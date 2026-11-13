@@ -1,6 +1,6 @@
 # Identity, access and browser security
 
-**Status: Design synthesis for user review; not implementation authorization.**
+**Status: Confirmed final design; not runtime implementation authorization.**
 
 ShiftBox authenticates people through OIDC and separately decides what they may do. Embedded Dex owns local credentials and brokers the external identity option; ShiftBox owns membership, roles and resource authorization. Successful sign-in alone grants no workspace access. See the [design readback](design-readback.md) and [communication architecture](architecture-and-communication.md). Authoritative decisions: Q24, Q29, Q34, Q51, Q73–Q85, Q136–Q147 and Q152–Q155.
 

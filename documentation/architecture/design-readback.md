@@ -1,6 +1,6 @@
 # ShiftBox design readback
 
-**Status:** Design synthesis for user review, November 13, 2026. Decisions through Q155 and the subsequent Mantine component-library selection are incorporated. This is a greenfield design; it is not implementation authorization or a claim that the integrations have been validated.
+**Status:** Final design confirmed by the user on November 13, 2026. Decisions through Q155 and the subsequent Mantine component-library selection are incorporated. This is a greenfield design; confirmation is not implementation authorization or a claim that the integrations have been validated.
 
 ShiftBox is a self-hosted cloud development environment that owns workspace lifecycle while delegating machine infrastructure to VM providers. Its first supported deployment is a native Go controller beside UTM on a logged-in, awake Mac. Each workspace receives its own Ubuntu VM and one primary development container. The browser UI, controller, proxy and provider adapter ship as one product; processes and helper utilities may be separated where necessary.
 
@@ -49,6 +49,6 @@ No HA/shared SaaS, migration of the CloudBox codebase, platform-managed Compose,
 
 The default values and implementation patterns in these documents are engineering proposals under the delegation accepted at Q155. They cannot override accepted behavior. If validation requires a weaker trust boundary, changed data-loss contract or additional product scope, that tradeoff returns for a decision.
 
-## Review and approval
+## Confirmation and implementation boundary
 
-The design decision frontier is closed at the product-contract level; the requested offline-VM research is incorporated as a bounded engineering design and validation gate. **Final readback confirmation remains outstanding.** Review the certificate recovery contract, secret-exposure boundary, external-session default and operational safeguards in particular. Implementation requires a separate authorization after shared understanding is confirmed.
+The user confirmed this final readback and the shared understanding on November 13, 2026. The design decision frontier is closed at the product-contract level, and the requested offline-VM research is incorporated as a bounded engineering design and validation gate. Runtime implementation requires separate authorization and must satisfy the documented validation gates.

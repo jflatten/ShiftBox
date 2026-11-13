@@ -1,6 +1,6 @@
 # Certificates and guest trust
 
-Status: design for user review; not implemented or operationally validated. The accepted policy separates uploaded browser HTTPS certificates from installation-issued internal mTLS certificates. The protocol details below are engineering proposals under the delegated implementation responsibility; their release gates remain mandatory.
+Status: confirmed final design; not implemented or operationally validated. The accepted policy separates uploaded browser HTTPS certificates from installation-issued internal mTLS certificates. The protocol details below are engineering proposals under the delegated implementation responsibility; their release gates remain mandatory.
 
 Read this alongside the [design readback](design-readback.md), [architecture and communication](architecture-and-communication.md), [operations and recovery](operations-state-and-recovery.md), and [validation and engineering defaults](validation-and-engineering-defaults.md).
 

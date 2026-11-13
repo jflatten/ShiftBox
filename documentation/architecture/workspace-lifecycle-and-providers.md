@@ -1,6 +1,6 @@
 # Workspace lifecycle and providers
 
-**Status:** Design synthesis for review. Main decisions: Q4–Q22, Q40–Q60, Q66–Q78, Q83–Q99, Q100–Q103 and Q151. [Readback](design-readback.md)
+**Status:** Confirmed final design. Main decisions: Q4–Q22, Q40–Q60, Q66–Q78, Q83–Q99, Q100–Q103 and Q151. [Readback](design-readback.md)
 
 ## Artifacts and runtime baseline
 

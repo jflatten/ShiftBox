@@ -1,6 +1,6 @@
 # Operations, state and recovery
 
-**Status:** Design synthesis for review. Main decisions: Q69–Q75, Q115–Q125, Q133–Q146 and Q153–Q154. [Readback](design-readback.md)
+**Status:** Confirmed final design. Main decisions: Q69–Q75, Q115–Q125, Q133–Q146 and Q153–Q154. [Readback](design-readback.md)
 
 ## Deployment and database ownership
 

@@ -1,12 +1,12 @@
 # Validation and engineering defaults
 
-**Status:** Explicit engineering proposals under Q155, for review with the [design readback](design-readback.md). Accepted product/security contracts take precedence. These documents are not a claim that tests have passed or authorization to implement.
+**Status:** Explicit engineering proposals under the confirmed Q155 [design readback](design-readback.md). Accepted product/security contracts take precedence. These documents are not a claim that tests have passed or authorization to implement.
 
 ## Authority and closure
 
 All interview responses Q1–Q155 are captured in the [decision record](shiftbox-design-decisions.md). Later answers supersede earlier proposals. This series presents the effective design; historical questions and old research are evidence, not active requirements.
 
-The user delegated internal implementation choices within the agreed boundaries. Paths, libraries, endpoint names, utility packaging and tunable defaults can be selected and validated without reopening every question. A change to data loss, trust, required operator burden, supported scope or deployment capability returns for a product decision. Final readback confirmation and implementation authorization remain separate gates.
+The user confirmed the final readback on November 13, 2026 and delegated internal implementation choices within the agreed boundaries. Paths, libraries, endpoint names, utility packaging and tunable defaults can be selected and validated without reopening every question. A change to data loss, trust, required operator burden, supported scope or deployment capability returns for a product decision. Implementation authorization remains a separate gate.
 
 ## Defaults and tunables
 

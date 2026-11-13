@@ -1,6 +1,6 @@
 # Templates, secrets and Git
 
-**Status: Design synthesis for user review; not implementation authorization.**
+**Status: Confirmed final design; not runtime implementation authorization.**
 
 Templates describe reproducible launches; authorization determines current secret access; GitHub supplies the workspace owner's Git authority. These responsibilities remain distinct. See the [design readback](design-readback.md) and [communication architecture](architecture-and-communication.md). Authoritative decisions: Q90–Q113, Q120–Q139, Q144, Q148 and Q154–Q155.
 

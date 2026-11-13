@@ -1,6 +1,6 @@
 # Architecture and communication
 
-**Status:** Design synthesis for user review. Sources of authority: accepted decisions Q1–Q155 and the subsequent explicit Mantine selection; [readback](design-readback.md). Diagrams describe intended behavior, not a deployed system.
+**Status:** Confirmed final design. Sources of authority: accepted decisions Q1–Q155, the subsequent explicit Mantine selection, and the user-confirmed [readback](design-readback.md). Diagrams describe intended behavior, not a deployed system.
 
 ## Guiding architecture
 

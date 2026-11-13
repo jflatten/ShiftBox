@@ -1,6 +1,6 @@
 # ShiftBox design decisions
 
-Updated November 13, 2026, America/New_York. Responses recorded through Q155, plus the subsequent explicit Mantine component-library decision. The closing round is complete; the design document series is ready for review. Shared-understanding confirmation and implementation authorization remain outstanding.
+Updated November 13, 2026, America/New_York. Responses recorded through Q155, plus the subsequent explicit Mantine component-library decision. The closing round is complete, and the user confirmed the final readback and shared understanding on November 13, 2026. Implementation authorization remains separate.
 
 ## Status and authority
 
@@ -8,7 +8,7 @@ Canonical decision record: `/Users/jflatten/Workspace/ShiftBox/documentation/arc
 
 This is the working decision record for a **greenfield project** implementing a provider-backed VM CDE architecture. On November 13 the user explicitly clarified that the current codebase will not be migrated. Existing CloudBox code is research/reference material, not an implementation to adapt. The user has selected the greenfield ShiftBox project and requested this record at ShiftBox/documentation/architecture/shiftbox-design-decisions.md. This documentation relocation does not migrate the reference codebase.
 
-**Product-level interview responses are complete through Q155. The user has authorized design synthesis, but has not confirmed the final readback or authorized implementation.** Updating this record and creating the design document series are authorized. It does not authorize modifying the runtime, creating a plugin fork, building images, changing UTM, migrating data, or replacing existing specifications and the constitution.
+**Product-level interview responses are complete through Q155, and the user confirmed the final readback and shared understanding on November 13, 2026. The user has not authorized implementation through that confirmation alone.** Updating this record, the design document series, and implementation specifications is authorized. Runtime implementation remains a separate activity.
 
 Responses through Q155 are recorded. Q148 accepts encrypted persistent GitHub access/refresh tokens with automatic renewal. Q149 accepts restricted loopback HTTPS bootstrap before validated uploaded browser TLS. Q150 accepts four-hour leaf/key rotation, eight-hour validity and a stable CA, with additional long-offline recovery research incorporated below. Q151 accepts bounded graceful shutdown followed by provider-enforced deletion under an authorized retention policy. Q152 requires an administrator-configurable external OIDC authorization interval; four hours is the researched initial engineering default, not a universal industry standard. Q153–Q154 settle operator updates, backup prerequisites, administration deferrals and storage pressure. Q155 authorizes synthesis and bounded engineering choices, with functional/security validation and final review still required.
 
@@ -222,7 +222,7 @@ Throughout the effective summaries, remaining exact versions, paths, algorithms 
 
 ## Historical closing round Q148 through Q155
 
-**The original question/recommendation wording below is historical.** Q148–Q155 are answered in the ledger. Q150 additionally requires the researched offline recovery path; Q152 permits administrator configuration, superseding the recommendation to allow only stricter intervals. Q155 requests the design series and diagrams. Final readback confirmation remains outstanding; next unused number is Q156 only if a material new decision arises.
+**The original question/recommendation wording below is historical.** Q148–Q155 are answered in the ledger. Q150 additionally requires the researched offline recovery path; Q152 permits administrator configuration, superseding the recommendation to allow only stricter intervals. Q155 requests the design series and diagrams. The final readback was confirmed on November 13, 2026; next unused number is Q156 only if a material new decision arises.
 
 ### Q148 Persistent OAuth renewal
 
@@ -276,7 +276,7 @@ Should the final readback consolidate the accepted product/security/operations c
 
 The requested series has been prepared in this architecture folder. [Start with the design readback](design-readback.md). Seven supporting documents cover architecture/communication, lifecycle/providers, identity/browser security, templates/secrets/Git, certificates/guest trust, operations/recovery, and validation/defaults. Seven SVG diagrams have editable Mermaid source companions under `diagrams/`.
 
-Shared-understanding confirmation remains a user decision after review. Implementation requires separate authorization; no code migration or runtime changes follow automatically from these answers.
+The user confirmed the shared understanding on November 13, 2026. Implementation requires separate authorization; no code migration or runtime changes follow automatically from the design confirmation.
 
 ## Historical round Q139 through Q147
 
@@ -1206,7 +1206,7 @@ This table records the current outcome of every asked question. Later refinement
 | Q152 | External authorization interval | Administrator-configurable interval; researched engineering default 4h, not a universal standard. Actual upstream authorization, no refresh-only extension or directory-disablement guarantee. |
 | Q153 | Operator installation and updates | Accepted: manual native operation, prerequisites, compatibility gate and verified backup before irreversible app/Dex migrations; compatible-release restore, not binary-only rollback. |
 | Q154 | Administration and storage | Accepted: defer purge/ownership transfer; configurable audit/notice retention preserves required records; pressure blocks allocations and alerts, no extra data-deletion authority. |
-| Q155 | Design synthesis and closure | Accepted: series of design documents and architecture/communication/boundary diagrams; delegated bounded engineering details and validation backlog; final readback confirmation and implementation authorization pending. |
+| Q155 | Design synthesis and closure | Accepted: series of design documents and architecture/communication/boundary diagrams; delegated bounded engineering details and validation backlog. Final readback confirmed November 13, 2026; implementation authorization remains separate. |
 
 ## Research findings and validation limits
 
@@ -1461,8 +1461,8 @@ ShiftBox: simplicity, owned workspace lifecycle, provider-managed infrastructure
 │  ├─ Portable key custody -> encrypted application values; key rotation phase II
 │  └─ Coordinated encrypted backup -> replacement PG -> admin-reviewed recovery
 └─ Closure: design series + bounded defaults + functional/security validation gates
-   └─ CURRENT REVIEW FRONTIER: user confirms final readback/shared understanding
-      └─ Separate implementation authorization
+   └─ FINAL READBACK/SHARED UNDERSTANDING: confirmed November 13, 2026
+      └─ CURRENT FRONTIER: separate implementation authorization
 ```
 
 See [validation and engineering defaults](validation-and-engineering-defaults.md) for release gates, technical choices and deferrals. Scale/load testing remains deferred until product completion. A failed validation that requires a product/security tradeoff returns to the user rather than silently weakening this tree. Design approval alone does not establish a production-proven release.
@@ -1471,6 +1471,6 @@ See [validation and engineering defaults](validation-and-engineering-defaults.md
 
 The latest supplied drawing is `/Users/jflatten/Downloads/ShiftBox Architecture.pdf`. It contains UI, Controller API, Platform Provisioning and Proxy services in the binary; a platform VM containing the DevContainer Provisioning Service and a devcontainer; and retained-path labels `/home/vscode`, `/opt/shiftbox`, `/workspaces`. It shows a user-to-proxy-to-devcontainer path. The polling/tunnel directions and later decisions in this record clarify the high-level drawing; its arrows are not a protocol specification. The external PDF has been revised in place and is not copied into this checkpoint.
 
-Preserve this existing checkout and its unrelated work. The implementation will be a new greenfield project: do not migrate current code or rewrite its specifications as if it were the implementation target. The user has selected the ShiftBox project folder, authorized relocation/update of this decision record, and at Q155 authorized the design document series and diagrams. New scaffolding and implementation specifications await final shared-understanding confirmation and subsequent authorization. Existing data import/API compatibility is not implied; the old installation remains protected.
+Preserve this existing checkout and its unrelated work. The implementation will be a new greenfield project: do not migrate current code or rewrite its specifications as if it were the implementation target. The user has selected the ShiftBox project folder, authorized relocation/update of this decision record, and at Q155 authorized the design document series and diagrams. The final shared understanding was confirmed on November 13, 2026; implementation specifications may now be prepared, while runtime implementation remains separately authorized. Existing data import/API compatibility is not implied; the old installation remains protected.
 
 Preserve the original `cloudbox-us1` Docker Desktop installation at `.cache/us1-installation`, its database, Keycloak data, TLS files, and private bootstrap credentials. No credential values belong in this record. Any later local Compose testing must follow the repository's existing installation instructions; this checkpoint does not authorize rebuilding or resetting it.
