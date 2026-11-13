@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1420" height="1160" viewBox="0 0 1420 1160" role="img" aria-labelledby="title desc"><title id="title">Certificate rotation and long-offline recovery</title><desc id="desc">Stopped VMs do not rotate. Known expired VMs receive new host-authorized enrollment material; revoked or mismatched identities are denied.</desc><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#496B88"/></marker></defs><rect width="100%" height="100%" fill="white"/>
+<text x="28" y="36" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700">Certificate rotation and long-offline recovery</text>
+<rect x="405" y="70" width="600" height="95" rx="12" fill="#EAF6F0" stroke="#496B88" stroke-width="1.6"/>
+<text x="419" y="98" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Connected and authorized</text>
+<text x="419" y="123" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Rotate leaf + private key every 4h; validity 8h; stable installation CA</text>
+<rect x="405" y="215" width="600" height="85" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="419" y="243" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">VM stopped / suspended</text>
+<text x="419" y="268" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">No rotation occurs; validity follows wall-clock time</text>
+<polyline points="705,165 705,215" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="603.1" y="180" width="203.79999999999998" height="22" rx="3" fill="white"/>
+<text x="705" y="195" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Shutdown / loss of service</text>
+<rect x="405" y="345" width="600" height="85" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="419" y="373" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Authorized start / recovery</text>
+<text x="419" y="398" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Controller reconciles exact provider instance and current registration</text>
+<polyline points="705,300 705,345" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="35" y="490" width="350" height="115" rx="12" fill="#EAF6F0" stroke="#496B88" stroke-width="1.6"/>
+<text x="49" y="518" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Still valid and eligible</text>
+<text x="49" y="543" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Authenticate; check revocation; renew if</text>
+<text x="49" y="563" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">due</text>
+<rect x="535" y="490" width="350" height="115" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="549" y="518" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Expired, known, eligible</text>
+<text x="549" y="543" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Expired certificate grants no authority</text>
+<rect x="1035" y="490" width="350" height="115" rx="12" fill="#FCEDEE" stroke="#496B88" stroke-width="1.6"/>
+<text x="1049" y="518" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Revoked / unknown / mismatched</text>
+<text x="1049" y="543" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Deny automatic enrollment; admin review</text>
+<text x="1049" y="563" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">or verified registration required</text>
+<polyline points="500,430 500,455 210,455 210,490" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="314.75" y="430" width="50.5" height="22" rx="3" fill="white"/>
+<text x="340" y="445" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Valid</text>
+<polyline points="705,430 705,490" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="717.45" y="454" width="65.1" height="22" rx="3" fill="white"/>
+<text x="750" y="469" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Expired</text>
+<polyline points="910,430 910,455 1210,455 1210,490" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="1036.5" y="430" width="87.0" height="22" rx="3" fill="white"/>
+<text x="1080" y="445" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Ineligible</text>
+<rect x="480" y="665" width="460" height="115" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="494" y="693" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Fresh provider-delivered enrollment</text>
+<text x="494" y="718" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">New one-use grant + current trust bundle; generate new</text>
+<text x="494" y="738" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">guest key</text>
+<polyline points="710,605 710,665" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="637.3" y="628" width="145.4" height="22" rx="3" fill="white"/>
+<text x="710" y="643" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Verified host path</text>
+<rect x="480" y="835" width="460" height="100" rx="12" fill="#EAF6F0" stroke="#496B88" stroke-width="1.6"/>
+<text x="494" y="863" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Issue scoped identity atomically</text>
+<text x="494" y="888" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Consume grant; reject replay / old generation; record</text>
+<text x="494" y="908" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">result</text>
+<polyline points="710,780 710,835" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="608.1" y="799" width="203.79999999999998" height="22" rx="3" fill="white"/>
+<text x="710" y="814" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">TLS enrollment + key proof</text>
+<rect x="35" y="835" width="350" height="100" rx="12" fill="#EAF6F0" stroke="#496B88" stroke-width="1.6"/>
+<text x="49" y="863" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Access restored</text>
+<text x="49" y="888" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Fresh authenticated polling / tunnel;</text>
+<text x="49" y="908" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">preserve workspace data</text>
+<polyline points="480,885 385,885" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="210,605 210,835" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="151.9" y="720" width="116.2" height="22" rx="3" fill="white"/>
+<text x="210" y="735" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Normal renewal</text>
+<rect x="1035" y="690" width="350" height="245" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="1049" y="718" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Recovery limits</text>
+<text x="1049" y="743" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Stopped UTM: replace designated seed</text>
+<text x="1049" y="763" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">media while preserving ALL drives.</text>
+<text x="1049" y="783" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Running but expired: no forced stop</text>
+<text x="1049" y="803" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">merely to inject media.</text>
+<text x="1049" y="823" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Provider unavailable: fail closed and</text>
+<text x="1049" y="843" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">report recovery blocked.</text>
+<text x="38" y="1000" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400">CA expiry, clock errors and N/N−1 protocol compatibility are separate checks. Never disable server verification.</text>
+<text x="38" y="1030" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400">UTM media delivery is source-backed but requires end-to-end validation. No permanent guest recovery password.</text>
+<text x="38" y="1060" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400">Revocation closes existing access immediately; tunnels reauthenticate no later than the certificate used for them expires.</text>
+<text x="28" y="1142" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400">ShiftBox design • November 2026 • Intended contracts; implementation validation required</text>
+</svg>

@@ -1,0 +1,19 @@
+flowchart TB
+ subgraph Trusted[Trusted control plane]
+ I[Infrastructure keys and provider authority]
+ A[Authorization / ownership]
+ S[Application secret resolver]
+ A --> S
+ end
+ subgraph Guest[Entire untrusted VM]
+ G[Guest service / root]
+ D[Project code and tools]
+ G --> D
+ end
+ S -->|Authorized values only| G
+ subgraph Browser[Separate browser origins]
+ M[Management session]
+ P[IDE / preview scoped access]
+ end
+ A --> P
+ P -->|Proxy strips management credentials| D

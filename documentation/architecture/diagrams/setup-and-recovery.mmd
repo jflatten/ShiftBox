@@ -1,0 +1,9 @@
+flowchart LR
+ A[Local HTTPS setup] --> B[Restricted Dex SQLite]
+ B --> C[Change initial password]
+ C --> D[Validate and seed production PG]
+ D --> E[Transfer initial owner; fresh sign-in]
+ E --> F[Pause mutations for checkpoint]
+ F --> G[Password-encrypted owned-state archive]
+ G --> H[Validate empty replacement target]
+ H --> I[Reviewed recovery gate]

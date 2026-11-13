@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1460" height="940" viewBox="0 0 1460 940" role="img" aria-labelledby="title desc"><title id="title">ShiftBox system architecture</title><desc id="desc">Native Go control plane and UTM provider manage an untrusted workspace VM. Browser and guest channels have different trust boundaries.</desc><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#496B88"/></marker></defs><rect width="100%" height="100%" fill="white"/>
+<text x="28" y="36" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700">ShiftBox system architecture</text>
+<rect x="30" y="100" width="240" height="110" rx="12" fill="#F1EDFC" stroke="#496B88" stroke-width="1.6"/>
+<text x="44" y="128" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Administrator / member</text>
+<text x="44" y="153" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Management, IDE and</text>
+<text x="44" y="173" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">previews use HTTPS origins</text>
+<rect x="340" y="65" width="730" height="380" rx="12" fill="#EAF6F0" stroke="#496B88" stroke-width="1.6" stroke-dasharray="7 5"/>
+<text x="356" y="92" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Trusted controller • native Go on the Mac</text>
+<rect x="365" y="120" width="205" height="105" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="379" y="148" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Static web UI</text>
+<text x="379" y="173" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Next.js build assets;</text>
+<text x="379" y="193" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Go HTTPS</text>
+<rect x="590" y="120" width="205" height="105" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="604" y="148" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Controller API</text>
+<text x="604" y="173" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Intent, permissions,</text>
+<text x="604" y="193" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">reconciliation</text>
+<rect x="815" y="120" width="225" height="105" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="829" y="148" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Embedded Dex</text>
+<text x="829" y="173" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Local credentials;</text>
+<text x="829" y="193" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">external OIDC</text>
+<rect x="365" y="280" width="205" height="110" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="379" y="308" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Provider adapter</text>
+<text x="379" y="333" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Native lifecycle;</text>
+<text x="379" y="353" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">capability checks</text>
+<rect x="590" y="280" width="205" height="110" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="604" y="308" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Proxy service</text>
+<text x="604" y="333" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Authorized IDE /</text>
+<text x="604" y="353" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">preview routing</text>
+<rect x="815" y="280" width="225" height="110" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="829" y="308" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">State and secrets</text>
+<text x="829" y="333" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Encrypted values; token</text>
+<text x="829" y="353" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">renewal</text>
+<rect x="1140" y="110" width="280" height="120" rx="12" fill="#F1EDFC" stroke="#496B88" stroke-width="1.6"/>
+<text x="1154" y="138" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">External identity provider</text>
+<text x="1154" y="163" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Optional upstream OIDC</text>
+<text x="1154" y="183" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">authorization</text>
+<rect x="1140" y="305" width="280" height="140" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="1154" y="333" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">State storage</text>
+<text x="1154" y="358" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Production: one PostgreSQL DB,</text>
+<text x="1154" y="378" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">two schemas</text>
+<text x="1154" y="398" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Demo: SQLite stores</text>
+<rect x="30" y="590" width="240" height="120" rx="12" fill="#EAF6F0" stroke="#496B88" stroke-width="1.6"/>
+<text x="44" y="618" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">UTM on the Mac</text>
+<text x="44" y="643" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Owns VM disks and</text>
+<text x="44" y="663" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">supported network controls</text>
+<rect x="340" y="540" width="730" height="320" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6" stroke-dasharray="7 5"/>
+<text x="356" y="567" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Untrusted workspace VM • Ubuntu Minimal amd64</text>
+<rect x="370" y="600" width="285" height="115" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="384" y="628" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Guest provisioning service</text>
+<text x="384" y="653" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Polls, runs Dev Container CLI,</text>
+<text x="384" y="673" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">delivers authorized values</text>
+<rect x="730" y="600" width="305" height="115" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="744" y="628" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Project devcontainer</text>
+<text x="744" y="653" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Developer-managed tooling; browser</text>
+<text x="744" y="673" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">IDE / applications</text>
+<rect x="370" y="755" width="665" height="75" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="384" y="783" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">One VM-owned disk</text>
+<text x="384" y="808" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Retained project, developer home and designated app data</text>
+<rect x="1140" y="610" width="280" height="120" rx="12" fill="#F1EDFC" stroke="#496B88" stroke-width="1.6"/>
+<text x="1154" y="638" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">GitHub / approved egress</text>
+<text x="1154" y="663" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Owner-authorized Git HTTPS;</text>
+<text x="1154" y="683" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">provider network policy applies</text>
+<rect x="30" y="780" width="240" height="105" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="44" y="808" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Release pipeline</text>
+<text x="44" y="833" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Packer → approved local</text>
+<text x="44" y="853" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">artifact catalog</text>
+<polyline points="270,150 365,165" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="279.8" y="127" width="72.4" height="22" rx="3" fill="white"/>
+<text x="316" y="142" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">UI HTTPS</text>
+<polyline points="150,210 150,250 690,250 690,280" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="253.65" y="228" width="152.7" height="22" rx="3" fill="white"/>
+<text x="330" y="243" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">IDE / preview HTTPS</text>
+<polyline points="1040,165 1140,165" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="1068.4" y="135" width="43.2" height="22" rx="3" fill="white"/>
+<text x="1090" y="150" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">OIDC</text>
+<polyline points="1070,370 1140,370" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="1065.15" y="340" width="79.7" height="22" rx="3" fill="white"/>
+<text x="1105" y="355" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">SQL / TLS</text>
+<polyline points="465,390 465,485 150,485 150,590" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="222.7" y="463" width="174.6" height="22" rx="3" fill="white"/>
+<text x="310" y="478" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Host lifecycle control</text>
+<polyline points="270,650 340,650" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="276.1" y="619" width="57.8" height="22" rx="3" fill="white"/>
+<text x="305" y="634" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">VM API</text>
+<polyline points="520,600 520,495 700,495 700,445" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="655.25" y="473" width="269.5" height="22" rx="3" fill="white"/>
+<text x="790" y="488" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Guest-initiated mTLS: poll + tunnel</text>
+<polyline points="655,655 730,655" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="653.15" y="626" width="79.7" height="22" rx="3" fill="white"/>
+<text x="693" y="641" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Local ops</text>
+<polyline points="1035,660 1140,660" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="1050.15" y="630" width="79.7" height="22" rx="3" fill="white"/>
+<text x="1090" y="645" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Git HTTPS</text>
+<polyline points="150,780 150,710" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="163.8" y="734" width="72.4" height="22" rx="3" fill="white"/>
+<text x="200" y="749" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Artifact</text>
+<text x="28" y="922" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400">ShiftBox design • November 2026 • Intended contracts; implementation validation required</text>
+</svg>

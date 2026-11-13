@@ -1,0 +1,51 @@
+{
+  "name": "@mendiak/less-is-more-ui",
+  "version": "1.1.1",
+  "description": "A minimalist design system for calm, functional web interfaces. Design tokens, CSS reset, and utility patterns inspired by Mies van der Rohe and Dieter Rams.",
+  "main": "index.css",
+  "style": "index.css",
+  "scripts": {
+    "build": "node site/build.mjs",
+    "serve": "node site/serve.mjs",
+    "preview": "npm run build && npm run serve"
+  },
+  "exports": {
+    ".": "./index.css",
+    "./index.css": "./index.css",
+    "./references/tokens.css": "./references/tokens.css",
+    "./assets/css/reset.css": "./assets/css/reset.css",
+    "./assets/css/components.css": "./assets/css/components.css"
+  },
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "files": [
+    "index.css",
+    "assets/css/reset.css",
+    "assets/css/components.css",
+    "references/tokens.css"
+  ],
+  "keywords": [
+    "css",
+    "design-system",
+    "minimalism",
+    "ui",
+    "design-tokens",
+    "reset",
+    "modernist",
+    "web-design"
+  ],
+  "license": "GPL-3.0-only",
+  "author": "Mendiak",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mendiak/less-is-more-ui.git"
+  },
+  "homepage": "https://mendiak.github.io/less-is-more-ui/",
+  "bugs": {
+    "url": "https://github.com/Mendiak/less-is-more-ui/issues"
+  },
+  "engines": {
+    "node": ">=14"
+  }
+}

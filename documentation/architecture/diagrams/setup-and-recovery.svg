@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1460" height="950" viewBox="0 0 1460 950" role="img" aria-labelledby="title desc"><title id="title">Setup, database activation and management recovery</title><desc id="desc">Restricted local bootstrap precedes PostgreSQL setup. Management backup does not include workspace disks or rewind external systems.</desc><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#496B88"/></marker></defs><rect width="100%" height="100%" fill="white"/>
+<text x="28" y="36" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700">Setup, database activation and management recovery</text>
+<text x="35" y="80" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700">FIRST INSTALLATION</text>
+<rect x="35" y="105" width="310" height="155" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="49" y="133" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Local HTTPS bootstrap</text>
+<text x="49" y="158" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Owner email; unique temporary</text>
+<text x="49" y="178" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">password; explicit trust</text>
+<rect x="395" y="105" width="310" height="155" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="409" y="133" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Restricted Dex / SQLite</text>
+<text x="409" y="158" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Force password change; no normal</text>
+<text x="409" y="178" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">workspace use</text>
+<rect x="755" y="105" width="310" height="155" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="769" y="133" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Production PostgreSQL</text>
+<text x="769" y="158" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">One DB, separate owned schemas;</text>
+<text x="769" y="178" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">verify and seed</text>
+<rect x="1115" y="105" width="310" height="155" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="1129" y="133" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Activate production</text>
+<text x="1129" y="158" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Transfer initial owner; fresh sign-</text>
+<text x="1129" y="178" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">in; no stale fallback</text>
+<polyline points="345,182 395,182" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="705,182 755,182" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="1065,182 1115,182" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="35" y="335" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700">BACKUP / RESTORE</text>
+<rect x="35" y="365" width="310" height="180" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="49" y="393" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Coordinated checkpoint</text>
+<text x="49" y="418" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Pause management, sign-in and</text>
+<text x="49" y="438" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">background mutations; VMs continue</text>
+<rect x="395" y="365" width="310" height="180" rx="12" fill="#EAF6F0" stroke="#496B88" stroke-width="1.6"/>
+<text x="409" y="393" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Encrypted archive</text>
+<text x="409" y="418" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Owned app + Dex + keys/config;</text>
+<text x="409" y="438" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">independent operator password</text>
+<rect x="755" y="365" width="310" height="180" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="769" y="393" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Empty replacement target</text>
+<text x="769" y="418" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Validate archive, keys, roles, TLS</text>
+<text x="769" y="438" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">and compatibility; original Mac</text>
+<rect x="1115" y="365" width="310" height="180" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="1129" y="393" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Reviewed recovery gate</text>
+<text x="1129" y="418" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Reconcile VMs/identities; no</text>
+<text x="1129" y="438" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">restored session or grant auto-</text>
+<text x="1129" y="458" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">trust</text>
+<polyline points="345,455 395,455" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="705,455 755,455" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="1065,455 1115,455" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="35" y="625" width="670" height="160" rx="12" fill="#F1EDFC" stroke="#496B88" stroke-width="1.6"/>
+<text x="49" y="653" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">External PostgreSQL remains operator-owned</text>
+<text x="49" y="678" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">ShiftBox manages its schemas and recovery data, not the server or unrelated</text>
+<text x="49" y="698" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">databases. Setup administrator credentials are discarded; scoped service access</text>
+<text x="49" y="718" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">remains.</text>
+<rect x="755" y="625" width="670" height="160" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="769" y="653" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Management checkpoint does not rewind the world</text>
+<text x="769" y="678" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">VM files, Git pushes, upstream account changes and GitHub token rotation are</text>
+<text x="769" y="698" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">outside the archive transaction. Revalidate authority during recovery.</text>
+<text x="35" y="850" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400">Before irreversible migrations: compatibility gate + verified backup. Recovery uses a matching release and archive.</text>
+<text x="28" y="932" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400">ShiftBox design • November 2026 • Intended contracts; implementation validation required</text>
+</svg>

@@ -1,0 +1,15 @@
+stateDiagram-v2
+ [*] --> Provisioning
+ Provisioning --> Enrolling
+ Enrolling --> Configuring
+ Configuring --> Ready
+ Configuring --> RepairNeeded
+ RepairNeeded --> Configuring
+ Ready --> Stopped
+ Stopped --> Enrolling
+ Ready --> Deleting
+ Stopped --> Deleting
+ Deleting --> CleanupFailed
+ CleanupFailed --> Deleting
+ Deleting --> Deleted: verified owned-resource removal
+ Deleted --> [*]

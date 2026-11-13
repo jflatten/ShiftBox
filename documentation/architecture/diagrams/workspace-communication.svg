@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1450" height="1030" viewBox="0 0 1450 1030" role="img" aria-labelledby="title desc"><title id="title">Workspace communication paths</title><desc id="desc">Requests flow from browser to controller and from guest to controller; provisioning goes through the trusted provider host.</desc><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#496B88"/></marker></defs><rect width="100%" height="100%" fill="white"/>
+<text x="28" y="36" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700">Workspace communication paths</text>
+<rect x="10" y="70" width="180" height="65" rx="12" fill="#F1EDFC" stroke="#496B88" stroke-width="1.6"/>
+<text x="24" y="98" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Browser</text>
+<line x1="100" y1="140" x2="100" y2="960" stroke="#ACBAC6" stroke-dasharray="5 5"/>
+<rect x="305" y="70" width="180" height="65" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="319" y="98" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Go controller /</text>
+<text x="319" y="120" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">proxy</text>
+<line x1="395" y1="140" x2="395" y2="960" stroke="#ACBAC6" stroke-dasharray="5 5"/>
+<rect x="605" y="70" width="180" height="65" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="619" y="98" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Provider / UTM</text>
+<line x1="695" y1="140" x2="695" y2="960" stroke="#ACBAC6" stroke-dasharray="5 5"/>
+<rect x="905" y="70" width="180" height="65" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="919" y="98" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Guest service</text>
+<line x1="995" y1="140" x2="995" y2="960" stroke="#ACBAC6" stroke-dasharray="5 5"/>
+<rect x="1215" y="70" width="180" height="65" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="1229" y="98" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Devcontainer</text>
+<line x1="1305" y1="140" x2="1305" y2="960" stroke="#ACBAC6" stroke-dasharray="5 5"/>
+<polyline points="100,185 395,185" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="79.9" y="158" width="335.2" height="22" rx="3" fill="white"/>
+<text x="247.5" y="173" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">1  Launch request • user session / ownership</text>
+<polyline points="395,255 695,255" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="381.05" y="228" width="327.9" height="22" rx="3" fill="white"/>
+<text x="545.0" y="243" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">2  Reserve resources; reconcile / provision</text>
+<polyline points="695,325 995,325" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="681.05" y="298" width="327.9" height="22" rx="3" fill="white"/>
+<text x="845.0" y="313" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">3  Start known VM + scoped enrollment media</text>
+<polyline points="995,395 395,395" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="527.4" y="368" width="335.2" height="22" rx="3" fill="white"/>
+<text x="695.0" y="383" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">4  Enrollment exchange • fresh one-use grant</text>
+<polyline points="995,465 395,465" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="560.25" y="438" width="269.5" height="22" rx="3" fill="white"/>
+<text x="695.0" y="453" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">5  Desired-state poll • per-VM mTLS</text>
+<polyline points="395,535 995,535" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="483.6" y="508" width="422.8" height="22" rx="3" fill="white"/>
+<text x="695.0" y="523" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">6  Poll response • identified operation, not server push</text>
+<polyline points="995,605 1305,605" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="1004.3" y="578" width="291.4" height="22" rx="3" fill="white"/>
+<text x="1150.0" y="593" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">7  Dev Container CLI / retained mounts</text>
+<polyline points="995,675 395,675" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="509.15" y="648" width="371.7" height="22" rx="3" fill="white"/>
+<text x="695.0" y="663" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">8  Guest establishes authenticated reverse tunnel</text>
+<polyline points="100,745 395,745" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="87.20000000000002" y="718" width="320.59999999999997" height="22" rx="3" fill="white"/>
+<text x="247.5" y="733" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">9  IDE / preview request • authorized user</text>
+<polyline points="395,815 995,815" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="516.45" y="788" width="357.09999999999997" height="22" rx="3" fill="white"/>
+<text x="695.0" y="803" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">10  Route over existing guest-originated tunnel</text>
+<polyline points="995,885 1305,885" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="967.8" y="858" width="364.4" height="22" rx="3" fill="white"/>
+<text x="1150.0" y="873" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">11  HTTP / WebSocket • no management credentials</text>
+<text x="28" y="1012" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400">ShiftBox design • November 2026 • Intended contracts; implementation validation required</text>
+</svg>

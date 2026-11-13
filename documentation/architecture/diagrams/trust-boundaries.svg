@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1420" height="940" viewBox="0 0 1420 940" role="img" aria-labelledby="title desc"><title id="title">Application and infrastructure trust boundaries</title><desc id="desc">Entire guest VM is untrusted. Application secrets may cross the boundary after authorization; infrastructure keys do not.</desc><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#496B88"/></marker></defs><rect width="100%" height="100%" fill="white"/>
+<text x="28" y="36" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700">Application and infrastructure trust boundaries</text>
+<rect x="30" y="75" width="660" height="330" rx="12" fill="#EAF6F0" stroke="#496B88" stroke-width="1.6" stroke-dasharray="7 5"/>
+<text x="46" y="102" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Trusted control plane / provider host</text>
+<rect x="55" y="130" width="300" height="120" rx="12" fill="#EAF6F0" stroke="#496B88" stroke-width="1.6"/>
+<text x="69" y="158" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Infrastructure authority</text>
+<text x="69" y="183" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">CA keys, provider access, database</text>
+<text x="69" y="203" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">roles, root encryption key</text>
+<rect x="380" y="130" width="280" height="120" rx="12" fill="#EAF6F0" stroke="#496B88" stroke-width="1.6"/>
+<text x="394" y="158" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Authorization and records</text>
+<text x="394" y="183" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Owner, project, membership,</text>
+<text x="394" y="203" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">instance generation</text>
+<rect x="55" y="280" width="605" height="90" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="69" y="308" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Application secret resolver</text>
+<text x="69" y="333" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">User → Project Template → Organization; OAuth access token exposure</text>
+<rect x="770" y="75" width="620" height="330" rx="12" fill="#F1EDFC" stroke="#496B88" stroke-width="1.6" stroke-dasharray="7 5"/>
+<text x="786" y="102" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">External trust and storage</text>
+<rect x="795" y="130" width="565" height="100" rx="12" fill="#F1EDFC" stroke="#496B88" stroke-width="1.6"/>
+<text x="809" y="158" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">GitHub and upstream identity</text>
+<text x="809" y="183" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Enforce their own grants; user OAuth is distinct from ShiftBox</text>
+<text x="809" y="203" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">login</text>
+<rect x="795" y="260" width="565" height="110" rx="12" fill="#F1EDFC" stroke="#496B88" stroke-width="1.6"/>
+<text x="809" y="288" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">PostgreSQL operator</text>
+<text x="809" y="313" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Runs server and encrypted storage; authorized DB admins can read</text>
+<text x="809" y="333" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Dex state</text>
+<rect x="30" y="505" width="660" height="330" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6" stroke-dasharray="7 5"/>
+<text x="46" y="532" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Untrusted VM boundary includes the guest agent</text>
+<rect x="55" y="560" width="285" height="150" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="69" y="588" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Guest service / root</text>
+<text x="69" y="613" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Can request every effective</text>
+<text x="69" y="633" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">authorized value; mTLS is</text>
+<text x="69" y="653" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">identity, not attestation</text>
+<rect x="365" y="560" width="295" height="150" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="379" y="588" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Project code and tools</text>
+<text x="379" y="613" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Can copy delivered secrets;</text>
+<text x="379" y="633" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">developer-managed environment</text>
+<rect x="55" y="745" width="605" height="65" rx="12" fill="#FCEDEE" stroke="#496B88" stroke-width="1.6"/>
+<text x="69" y="773" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">No CA, provider or controller-root authority crosses this</text>
+<text x="69" y="795" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">boundary</text>
+<rect x="770" y="505" width="620" height="330" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6" stroke-dasharray="7 5"/>
+<text x="786" y="532" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Browser origin boundaries</text>
+<rect x="795" y="560" width="255" height="140" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="809" y="588" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Management origin</text>
+<text x="809" y="613" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Host-only session; origin /</text>
+<text x="809" y="633" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">CSRF checks</text>
+<rect x="1080" y="560" width="280" height="140" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="1094" y="588" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">IDE / preview origins</text>
+<text x="1094" y="613" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Owner or audited admin; scoped</text>
+<text x="1094" y="633" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">access; hostile app content</text>
+<polyline points="360,370 360,465 195,465 195,560" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="228.9" y="440" width="262.2" height="22" rx="3" fill="white"/>
+<text x="360" y="455" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Authorized application values only</text>
+<polyline points="340,635 365,635" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="770,780 690,780" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)" stroke-dasharray="6 4"/>
+<rect x="865.25" y="769" width="269.5" height="22" rx="3" fill="white"/>
+<text x="1000" y="784" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Proxy strips management credentials</text>
+<text x="38" y="890" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400">A copied value cannot be retracted. Revocation stops future access; external credentials may need provider-side rotation.</text>
+<text x="28" y="922" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400">ShiftBox design • November 2026 • Intended contracts; implementation validation required</text>
+</svg>

@@ -1,0 +1,10 @@
+flowchart TB
+ Browser[Administrator or member] -->|HTTPS| Controller[Go controller: UI API proxy Dex]
+ Controller -->|Scoped SQL over TLS| DB[(PG: application and Dex schemas)]
+ Controller -->|Native host lifecycle| UTM[UTM adapter]
+ UTM -->|Create start stop delete| VM[One Ubuntu amd64 VM per workspace]
+ VM -->|Guest initiated mTLS polling and tunnel| Controller
+ VM --> Devcontainer[Developer project container]
+ Devcontainer -->|User OAuth access token over HTTPS| GitHub[GitHub]
+ Packer[Packer release pipeline] --> Catalog[Approved local artifacts]
+ Catalog --> UTM

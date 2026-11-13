@@ -1,0 +1,17 @@
+sequenceDiagram
+ participant B as Browser
+ participant C as Controller / proxy
+ participant P as Provider
+ participant G as Guest
+ participant D as Devcontainer
+ B->>C: Authorized launch request
+ C->>P: Reserve / provision known VM
+ P->>G: Boot with scoped enrollment media
+ G->>C: Fresh one-use enrollment
+ G->>C: mTLS desired-state poll
+ C-->>G: Identified operation in response
+ G->>D: Dev Container CLI / retained mounts
+ G->>C: Establish reverse tunnel
+ B->>C: Authorized IDE / preview request
+ C->>G: Route over existing tunnel
+ G->>D: HTTP / WebSocket without management credentials

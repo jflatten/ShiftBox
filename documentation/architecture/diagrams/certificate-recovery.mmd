@@ -1,0 +1,11 @@
+flowchart TD
+ A[Connected: rotate every 4h, valid 8h] --> B[Stopped: no rotation]
+ B --> C[Authorized start and provider reconciliation]
+ C -->|Valid and eligible| D[Authenticate and renew when due]
+ C -->|Expired, known and eligible| E[Fresh provider-delivered one-use enrollment]
+ C -->|Revoked / unknown / mismatched| X[Deny automatic recovery]
+ E --> F[Generate new key; prove possession]
+ F --> G[Consume grant; issue recorded identity]
+ G --> D
+ R[Running but expired] --> S[Validated host channel or authorized restart]
+ S --> E

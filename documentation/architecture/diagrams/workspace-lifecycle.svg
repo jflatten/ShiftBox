@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1000" viewBox="0 0 1440 1000" role="img" aria-labelledby="title desc"><title id="title">Workspace lifecycle and durable reconciliation</title><desc id="desc">Desired state is separate from observed state. A timeout never proves cleanup; destructive retention and safe maintenance have different authority.</desc><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#496B88"/></marker></defs><rect width="100%" height="100%" fill="white"/>
+<text x="28" y="36" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700">Workspace lifecycle and durable reconciliation</text>
+<rect x="30" y="90" width="300" height="105" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="44" y="118" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Template + image snapshot</text>
+<text x="44" y="143" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Owner, size, revision and</text>
+<text x="44" y="163" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">references</text>
+<rect x="395" y="90" width="300" height="105" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="409" y="118" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Admission / provisioning</text>
+<text x="409" y="143" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Durable operation and reservations</text>
+<rect x="760" y="90" width="300" height="105" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="774" y="118" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Enrolling / configuring</text>
+<text x="774" y="143" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Provider identity, CLI and hooks</text>
+<rect x="760" y="280" width="300" height="105" rx="12" fill="#EAF6F0" stroke="#496B88" stroke-width="1.6"/>
+<text x="774" y="308" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Ready / running</text>
+<text x="774" y="333" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">waitFor + actual IDE route ready</text>
+<rect x="395" y="280" width="300" height="105" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="409" y="308" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Stopped</text>
+<text x="409" y="333" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">CPU/RAM released; disk retained</text>
+<rect x="30" y="280" width="300" height="105" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="44" y="308" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Repair / recovery needed</text>
+<text x="44" y="333" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Files retained; failures remain</text>
+<text x="44" y="353" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">visible</text>
+<rect x="760" y="500" width="300" height="115" rx="12" fill="#FCEDEE" stroke="#496B88" stroke-width="1.6"/>
+<text x="774" y="528" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Deleting</text>
+<text x="774" y="553" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Authorized action or enabled</text>
+<text x="774" y="573" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">policy; final activity recheck</text>
+<rect x="760" y="710" width="300" height="105" rx="12" fill="#FCEDEE" stroke="#496B88" stroke-width="1.6"/>
+<text x="774" y="738" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Deleted</text>
+<text x="774" y="763" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Owned resources verified absent;</text>
+<text x="774" y="783" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">disk reservation released</text>
+<rect x="1110" y="500" width="300" height="190" rx="12" fill="#FFF4DD" stroke="#496B88" stroke-width="1.6"/>
+<text x="1124" y="528" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Cleanup uncertain / failed</text>
+<text x="1124" y="553" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Keep operation and reservations.</text>
+<text x="1124" y="573" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Reconcile and retry; never mark</text>
+<text x="1124" y="593" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">success from a timeout.</text>
+<rect x="30" y="500" width="665" height="190" rx="12" fill="#EAF3FC" stroke="#496B88" stroke-width="1.6"/>
+<text x="44" y="528" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Maintenance is a separate operation</text>
+<text x="44" y="553" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">Re-enroll if needed → safe guest update → verify → return previously stopped VM</text>
+<text x="44" y="573" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">to stopped.</text>
+<text x="44" y="593" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">No force-kill of unsafe work. Retention-authorized deletion may escalate after</text>
+<text x="44" y="613" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400">its grace timeout.</text>
+<polyline points="330,142 395,142" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="695,142 760,142" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="910,195 910,280" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="760,330 695,330" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="706.4" y="299" width="43.2" height="22" rx="3" fill="white"/>
+<text x="728" y="314" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Stop</text>
+<polyline points="545,280 545,235 850,235 850,195" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="605.95" y="225" width="138.1" height="22" rx="3" fill="white"/>
+<text x="675" y="240" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Start / reconcile</text>
+<polyline points="1060,142 1080,142 1080,250 350,250 350,330 330,330" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)" stroke-dasharray="6 4"/>
+<rect x="967.45" y="235" width="65.1" height="22" rx="3" fill="white"/>
+<text x="1000" y="250" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Failure</text>
+<polyline points="180,280 180,220 910,220 910,195" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)" stroke-dasharray="6 4"/>
+<rect x="504.75" y="200" width="50.5" height="22" rx="3" fill="white"/>
+<text x="530" y="215" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Retry</text>
+<polyline points="910,385 910,500" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="833.65" y="436" width="152.7" height="22" rx="3" fill="white"/>
+<text x="910" y="451" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Destroy / retention</text>
+<polyline points="695,350 720,350 720,557 760,557" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="687.45" y="430" width="65.1" height="22" rx="3" fill="white"/>
+<text x="720" y="445" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Destroy</text>
+<polyline points="910,615 910,710" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="844.6" y="650" width="130.8" height="22" rx="3" fill="white"/>
+<text x="910" y="665" text-anchor="middle" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400">Verified removal</text>
+<polyline points="1060,557 1110,557" fill="none" stroke="#496B88" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="35" y="860" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Retained data: project files + actual developer home + designated application mounts.</text>
+<text x="35" y="890" text-anchor="start" fill="#17324D" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400">Rebuild / restart preserve these areas. VM destruction loses them. Management backups exclude VM disks.</text>
+<text x="28" y="982" text-anchor="start" fill="#52677B" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400">ShiftBox design • November 2026 • Intended contracts; implementation validation required</text>
+</svg>
