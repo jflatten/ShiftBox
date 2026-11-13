@@ -1,6 +1,6 @@
 # A workspace for you and your coding agent
 
-![ShiftBox](branding/svg/shiftbox-logo-light.svg)
+![ShiftBox](branding/repository/shiftbox-logo-readme.svg)
 
 ShiftBox is an open-source, self-hosted development sandbox for developers and AI coding agents. The goal is to give both the same project files, tools, and runtime so they can work in the environment your repository defines.
 
