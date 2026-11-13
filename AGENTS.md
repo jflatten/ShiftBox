@@ -18,6 +18,9 @@ the developer and AI development agents.
   The project has the appropriate skills installed for the technologies being utilized.  Always
   look for a relevant skill before proceeding.
 
+  Never edit or change the documents in `documentation/architecture`.  These are reference only
+  documents that require human oversight. 
+
 ## Architecture and Guiding Principles
 
 - Simplicity in ALL things
