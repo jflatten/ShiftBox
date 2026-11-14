@@ -96,6 +96,7 @@ CREATE TABLE resource_grants (
  revoked_at TEXT
 );
 CREATE TABLE operations (
+ originating_action TEXT NOT NULL DEFAULT '',
  id TEXT PRIMARY KEY,
  workspace_id TEXT,
  type TEXT NOT NULL CHECK (type IN ('provision','start','open_ide','rebuild','repair','stop','delete','recover','update','backup','restore','setup')),

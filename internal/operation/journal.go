@@ -48,8 +48,8 @@ func (j *Journal) CreateInTx(ctx context.Context, tx *sql.Tx, request Request) (
 		return Operation{}, err
 	}
 	now := j.now().UTC()
-	op := Operation{ID: j.newID(), WorkspaceID: request.WorkspaceID, Type: request.Type, Generation: request.Generation, Actor: request.Actor, RequestKey: request.Key, Status: "pending", CreatedAt: now, Version: 1, Steps: append([]Step(nil), request.Steps...)}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,created_at,version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1)`, op.ID, op.WorkspaceID, op.Type, op.Generation, op.Actor, op.RequestKey, op.Status, timestamp(now)); err != nil {
+	op := Operation{OriginatingAction: request.OriginatingAction, ID: j.newID(), WorkspaceID: request.WorkspaceID, Type: request.Type, Generation: request.Generation, Actor: request.Actor, RequestKey: request.Key, Status: "pending", CreatedAt: now, Version: 1, Steps: append([]Step(nil), request.Steps...)}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,created_at,version,originating_action) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9)`, op.ID, op.WorkspaceID, op.Type, op.Generation, op.Actor, op.RequestKey, op.Status, timestamp(now), op.OriginatingAction); err != nil {
 		return Operation{}, err
 	}
 	for index := range op.Steps {

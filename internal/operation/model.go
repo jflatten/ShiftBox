@@ -19,31 +19,34 @@ type Step struct {
 
 // Operation is authoritative workflow state; worker credentials stay server-side.
 type Operation struct {
-	ID             string     `json:"id"`
-	WorkspaceID    *string    `json:"workspaceId,omitempty"`
-	Type           string     `json:"type"`
-	Generation     int64      `json:"-"`
-	Actor          string     `json:"-"`
-	RequestKey     string     `json:"-"`
-	Status         string     `json:"status"`
-	CurrentStep    *string    `json:"currentStep"`
-	Steps          []Step     `json:"steps"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	StartedAt      *time.Time `json:"startedAt"`
-	FinishedAt     *time.Time `json:"finishedAt"`
-	Version        int64      `json:"version"`
-	leaseOwner     string
-	leaseExpiresAt time.Time
+	// OriginatingAction is controller-owned admission evidence, never browser input.
+	OriginatingAction string     `json:"-"`
+	ID                string     `json:"id"`
+	WorkspaceID       *string    `json:"workspaceId,omitempty"`
+	Type              string     `json:"type"`
+	Generation        int64      `json:"-"`
+	Actor             string     `json:"-"`
+	RequestKey        string     `json:"-"`
+	Status            string     `json:"status"`
+	CurrentStep       *string    `json:"currentStep"`
+	Steps             []Step     `json:"steps"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	StartedAt         *time.Time `json:"startedAt"`
+	FinishedAt        *time.Time `json:"finishedAt"`
+	Version           int64      `json:"version"`
+	leaseOwner        string
+	leaseExpiresAt    time.Time
 }
 
 // Request describes intent that must commit before a provider or guest effect.
 type Request struct {
-	Actor       string
-	Key         string
-	Type        string
-	WorkspaceID *string
-	Generation  int64
-	Steps       []Step
+	OriginatingAction string
+	Actor             string
+	Key               string
+	Type              string
+	WorkspaceID       *string
+	Generation        int64
+	Steps             []Step
 }
 
 // Claim fences one worker attempt, including reuse of the same worker name.

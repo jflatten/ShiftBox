@@ -21,7 +21,7 @@ func readOperation(ctx context.Context, tx *sql.Tx, id string) (Operation, error
 	var op Operation
 	var created string
 	var started, finished, leaseOwner, leaseExpires sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,started_at,finished_at,version,lease_owner,lease_expires_at FROM operations WHERE id=$1`, id).Scan(&op.ID, &op.WorkspaceID, &op.Type, &op.Generation, &op.Actor, &op.RequestKey, &op.Status, &op.CurrentStep, &created, &started, &finished, &op.Version, &leaseOwner, &leaseExpires)
+	err := tx.QueryRowContext(ctx, `SELECT originating_action,id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,started_at,finished_at,version,lease_owner,lease_expires_at FROM operations WHERE id=$1`, id).Scan(&op.OriginatingAction, &op.ID, &op.WorkspaceID, &op.Type, &op.Generation, &op.Actor, &op.RequestKey, &op.Status, &op.CurrentStep, &created, &started, &finished, &op.Version, &leaseOwner, &leaseExpires)
 	if err != nil {
 		return Operation{}, err
 	}

@@ -294,3 +294,27 @@ func TestCompletionEvidenceAndReplay(t *testing.T) {
 		t.Error("Last-Event-ID replay returned the wrong suffix")
 	}
 }
+
+// TestOriginatingActionPersists prevents an idempotent retry from weakening the permission attached to existing intent.
+func TestOriginatingActionPersists(t *testing.T) {
+	j, _ := journalFixture(t)
+	request := provisionRequest()
+	request.Type = "backup"
+	request.OriginatingAction = "backup.create"
+	op, err := j.Create(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.OriginatingAction = "session.view"
+	repeated, err := j.Create(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := j.Get(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated.OriginatingAction != "backup.create" || restored.OriginatingAction != "backup.create" {
+		t.Fatal("idempotent retry changed original authority")
+	}
+}
