@@ -1687,3 +1687,13 @@ This checkpoint does not itself change the goal status.
   Go test and a live Chrome run passed against pinned Dex and loopback TLS.
 - The database, certificate, provider and activation screens remain open
   under T058.
+
+### Database and certificate setup UI
+
+- Local setup submits the SQLite or scoped PostgreSQL profile and browser
+  certificate files over the restricted session. The certificate form
+  builds the approved IDE and preview host patterns from DNS suffixes.
+- UI tests cover rejected PostgreSQL configuration and retry, first-invalid
+  focus, certificate submission, and advancement from server-reported
+  progress. Chrome verified SQLite selection and certificate form validation
+  against the embedded setup server. Provider and activation remain open.

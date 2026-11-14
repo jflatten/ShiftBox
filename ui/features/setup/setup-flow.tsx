@@ -6,6 +6,7 @@ import { useForm } from '@mantine/form';
 import { useQuery } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
+import { CertificateForm, DatabaseForm } from './setup-configuration';
 
 const steps = [
   ['administrator', 'Administrator'],
@@ -57,6 +58,7 @@ export function SetupFlow() {
   const active = steps.findIndex(([key]) => key === current);
   const currentSession = session.data?.mode === 'bootstrap_restricted' ? session.data : null;
   const error = status.error ?? session.error;
+  const refreshStatus = async () => { await status.refetch(); };
   const showAdministrator = !error && !status.isPending && stage === 'administrator' && !administratorCreated;
   return (
     <Container component="main" size="sm" py="xl">
@@ -81,7 +83,13 @@ export function SetupFlow() {
         {!error && stage === 'password' && currentSession && !passwordChanged ? (
           <PasswordForm csrfToken={currentSession.csrfToken} onChanged={() => setPasswordChanged(true)} />
         ) : null}
-        {!error && active > 1 && currentSession && !passwordChanged ? (
+        {!error && stage === 'data_profile' && currentSession && !passwordChanged ? (
+          <DatabaseForm csrfToken={currentSession.csrfToken} onSaved={refreshStatus} />
+        ) : null}
+        {!error && stage === 'certificate' && currentSession && !passwordChanged ? (
+          <CertificateForm csrfToken={currentSession.csrfToken} onSaved={refreshStatus} />
+        ) : null}
+        {!error && active > 3 && currentSession && !passwordChanged ? (
           <Text role="status">{steps[active][1]} configuration is pending.</Text>
         ) : null}
         {!error && status.data?.state === 'active' ? <Text role="status">Setup is complete. Sign in at the management address.</Text> : null}
