@@ -104,6 +104,9 @@ func ScheduleMaintenance(ctx context.Context, tx *sql.Tx, journal *operation.Jou
 	if !deadline.After(now) {
 		return operation.Operation{}, ErrMaintenanceInvalid
 	}
+	// A failed target can be included in an explicitly scheduled replacement.
+	// If removal has already started, wait for proof before admitting a
+	// campaign that would omit that failed workspace.
 	var available bool
 	err = tx.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM installations i JOIN platform_artifacts a ON a.release_id=$2 AND a.guest_release=i.active_release
@@ -112,7 +115,7 @@ func ScheduleMaintenance(ctx context.Context, tx *sql.Tx, journal *operation.Jou
 				c.state IN ('scheduled','active') OR (c.state='blocked' AND EXISTS (
 					SELECT 1 FROM maintenance_targets t JOIN workspaces w ON w.id=t.workspace_id
 					WHERE t.campaign_id=c.operation_id AND t.state='failed' AND w.installation_id=i.id
-					AND w.generation=t.generation AND w.observed_state<>'deleted')))
+					AND w.generation=t.generation AND w.observed_state<>'deleted' AND w.deletion_commit_at IS NOT NULL)))
 		))`, installation, releaseID).Scan(&available)
 	if err != nil {
 		return operation.Operation{}, err

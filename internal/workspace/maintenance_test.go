@@ -71,6 +71,48 @@ func TestMaintenanceBlocksControllerAdvance(t *testing.T) {
 	}
 }
 
+// TestMaintenanceReplacementKeepsGateUntilVerified exercises explicit
+// replacement of a failed campaign without erasing its failure evidence.
+func TestMaintenanceReplacementKeepsGateUntilVerified(t *testing.T) {
+	db, journal, now := maintenanceFixture(t, "retained")
+	ctx := t.Context()
+	maintenanceExec(t, db, `UPDATE workspaces SET observed_state='running',guest_release='test',protocol_version='1'`)
+	first, err := scheduleMaintenanceFixture(t, db, journal, "reservation-release", now.Add(time.Hour), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maintenanceExec(t, db, "UPDATE maintenance_targets SET state='failed' WHERE campaign_id=$1", first.ID)
+	maintenanceExec(t, db, "UPDATE maintenance_campaigns SET state='blocked' WHERE operation_id=$1", first.ID)
+	var replacement operation.Operation
+	later := now.Add(2 * time.Hour)
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		var err error
+		replacement, err = ScheduleMaintenance(ctx, tx, journal, testInstallation, "reservation-owner",
+			"replacement-campaign", "reservation-release", later.Add(time.Hour), later)
+		return err
+	}); err != nil {
+		t.Fatalf("explicit replacement campaign = %v, want scheduled", err)
+	}
+	check := func(want int) {
+		t.Helper()
+		got, err := release.NewStore(db).GuestUpgradeBlockers(ctx, testInstallation, "test", "1")
+		if err != nil || len(got) != want {
+			t.Errorf("release gate = %+v (%v), want %d blockers", got, err, want)
+		}
+	}
+	check(1)
+	maintenanceExec(t, db, "UPDATE maintenance_campaigns SET state='active' WHERE operation_id=$1", replacement.ID)
+	check(1)
+	maintenanceExec(t, db, `INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,created_at,version,originating_action)
+		VALUES('verified-replacement','retained','update',1,'controller','verified-replacement','succeeded',$1,1,'maintenance.update_guest')`, testStamp)
+	maintenanceExec(t, db, "UPDATE maintenance_targets SET state='completed',operation_id='verified-replacement' WHERE campaign_id=$1", replacement.ID)
+	check(0)
+	var failed string
+	if err := db.QueryRow("SELECT state FROM maintenance_targets WHERE campaign_id=$1", first.ID).Scan(&failed); err != nil || failed != "failed" {
+		t.Errorf("original target = %q (%v), want preserved failed state", failed, err)
+	}
+}
+
 // TestMaintenanceCampaignWorker confirms that a scheduled campaign waits for
 // its deadline and that a failed workspace update blocks campaign completion.
 func TestMaintenanceCampaignWorker(t *testing.T) {

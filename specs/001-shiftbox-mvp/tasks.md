@@ -1750,6 +1750,9 @@ This checkpoint does not itself change the goal status.
   until a fresh provider observation confirms shutdown.
   A blocked campaign remains in history after verified retirement of its
   failed targets, and it no longer prevents scheduling a new campaign.
+  An administrator can schedule a replacement for retained failed targets.
+  Migration stays blocked until the replacement succeeds for the exact
+  workspace generation or the provider verifies removal.
 
 ### Migration preflight CLI
 
