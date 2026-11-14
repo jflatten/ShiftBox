@@ -21,7 +21,7 @@ func TestProvisionRecoversLostCreateReply(t *testing.T) {
 	db := openWorkspaceDatabase(t, "sqlite")
 	seedReservationWorkspaces(t, db)
 	t.Cleanup(func() {
-		if _, err := db.Exec("DELETE FROM provider_resources; DELETE FROM reservations; DELETE FROM workspaces"); err != nil {
+		if _, err := db.Exec("DELETE FROM guest_registrations; DELETE FROM provider_resources; DELETE FROM reservations; DELETE FROM workspaces"); err != nil {
 			t.Errorf("clean up provision fixture: %v", err)
 		}
 	})
@@ -68,6 +68,10 @@ func TestProvisionRecoversLostCreateReply(t *testing.T) {
 	var assets int
 	if err := db.QueryRow("SELECT COUNT(*) FROM provider_resources WHERE workspace_id=$1 AND generation=1", id).Scan(&assets); err != nil || assets != 3 || machines.creates != 1 {
 		t.Fatalf("persisted resources/create calls = %d/%d, %v, want 3/1", assets, machines.creates, err)
+	}
+	var registration string
+	if err := db.QueryRow("SELECT state FROM guest_registrations WHERE workspace_id=$1 AND generation=1", id).Scan(&registration); err != nil || registration != "eligible" {
+		t.Fatalf("initial guest registration = %q, %v, want eligible", registration, err)
 	}
 	op, err = journal.Get(ctx, op.ID)
 	if err != nil || op.Status != "waiting" || op.Steps[0].Status != "succeeded" || op.Steps[1].Status != "pending" {

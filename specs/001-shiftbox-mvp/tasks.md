@@ -1297,3 +1297,16 @@ This checkpoint does not itself change the goal status.
   network verification and repeated deletion. Provider, workspace, release
   and contract race tests passed. Controller startup composition and the
   full Ubuntu release journey remain pending.
+
+### Guest enrollment grants and certificate issuance
+
+- Verified provisioning creates the initial eligible registration. The
+  enrollment store binds grants to the stopped provider instance, current
+  generation and active operation, and persists only the grant digest.
+- Grant consumption and certificate issuance are atomic. Same-key retries
+  recover the original certificate. Other keys, expiry, revoked
+  registration and mismatched provider ownership are denied. Client leaves
+  have controller-selected identity and expiry capped at the CA boundary.
+- Guest, workspace and contract race tests and dual-dialect migration
+  checks passed. Provider delivery orchestration, the enrollment HTTP
+  endpoint, renewal, and authenticated guest boot remain pending.

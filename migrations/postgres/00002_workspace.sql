@@ -150,3 +150,35 @@ CREATE TABLE provider_resources (
  deleted_at TEXT,
  PRIMARY KEY (workspace_id, provider_resource_id)
 );
+
+CREATE TABLE guest_registrations (
+ workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+ generation BIGINT NOT NULL CHECK (generation > 0),
+ -- `eligible`, `active`, `expired`, `revoked`, or `deleted`
+ state TEXT NOT NULL CHECK (state IN ('eligible','active','expired','revoked','deleted')),
+ certificate_serial TEXT,
+ certificate_not_after TEXT,
+ public_key_fingerprint TEXT,
+ last_authenticated_at TEXT,
+ revoked_at TEXT,
+ revocation_reason TEXT,
+ PRIMARY KEY (workspace_id,generation)
+);
+
+CREATE TABLE enrollment_grants (
+ -- Random high-entropy identifier stored as a digest
+ id TEXT NOT NULL PRIMARY KEY CHECK (length(id) = 64),
+ workspace_id TEXT NOT NULL,
+ generation BIGINT NOT NULL,
+ operation_id TEXT NOT NULL REFERENCES operations(id),
+ provider_instance_id TEXT NOT NULL,
+ -- Initially 15 minutes after minting
+ expires_at TEXT NOT NULL,
+ -- `issued`, `consumed`, `expired`, or `invalidated`
+ state TEXT NOT NULL CHECK (state IN ('issued','consumed','expired','invalidated')),
+ key_proof TEXT,
+ certificate_der TEXT,
+ CHECK (state <> 'consumed' OR (key_proof IS NOT NULL AND certificate_der IS NOT NULL)),
+ FOREIGN KEY (workspace_id,generation) REFERENCES guest_registrations(workspace_id,generation)
+);
+CREATE INDEX enrollment_workspace_grants ON enrollment_grants(workspace_id,generation);

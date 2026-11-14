@@ -167,7 +167,9 @@ func (p *ProvisionExecutor) record(ctx context.Context, req provider.CreateReque
 		if tracked != len(got.Resources) {
 			return provider.ErrOutcomeUnknown
 		}
-		return nil
+		_, err = tx.ExecContext(ctx, `INSERT INTO guest_registrations(workspace_id,generation,state)
+			VALUES($1,$2,'eligible') ON CONFLICT(workspace_id,generation) DO NOTHING`, ref.WorkspaceID, ref.Generation)
+		return err
 	})
 	if err != nil {
 		return "", err
