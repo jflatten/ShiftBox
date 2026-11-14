@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/jflatten/ShiftBox/internal/release"
 )
 
 // TestStageGuestUpdate verifies that only an intact artifact signed by the
@@ -23,8 +25,8 @@ func TestStageGuestUpdate(t *testing.T) {
 	}
 	binary := []byte("fixture guest executable")
 	digest := sha256.Sum256(binary)
-	metadata := guestUpdateMetadata{Release: "2026.11.0", Protocol: "1", Size: int64(len(binary)), Digest: digest}
-	signature := ed25519.Sign(private, metadata.signedBytes())
+	metadata := release.GuestUpdateMetadata{Release: "2026.11.0", Protocol: "1", Size: int64(len(binary)), Digest: digest}
+	signature := ed25519.Sign(private, metadata.SignedBytes())
 	path := filepath.Join(t.TempDir(), "staged-agent")
 	previous := []byte("previous verified staging")
 	if err := os.WriteFile(path, previous, 0600); err != nil {
@@ -34,7 +36,7 @@ func TestStageGuestUpdate(t *testing.T) {
 		name, release, protocol string
 		key                     ed25519.PublicKey
 		body                    []byte
-		metadata                guestUpdateMetadata
+		metadata                release.GuestUpdateMetadata
 	}{
 		{"untrusted signer", metadata.Release, metadata.Protocol, wrongKey, binary, metadata},
 		{"wrong release", "2026.12.0", metadata.Protocol, public, binary, metadata},
@@ -43,7 +45,7 @@ func TestStageGuestUpdate(t *testing.T) {
 		{"extra bytes", metadata.Release, metadata.Protocol, public, append(bytes.Clone(binary), 'x'), metadata},
 		{"truncated download", metadata.Release, metadata.Protocol, public, binary[:len(binary)-1], metadata},
 		{"relabeled download", "2026.12.0", metadata.Protocol, public, binary,
-			guestUpdateMetadata{Release: "2026.12.0", Protocol: metadata.Protocol, Size: metadata.Size, Digest: digest}},
+			release.GuestUpdateMetadata{Release: "2026.12.0", Protocol: metadata.Protocol, Size: metadata.Size, Digest: digest}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			err := stageGuestUpdate(t.Context(), path, test.release, test.protocol, test.key, test.metadata, signature, bytes.NewReader(test.body))

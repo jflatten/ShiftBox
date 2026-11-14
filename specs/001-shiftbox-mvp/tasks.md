@@ -1705,8 +1705,11 @@ This checkpoint does not itself change the goal status.
   before launch, and falls back when the candidate is missing or changed.
   The selected agent confirms its trial only after its authenticated poll
   succeeds. A rejected poll leaves the trial unconfirmed for supervisor
-  rollback. Production key provisioning, guest dispatch, and prior-state
-  restoration remain open under T095.
+  rollback. The controller can load the pinned binary and detached signature
+  from the private local release directory. Tests cover the shared signed
+  metadata and rejection of changed or linked artifacts. Production key
+  provisioning, guest dispatch, and prior-state restoration remain open
+  under T095.
 
 ### Migration preflight CLI
 

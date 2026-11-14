@@ -29,25 +29,34 @@ func ReadLocalMigrationRelease(root, id string) (MigrationRelease, error) {
 			return MigrationRelease{}, unavailable
 		}
 	}
-	path := filepath.Join(folder, "release.json")
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
-		return MigrationRelease{}, unavailable
-	}
-	file, err := os.Open(path)
+	file, err := openPrivateReleaseFile(filepath.Join(folder, "release.json"))
 	if err != nil {
 		return MigrationRelease{}, unavailable
 	}
 	defer file.Close()
-	opened, err := file.Stat()
-	if err != nil || !os.SameFile(info, opened) {
-		return MigrationRelease{}, unavailable
-	}
 	manifest, err := ReadMigrationRelease(file)
 	if err != nil || manifest.ReleaseID != id {
 		return MigrationRelease{}, unavailable
 	}
 	return manifest, nil
+}
+
+func openPrivateReleaseFile(path string) (*os.File, error) {
+	unavailable := errors.New("private release file is unavailable")
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+		return nil, unavailable
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, unavailable
+	}
+	opened, err := file.Stat()
+	if err != nil || opened.Mode().Perm()&0077 != 0 || !os.SameFile(info, opened) {
+		file.Close()
+		return nil, unavailable
+	}
+	return file, nil
 }
 
 // MigrationRelease identifies the pinned inputs for a proposed controller release.
