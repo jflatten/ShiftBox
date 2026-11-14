@@ -17,6 +17,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/provider/fake"
@@ -24,6 +25,189 @@ import (
 	"github.com/jflatten/ShiftBox/internal/web"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
+
+// TestRestartResumesMaintenancePower stops the worker after the provider
+// changes power but before the controller can record the result.
+func TestRestartResumesMaintenancePower(t *testing.T) {
+	ctx, now := t.Context(), time.Now().UTC()
+	clock := func() time.Time { return now }
+	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "maintenance-power.db")}
+	open := func() *sql.DB {
+		t.Helper()
+		db, err := database.Open(ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return db
+	}
+	db := open()
+	if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	machines := &interruptedMaintenanceProvider{Provider: fake.New(), now: clock}
+	ref := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		Generation: 1, OwnershipMarker: "fixture-owner"}
+	created, err := machines.Create(ctx, provider.CreateRequest{Ref: ref, OperationID: "fixture-create",
+		ArtifactID: "fixture-image", Release: "fixture", NetworkMode: "nat",
+		Resources: provider.Resources{CPU: 2, MemoryBytes: 1024 << 20, DiskBytes: 40 << 20}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, actor := created.Ref, uuid.NewString()
+	seedRecoveryRestart(t, db, ref, actor, now)
+	exec("UPDATE workspaces SET observed_state='stopped' WHERE id=$1", ref.WorkspaceID)
+	exec(`INSERT INTO reservations(workspace_id,cpu_count,memory_mib,disk_mib,cpu_memory_state,disk_state,reserved_at,cpu_memory_released_at)
+		VALUES($1,2,1024,40,'released','reserved',$2,$2)`, ref.WorkspaceID, now.Format(time.RFC3339Nano))
+	exec(`INSERT INTO guest_registrations(workspace_id,generation,state,certificate_not_after,last_authenticated_at)
+		VALUES($1,$2,'active',$3,$4)`, ref.WorkspaceID, ref.Generation,
+		now.Add(24*time.Hour).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	journal := operation.NewJournal(db, clock, uuid.NewString)
+	store := workspace.NewStore(db)
+	if err := store.SetCapacityBudget(ctx, ref.InstallationID, workspace.Allocation{CPU: 2, MemoryMiB: 1024, DiskMiB: 40}, 0, actor, now); err != nil {
+		t.Fatal(err)
+	}
+	deadline := now.Add(time.Hour)
+	var campaign operation.Operation
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		var err error
+		campaign, err = workspace.ScheduleMaintenance(ctx, tx, journal, ref.InstallationID, actor,
+			"maintenance-power-restart", "fixture", deadline, now)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now = deadline
+	if err := store.PrepareMaintenanceTargets(ctx, journal, ref.InstallationID, campaign.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	var target string
+	if err := db.QueryRowContext(ctx, "SELECT operation_id FROM maintenance_targets WHERE campaign_id=$1", campaign.ID).Scan(&target); err != nil {
+		t.Fatal(err)
+	}
+	load := func(context.Context, string) (release.GuestUpdate, error) {
+		return release.GuestUpdate{Metadata: release.GuestUpdateMetadata{Release: "fixture", Protocol: "1"}}, nil
+	}
+	newWorker := func() *operation.Worker {
+		// The guest already has a valid certificate. Reconciliation only needs
+		// enrollment to clean up delivery records after fresh guest contact.
+		launch := workspace.NewLaunchExecutor(store, machines, guest.NewEnrollment(db, nil), "", "", "", clock, nil)
+		_, worker := store.MaintenanceWorkers(journal, ref.InstallationID, "1", load, launch)
+		return worker
+	}
+	worker := newWorker()
+	interrupt := func(step string, power provider.PowerState) {
+		t.Helper()
+		interrupted, cancel := context.WithCancel(ctx)
+		defer cancel()
+		machines.interrupt = cancel
+		if err := worker.RunOnce(interrupted, target); !errors.Is(err, context.Canceled) {
+			t.Fatalf("RunOnce(%s) after interrupt = %v, want context canceled", step, err)
+		}
+		inventory, err := machines.Inspect(ctx, ref)
+		if err != nil || inventory.Power != power {
+			t.Fatalf("Inspect after %s = %s (%v), want %s", step, inventory.Power, err, power)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		db = open()
+		journal = operation.NewJournal(db, clock, uuid.NewString)
+		store = workspace.NewStore(db)
+		lease := worker.LeaseDuration
+		worker = newWorker()
+		if err := worker.RunOnce(ctx, target); !errors.Is(err, operation.ErrConflict) {
+			t.Fatalf("RunOnce(%s) before lease expiry = %v, want conflict", step, err)
+		}
+		now = now.Add(lease + time.Second)
+	}
+	assertStates := func(wantObserved, wantCPU string) {
+		t.Helper()
+		var desired, observed, cpu, disk string
+		err := db.QueryRowContext(ctx, `SELECT w.desired_state,w.observed_state,r.cpu_memory_state,r.disk_state
+			FROM workspaces w JOIN reservations r ON r.workspace_id=w.id WHERE w.id=$1`,
+			ref.WorkspaceID).Scan(&desired, &observed, &cpu, &disk)
+		if err != nil || desired != "stopped" || observed != wantObserved || cpu != wantCPU || disk != "reserved" {
+			t.Fatalf("workspace and reservation = %s/%s %s/%s (%v), want stopped/%s %s/reserved",
+				desired, observed, cpu, disk, err, wantObserved, wantCPU)
+		}
+	}
+	interrupt("maintenance_boot", provider.Running)
+	assertStates("stopped", "reserved")
+	err = worker.RunOnce(ctx, target)
+	if _, ok := errors.AsType[*operation.StepWaiting](err); !ok {
+		t.Fatalf("RunOnce(maintenance_boot) with stale guest contact = %v, want waiting", err)
+	}
+	exec("UPDATE guest_registrations SET last_authenticated_at=$1 WHERE workspace_id=$2", now.Format(time.RFC3339Nano), ref.WorkspaceID)
+	if err := worker.RunOnce(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	assertStates("running", "reserved")
+	exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,problem)
+		VALUES($1,1,'failed','guest.update_stage_failed')`, target)
+	if err := worker.RunOnce(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	interrupt("maintenance_restore", provider.Stopped)
+	assertStates("running", "reserved")
+	if err := worker.RunOnce(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	assertStates("stopped", "released")
+	op, err := journal.Get(ctx, target)
+	if err != nil || op.Status != "failed" || op.Steps[0].Status != "succeeded" ||
+		op.Steps[1].Status != "failed" || op.Steps[2].Status != "skipped" ||
+		op.Steps[3].Status != "skipped" || op.Steps[4].Status != "succeeded" {
+		t.Fatalf("target after restart = %+v (%v), want successful boot and restore with staging failure", op, err)
+	}
+	if machines.starts != 1 || machines.stops != 1 || machines.forcedStop {
+		t.Errorf("provider requests = %d starts, %d stops, force=%t, want one start and one graceful stop",
+			machines.starts, machines.stops, machines.forcedStop)
+	}
+}
+
+type interruptedMaintenanceProvider struct {
+	provider.Provider
+	now           func() time.Time
+	interrupt     context.CancelFunc
+	starts, stops int
+	forcedStop    bool
+}
+
+func (p *interruptedMaintenanceProvider) Inspect(ctx context.Context, ref provider.WorkspaceRef) (provider.Inventory, error) {
+	inventory, err := p.Provider.Inspect(ctx, ref)
+	inventory.ObservedAt = p.now()
+	return inventory, err
+}
+
+func (p *interruptedMaintenanceProvider) Start(ctx context.Context, req provider.StartRequest) (provider.Inventory, error) {
+	p.starts++
+	inventory, err := p.Provider.Start(ctx, req)
+	if err == nil && p.interrupt != nil {
+		p.interrupt()
+		p.interrupt = nil
+		return provider.Inventory{}, provider.ErrOutcomeUnknown
+	}
+	return inventory, err
+}
+
+func (p *interruptedMaintenanceProvider) Stop(ctx context.Context, req provider.StopRequest) (provider.Inventory, error) {
+	p.stops++
+	p.forcedStop = p.forcedStop || req.ForceRetentionDelete
+	inventory, err := p.Provider.Stop(ctx, req)
+	if err == nil && p.interrupt != nil {
+		p.interrupt()
+		p.interrupt = nil
+		return provider.Inventory{}, provider.ErrOutcomeUnknown
+	}
+	return inventory, err
+}
 
 // TestRestartResumesMaintenanceReceipts interrupts the controller after each
 // fixture receipt is persisted and before the worker completes its step.

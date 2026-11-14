@@ -1765,6 +1765,10 @@ This checkpoint does not itself change the goal status.
   T120 reopens the controller database after staging and activation receipt
   writes with an outstanding worker lease. Both confirmed activation and
   rollback settle the same persisted target and campaign after restart.
+  The restart suite also interrupts a management boot and graceful shutdown
+  after each provider effect. The replacement worker honors the outstanding
+  lease, requires fresh guest contact after boot, and verifies stopped power
+  before releasing CPU and memory. Disk stays reserved throughout.
 
 ### Migration preflight CLI
 
