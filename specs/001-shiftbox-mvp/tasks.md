@@ -1462,3 +1462,14 @@ This checkpoint does not itself change the goal status.
 - Successful preflight still stops at the runtime composition boundary.
   Dex, management and internal HTTPS, proxy and reconciliation need startup
   wiring before the command can serve an installation.
+
+### Operation lookup and progress streaming
+
+- Added authenticated operation detail and SSE routes using the current
+  workspace owner or the operation's recorded installation authority.
+  Unauthorized workspace operations use the same response as missing IDs.
+- The launch contract test fetches the accepted operation and reconnects
+  the stream from its last event ID. The stream uses the existing
+  revocation registry and rechecks current session and scope.
+- Web, operation and HTTP contract race tests passed. The production
+  management router and workspace UI still need to mount these routes.

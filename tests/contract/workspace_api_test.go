@@ -1,6 +1,7 @@
 package contract_test
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -103,6 +105,78 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 		owner != "member" || reservations != 1 || operations != 1 {
 		t.Fatalf("committed launch = %s, %d reservations, %d operations, %v, want member/1/1", owner, reservations, operations, err)
 	}
+	detail, stream := web.OperationHandlers(db, origin, clock, journal, &proxy.Registry{})
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/operations/{operationId}", &detail)
+	mux.Handle("GET /api/v1/operations/{operationId}/events", &stream)
+	path := "/api/v1/operations/" + op.ID
+	lookup := func(path string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, origin+path, nil)
+		req.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, req)
+		return response
+	}
+	response := lookup(path)
+	check(response, 200, "")
+	if response.Body.String() != accepted.Body.String() {
+		t.Error("operation detail differs from launch response")
+	}
+	claim, err := journal.Claim(ctx, op.ID, "fixture-worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.StartStep(ctx, claim, 0); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	streamRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+path+"/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamRequest.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+	streamRequest.Header.Set("Last-Event-ID", "1")
+	streamResponse, err := (&http.Client{Timeout: 3 * time.Second}).Do(streamRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer streamResponse.Body.Close()
+	if streamResponse.StatusCode != 200 || streamResponse.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("operation events = %d %s, want SSE stream", streamResponse.StatusCode, streamResponse.Header.Get("Content-Type"))
+	}
+	scanner := bufio.NewScanner(streamResponse.Body)
+	var resumed bool
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "id: ") {
+			resumed = line == "id: 2"
+			break
+		}
+	}
+	if !resumed {
+		t.Fatalf("stream did not resume at the first unseen event: %v", scanner.Err())
+	}
+	if err := streamResponse.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Another member with a valid session cannot use an operation ID to
+	// discover a workspace or subscribe to its progress.
+	if _, err := db.Exec("UPDATE users SET role='member' WHERE id='owner'"); err != nil {
+		t.Fatal(err)
+	}
+	other, otherToken, err := auth.NewSession("other-session", "owner", "normal", now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error { return auth.NewStore(db).SaveSession(ctx, tx, other) }); err != nil {
+		t.Fatal(err)
+	}
+	token = otherToken
+	check(lookup(path), 404, "operation.not_found")
+	check(lookup(path+"/events"), 404, "operation.not_found")
+	check(lookup("/api/v1/operations/"+uuid.NewString()), 404, "operation.not_found")
 }
 
 func seedWorkspaceLaunch(t *testing.T, db *sql.DB, templateID, token string, now time.Time) {
