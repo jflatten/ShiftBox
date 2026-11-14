@@ -1734,3 +1734,14 @@ This checkpoint does not itself change the goal status.
 - The contract test verifies owner and administrator access, launch denial
   after archive, visibility for grantees, and revocation. Guest-side project
   secret resolution remains open.
+
+### Protected application secrets
+
+- Added exactly three scopes, context-bound encryption, explicit empty
+  overrides, and workspace resolution from current owner and template
+  grants. Management handlers return metadata, require fallback
+  acknowledgement on deletion, and exclude values from audit entries.
+- Service and HTTP contract race tests passed. The new migration passed
+  on SQLite and fresh PostgreSQL. Wiring workspace resolution to the
+  authenticated guest endpoint and surfacing fallback in the UI remain
+  open.

@@ -11,6 +11,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/proxy"
+	"github.com/jflatten/ShiftBox/internal/secret"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -24,7 +25,7 @@ type ManagementServices struct {
 // NewManagementServices binds workspace, template, operation, capacity, and Git
 // services to shared controller state. NewManagementRouter checks the full catalog.
 func NewManagementServices(db *sql.DB, settings config.InstallationSettings, journal *operation.Journal,
-	registry *proxy.Registry, launchPolicy web.WorkspaceLaunchPolicy, github *identity.GitHub, now func() time.Time,
+	registry *proxy.Registry, launchPolicy web.WorkspaceLaunchPolicy, github *identity.GitHub, secrets *secret.Service, now func() time.Time,
 ) (ManagementServices, error) {
 	if db == nil || journal == nil || registry == nil || now == nil {
 		return ManagementServices{}, errors.New("management services are incompletely configured")
@@ -40,6 +41,9 @@ func NewManagementServices(db *sql.DB, settings config.InstallationSettings, jou
 	grantTemplate, revokeTemplate := web.TemplateGrantHandlers(db, origin, now)
 	budget, resourceProfile := web.CapacityHandlers(db, origin, now, uuid.NewString, launchPolicy.Capabilities)
 	handlers := web.GitAuthorizationHandlers(db, origin, now, github)
+	for id, handler := range web.SecretHandlers(db, origin, secrets, now) {
+		handlers[id] = handler
+	}
 	for _, handler := range []web.AuthorizedHandler{
 		listWorkspaces, getWorkspace, getOperation, streamEvents, listTemplates, createTemplate, reviseTemplate, budget, resourceProfile,
 		web.TemplateUpdateHandler(db, origin, now), grantTemplate, revokeTemplate,

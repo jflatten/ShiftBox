@@ -10,8 +10,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/config"
+	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/proxy"
+	"github.com/jflatten/ShiftBox/internal/secret"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -19,10 +21,14 @@ import (
 // and keeps the completeness check for a production router.
 func TestManagementServices(t *testing.T) {
 	db := &sql.DB{}
+	cipher, err := cryptostore.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
 	services, err := NewManagementServices(db, config.InstallationSettings{
 		ManagementOrigin: "https://management.test", IDEHostPattern: "{workspace}.ide.test",
 		PreviewHostPattern: "{service}--{workspace}.preview.test",
-	}, operation.NewJournal(db, time.Now, uuid.NewString), &proxy.Registry{}, web.WorkspaceLaunchPolicy{}, nil, time.Now)
+	}, operation.NewJournal(db, time.Now, uuid.NewString), &proxy.Registry{}, web.WorkspaceLaunchPolicy{}, nil, secret.NewService(cipher), time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +39,7 @@ func TestManagementServices(t *testing.T) {
 	for _, id := range []string{"listWorkspaces", "getWorkspace", "launchWorkspace", "requestWorkspaceAction",
 		"createWorkspaceEntryGrant", "getOperation", "streamOperationEvents", "listTemplates", "createTemplate",
 		"createTemplateRevision", "updateTemplate", "grantTemplateLaunch", "revokeTemplateLaunch",
-		"updateCapacityBudget", "createResourceProfile"} {
+		"updateCapacityBudget", "createResourceProfile", "listSecretMetadata", "setSecret", "deleteSecretOverride"} {
 		handler, ok := services.Handlers[id]
 		if !ok || handler.Route != catalog[id] || handler.DB != db || handler.Origin != "https://management.test" {
 			t.Errorf("handler for %s = route %+v, want reviewed catalog route %+v", id, handler.Route, catalog[id])

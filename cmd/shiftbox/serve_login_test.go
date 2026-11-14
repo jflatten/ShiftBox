@@ -121,7 +121,7 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		settings := config.InstallationSettings{ManagementOrigin: origin,
 			IDEHostPattern: "{workspace}.ide.test", PreviewHostPattern: "{service}--{workspace}.preview.test"}
 		services, err := app.NewManagementServices(db, settings, operation.NewJournal(db, time.Now, uuid.NewString),
-			&proxy.Registry{}, web.WorkspaceLaunchPolicy{}, nil, time.Now)
+			&proxy.Registry{}, web.WorkspaceLaunchPolicy{}, nil, nil, time.Now)
 		if err != nil {
 			return nil, err
 		}
