@@ -9,6 +9,16 @@ import (
 	"github.com/jflatten/ShiftBox/internal/config"
 )
 
+// TestManagementOriginCanonicalForm prevents browser Origin serialization from disagreeing with configured mutation checks.
+func TestManagementOriginCanonicalForm(t *testing.T) {
+	for _, origin := range []string{"https://management.test?", "https://management.test#", "https://management.test:", "https://management.test:443", "https://Management.test", "https://management.test:65536"} {
+		cfg := config.Config{InstallationDir: "/tmp/installation", DataProfile: "sqlite", SQLitePath: "/tmp/state.db", ManagementOrigin: origin, ExternalAuthIntervalSeconds: 14400}
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("Validate(origin %q) accepted noncanonical origin", origin)
+		}
+	}
+}
+
 // TestLoadRequiresExplicitPath prevents accidentally selecting stale installation state.
 func TestLoadRequiresExplicitPath(t *testing.T) {
 	if _, err := config.Load(""); err == nil {

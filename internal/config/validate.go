@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/url"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // Validate rejects ambiguous paths, insecure service URLs, and invalid intervals.
@@ -15,8 +17,15 @@ func (c Config) Validate() error {
 		return errors.New("external authorization interval must be positive")
 	}
 	origin, err := url.Parse(c.ManagementOrigin)
-	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || origin.ForceQuery || origin.String() != c.ManagementOrigin || origin.Host != strings.ToLower(origin.Host) || strings.HasSuffix(origin.Host, ":") {
 		return errors.New("management origin must be a canonical HTTPS origin")
+	}
+	// Browsers omit the default HTTPS port when serializing their Origin header.
+	if port := origin.Port(); port != "" {
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 || number == 443 || strconv.Itoa(number) != port {
+			return errors.New("management origin must use a canonical HTTPS port")
+		}
 	}
 	switch c.DataProfile {
 	case "sqlite":

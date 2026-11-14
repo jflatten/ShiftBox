@@ -595,3 +595,15 @@ This checkpoint does not itself change the goal status.
   install/persist keys or select trust policy. Configured-pattern validation,
   private-CA/browser trust integration, protected storage, and atomic activation
   remain consuming T018/T045 work; neither task is marked complete.
+
+### Approved service hostname syntax
+
+- User approved `{workspace}.ide.example.com` and
+  `{service}--{workspace}.preview.example.com`, with configurable DNS suffixes.
+  Workspace labels use UUIDs; preview service keys share one label with the UUID.
+- Added test-first fixed-template/DNS-suffix validation and tightened management
+  origin checks to reject spellings that disagree with browser serialization
+  (empty query/fragment/port, uppercase hosts, default or invalid ports).
+- Configuration race tests and formatting/vet pass. Host routing, management
+  collision checks, wildcard certificate coverage, and activation wiring remain
+  pending; T018 is not marked complete. Architecture documents were not changed.
