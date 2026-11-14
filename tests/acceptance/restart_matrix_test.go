@@ -1034,7 +1034,7 @@ func TestRestartRestorePublication(t *testing.T) {
 }
 
 // TestRestartRecoveryReview reopens the controller database after each review
-// decision, including a provider conflict, then checks the activation fence.
+// decision, including a provider conflict and a rolled-back final approval.
 func TestRestartRecoveryReview(t *testing.T) {
 	ctx, now := t.Context(), time.Now().UTC()
 	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "recover.db")}
@@ -1101,9 +1101,10 @@ func TestRestartRecoveryReview(t *testing.T) {
 		}
 		return got
 	}
+	const approvalKey = "reviewed-restart-activation"
 	activate := func(fresh []backup.RecoveryWorkspace) error {
 		return database.Transaction(ctx, db, func(tx *sql.Tx) error {
-			_, err := backup.ActivateRecoveryInTx(ctx, tx, journal, reviewID, actor, "reviewed-restart-activation", fresh, now)
+			_, err := backup.ActivateRecoveryInTx(ctx, tx, journal, reviewID, actor, approvalKey, fresh, now)
 			return err
 		})
 	}
@@ -1123,13 +1124,58 @@ func TestRestartRecoveryReview(t *testing.T) {
 	if err := activate(observe(false)); !errors.Is(err, backup.ErrRecoveryReview) {
 		t.Fatalf("activate with newly conflicting inventory = %v, want review rejection", err)
 	}
+	session, _, err := auth.NewSession("review-session", actor, "recovery_review", now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		return auth.NewStore(db).SaveSession(ctx, tx, session)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The audit write is last. Interrupting it must roll back authority,
+	// workspace observations, session retirement, and operation completion.
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER interrupt_recovery_approval BEFORE INSERT ON audit_events
+		WHEN NEW.action='recovery.activate' BEGIN SELECT RAISE(ABORT, 'fixture audit write interruption'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := activate(observe(true)); err == nil || errors.Is(err, backup.ErrRecoveryReview) {
+		t.Fatalf("interrupted approval = %v, want database failure at the audit write", err)
+	}
+	restart("ready", "recovery", 5)
+	var approvals int
+	var power string
+	var reviewRevoked bool
+	err = db.QueryRowContext(ctx, `SELECT w.observed_state,s.revoked_at IS NOT NULL,
+		(SELECT COUNT(*) FROM operations WHERE request_key=$1)
+		FROM workspaces w CROSS JOIN sessions s WHERE w.id=$2 AND s.id=$3`,
+		approvalKey, ref.WorkspaceID, session.ID).Scan(&power, &reviewRevoked, &approvals)
+	if err != nil || power != "running" || reviewRevoked || approvals != 0 {
+		t.Fatalf("interrupted approval left %s, revoked=%t, %d operations (%v), want running, open review session, and no approval",
+			power, reviewRevoked, approvals, err)
+	}
+	if _, err := db.ExecContext(ctx, "DROP TRIGGER interrupt_recovery_approval"); err != nil {
+		t.Fatal(err)
+	}
 	if err := activate(observe(true)); err != nil {
 		t.Fatal(err)
 	}
 	restart("activated", "active", 6)
-	var power string
 	if err := db.QueryRowContext(ctx, "SELECT observed_state FROM workspaces WHERE id=$1", ref.WorkspaceID).Scan(&power); err != nil || power != "stopped" {
 		t.Fatalf("restored workspace state = %q (%v), want verified stopped state", power, err)
+	}
+	var reason string
+	err = db.QueryRowContext(ctx, `SELECT s.revocation_reason, (SELECT COUNT(*) FROM operations
+		WHERE request_key=$1 AND status='succeeded' AND originating_action='recovery.activate')
+		FROM sessions s WHERE s.id=$2 AND s.revoked_at IS NOT NULL`, approvalKey, session.ID).Scan(&reason, &approvals)
+	if err != nil || reason != "recovery_activated" || approvals != 1 {
+		t.Errorf("final approval = %d succeeded, review session reason %q (%v), want one approval and recovery_activated", approvals, reason, err)
+	}
+	var audits int
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE action='recovery.activate'
+		AND resource_id=$1 AND actor_id=$2 AND outcome='activated'`, reviewID, actor).Scan(&audits)
+	if err != nil || audits != 1 {
+		t.Errorf("recovery approval audit after restart = %d (%v), want one", audits, err)
 	}
 }
 

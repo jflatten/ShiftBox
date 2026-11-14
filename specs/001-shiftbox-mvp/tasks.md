@@ -1888,6 +1888,10 @@ This checkpoint does not itself change the goal status.
   The retry verifies the encrypted archive again and publishes a replacement
   with one identity review and revoked copied sessions. The source stays
   active and replay cannot overwrite the published replacement.
+- T120 reopens the recovery database after each review decision and a final
+  approval rolled back at its audit write. The installation stays in review
+  until the subsequent approval commits the workspace observation, session
+  retirement, operation, and audit event together.
 - T111 verifies both PostgreSQL dumps before loading them into a
   replacement database. Each pre-provisioned owner restores only its
   schema in its own transaction. The local PostgreSQL 18 test confirmed
