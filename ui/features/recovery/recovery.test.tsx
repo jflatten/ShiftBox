@@ -165,6 +165,8 @@ test('confirms the restored identity before continuing recovery review', async (
   render(<Providers><RecoveryReview csrfToken={csrfToken} reviewId={reviewId} /></Providers>);
   await user.click(await screen.findByRole('checkbox', { name: /admin@example\.test/i }));
   await user.click(screen.getByRole('button', { name: 'Confirm identities' }));
+  await screen.findByRole('button', { name: 'Reconcile provider inventory: In progress' });
+  expect(screen.getByRole('heading', { name: 'Recovery review' })).toHaveFocus();
   const patch = fetch.mock.calls.find(([, init]) => init?.method === 'PATCH');
   expect(patch?.[0]).toBe(reviewPath);
   expect(patch?.[1]?.headers).toEqual(expect.objectContaining({ 'If-Match': '"4"', 'X-CSRF-Token': csrfToken }));
@@ -209,6 +211,7 @@ test('submits activation only after explicit approval of a ready review', async 
   expect(activate).toBeEnabled();
   expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
   await user.click(activate);
+  expect(await screen.findByRole('heading', { name: 'Recovery complete' })).toHaveFocus();
   await waitFor(() => expect(fetch).toHaveBeenCalledWith(`${reviewPath}/activate`, expect.objectContaining({
     method: 'POST',
     headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String), 'X-CSRF-Token': csrfToken }),

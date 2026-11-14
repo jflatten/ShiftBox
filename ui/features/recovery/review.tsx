@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Checkbox, Stack, Text, Title } from '@mantine/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
@@ -44,6 +44,16 @@ export function RecoveryReview({ csrfToken, reviewId }: { csrfToken: string; rev
   const [activated, setActivated] = useState<WorkflowOperation>();
   const [error, setError] = useState<unknown>();
   const review = query.isError ? undefined : query.data;
+  const reviewHeading = useRef<HTMLHeadingElement>(null);
+  const focusAfterDecision = useRef(false);
+
+  // A submitted action can disappear when the next stage renders.
+  useEffect(() => {
+    if (focusAfterDecision.current && reviewHeading.current) {
+      focusAfterDecision.current = false;
+      reviewHeading.current.focus();
+    }
+  }, [review?.version, activated]);
 
   async function decide(section: string, decisions: object) {
     if (!review || busy) return;
@@ -60,7 +70,9 @@ export function RecoveryReview({ csrfToken, reviewId }: { csrfToken: string; rev
         if ([401, 403, 409, 412].includes(response.status)) await query.refetch();
         throw problem;
       }
-      client.setQueryData(queryKey, await response.json());
+      const updated: Review = await response.json();
+      focusAfterDecision.current = updated.version !== review.version;
+      client.setQueryData(queryKey, updated);
       setRetention(false);
     } catch (error) {
       setError(error);
@@ -81,7 +93,9 @@ export function RecoveryReview({ csrfToken, reviewId }: { csrfToken: string; rev
         if ([401, 403, 409].includes(response.status)) await query.refetch();
         throw problem;
       }
-      setActivated(await response.json());
+      const result: WorkflowOperation = await response.json();
+      focusAfterDecision.current = true;
+      setActivated(result);
     } catch (error) {
       setError(error);
     } finally {
@@ -90,8 +104,9 @@ export function RecoveryReview({ csrfToken, reviewId }: { csrfToken: string; rev
   }
 
   if (activated) return <Stack>
+    <Title order={2} tabIndex={-1} ref={reviewHeading}>Recovery complete</Title>
     <WorkflowStepper operation={activated} />
-    <Text>Recovery is complete. Sign in again to continue.</Text>
+    <Text>Sign in again to continue.</Text>
     <SignInChoices />
   </Stack>;
   if (!review) return query.isError
@@ -113,7 +128,7 @@ export function RecoveryReview({ csrfToken, reviewId }: { csrfToken: string; rev
     })),
   };
   return <Stack align="flex-start">
-    <Title order={2}>Recovery review</Title>
+    <Title order={2} tabIndex={-1} ref={reviewHeading}>Recovery review</Title>
     <Text>Workspace entry and destructive operations stay paused until activation. Restored sessions and grants must be issued again.</Text>
     <WorkflowStepper operation={operation} />
     {error !== undefined ? <APIProblemView error={error} /> : null}

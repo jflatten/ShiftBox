@@ -407,10 +407,14 @@ test('recovery review and activation', async ({ page }) => {
   await expect(page.getByRole('button', { name: /: In progress$/ })).toHaveAttribute('aria-current', 'step');
   await activate(page, page.getByRole('checkbox', { name: 'reviewer@example.test' }), 'Space');
   await activate(page, page.getByRole('button', { name: 'Confirm identities' }));
+  await expect(page.getByRole('heading', { name: 'Recovery review' })).toBeFocused();
   await activate(page, page.getByRole('button', { name: 'Check provider inventory' }));
+  await expect(page.getByRole('heading', { name: 'Recovery review' })).toBeFocused();
   await activate(page, page.getByRole('checkbox', { name: /approve resuming the configured retention policy/i }), 'Space');
   await activate(page, page.getByRole('button', { name: 'Confirm authorization and retention' }));
+  await expect(page.getByRole('heading', { name: 'Recovery review' })).toBeFocused();
   await activate(page, page.getByRole('button', { name: 'Activate installation' }));
+  await expect(page.getByRole('heading', { name: 'Recovery complete' })).toBeFocused();
   await activate(page, page.getByRole('button', { name: 'Activate reviewed installation: Completed' }));
   await expect(page.getByText('Activation recorded.')).toBeVisible();
 });

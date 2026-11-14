@@ -33,8 +33,9 @@ In a separate Chrome tab connected to an isolated loopback fixture, I stepped th
 - In Account, selecting Renew authorization and Reconnect GitHub with Enter moved focus to Continue to organization and Continue to GitHub. I stopped at the links.
 - In Infrastructure, an empty certificate submission moved focus to Certificate chain and showed both missing-file errors. Enter on View progress exposed the active campaign step while leaving focus on the trigger.
 - In People, opening Reset password and Disable account focused Cancel. Dismissing either with Escape initially sent focus to the document. After the fix, the browser regression confirmed focus returns to both original triggers.
+- In Recovery review, Tab reached the current step and the identity checkbox. Space selected the identity and Enter submitted it. I continued through provider reconciliation, retention approval, and activation, then opened the completed step to read its evidence. Between stages, the submitted button disappeared and focus fell back to the document. The updated UI focuses the review heading after each successful decision and the completion heading after activation. The regression passed in Chrome, Firefox, and WebKit.
 
-The manual session covers shared workspace progress, setup and backup/restore validation, the two handoff flows, three dialog entry/exit paths, and Infrastructure entry. Individual workspace action starts, the subsequent setup submissions, native file selection, People submission, backup/restore submission, and recovery review and activation have automated evidence only. The exact-stack controller and screen-reader speech output are pending.
+The manual checks cover shared workspace progress, setup and backup/restore validation, the two handoff flows, three dialog entry/exit paths, Infrastructure entry, and recovery review and activation. Individual workspace action starts, subsequent setup submissions, native file selection, People submission, and backup/restore submission have automated evidence only. The exact-stack controller and screen-reader speech output are pending.
 
 ## Reproduce
 
