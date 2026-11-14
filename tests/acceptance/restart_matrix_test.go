@@ -663,10 +663,16 @@ func (e *restartLaunchEnrollment) CleanupDelivery(context.Context, string, provi
 	return nil
 }
 
-// TestRestartWorkspaceDeletion reopens the controller database after a
-// graceful shutdown receipt, an uncertain stop, and partial and uncertain
-// removal. Accounting and the guest registration follow verified inventory.
+// TestRestartWorkspaceDeletion reopens the controller during graceful
+// shutdown, uncertain stop, and partial and uncertain removal. Only
+// retention authorizes a forced stop, and only after its grace window.
 func TestRestartWorkspaceDeletion(t *testing.T) {
+	t.Run("explicit", func(t *testing.T) { checkRestartWorkspaceDeletion(t, false) })
+	t.Run("retention", func(t *testing.T) { checkRestartWorkspaceDeletion(t, true) })
+}
+
+func checkRestartWorkspaceDeletion(t *testing.T, retention bool) {
+	t.Helper()
 	ctx, now := t.Context(), time.Now().UTC()
 	clock := func() time.Time { return now }
 	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "deletion.db")}
@@ -689,7 +695,7 @@ func TestRestartWorkspaceDeletion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	machines := &restartDeletionProvider{Provider: fake.New()}
+	machines := &restartDeletionProvider{Provider: fake.New(), now: clock}
 	ref := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		Generation: 1, OwnershipMarker: "fixture-owner"}
 	created, err := machines.Create(ctx, provider.CreateRequest{Ref: ref, OperationID: "fixture-create",
@@ -703,31 +709,12 @@ func TestRestartWorkspaceDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner := uuid.NewString()
-	seedRecoveryRestart(t, db, ref, owner, now)
+	seedRecoveryRestart(t, db, ref, owner, now.Add(-time.Hour))
 	exec("UPDATE workspaces SET desired_state='running' WHERE id=$1", ref.WorkspaceID)
 	exec(`INSERT INTO reservations(workspace_id,cpu_count,memory_mib,disk_mib,cpu_memory_state,disk_state,reserved_at)
 		VALUES($1,2,1024,40,'reserved','reserved',$2)`, ref.WorkspaceID, now.Format(time.RFC3339Nano))
 	exec("INSERT INTO guest_registrations(workspace_id,generation,state) VALUES($1,$2,'active')", ref.WorkspaceID, ref.Generation)
 	journal := operation.NewJournal(db, clock, uuid.NewString)
-	var deletion operation.Operation
-	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
-		var err error
-		deletion, err = workspace.AdmitPower(ctx, tx, journal, workspace.PowerIntent{
-			WorkspaceID: ref.WorkspaceID, ActorID: owner, Action: "delete", RequestKey: "delete-with-restart", Version: 1,
-		}, now)
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	const lease = time.Minute
-	claim, err := journal.Claim(ctx, deletion.ID, "interrupted-controller", lease)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := journal.StartStep(ctx, claim, 0); err != nil {
-		t.Fatal(err)
-	}
-	exec("INSERT INTO guest_dispatches(operation_id,dispatch_version,status) VALUES($1,1,'succeeded')", deletion.ID)
 	restart := func() {
 		t.Helper()
 		if err := db.Close(); err != nil {
@@ -736,11 +723,55 @@ func TestRestartWorkspaceDeletion(t *testing.T) {
 		db = open()
 		journal = operation.NewJournal(db, clock, uuid.NewString)
 	}
+	var deletion operation.Operation
+	if retention {
+		exec("UPDATE workspaces SET retention_seconds=600 WHERE id=$1", ref.WorkspaceID)
+		maximum := int64(3600)
+		policy := workspace.RetentionEligibility{MaximumSeconds: &maximum, ReconciledAt: now, OutageGrace: time.Minute}
+		restart()
+		list, err := workspace.NewStore(db).RetentionCandidates(ctx, ref.InstallationID, now, policy, machines.Inspect)
+		if err != nil || len(list) != 0 {
+			t.Fatalf("retention during outage grace = %d candidates (%v), want zero", len(list), err)
+		}
+		now = now.Add(policy.OutageGrace)
+		store := workspace.NewStore(db)
+		list, err = store.RetentionCandidates(ctx, ref.InstallationID, now, policy, machines.Inspect)
+		if err != nil || len(list) != 1 || list[0].Ref != ref {
+			t.Fatalf("retention after outage grace = %+v (%v), want the original workspace", list, err)
+		}
+		deletion, err = store.CommitRetentionDeletion(ctx, journal, list[0], now, policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			var err error
+			deletion, err = workspace.AdmitPower(ctx, tx, journal, workspace.PowerIntent{
+				WorkspaceID: ref.WorkspaceID, ActorID: owner, Action: "delete", RequestKey: "delete-with-restart", Version: 1,
+			}, now)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const lease = 30 * time.Second
+	claim, err := journal.Claim(ctx, deletion.ID, "interrupted-controller", lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.StartStep(ctx, claim, 0); err != nil {
+		t.Fatal(err)
+	}
+	if !retention {
+		exec("INSERT INTO guest_dispatches(operation_id,dispatch_version,status) VALUES($1,1,'succeeded')", deletion.ID)
+	}
+	runOnce := func() error {
+		power := workspace.NewPowerExecutor(workspace.NewStore(db), machines, clock, nil)
+		return workspace.NewWorker(journal, nil, power).RunOnce(ctx, deletion.ID)
+	}
 	run := func(step string, want error) {
 		t.Helper()
-		power := workspace.NewPowerExecutor(workspace.NewStore(db), machines, clock, nil)
-		worker := workspace.NewWorker(journal, nil, power)
-		if err := worker.RunOnce(ctx, deletion.ID); !errors.Is(err, want) {
+		if err := runOnce(); !errors.Is(err, want) {
 			t.Fatalf("RunOnce(%s) = %v, want %v", step, err, want)
 		}
 	}
@@ -758,7 +789,18 @@ func TestRestartWorkspaceDeletion(t *testing.T) {
 	}
 	restart()
 	run("shutdown before lease expiry", operation.ErrConflict)
-	now = now.Add(lease + time.Second)
+	if retention {
+		now = now.Add(59 * time.Second)
+		err := runOnce()
+		if _, ok := errors.AsType[*operation.StepWaiting](err); !ok || machines.stops != 0 {
+			t.Fatalf("shutdown before grace expiry = %v after %d stops, want waiting and no stop", err, machines.stops)
+		}
+		assertState("running", "reserved", "reserved", "active")
+		restart()
+		now = now.Add(time.Second)
+	} else {
+		now = now.Add(lease + time.Second)
+	}
 	run("shutdown", nil)
 	assertState("running", "reserved", "reserved", "active")
 	machines.LoseReply("stop")
@@ -784,9 +826,9 @@ func TestRestartWorkspaceDeletion(t *testing.T) {
 	restart()
 	assertState("deleted", "released", "released", "deleted")
 	finished, err := journal.Get(ctx, deletion.ID)
-	if err != nil || finished.Status != "succeeded" || machines.stops != 1 || machines.deletes != 2 || machines.forcedStop {
-		t.Fatalf("deletion after restart = %s (%v), stops=%d deletes=%d force=%t, want success, one graceful stop, two delete attempts",
-			finished.Status, err, machines.stops, machines.deletes, machines.forcedStop)
+	if err != nil || finished.Status != "succeeded" || machines.stops != 1 || machines.deletes != 2 || machines.forcedStop != retention {
+		t.Fatalf("deletion after restart = %s (%v), stops=%d deletes=%d force=%t, want success, one stop, two delete attempts, force=%t",
+			finished.Status, err, machines.stops, machines.deletes, machines.forcedStop, retention)
 	}
 	for _, step := range finished.Steps {
 		if step.Status != "succeeded" {
@@ -805,8 +847,15 @@ func TestRestartWorkspaceDeletion(t *testing.T) {
 
 type restartDeletionProvider struct {
 	*fake.Provider
+	now            func() time.Time
 	stops, deletes int
 	forcedStop     bool
+}
+
+func (p *restartDeletionProvider) Inspect(ctx context.Context, ref provider.WorkspaceRef) (provider.Inventory, error) {
+	inventory, err := p.Provider.Inspect(ctx, ref)
+	inventory.ObservedAt = p.now()
+	return inventory, err
 }
 
 func (p *restartDeletionProvider) Stop(ctx context.Context, req provider.StopRequest) (provider.Inventory, error) {

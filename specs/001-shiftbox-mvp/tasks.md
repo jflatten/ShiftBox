@@ -3055,6 +3055,9 @@ This checkpoint does not itself change the goal status.
   CPU and memory. Verified removal releases disk and retires the guest
   registration. The restarted worker makes no duplicate provider call after
   an effect has been verified.
+- The retention case also checks outage grace before admission and reopens
+  the database at 59 seconds into workload shutdown. The worker waits until
+  the original minute expires before requesting one forced stop.
 
 ### Sharing persistence and Git refresh fencing
 
