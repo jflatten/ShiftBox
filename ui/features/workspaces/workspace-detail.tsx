@@ -1,0 +1,98 @@
+import { useEffect, useRef, useState } from 'react';
+import { Anchor, Button, Group, Stack, Text, Title } from '@mantine/core';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { APIProblemView } from '../../components/api-problem';
+import { WorkflowStepper } from '../../components/workflow-stepper';
+import { readProblem } from '../../lib/api-problem';
+import { useOperation } from '../../lib/use-operation';
+import { workspaceState, type Workspace } from './workspace';
+
+export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: string }) {
+  const workspace = useQuery<Workspace>({
+    queryKey: ['workspaces', 'detail', id],
+    queryFn: async ({ signal }) => {
+      const response = await fetch('/api/v1/workspaces/' + encodeURIComponent(id), { signal, cache: 'no-store' });
+      if (!response.ok) throw await readProblem(response);
+      return response.json();
+    },
+  });
+  const data = !workspace.isError ? workspace.data : undefined;
+  const [operationId, setOperationId] = useState<string>();
+  const [operationBusy, setOperationBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<unknown>();
+  const request = useRef<{ action: 'start' | 'stop'; version: number; key: string }>(undefined);
+  const currentOperation = data?.currentOperationId ?? operationId;
+  const action = data?.desiredState === 'running' && data.observedState === 'running' ? 'stop' :
+    data?.desiredState === 'stopped' && data.observedState === 'stopped' ? 'start' : undefined;
+
+  const requestPower = async (action: 'start' | 'stop') => {
+    if (!data || submitting) return;
+    setSubmitting(true);
+    setError(undefined);
+    try {
+      if (request.current?.action !== action || request.current.version !== data.version) {
+        request.current = { action, version: data.version, key: crypto.randomUUID() };
+      }
+      const response = await fetch(`/api/v1/workspaces/${encodeURIComponent(id)}/actions/${action}`, {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken, 'If-Match': `"${data.version}"`, 'Idempotency-Key': request.current.key },
+      });
+      if (!response.ok) {
+        if (response.status === 412) void workspace.refetch();
+        throw await readProblem(response);
+      }
+      const accepted: { id: string } = await response.json();
+      setOperationBusy(true);
+      setOperationId(accepted.id);
+      request.current = undefined;
+      await workspace.refetch();
+    } catch (error) {
+      setError(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  return (
+    <>
+      <Anchor href="/workspaces/">All workspaces</Anchor>
+      <Title order={1}>Workspace</Title>
+      {workspace.isError ? <APIProblemView error={workspace.error} /> : null}
+      {workspace.isPending ? <Text role="status">Loading workspace…</Text> : null}
+      {data ? (
+        <Stack gap="lg">
+          <Text size="sm" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{data.id}</Text>
+          <Group gap="xl" align="flex-start">
+            <Stack gap={2}><Text size="sm" c="dimmed">Desired state</Text><Text fw={600}>{workspaceState(data.desiredState)}</Text></Stack>
+            <Stack gap={2}><Text size="sm" c="dimmed">Observed state</Text><Text fw={600}>{workspaceState(data.observedState)}</Text></Stack>
+          </Group>
+          <Text>{data.resources.cpuCount} vCPU · {data.resources.memoryMiB} MiB memory · {data.resources.diskMiB} MiB disk</Text>
+          <Text size="sm">Stop and start preserve project files, the developer home, and configured persistent mounts.</Text>
+          {error !== undefined ? <APIProblemView error={error} /> : null}
+          {action ? (
+            <Button style={{ alignSelf: 'flex-start' }} loading={submitting}
+              disabled={!!data.currentOperationId || operationBusy} onClick={() => void requestPower(action)}>
+              {action === 'start' ? 'Start workspace' : 'Stop workspace'}
+            </Button>
+          ) : null}
+          {currentOperation ? <WorkspaceProgress key={currentOperation} workspaceId={id} operationId={currentOperation} onFinished={setOperationBusy} /> : null}
+        </Stack>
+      ) : null}
+    </>
+  );
+}
+
+function WorkspaceProgress({ workspaceId, operationId, onFinished }: { workspaceId: string; operationId: string; onFinished: (busy: boolean) => void }) {
+  const operation = useOperation(operationId);
+  const client = useQueryClient();
+  const state = operation.data?.status;
+  useEffect(() => {
+    if (state !== 'succeeded' && state !== 'failed' && state !== 'cancelled') return;
+    onFinished(false);
+    void client.invalidateQueries({ queryKey: ['workspaces', 'detail', workspaceId] });
+  }, [client, onFinished, state, workspaceId]);
+  if (operation.accessDenied) return <Text role="alert">You no longer have access to this operation.</Text>;
+  if (operation.isError) return <APIProblemView error={operation.error} />;
+  if (!operation.data) return <Text role="status">Loading operation…</Text>;
+  return <WorkflowStepper operation={operation.data} />;
+}

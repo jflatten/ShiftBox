@@ -1782,3 +1782,14 @@ This checkpoint does not itself change the goal status.
   confirmed helper dispatch with `credential.useHttpPath=true`. The Linux
   guest binary builds. Live GitHub authorization and the rebuilt UTM
   container path remain unverified.
+
+### Workspace list and detail UI
+
+- Added the static workspace route, cursor-based listing, desired and
+  observed state, resource details, and retained-data guidance. Versioned
+  start and stop requests use the current session and the returned operation
+  ID drives the shared WorkflowStepper.
+- UI tests cover listing, paging, separate state, workflow failures, and
+  start/stop request wiring. Chrome verified the exported route with
+  fixture API responses. Launch, repair and production composition remain
+  open under T059 and T060.

@@ -1,0 +1,82 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { Providers } from '../../app/providers';
+import { Workspaces } from './workspaces';
+
+const workspace = {
+  id: 'workspace-one', ownerId: 'member', templateId: 'template-one', templateRevision: 2,
+  desiredState: 'running', observedState: 'stopped', currentOperationId: 'operation-one', version: 4,
+  resources: { cpuCount: 2, memoryMiB: 4096, diskMiB: 32768 },
+};
+const session = {
+  user: { id: 'member', role: 'member' }, mode: 'normal', installationState: 'active',
+  permissions: [], csrfToken: 'fixture',
+};
+const originalFetch = globalThis.fetch;
+
+afterEach(() => { globalThis.fetch = originalFetch; });
+
+function json(payload: unknown) {
+  return { ok: true, status: 200, json: async () => payload } as Response;
+}
+
+// Workspace detail keeps requested power separate from provider observations
+// and shows the operation step and retained-data guidance.
+test('shows the saved workspace state and workflow', async () => {
+  globalThis.fetch = jest.fn(async (input) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces/workspace-one') return json(workspace);
+    if (input === '/api/v1/operations/operation-one') return json({
+      id: 'operation-one', version: 3, status: 'failed', currentStep: 'start',
+      steps: [{ key: 'start', index: 0, label: 'Start workspace', status: 'failed' }],
+    });
+    throw new Error('unexpected request');
+  });
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  expect(await screen.findByText('Running', { exact: true })).toBeVisible();
+  expect(screen.getByText('Stopped', { exact: true })).toBeVisible();
+  expect(await screen.findByText('Failed — Start workspace')).toBeVisible();
+  expect(screen.getByText(/Stop and start preserve/)).toBeVisible();
+});
+
+// Cursor pagination follows the server response and workspace links use a
+// fixed static route with the selected ID in the query.
+test('lists workspaces and goes to the next page', async () => {
+  globalThis.fetch = jest.fn(async (input) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces') return json({ items: [workspace], nextCursor: 'cursor-one' });
+    if (input === '/api/v1/workspaces?cursor=cursor-one') return json({ items: [], nextCursor: null });
+    throw new Error('unexpected request');
+  });
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+  expect(await screen.findByRole('link', { name: 'workspace-one' })).toHaveAttribute('href', '/workspaces/?id=workspace-one');
+  await user.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(await screen.findByText('No workspaces on this page.')).toBeVisible();
+});
+
+// An admitted stop uses the displayed server version and waits for its
+// durable operation before changing the displayed observed state.
+test('submits stop with CSRF and the workspace version', async () => {
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces/workspace-one') return json({
+      ...workspace, observedState: 'running', currentOperationId: null,
+    });
+    if (input === '/api/v1/workspaces/workspace-one/actions/stop' && init?.method === 'POST') return json({ id: 'stop-operation' });
+    if (input === '/api/v1/operations/stop-operation') return json({
+      id: 'stop-operation', version: 1, status: 'failed', currentStep: 'shutdown',
+      steps: [{ key: 'shutdown', index: 0, label: 'Stop workspace workloads', status: 'failed' }],
+    });
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Stop workspace' }));
+  expect(await screen.findByText('Failed — Stop workspace workloads')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces/workspace-one/actions/stop', expect.objectContaining({
+    method: 'POST', headers: expect.objectContaining({ 'If-Match': '"4"', 'X-CSRF-Token': 'fixture', 'Idempotency-Key': expect.any(String) }),
+  }));
+  expect(screen.getAllByText('Running', { exact: true })).toHaveLength(2);
+});
