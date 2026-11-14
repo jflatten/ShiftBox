@@ -1063,3 +1063,17 @@ This checkpoint does not itself change the goal status.
   roles were cleaned up after the passing race test. Formatting and vet passed.
 - PostgreSQL setup still needs authenticated target collection, application
   migrations and state transfer, and authority switching.
+
+### PostgreSQL application setup staging
+
+- Added the scoped PostgreSQL application opener, which rechecks role and
+  schema isolation on every fresh connection.
+- A single target transaction stages the installation, initial administrator,
+  current configuration and encrypted browser TLS material. The source keeps
+  bootstrap authority, the destination stays configuring, and sessions,
+  temporary password data and unrelated ciphertext are excluded.
+- Live PostgreSQL integration tests verify migrations, repeat staging,
+  rejection of changed destination records and exclusion of bootstrap
+  credentials and sessions. Formatting and vet passed.
+- Durable authority switching, credential collection, and the activation
+  route remain open.

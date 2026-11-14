@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"errors"
 	"net"
 	"net/url"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 const (
@@ -87,8 +89,45 @@ func checkSetupNamespace(ctx context.Context, cfg *pgx.ConnConfig, schema, sibli
 		return errors.New("cannot connect to PostgreSQL with verified TLS and the scoped setup credentials")
 	}
 	defer conn.Close(context.Background())
+	if err := checkSetupRole(ctx, conn, cfg.User, schema, sibling); err != nil {
+		return err
+	}
+
+	var empty bool
+	err = conn.QueryRow(ctx, `SELECT NOT EXISTS (
+		SELECT 1 FROM pg_depend d JOIN pg_namespace n ON d.refobjid=n.oid
+		WHERE d.refclassid='pg_namespace'::regclass AND n.nspname=$1
+	)`, schema).Scan(&empty)
+	if err != nil || !empty {
+		return errors.New("PostgreSQL setup requires empty ShiftBox and Dex schemas")
+	}
+	return nil
+}
+
+// OpenPostgresSetupApplication opens the scoped application database after preflight.
+// It checks schema isolation on every fresh connection, including after migrations.
+func OpenPostgresSetupApplication(ctx context.Context, target PostgresSetupTarget) (*sql.DB, error) {
+	if target.Roots == nil {
+		return nil, errors.New("PostgreSQL setup requires server certificate trust")
+	}
+	cfg, err := setupPostgresConfig(target.ApplicationURI, target.Roots)
+	if err != nil {
+		return nil, err
+	}
+	db := stdlib.OpenDB(*cfg, stdlib.OptionAfterConnect(func(ctx context.Context, conn *pgx.Conn) error {
+		return checkSetupRole(ctx, conn, cfg.User, applicationSchema, dexSchema)
+	}))
+	db.SetMaxOpenConns(1)
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, errors.New("cannot open the scoped PostgreSQL application schema")
+	}
+	return db, nil
+}
+
+func checkSetupRole(ctx context.Context, conn *pgx.Conn, user, schema, sibling string) error {
 	var isolated bool
-	err = conn.QueryRow(ctx, `SELECT
+	err := conn.QueryRow(ctx, `SELECT
 		current_user = $1
 		AND current_schemas(false) = ARRAY[$2]::name[]
 		AND NOT (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls)
@@ -99,17 +138,9 @@ func checkSetupNamespace(ctx context.Context, cfg *pgx.ConnConfig, schema, sibli
 		AND NOT EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid)
 		AND NOT EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname<>$2
 			AND has_schema_privilege(n.oid, 'CREATE'))
-		FROM pg_roles r WHERE r.rolname=current_user`, cfg.User, schema, sibling).Scan(&isolated)
+		FROM pg_roles r WHERE r.rolname=current_user`, user, schema, sibling).Scan(&isolated)
 	if err != nil || !isolated {
 		return errors.New("PostgreSQL setup role must own only its isolated schema and use it as its search path")
-	}
-	var empty bool
-	err = conn.QueryRow(ctx, `SELECT NOT EXISTS (
-		SELECT 1 FROM pg_depend d JOIN pg_namespace n ON d.refobjid=n.oid
-		WHERE d.refclassid='pg_namespace'::regclass AND n.nspname=$1
-	)`, schema).Scan(&empty)
-	if err != nil || !empty {
-		return errors.New("PostgreSQL setup requires empty ShiftBox and Dex schemas")
 	}
 	return nil
 }
