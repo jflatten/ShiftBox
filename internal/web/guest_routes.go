@@ -85,7 +85,7 @@ func GuestEnrollmentHandler(compatibility GuestCompatibility,
 // GuestPollHandler verifies current authority on every poll, including requests
 // on an existing TLS connection. Mount it on the internal mTLS listener.
 func GuestPollHandler(compatibility GuestCompatibility,
-	exchange func(context.Context, *x509.Certificate, time.Time, guest.PollReport) (guest.Contact, *guest.PollOperation, error), now func() time.Time,
+	exchange func(context.Context, *x509.Certificate, time.Time, guest.PollReport) (guest.Contact, *guest.PollOperation, error), now func() time.Time, tunnelAddress string,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /internal/v1/guest/poll", func(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +143,9 @@ func GuestPollHandler(compatibility GuestCompatibility,
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if tunnelAddress != "" && contact.DesiredState == "running" {
+			w.Header().Set(guest.TunnelAddressHeader, tunnelAddress)
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"protocolVersion": compatibility.Protocol, "serverTime": stamp,
 			"workspaceGeneration": contact.Generation, "desiredState": contact.DesiredState, "operation": dispatch,

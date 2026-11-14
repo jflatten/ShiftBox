@@ -193,7 +193,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	clock := func() time.Time { return now }
 	mux := http.NewServeMux()
 	mux.Handle("/internal/v1/guest/poll", web.GuestPollHandler(
-		web.GuestCompatibility{Protocol: "1", CurrentRelease: "test", PreviousRelease: "previous"}, enrollment.Exchange, clock))
+		web.GuestCompatibility{Protocol: "1", CurrentRelease: "test", PreviousRelease: "previous"}, enrollment.Exchange, clock, ""))
 	const gitPath = "/internal/v1/guest/git/github:access-token"
 	resolveGitToken := func(_ context.Context, owner, repository string) (string, error) {
 		if owner != "owner" || repository != "https://github.com/example/test" {
@@ -237,10 +237,24 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		defer cancel()
 		done := make(chan error, 1)
 		go func() { done <- listeners.Serve(ctx) }()
+		pollTransport := &http.Transport{TLSClientConfig: guest.ClientTLS(
+			tls.Certificate{Certificate: [][]byte{first}, PrivateKey: clientKey}, ca, "127.0.0.1")}
+		defer pollTransport.CloseIdleConnections()
+		pollClient := &http.Client{Transport: pollTransport, Timeout: time.Second}
+		reply, err := pollClient.Post(listeners.PollURL, "application/json",
+			bytes.NewBufferString(`{"protocolVersion":"1","guestRelease":"test"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		reply.Body.Close()
+		tunnelAddress := reply.Header.Get(guest.TunnelAddressHeader)
+		if reply.StatusCode != 200 || tunnelAddress != listeners.TunnelAddress {
+			t.Fatalf("poll returned %d and tunnel address %q, want 200 and %q", reply.StatusCode, tunnelAddress, listeners.TunnelAddress)
+		}
 		guestDone := make(chan error, 1)
 		go func() {
 			cfg := guest.ClientTLS(tls.Certificate{Certificate: [][]byte{first}, PrivateKey: clientKey}, ca, "127.0.0.1")
-			guestDone <- guest.ServeTunnel(ctx, listeners.TunnelAddress, cfg, "1", 1,
+			guestDone <- guest.ServeTunnel(ctx, tunnelAddress, cfg, "1", 1,
 				[]proxy.TunnelService{{Key: "ide", Target: "127.0.0.1:3000", Protocols: []string{"http"}}})
 		}()
 		ticker := time.NewTicker(10 * time.Millisecond)

@@ -150,7 +150,7 @@ func TestGuestPollSendsCommittedLifecycleEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		input := newGuestPollRequest("1", "test", journal)
-		if err := pollAgent(t.Context(), server.Client(), server.URL+pollPath, input, journal, runtime); err != nil {
+		if err := pollAgent(t.Context(), server.Client(), server.URL+pollPath, input, journal, runtime, nil); err != nil {
 			t.Fatalf("pollAgent(%+v) = %v, want success", input, err)
 		}
 	}

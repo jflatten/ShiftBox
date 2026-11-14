@@ -22,7 +22,7 @@ var errAgentOperationPending = errors.New("guest operation execution unavailable
 func (identity AgentIdentity) Poll(ctx context.Context, endpoint, serverName, protocol, release string) error {
 	client := identity.pollClient(serverName)
 	defer client.CloseIdleConnections()
-	return pollAgent(ctx, client, endpoint, newGuestPollRequest(protocol, release, nil), nil, devContainer{})
+	return pollAgent(ctx, client, endpoint, newGuestPollRequest(protocol, release, nil), nil, devContainer{}, nil)
 }
 
 func (identity AgentIdentity) pollClient(serverName string) *http.Client {
@@ -60,7 +60,7 @@ func newGuestPollRequest(protocol, release string, journal *localJournal) guestP
 	return input
 }
 
-func pollAgent(ctx context.Context, client *http.Client, endpoint string, input guestPollRequest, journal *localJournal, runtime devContainer) error {
+func pollAgent(ctx context.Context, client *http.Client, endpoint string, input guestPollRequest, journal *localJournal, runtime devContainer, tunnel *agentTunnel) error {
 	if !validPollEndpoint(endpoint) || input.ProtocolVersion == "" || input.GuestRelease == "" {
 		return errors.New("invalid guest poll configuration")
 	}
@@ -102,6 +102,16 @@ func pollAgent(ctx context.Context, client *http.Client, endpoint string, input 
 	if err := decodeAgentJSON(response.Body, &result); err != nil || result.ProtocolVersion != input.ProtocolVersion ||
 		result.Generation < 1 || result.ServerTime.IsZero() || result.Certificate.RenewAfter.IsZero() {
 		return errors.New("invalid guest poll response")
+	}
+	if tunnel != nil {
+		offer, err := readTunnelOffer(endpoint, response.Header, result.Generation, result.DesiredState)
+		if err != nil {
+			return err
+		}
+		if result.Generation < journal.state.Generation {
+			return errGuestDispatchConflict
+		}
+		tunnel.update(ctx, offer)
 	}
 	return applyGuestPoll(ctx, journal, runtime, result.Generation, result.DesiredState, result.Operation)
 }
@@ -185,6 +195,9 @@ func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release strin
 	}
 	client := identity.pollClient("")
 	defer client.CloseIdleConnections()
+	tunnel := &agentTunnel{protocol: protocol, tls: client.Transport.(*http.Transport).TLSClientConfig.Clone(),
+		retry: 5 * time.Second, serve: ServeTunnel}
+	defer tunnel.close()
 	journal, err := loadLocalJournal(filepath.Join(stateDir, "operation.json"))
 	if err != nil {
 		return err
@@ -197,7 +210,7 @@ func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release strin
 		},
 	}}
 	for {
-		if err := pollAgent(ctx, client, identity.PollEndpoint, newGuestPollRequest(protocol, release, journal), journal, runtime); err != nil {
+		if err := pollAgent(ctx, client, identity.PollEndpoint, newGuestPollRequest(protocol, release, journal), journal, runtime, tunnel); err != nil {
 			return err
 		}
 		delay := 27*time.Second + rand.N(6*time.Second)

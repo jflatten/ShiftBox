@@ -67,7 +67,6 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		return nil, err
 	}
 	internal := http.NewServeMux()
-	internal.Handle("/internal/v1/guest/poll", web.GuestPollHandler(compatibility, enrollment.Exchange, now))
 	if config.GitHub != nil {
 		internal.Handle(guest.GitAccessTokenPath, web.GuestGitTokenHandler(enrollment.Authenticate, config.GitHub.AccessToken, now))
 	}
@@ -101,6 +100,7 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		listeners.tunnel = tunnel
 		listeners.TunnelAddress = guestAddress(config.PublicHost, tunnel.network)
 	}
+	internal.Handle("/internal/v1/guest/poll", web.GuestPollHandler(compatibility, enrollment.Exchange, now, listeners.TunnelAddress))
 	return listeners, nil
 }
 
