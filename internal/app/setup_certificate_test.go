@@ -93,6 +93,7 @@ func TestSetupCertificateUpload(t *testing.T) {
 	mux.Handle("PUT /profile", setup.profileHandler(database.PreflightPostgresSetup))
 	mux.Handle("PUT /certificate", setup.certificateHandler())
 	mux.Handle("POST /activate", setup.activationHandler())
+	mux.Handle("PUT /capacity", setup.capacityHandler())
 	handler, err := ProtectBootstrap(origin, mux)
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +119,9 @@ func TestSetupCertificateUpload(t *testing.T) {
 		r.Header.Set("Origin", origin)
 		r.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
 		r.Header.Set("Idempotency-Key", key)
+		if path == "/capacity" {
+			r.Header.Set("If-Match", `"0"`)
+		}
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		if w.Code != want || strings.Contains(w.Body.String(), "PRIVATE KEY") {
@@ -125,6 +129,8 @@ func TestSetupCertificateUpload(t *testing.T) {
 		}
 		return w.Body.String()
 	}
+	budget := map[string]int{"cpuCount": 4, "memoryMiB": 4096, "diskMiB": 10240}
+	request("/capacity", "", budget, 409)
 	request("/certificate", "setup-cert-upload-001", input, 409)
 	request("/profile", "setup-profile-select-1", map[string]string{"profile": "sqlite"}, 202)
 	input["privateKeyPem"] = "malformed private key"
@@ -157,10 +163,8 @@ func TestSetupCertificateUpload(t *testing.T) {
 		VALUES('fixture','fixture','amd64','test','development','1','[]','{}','{}','{}','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','fixture.utm',$1,$2,'available',1)`, owner, now.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO capacity_budgets(installation_id,cpu_limit,memory_mib_limit,disk_mib_limit,updated_by,updated_at,version)
-		VALUES($1,4,4096,10240,$2,$3,1)`, id, owner, now.Format(time.RFC3339Nano)); err != nil {
-		t.Fatal(err)
-	}
+	request("/capacity", "", budget, 204)
+	request("/capacity", "", budget, 412)
 	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
 		return setup.savePendingPostgres(ctx, tx, selectedPostgresProfile{RequestKey: "test-postgres-selection"})
 	}); err != nil {

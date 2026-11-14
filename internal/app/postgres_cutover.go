@@ -47,6 +47,12 @@ func (s SetupHTTP) activatePostgres(ctx context.Context, target *sql.DB, actor, 
 	if err := database.CheckSchema(ctx, target, "postgres"); err != nil {
 		return operation.Operation{}, ErrSetupConflict
 	}
+	var budgetVersion int64
+	if profileKey != "" {
+		if err := target.QueryRowContext(ctx, "SELECT version FROM capacity_budgets WHERE installation_id=$1", s.InstallationID).Scan(&budgetVersion); err != nil {
+			return operation.Operation{}, ErrSetupConflict
+		}
+	}
 	c := postgresCutover{source: s.Journal, target: operation.NewJournal(target, s.Now, s.NewID),
 		id: s.InstallationID, actor: actor, key: key, now: s.Now(),
 		verifySource: func(ctx context.Context, tx *sql.Tx) error {
@@ -55,6 +61,11 @@ func (s SetupHTTP) activatePostgres(ctx context.Context, target *sql.DB, actor, 
 			}
 			selected, err := s.readPendingPostgres(ctx, tx)
 			if err != nil || selected.RequestKey != profileKey {
+				return ErrSetupConflict
+			}
+			var currentBudget int64
+			if err := tx.QueryRowContext(ctx, "SELECT version FROM capacity_budgets WHERE installation_id=$1", s.InstallationID).Scan(&currentBudget); err != nil ||
+				currentBudget != budgetVersion {
 				return ErrSetupConflict
 			}
 			principal, err := s.bootstrapPrincipal(ctx, tx, token)

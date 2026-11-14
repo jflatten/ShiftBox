@@ -1587,3 +1587,14 @@ This checkpoint does not itself change the goal status.
   stale budget updates, over-limit profiles, and duplicate profile names.
   The management router still needs to mount the handlers. Provider
   validation and capacity configuration in local setup remain open.
+
+### Capacity in protected setup
+
+- Local setup accepts the versioned capacity write after the browser
+  certificate step. It reuses the management budget validation and uses
+  the restricted setup session for authority.
+- PostgreSQL staging copies the budget and its revision, and cutover
+  checks that the source revision still matches before retiring setup.
+  The live integration test edits the budget after a failed transfer
+  and confirms the retry activates PostgreSQL with the newer revision.
+- Default artifact import and real UTM guest validation remain open.

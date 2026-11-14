@@ -30,29 +30,11 @@ func CapacityHandlers(db *sql.DB, origin string, now func() time.Time, newID fun
 		DB: db, Origin: origin, Now: now, Resolve: resolve,
 		Route: ManagementRoute{Method: http.MethodPut, Path: "/admin/capacity", OperationID: "updateCapacityBudget", Action: "infrastructure.manage"},
 		Apply: func(ctx context.Context, tx *sql.Tx, r *http.Request, actor auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
-			version, err := RequireVersion(r)
-			if err != nil {
-				return nil, err
-			}
-			var input workspaceResources
-			if err := DecodeJSON(nil, r, &input, 4096); err != nil {
-				return nil, err
-			}
-			if !input.positive() {
-				return nil, Problem{Status: 400, Code: "infrastructure.invalid_capacity", Title: "Enter positive capacity limits"}
-			}
 			var id string
 			if err := tx.QueryRowContext(ctx, "SELECT id FROM installations WHERE singleton=1").Scan(&id); err != nil {
 				return nil, err
 			}
-			err = workspace.SetCapacityBudgetInTx(ctx, tx, id, input.allocation(), version, actor.User.ID, now())
-			if errors.Is(err, workspace.ErrCapacityConflict) {
-				return nil, Problem{Status: 412, Code: "request.version_mismatch", Title: "Refresh the capacity budget before updating"}
-			}
-			if err != nil {
-				return nil, err
-			}
-			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), nil
+			return ApplyCapacityBudget(ctx, tx, r, id, actor.User.ID, now())
 		},
 	}
 	profile := AuthorizedHandler{
@@ -89,6 +71,30 @@ func CapacityHandlers(db *sql.DB, origin string, now func() time.Time, newID fun
 		},
 	}
 	return budget, profile
+}
+
+// ApplyCapacityBudget handles the shared, versioned capacity write after the
+// caller authorizes the request in the same transaction.
+func ApplyCapacityBudget(ctx context.Context, tx *sql.Tx, r *http.Request, installation, actor string, now time.Time) (http.Handler, error) {
+	version, err := RequireVersion(r)
+	if err != nil {
+		return nil, err
+	}
+	var input workspaceResources
+	if err := DecodeJSON(nil, r, &input, 4096); err != nil {
+		return nil, err
+	}
+	if !input.positive() {
+		return nil, Problem{Status: 400, Code: "infrastructure.invalid_capacity", Title: "Enter positive capacity limits"}
+	}
+	err = workspace.SetCapacityBudgetInTx(ctx, tx, installation, input.allocation(), version, actor, now)
+	if errors.Is(err, workspace.ErrCapacityConflict) {
+		return nil, Problem{Status: 412, Code: "request.version_mismatch", Title: "Refresh the capacity budget before updating"}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), nil
 }
 
 func (r workspaceResources) positive() bool {

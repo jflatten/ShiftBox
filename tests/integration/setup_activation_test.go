@@ -231,21 +231,25 @@ func TestStagePostgresSetup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	budgetVersion := `"0"`
 	request := func(method, path, key, body string, want int) {
 		t.Helper()
-		r := httptest.NewRequest(method, localOrigin+"/api/v1/setup/"+path, strings.NewReader(body))
+		r := httptest.NewRequest(method, localOrigin+"/api/v1/"+path, strings.NewReader(body))
 		r.RemoteAddr = "127.0.0.1:55555"
 		r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
 		r.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
 		r.Header.Set("Origin", localOrigin)
 		r.Header.Set("Idempotency-Key", key)
+		if path == "admin/capacity" {
+			r.Header.Set("If-Match", budgetVersion)
+		}
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		if w.Code != want || strings.Contains(w.Body.String(), appURI) || strings.Contains(w.Body.String(), dexURI) {
 			t.Fatalf("%s returned %d, want %d with redacted body", path, w.Code, want)
 		}
 	}
-	request(http.MethodPut, "data-profile", "fixture-postgres-profile", fmt.Sprintf(`{"profile":"postgres","tlsMode":"verify-full","connectionUri":%q}`, appURI), 202)
+	request(http.MethodPut, "setup/data-profile", "fixture-postgres-profile", fmt.Sprintf(`{"profile":"postgres","tlsMode":"verify-full","connectionUri":%q}`, appURI), 202)
 	if err := database.Migrate(ctx, dst, "postgres"); err != nil {
 		t.Fatal(err)
 	}
@@ -319,20 +323,19 @@ func TestStagePostgresSetup(t *testing.T) {
 		VALUES('fixture','fixture','amd64','test','development','1','[]','{}','{}','{}',repeat('a',64),'fixture.utm','owner','now','available',1)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dst.ExecContext(ctx, `INSERT INTO capacity_budgets(installation_id,cpu_limit,memory_mib_limit,disk_mib_limit,updated_by,updated_at,version)
-		VALUES($1,4,4096,10240,'owner','now',1)`, id); err != nil {
-		t.Fatal(err)
-	}
-	request(http.MethodPost, "activate", key, "", 500)
+	request(http.MethodPut, "admin/capacity", "", `{"cpuCount":4,"memoryMiB":4096,"diskMiB":10240}`, 204)
+	request(http.MethodPost, "setup/activate", key, "", 500)
 	if err := src.QueryRowContext(ctx, "SELECT state FROM installations").Scan(&state); err != nil || state != "configuring" {
 		t.Fatalf("transfer failure changed source state to %s, error %v", state, err)
 	}
+	budgetVersion = `"1"`
+	request(http.MethodPut, "admin/capacity", "", `{"cpuCount":6,"memoryMiB":8192,"diskMiB":20480}`, 204)
 	transferReady = true
-	request(http.MethodPost, "activate", key, "", 202)
+	request(http.MethodPost, "setup/activate", key, "", 202)
 	if transfers != 2 {
 		t.Fatalf("activation attempted %d identity transfers, want one attempt and one retry", transfers)
 	}
-	request(http.MethodPost, "activate", key, "", 401)
+	request(http.MethodPost, "setup/activate", key, "", 401)
 	first, err := setup.ResumeRetiredPostgresSetup(ctx)
 	if err != nil || first.Status != "succeeded" {
 		t.Fatalf("activation = %s, %v, want succeeded", first.Status, err)
@@ -343,6 +346,11 @@ func TestStagePostgresSetup(t *testing.T) {
 	}
 	if err := dst.QueryRowContext(ctx, "SELECT state FROM installations").Scan(&state); err != nil || state != "active" {
 		t.Fatalf("target state = %s, %v, want active", state, err)
+	}
+	var cpu, memory, disk int
+	if err := dst.QueryRowContext(ctx, "SELECT cpu_limit,memory_mib_limit,disk_mib_limit FROM capacity_budgets").Scan(&cpu, &memory, &disk); err != nil ||
+		cpu != 6 || memory != 8192 || disk != 20480 {
+		t.Fatalf("target budget = %d/%d/%d, %v, want 6/8192/20480", cpu, memory, disk, err)
 	}
 	runtimeURI, err := url.Parse(appURI)
 	if err != nil {

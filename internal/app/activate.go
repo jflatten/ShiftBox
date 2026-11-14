@@ -22,6 +22,12 @@ type setupSnapshot struct {
 	ownerCreator, ownerCreated, ownerUpdated                           string
 	settings, activatedBy, activatedAt                                 string
 	certID, chain, keyID, notBefore, notAfter, fingerprint, ciphertext string
+	budget                                                             *setupCapacityBudget
+}
+
+type setupCapacityBudget struct {
+	cpu, memory, disk, version int64
+	actor, updated             string
 }
 
 // StagePostgresSetup copies the selected setup records and retains the scoped
@@ -66,7 +72,15 @@ func StagePostgresSetup(ctx context.Context, source, target *sql.DB, installatio
 			expected.version++
 			// The original staging timestamp is retained across retries.
 			expected.updated = existing.updated
+			// Capacity may be edited during setup without replacing the
+			// staged certificate or owner. Copy newer revisions below.
+			expected.budget = existing.budget
 			if err != nil || !reflect.DeepEqual(existing, expected) {
+				return ErrSetupConflict
+			}
+			if staged.budget != nil && existing.budget != nil &&
+				(existing.budget.version > staged.budget.version ||
+					(existing.budget.version == staged.budget.version && *existing.budget != *staged.budget)) {
 				return ErrSetupConflict
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) {
@@ -74,7 +88,10 @@ func StagePostgresSetup(ctx context.Context, source, target *sql.DB, installatio
 		} else if err := staged.insert(ctx, tx, string(encoded), now); err != nil {
 			return err
 		}
-		return retainPostgresDexStorage(ctx, tx, staged.id, credentials, cipher)
+		if err := retainPostgresDexStorage(ctx, tx, staged.id, credentials, cipher); err != nil {
+			return err
+		}
+		return staged.stageCapacity(ctx, tx)
 	})
 	if err != nil {
 		return auth.User{}, err
@@ -107,7 +124,35 @@ func readSetupSnapshot(ctx context.Context, tx *sql.Tx, id, ownerID string) (set
 	err = tx.QueryRowContext(ctx, `SELECT c.id,c.chain_pem,c.private_key_ciphertext_id,c.not_before,c.not_after,c.fingerprint_sha256,p.value_json
 		FROM browser_certificates c JOIN protected_values p ON p.id=c.private_key_ciphertext_id WHERE c.state='active'`).Scan(
 		&s.certID, &s.chain, &s.keyID, &s.notBefore, &s.notAfter, &s.fingerprint, &s.ciphertext)
-	return s, err
+	if err != nil {
+		return s, err
+	}
+	budget := new(setupCapacityBudget)
+	err = tx.QueryRowContext(ctx, `SELECT cpu_limit,memory_mib_limit,disk_mib_limit,version,updated_by,updated_at
+		FROM capacity_budgets WHERE installation_id=$1`, id).
+		Scan(&budget.cpu, &budget.memory, &budget.disk, &budget.version, &budget.actor, &budget.updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return s, nil
+	}
+	if err != nil {
+		return s, err
+	}
+	s.budget = budget
+	return s, nil
+}
+
+func (s setupSnapshot) stageCapacity(ctx context.Context, tx *sql.Tx) error {
+	if s.budget == nil {
+		return nil
+	}
+	b := s.budget
+	_, err := tx.ExecContext(ctx, `INSERT INTO capacity_budgets
+		(installation_id,cpu_limit,memory_mib_limit,disk_mib_limit,version,updated_by,updated_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7)
+		ON CONFLICT(installation_id) DO UPDATE SET cpu_limit=excluded.cpu_limit,memory_mib_limit=excluded.memory_mib_limit,
+		disk_mib_limit=excluded.disk_mib_limit,version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at
+		WHERE capacity_budgets.version<excluded.version`, s.id, b.cpu, b.memory, b.disk, b.version, b.actor, b.updated)
+	return err
 }
 
 func (s setupSnapshot) insert(ctx context.Context, tx *sql.Tx, settings string, now time.Time) error {

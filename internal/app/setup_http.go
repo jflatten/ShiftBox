@@ -52,6 +52,7 @@ func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 		mux.Handle("/api/v1/session", sessions)
 		mux.Handle("PUT /api/v1/setup/data-profile", setup.profileHandler(database.PreflightPostgresSetup))
 		mux.Handle("PUT /api/v1/setup/certificate", setup.certificateHandler())
+		mux.Handle("PUT /api/v1/admin/capacity", setup.capacityHandler())
 		mux.Handle("POST /api/v1/setup/activate", setup.activationHandler())
 		if passwords, ok := setup.Admin.(setupPasswords); ok {
 			mux.Handle("PUT /api/v1/session/password", setup.passwordHandler(sessions, passwords))
