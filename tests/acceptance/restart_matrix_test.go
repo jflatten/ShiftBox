@@ -22,6 +22,87 @@ import (
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
+// TestRestartPreservesMaintenanceSchedule reopens the controller database
+// during the warning period and after the deadline. Scheduling replay must
+// preserve the same target generation and reserved disk.
+func TestRestartPreservesMaintenanceSchedule(t *testing.T) {
+	ctx, now := t.Context(), time.Now().UTC()
+	deadline := now.Add(time.Hour)
+	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "maintenance.db")}
+	open := func() *sql.DB {
+		t.Helper()
+		db, err := database.Open(ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return db
+	}
+	db := open()
+	if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
+		t.Fatal(err)
+	}
+	ref := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		Generation: 1, InstanceID: "retained-instance", OwnershipMarker: "fixture-owner"}
+	actor := uuid.NewString()
+	seedRecoveryRestart(t, db, ref, actor, now)
+	if _, err := db.ExecContext(ctx, "UPDATE workspaces SET observed_state='stopped' WHERE id=$1", ref.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO reservations(workspace_id,cpu_count,memory_mib,disk_mib,cpu_memory_state,
+		disk_state,reserved_at,cpu_memory_released_at) VALUES($1,2,1024,40,'released','reserved',$2,$2)`,
+		ref.WorkspaceID, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	clock := func() time.Time { return now }
+	schedule := func(db *sql.DB) operation.Operation {
+		t.Helper()
+		journal := operation.NewJournal(db, clock, uuid.NewString)
+		var op operation.Operation
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			var err error
+			op, err = workspace.ScheduleMaintenance(ctx, tx, journal, ref.InstallationID, actor,
+				"restart-scheduled-maintenance", "fixture", deadline, now)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return op
+	}
+	first := schedule(db)
+	for _, elapsed := range []time.Duration{30 * time.Minute, 31 * time.Minute} {
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(elapsed)
+		db = open()
+		replay := schedule(db)
+		if replay.ID != first.ID || replay.Status != "pending" {
+			t.Fatalf("scheduled replay = %s/%s, want %s/pending", replay.ID, replay.Status, first.ID)
+		}
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			warning, err := workspace.ReadWorkspaceMaintenance(ctx, tx, ref.WorkspaceID, ref.Generation)
+			if err != nil || warning == nil || warning.State != "pending" || !warning.Deadline.Equal(deadline) {
+				t.Fatalf("workspace warning after restart = %+v (%v), want pending with original deadline", warning, err)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var count int
+		var desired, observed, compute, disk string
+		err := db.QueryRowContext(ctx, `SELECT
+			(SELECT count(*) FROM maintenance_targets WHERE campaign_id=$1),
+			w.desired_state,w.observed_state,r.cpu_memory_state,r.disk_state
+			FROM workspaces w JOIN reservations r ON r.workspace_id=w.id WHERE w.id=$2`,
+			first.ID, ref.WorkspaceID).Scan(&count, &desired, &observed, &compute, &disk)
+		if err != nil || count != 1 || desired != "stopped" || observed != "stopped" || compute != "released" || disk != "reserved" {
+			t.Errorf("schedule after restart = %d targets, %s/%s workspace, %s/%s resources (%v), want one stopped target with retained disk",
+				count, desired, observed, compute, disk, err)
+		}
+	}
+}
+
 // TestRestartInterruptsRestoreValidation verifies that startup interrupts
 // pending and active validation jobs whose private inputs died with the process.
 func TestRestartInterruptsRestoreValidation(t *testing.T) {
