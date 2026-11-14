@@ -59,6 +59,8 @@ The restart-focused race suite also passed, including the populated
 PostgreSQL setup interruption after source retirement. The first PostgreSQL
 test invocation supplied the CA twice, in the setup URI and in the separate
 trust input. The corrected fixture uses the separate trust input.
+The separately owned PostgreSQL replacement validation and activation tests
+also passed again with `-race` against fresh dedicated schemas.
 
 T125 remains open for the outstanding scenarios in sections 3–10. The
 [release tracker](mvp-v1-v14.md) records the remaining live checks.
