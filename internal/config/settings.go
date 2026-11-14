@@ -16,6 +16,7 @@ var ErrProfileImmutable = errors.New("active installation data profile is immuta
 // InstallationSettings is the non-secret installation portion of an activation.
 // Connection credentials and certificate keys belong in protected storage.
 type InstallationSettings struct {
+	BrowserCertificateID        string `json:"browserCertificateId,omitempty"`
 	OrganizationName            string `json:"organizationName"`
 	DataProfile                 string `json:"dataProfile"`
 	ManagementOrigin            string `json:"managementOrigin"`

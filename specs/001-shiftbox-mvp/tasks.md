@@ -58,7 +58,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 ### Shared implementation
 
 - [X] T017 Implement the embedded Goose runner, explicit SQLite/PostgreSQL openers, transaction helpers, and schema ownership checks proven by T010 in `internal/database/database.go`, `internal/database/migrate.go`, and `internal/database/transaction.go`
-- [ ] T018 Implement base installation/configuration/session/operation migrations in `migrations/sqlite/00001_foundation.sql` and `migrations/postgres/00001_foundation.sql`, preserving these verbatim constraints: Installation `id` is a "Stable opaque UUID; exactly one active installation record", `state` is "`bootstrap`, `configuring`, `active`, `recovery`, or `blocked`", `organization_name` is a "Non-empty display name", `data_profile` is "`sqlite` or `postgres`; immutable after active configuration except guarded restore activation", `management_origin` is a "Canonical HTTPS origin; unique and distinct from IDE/preview patterns", `ide_host_pattern` "maps exactly one workspace ID", `preview_host_pattern` maps workspace/service identity, `external_auth_interval_seconds` is a "Positive finite value; initial default 14,400 seconds", and `config_generation` "Increments on durable configuration activation"; ActivatedConfiguration generation "increases exactly by one" and "the last active generation is unique"; BrowserCertificate chain "covers every configured service hostname", fingerprint is unique, and state is "`pending`, `active`, `replaced`, or `invalid`"; Session `token_digest` is a "Unique digest of a random cookie value; raw token is never stored" and mode is "`bootstrap_restricted`, `password_change`, `normal`, or `recovery_review`"; Operation `(requested_by, request_key)` is unique, type is "`provision`, `start`, `open_ide`, `rebuild`, `repair`, `stop`, `delete`, `recover`, `update`, `backup`, `restore`, or setup operation", status is "`pending`, `running`, `waiting`, `succeeded`, `failed`, or `cancelled`", step status is "`pending`, `active`, `succeeded`, `failed`, or `skipped`", and `event_id` is "Monotonic per operation; used for SSE replay"
+- [X] T018 Implement base installation/configuration/session/operation migrations in `migrations/sqlite/00001_foundation.sql` and `migrations/postgres/00001_foundation.sql`, preserving these verbatim constraints: Installation `id` is a "Stable opaque UUID; exactly one active installation record", `state` is "`bootstrap`, `configuring`, `active`, `recovery`, or `blocked`", `organization_name` is a "Non-empty display name", `data_profile` is "`sqlite` or `postgres`; immutable after active configuration except guarded restore activation", `management_origin` is a "Canonical HTTPS origin; unique and distinct from IDE/preview patterns", `ide_host_pattern` "maps exactly one workspace ID", `preview_host_pattern` maps workspace/service identity, `external_auth_interval_seconds` is a "Positive finite value; initial default 14,400 seconds", and `config_generation` "Increments on durable configuration activation"; ActivatedConfiguration generation "increases exactly by one" and "the last active generation is unique"; BrowserCertificate chain "covers every configured service hostname", fingerprint is unique, and state is "`pending`, `active`, `replaced`, or `invalid`"; Session `token_digest` is a "Unique digest of a random cookie value; raw token is never stored" and mode is "`bootstrap_restricted`, `password_change`, `normal`, or `recovery_review`"; Operation `(requested_by, request_key)` is unique, type is "`provision`, `start`, `open_ide`, `rebuild`, `repair`, `stop`, `delete`, `recover`, `update`, `backup`, `restore`, or setup operation", status is "`pending`, `running`, `waiting`, `succeeded`, `failed`, or `cancelled`", step status is "`pending`, `active`, `succeeded`, `failed`, or `skipped`", and `event_id` is "Monotonic per operation; used for SSE replay"
 - [X] T019 Implement authenticated encryption and protected installation-key file loading proven by T011 in `internal/cryptostore/store.go` and `internal/cryptostore/keyfile.go`
 - [X] T020 [P] Implement typed configuration loading with explicit paths, no environment reads below composition, and redacted validation errors in `internal/config/config.go` and `internal/config/validate.go`
 - [X] T021 Implement the durable operation journal, leases, ordered steps/events, generation checks, and idempotent request lookup proven by T012 in `internal/operation/model.go`, `internal/operation/store.go`, and `internal/operation/journal.go`
@@ -722,3 +722,25 @@ This checkpoint does not itself change the goal status.
 - Concrete endpoint loaders must still bind these inputs to database records in
   the authorization transaction. Other contextual routes and certificate
   activation remain outstanding; no additional task is marked complete.
+
+
+### Atomic protected browser-certificate activation
+
+- Added protected-value storage and a certificate-key reference constraint.
+  Certificate activation validates the matching pair, explicit trust roots,
+  current validity, management hostname, and both wildcard service patterns.
+- Private keys use the existing AES-256-GCM store with installation/certificate
+  identity in authenticated context. Ciphertext, certificate replacement, and
+  the typed configuration snapshot (including certificate ID) commit together.
+  Failed replacement preserves the prior certificate, generation, and key count.
+- Loading permits only the active certificate and rechecks current time, trust,
+  and hostname coverage. Wrong installation/key, retired certificates, and
+  expired active material fail without fallback.
+- Both-profile configuration tests and auth/web/audit/contract race suites pass;
+  formatting and vet pass. T018 is complete at its foundation schema/invariant
+  scope. This does not complete T045's UI upload, trust-policy selection, notices,
+  and listener integration, or the later guarded restore workflow. Ordinary
+  configuration activation still has no profile-immutability bypass.
+- 26 tasks are complete. Remaining foundation tasks are T013, T023, and T025.
+  Initial schema changes still do not upgrade the existing fixture's durable
+  tables; PostgreSQL tests exercise temporary copies of current shipped SQL.

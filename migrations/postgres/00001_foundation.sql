@@ -31,10 +31,14 @@ CREATE TABLE activated_configurations (
 );
 CREATE UNIQUE INDEX one_active_configuration ON activated_configurations(installation_id) WHERE retired_at IS NULL;
 -- Certificate activation validates the matching key and coverage of every service hostname.
+CREATE TABLE protected_values (
+ id TEXT PRIMARY KEY,
+ value_json TEXT NOT NULL
+);
 CREATE TABLE browser_certificates (
  id TEXT PRIMARY KEY,
  chain_pem TEXT NOT NULL,
- private_key_ciphertext_id TEXT NOT NULL,
+ private_key_ciphertext_id TEXT NOT NULL REFERENCES protected_values(id),
  not_before TEXT NOT NULL,
  not_after TEXT NOT NULL,
  fingerprint_sha256 TEXT NOT NULL UNIQUE,
