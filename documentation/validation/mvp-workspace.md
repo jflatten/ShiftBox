@@ -29,6 +29,11 @@ fixture and with the same valid certificate trust available to Chrome and the
 test runner. With Node 26, `NODE_USE_SYSTEM_CA=1` lets the test runner use
 system trust for its HTTPS requests. Use the development candidate and
 fixture-specific GitHub App installation.
+If consent must be completed in a different browser, keep the disposable
+controller running until GitHub returns to ShiftBox. Use
+`SHIFTBOX_MVP_RESUME_ACTIVE=1` only to resume a previously verified setup
+with the same running fixture and before creating a workspace. Record
+setup and workspace results separately when using this mode.
 
 After Chrome completes, point `SHIFTBOX_TEST_MVP_DATABASE` at the same
 disposable SQLite database and run

@@ -29,6 +29,7 @@ type WorkspaceFixture = {
 };
 
 const fixturePath = process.env.SHIFTBOX_MVP_FIXTURE;
+const resumeActive = process.env.SHIFTBOX_MVP_RESUME_ACTIVE === '1';
 const startupTimeout = 4 * 60_000;
 const workbenchTimeout = 3 * 60_000;
 const githubConsentTimeout = 9 * 60_000;
@@ -56,7 +57,12 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     throw new Error('Use a protected loopback setup URL and separate HTTPS management origin');
   }
 
-  await test.step('Complete protected setup with the keyboard and sign in afresh', async () => {
+  await test.step(resumeActive ? 'Sign in to the activated fixture' : 'Complete protected setup with the keyboard and sign in afresh', async () => {
+    if (resumeActive) {
+      await page.goto(new URL('/auth/login', managementOrigin).href);
+      await passwordLogin(page, installation.administratorEmail, installation.password);
+      return;
+    }
     await page.goto(new URL('/setup/', setupOrigin).href);
     await expect(page.getByRole('heading', { name: 'Local setup' })).toBeVisible();
     await activate(page.getByRole('link', { name: 'Sign in', exact: true }));
@@ -131,8 +137,12 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
       await activate(page.getByRole('link', { name: 'Continue to GitHub' }));
       // Allow the fixture owner time for sign-in and consent within the
       // controller's ten-minute OAuth state lifetime.
-      await page.waitForURL(url => url.origin === managementOrigin && url.pathname === '/', { timeout: githubConsentTimeout });
-      await page.goto(new URL('/account/', managementOrigin).href);
+      const authorizationURL = new URL('/api/v1/git/authorization', managementOrigin).href;
+      await expect.poll(async () => {
+        const response = await page.request.get(authorizationURL);
+        return response.ok() && (await response.json()).state === 'connected';
+      }, { timeout: githubConsentTimeout, message: 'The fixture owner must authorize the GitHub App' }).toBe(true);
+      await page.goto(new URL('/account/', managementOrigin).href, { waitUntil: 'domcontentloaded' });
       await expect(connected).toBeVisible({ timeout: startupTimeout });
     }
     await page.goto(new URL('/templates/', managementOrigin).href);
