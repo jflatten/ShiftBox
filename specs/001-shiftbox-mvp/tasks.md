@@ -1978,3 +1978,11 @@ This checkpoint does not itself change the goal status.
   with variable RFC3339 fractional-second precision.
 - Audit, configuration, app, CLI and contract race tests passed. Scheduling
   pruning in the active controller and dismissed-notice retention remain open.
+
+### Systemwide notice publication and receipts
+
+- Added the notice and receipt schema and wired the reviewed management
+  routes for publication, listing, first read and dismissal. Receipts are
+  scoped to the signed-in user. Notices observe scheduled start and expiry.
+- Web, application, database and contract race tests passed. Persistent
+  operational conditions, notice retention, and the browser view remain open.

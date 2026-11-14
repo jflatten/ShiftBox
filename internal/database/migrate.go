@@ -97,6 +97,8 @@ func CheckSchema(ctx context.Context, db *sql.DB, profile string) error {
 		"SELECT id,value_json FROM protected_values WHERE 1=0",
 		"SELECT originating_action FROM operations WHERE 1=0",
 		"SELECT id,occurred_at,actor_type,actor_id,action,resource_type,resource_id,outcome,reason_code,metadata_json FROM audit_events WHERE 1=0",
+		"SELECT id,severity,title,body,effective_at,expires_at,created_by,created_at FROM notices WHERE 1=0",
+		"SELECT notice_id,user_id,read_at,dismissed_at FROM notice_receipts WHERE 1=0",
 		"SELECT installation_id,user_id,operation_id,password_hash,password_ciphertext_id,credential_ready,delivered_at,created_at FROM bootstrap_administrator WHERE 1=0",
 	} {
 		probe, err := db.QueryContext(ctx, query)
