@@ -44,13 +44,8 @@ func AdmitLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, la
 	if err := capacityWrite(result, err); err != nil {
 		return operation.Operation{}, err
 	}
-	var existing string
-	err = tx.QueryRowContext(ctx, `SELECT id FROM operations WHERE requested_by=$1 AND request_key=$2`, launch.OwnerID, launch.RequestKey).Scan(&existing)
-	if err == nil {
-		return replayLaunch(ctx, tx, journal, existing, launch)
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return operation.Operation{}, err
+	if op, found, err := FindLaunch(ctx, tx, journal, launch); found || err != nil {
+		return op, err
 	}
 
 	names := launch.SecretNames
@@ -96,6 +91,21 @@ func AdmitLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, la
 		return operation.Operation{}, ErrLaunchConflict
 	}
 	return op, nil
+}
+
+// FindLaunch checks for a committed request before reevaluating provider and
+// profile eligibility. Call only after checking current launch authorization.
+func FindLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, launch LaunchIntent) (operation.Operation, bool, error) {
+	var id string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM operations WHERE requested_by=$1 AND request_key=$2`, launch.OwnerID, launch.RequestKey).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return operation.Operation{}, false, nil
+	}
+	if err != nil {
+		return operation.Operation{}, false, err
+	}
+	op, err := replayLaunch(ctx, tx, journal, id, launch)
+	return op, true, err
 }
 
 func replayLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, id string, launch LaunchIntent) (operation.Operation, error) {

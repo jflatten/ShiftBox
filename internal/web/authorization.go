@@ -18,6 +18,7 @@ type AuthorizationTarget struct {
 	Action   string
 	Resource auth.Resource
 	Grants   []auth.ResourceGrant
+	launch   *workspaceLaunchRequest
 }
 
 // AuthorizedHandler keeps current authority, policy, required audit, and durable

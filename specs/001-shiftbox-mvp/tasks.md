@@ -1237,3 +1237,14 @@ This checkpoint does not itself change the goal status.
   archive evidence. Repository URL and Dev Container path validation is
   shared with workspace admission. SQLite and PostgreSQL race tests cover
   historical revisions, grant revocation, and archival.
+
+### Workspace launch HTTP handler
+
+- The launch handler resolves the requested template revision and current
+  launch grant, checks the profile, artifact and provider capabilities, and
+  commits the workspace, reservation and provisioning operation together.
+- The HTTP contract test covers CSRF, injected owner fields, launch grants,
+  revocation, profile changes, request-key conflicts, retention limits and
+  capacity refusal. Management and contract race tests passed.
+- Controller composition and execution of provisioning, enrollment and
+  readiness steps remain pending.
