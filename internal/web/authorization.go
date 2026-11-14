@@ -10,6 +10,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/audit"
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 )
 
 // AuthorizationTarget contains controller-derived resource state and grants.
@@ -19,6 +20,7 @@ type AuthorizationTarget struct {
 	Resource auth.Resource
 	Grants   []auth.ResourceGrant
 	launch   *workspaceLaunchRequest
+	entry    *proxy.OriginScope
 }
 
 // AuthorizedHandler keeps current authority, policy, required audit, and durable
