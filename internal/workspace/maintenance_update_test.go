@@ -9,8 +9,77 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/operation"
+	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/provider/fake"
 	"github.com/jflatten/ShiftBox/internal/release"
 )
+
+// TestMaintenancePowerRetainsDesiredState checks capacity and provider
+// accounting for a management boot and a graceful return to stopped.
+func TestMaintenancePowerRetainsDesiredState(t *testing.T) {
+	db, journal, now := maintenanceFixture(t, "retained")
+	ctx := t.Context()
+	machines := fake.New()
+	ref := provider.WorkspaceRef{InstallationID: testInstallation, WorkspaceID: "retained", OwnershipMarker: "owned", Generation: 1}
+	got, err := machines.Create(ctx, provider.CreateRequest{Ref: ref, OperationID: "fixture-create", ArtifactID: "reservation-artifact",
+		Release: "reservation-release", NetworkMode: "nat", Resources: provider.Resources{CPU: 2, MemoryBytes: 1024 << 20, DiskBytes: 40 << 20}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	maintenanceExec(t, db, `UPDATE workspaces SET desired_state='stopped', observed_state='stopped', provider_instance_id=$1,
+		network_policy_override_json='{"mode":"nat"}'`, got.InstanceID)
+	maintenanceExec(t, db, `INSERT INTO reservations(workspace_id,cpu_count,memory_mib,disk_mib,cpu_memory_state,disk_state,reserved_at,cpu_memory_released_at)
+		VALUES('retained',2,1024,40,'released','reserved',$1,$1)`, testStamp)
+	deadline := now.Add(time.Hour)
+	campaign, err := scheduleMaintenanceFixture(t, db, journal, "reservation-release", deadline, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(db)
+	if err := store.SetCapacityBudget(ctx, testInstallation, Allocation{CPU: 1, MemoryMiB: 1024, DiskMiB: 40}, 0, "reservation-owner", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PrepareMaintenanceTargets(ctx, journal, testInstallation, campaign.ID, deadline); err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	if err := db.QueryRow(`SELECT operation_id FROM maintenance_targets WHERE campaign_id=$1`, campaign.ID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	worker := store.MaintenanceUpdateWorker(journal, testInstallation, "1", nil)
+	executor := worker.Executor.(maintenanceUpdateExecutor)
+	executor.power = &maintenancePower{machines: machines, now: time.Now}
+	worker.Executor = executor
+	var waiting *operation.StepWaiting
+	if err := worker.RunOnce(ctx, id); !errors.As(err, &waiting) {
+		t.Fatalf("management boot without capacity = %v, want waiting", err)
+	}
+	checkReservation(t, db, "retained", "released", "reserved")
+	if err := store.SetCapacityBudget(ctx, testInstallation, Allocation{CPU: 2, MemoryMiB: 1024, DiskMiB: 40}, 1, "reservation-owner", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.RunOnce(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	checkReservation(t, db, "retained", "reserved", "reserved")
+	assertPower := func(want string) {
+		t.Helper()
+		var desired, observed string
+		if err := db.QueryRow(`SELECT desired_state,observed_state FROM workspaces WHERE id='retained'`).Scan(&desired, &observed); err != nil ||
+			desired != "stopped" || observed != want {
+			t.Errorf("maintenance workspace = %s/%s (%v), want stopped/%s", desired, observed, err, want)
+		}
+	}
+	assertPower("running")
+	// The receipt executor has its own tests. Advance directly to the
+	// persisted power restoration step here.
+	maintenanceExec(t, db, `UPDATE operation_steps SET status='succeeded' WHERE operation_id=$1 AND step_key<>'maintenance_restore'`, id)
+	if err := worker.RunOnce(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	assertPower("stopped")
+	checkReservation(t, db, "retained", "released", "reserved")
+}
 
 // TestMaintenanceUpdateWorker advances on durable matching receipts alone
 // and blocks a rolled-back update even after the guest reports current.

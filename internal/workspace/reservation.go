@@ -13,6 +13,10 @@ import (
 // that accepts its start. Admissions lock the workspace and then the budget
 // before counting usage.
 func ReserveStart(ctx context.Context, tx *sql.Tx, installation, workspace string, generation int64, now time.Time) error {
+	return reserveStart(ctx, tx, installation, workspace, generation, "running", now)
+}
+
+func reserveStart(ctx context.Context, tx *sql.Tx, installation, workspace string, generation int64, expectedDesired string, now time.Time) error {
 	if now.IsZero() {
 		return provider.ErrInvalidState
 	}
@@ -34,7 +38,7 @@ func ReserveStart(ctx context.Context, tx *sql.Tx, installation, workspace strin
 	if err != nil {
 		return err
 	}
-	if desired != "running" || disk == "released" {
+	if desired != expectedDesired || disk == "released" || expectedDesired == "stopped" && disk != "reserved" {
 		return provider.ErrInvalidState
 	}
 	if compute == "reserved" {

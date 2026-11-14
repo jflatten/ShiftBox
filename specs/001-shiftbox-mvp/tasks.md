@@ -1725,8 +1725,12 @@ This checkpoint does not itself change the goal status.
   checks that successful activation reports the assigned release and staged
   digest. The target executor compares the staging receipt with the pinned
   artifact, fails on rollback, and requires the assigned release and
-  protocol at verification. Controller startup wiring, stopped-workspace
-  power handling, and native signed-update validation remain open under T095.
+  protocol at verification. The maintenance power executor can reserve
+  capacity and boot the exact retained VM while its desired state stays
+  stopped, then release compute after a provider-confirmed graceful stop.
+  Recovery for expired guest identities, restoration after a failed update,
+  production worker wiring, and native signed-update validation remain open
+  under T095.
 
 ### Migration preflight CLI
 

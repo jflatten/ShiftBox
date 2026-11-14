@@ -17,18 +17,22 @@ func (s *Store) MaintenanceUpdateWorker(journal *operation.Journal, installation
 	load func(context.Context, string) (release.GuestUpdate, error),
 ) *operation.Worker {
 	return &operation.Worker{Journal: journal, Name: "maintenance-update", LeaseDuration: time.Minute,
-		Actions: []string{maintenanceTargetAction}, Executor: maintenanceUpdateExecutor{s, installation, protocol, load}}
+		Actions: []string{maintenanceTargetAction}, Executor: maintenanceUpdateExecutor{store: s, installation: installation, protocol: protocol, load: load}}
 }
 
 type maintenanceUpdateExecutor struct {
 	store                  *Store
 	installation, protocol string
 	load                   func(context.Context, string) (release.GuestUpdate, error)
+	power                  *maintenancePower
 }
 
 func (e maintenanceUpdateExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
 	if op.WorkspaceID == nil || op.Type != "update" {
 		return "", false, &operation.StepFailure{Detail: "The workspace update operation is invalid."}
+	}
+	if step.Key == "maintenance_boot" || step.Key == "maintenance_restore" {
+		return e.reconcilePower(ctx, op, step, false)
 	}
 	var product, staged, digest, activation string
 	var reportedRelease, reportedProtocol string
@@ -79,8 +83,11 @@ func (e maintenanceUpdateExecutor) Observe(ctx context.Context, op operation.Ope
 	return "", false, nil
 }
 
-func (e maintenanceUpdateExecutor) Apply(_ context.Context, _ operation.Operation, step operation.Step) (string, error) {
+func (e maintenanceUpdateExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
 	switch step.Key {
+	case "maintenance_boot", "maintenance_restore":
+		evidence, _, err := e.reconcilePower(ctx, op, step, true)
+		return evidence, err
 	case "maintenance_stage":
 		return "", &operation.StepWaiting{Detail: "Waiting for the guest to verify and stage the signed update."}
 	case "maintenance_activate":
