@@ -20,8 +20,8 @@ that local binary. The companion UTM export's artifact manifest SHA-256 was
 | Native protected setup | A fresh SQLite installation used the pinned Dex build, rotated the temporary password, accepted fixture HTTPS, and saved capacity. |
 | Native UTM platform validation | Setup booted the imported image in a disposable VM, confirmed an authenticated guest poll, removed the VM, and recorded the image as available. |
 | Go native UTM enrollment and stop | `TestUTMGuestEnrollment` passed in 63.76 seconds. The guest enrolled in 45 seconds, and offboarding stopped the VM while preserving its owned disk. The test removed the disposable VM afterward. |
-| Chrome management handoff | The controller required a fresh sign-in after activation. Chrome signed in through Dex and reached the GitHub authorization step. |
-| Chrome workspace journey | The run reached GitHub and timed out waiting for authorization. Repository clone, Dev Container launch, IDE, stop and start, rebuild, and repair remain pending. |
+| Chrome management handoff | The controller required a fresh sign-in after activation. Chrome signed in through Dex. The resumed run verified a connected fixture GitHub App authorization. |
+| Chrome workspace journey | Chrome created the private-repository template, launched a UTM workspace, and reconnected the operation stream. Provisioning and guest enrollment completed. The run timed out after four minutes waiting for IDE verification while Dev Container configuration had a pending dispatch. Repository checkout, IDE access, stop and start, rebuild, and repair remain unverified. |
 | Go workspace journal check | Pending a completed workspace journey. |
 
 Run the browser spec with `SHIFTBOX_MVP_FIXTURE` pointing at a fresh local

@@ -1,6 +1,7 @@
 package guest_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ecdsa"
@@ -16,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +26,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jflatten/ShiftBox/internal/app"
+	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/guest"
@@ -239,6 +242,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	t.Run("controller tunnel listener", func(t *testing.T) {
 		registry := &proxy.Registry{}
 		tunnels := &proxy.Tunnels{Registry: registry}
+		fence := &backup.WriteFence{}
 		const bind = "127.0.0.1:0"
 		cipher, err := cryptostore.New(make([]byte, 32))
 		if err != nil {
@@ -262,6 +266,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		}
 		listeners, err := app.ListenGuests(app.GuestListenerConfig{
 			EnrollmentAddress: bind, PollAddress: bind, TunnelAddress: bind, PublicHost: "127.0.0.1", Tunnels: tunnels, Secrets: secrets,
+			Checkpoint: fence,
 		}, enrollment, ca, web.GuestCompatibility{Protocol: "1", CurrentRelease: "test"}, clock)
 		if err != nil {
 			t.Fatal(err)
@@ -321,18 +326,99 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		if reply.StatusCode != 200 || tunnelAddress != listeners.TunnelAddress {
 			t.Fatalf("poll returned %d and tunnel address %q, want 200 and %q", reply.StatusCode, tunnelAddress, listeners.TunnelAddress)
 		}
+		advance := make(chan struct{})
+		workload := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for _, line := range []string{"started\n", "checkpoint\n", "resumed\n"} {
+				select {
+				case <-r.Context().Done():
+					return
+				case <-advance:
+				}
+				if _, err := io.WriteString(w, line); err != nil {
+					return
+				}
+				if err := http.NewResponseController(w).Flush(); err != nil {
+					return
+				}
+			}
+		}))
+		defer workload.Close()
+		workloadURL, err := url.Parse(workload.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
 		guestDone := make(chan error, 1)
 		go func() {
 			cfg := guest.ClientTLS(tls.Certificate{Certificate: [][]byte{first}, PrivateKey: clientKey}, ca, "127.0.0.1")
 			guestDone <- guest.ServeTunnel(ctx, tunnelAddress, cfg, "1", 1,
-				[]proxy.TunnelService{{Key: "ide", Target: "127.0.0.1:3000", Protocols: []string{"http"}}})
+				[]proxy.TunnelService{{Key: "ide", Target: workloadURL.Host, Protocols: []string{"http"}}})
 		}()
 		ticker := time.NewTicker(10 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			stream, err := tunnels.Open(ctx, "work", 1, proxy.StreamHeader{ServiceKey: "ide", RequestID: "fixture", Protocol: "http"})
 			if err == nil {
-				stream.Close()
+				// A backup fences new controller writes. An established guest
+				// workload must keep making progress throughout that interval.
+				t.Run("workload continues during backup checkpoint", func(t *testing.T) {
+					defer stream.Close()
+					deadline, _ := ctx.Deadline()
+					if err := stream.SetDeadline(deadline); err != nil {
+						t.Fatal(err)
+					}
+					request := httptest.NewRequestWithContext(ctx, http.MethodGet, workload.URL, nil)
+					if err := request.Write(stream); err != nil {
+						t.Fatal(err)
+					}
+					step := func() {
+						t.Helper()
+						select {
+						case advance <- struct{}{}:
+						case <-ctx.Done():
+							t.Fatal("workload stopped before acknowledging the next step")
+						}
+					}
+					step()
+					response, err := http.ReadResponse(bufio.NewReader(stream), request)
+					if err != nil {
+						t.Fatal(err)
+					}
+					body := bufio.NewReader(response.Body)
+					expectLine := func(want string) {
+						t.Helper()
+						if got, err := body.ReadString('\n'); err != nil || got != want {
+							t.Fatalf("workload output = %q, %v, want %q", got, err, want)
+						}
+					}
+					expectLine("started\n")
+					resume, err := fence.Pause(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer resume()
+					pollCtx, stopPoll := context.WithTimeout(ctx, 50*time.Millisecond)
+					defer stopPoll()
+					poll, err := http.NewRequestWithContext(pollCtx, http.MethodPost, listeners.PollURL,
+						strings.NewReader(`{"protocolVersion":"1","guestRelease":"test"}`))
+					if err != nil {
+						t.Fatal(err)
+					}
+					poll.Header.Set("Content-Type", "application/json")
+					if blocked, err := pollClient.Do(poll); blocked != nil {
+						blocked.Body.Close()
+						t.Fatalf("guest poll during checkpoint returned %d, want it to wait for the fence", blocked.StatusCode)
+					} else if !errors.Is(err, context.DeadlineExceeded) {
+						t.Fatalf("guest poll during checkpoint = %v, want its deadline to expire", err)
+					}
+					step()
+					expectLine("checkpoint\n")
+					resume()
+					step()
+					expectLine("resumed\n")
+					if err := response.Body.Close(); err != nil {
+						t.Fatal(err)
+					}
+				})
 				break
 			}
 			select {

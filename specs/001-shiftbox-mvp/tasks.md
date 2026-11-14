@@ -212,7 +212,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 
 ### Tests first
 
-- [ ] T104 [P] [US4] Write failing backup tests proving management writes pause only while application/Dex checkpoints are acquired, resume before archive assembly/encryption and after checkpoint failure, workspace computation remains uninterrupted, and the canonical age-encrypted verified archive explicitly excludes VM disks in `internal/backup/backup_test.go`
+- [X] T104 [P] [US4] Write failing backup tests proving management writes pause only while application/Dex checkpoints are acquired, resume before archive assembly/encryption and after checkpoint failure, workspace computation remains uninterrupted, and the canonical age-encrypted verified archive explicitly excludes VM disks in `internal/backup/backup_test.go`
 - [X] T105 [P] [US4] Write failing restore validation tests for wrong password, truncation, digest mismatch, incompatible release/schema, mismatched key, wrong host, non-empty/unowned target, and zero mutation before validation in `internal/backup/restore_test.go`
 - [X] T106 [P] [US4] Write failing recovery tests for invalidated sessions/origin/enrollment grants/OAuth state, provider inventory matches/conflicts, gated workspace entry/destructive actions, identity/authorization review, and explicit activation in `internal/backup/recovery_test.go`
 - [X] T107 [P] [US4] Write failing backup/restore API and CLI contract tests for password handling, stable JSON/exit codes, operation steps, validation IDs, separate activation, and no protected data in diagnostics in `tests/contract/backup_restore_test.go`
@@ -2806,3 +2806,11 @@ This checkpoint does not itself change the goal status.
 - T056 passed the race-enabled management route and authorization matrix
   comparisons and the setup, template, workspace, event replay, and entry
   grant handler contracts. T057 still owns manually configured preview ports.
+
+### Backup checkpoint continuity
+
+- T104 verifies that an established guest workload can continue responding
+  over mutual TLS and Yamux while new guest polls wait on the checkpoint
+  fence. The race-enabled guest, controller, and backup tests passed with
+  the age archive, checkpoint failure, and release-before-assembly cases.
+  Native workload continuity during a backup remains part of T116.
