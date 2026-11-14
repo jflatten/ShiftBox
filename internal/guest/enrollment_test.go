@@ -22,6 +22,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/guest"
+	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/web"
 	_ "modernc.org/sqlite"
@@ -187,8 +188,31 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 			t.Fatalf("cleanup before authenticated contact removed the image: %v", err)
 		}
 	}
-	server := httptest.NewUnstartedServer(web.GuestPollHandler(
-		web.GuestCompatibility{Protocol: "1", CurrentRelease: "test", PreviousRelease: "previous"}, enrollment.Exchange, func() time.Time { return now }))
+	clock := func() time.Time { return now }
+	mux := http.NewServeMux()
+	mux.Handle("/internal/v1/guest/poll", web.GuestPollHandler(
+		web.GuestCompatibility{Protocol: "1", CurrentRelease: "test", PreviousRelease: "previous"}, enrollment.Exchange, clock))
+	const gitPath = "/internal/v1/guest/git/github:access-token"
+	resolveGitToken := func(_ context.Context, owner, repository string) (string, error) {
+		if owner != "owner" || repository != "https://github.com/example/test" {
+			t.Error("token lookup did not use the owner and repository from the guest registration")
+		}
+		var mode string
+		if err := db.QueryRow("SELECT display_name FROM users WHERE id='owner'").Scan(&mode); err != nil {
+			return "", err
+		}
+		switch mode {
+		case "revoke":
+			_, err := db.Exec("UPDATE guest_registrations SET state='revoked' WHERE workspace_id='work'")
+			return "fixture-no-longer-authorized", err
+		case "reconnect":
+			return "", identity.ErrGitHubReconnect
+		default:
+			return "fixture-user-access-token", nil
+		}
+	}
+	mux.Handle(gitPath, web.GuestGitTokenHandler(enrollment.Authenticate, resolveGitToken, clock))
+	server := httptest.NewUnstartedServer(mux)
 	server.TLS = guest.ServerTLS(leafFixture(t, issuerKey, issuer, false), ca)
 	server.StartTLS()
 	defer server.Close()
@@ -214,6 +238,50 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	if code := poll(hello); code != 200 {
 		t.Fatalf("registered poll = %d, want 200", code)
 	}
+	t.Run("guest Git credential authority", func(t *testing.T) {
+		// Switch provider behavior through the fixture database so the request
+		// and test goroutines need no shared mutable state.
+		mode := func(value string) {
+			t.Helper()
+			if _, err := db.Exec("UPDATE users SET display_name=$1 WHERE id='owner'", value); err != nil {
+				t.Fatal(err)
+			}
+		}
+		request := func(payload string, want int) string {
+			t.Helper()
+			response, err := client.Post(server.URL+gitPath, "application/json", bytes.NewBufferString(payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			var body bytes.Buffer
+			if _, err := body.ReadFrom(response.Body); err != nil {
+				t.Fatal(err)
+			}
+			if response.StatusCode != want || response.Header.Get("Cache-Control") != "no-store" {
+				t.Fatalf("guest Git token request = %d, cache %q, want %d and no-store", response.StatusCode, response.Header.Get("Cache-Control"), want)
+			}
+			return body.String()
+		}
+		mode("connected")
+		request(`{"ownerId":"other","repositoryUrl":"https://github.com/example/other"}`, 400)
+		body := request("", 200)
+		var got map[string]string
+		if err := json.Unmarshal([]byte(body), &got); err != nil || len(got) != 1 || got["accessToken"] != "fixture-user-access-token" {
+			t.Error("guest Git token response was not limited to the current access token")
+		}
+		mode("reconnect")
+		if body := request("", 409); !bytes.Contains([]byte(body), []byte("git.reconnect_required")) {
+			t.Error("guest Git token lookup did not communicate the reconnect requirement")
+		}
+		mode("revoke")
+		if body := request("", 403); bytes.Contains([]byte(body), []byte("fixture-no-longer-authorized")) {
+			t.Error("guest received Git token after revocation during provider lookup")
+		}
+		if _, err := db.Exec("UPDATE guest_registrations SET state='active' WHERE workspace_id='work'"); err != nil {
+			t.Fatal(err)
+		}
+	})
 	if code := poll(`{"protocolVersion":"1","guestRelease":"test","workspaceId":"foreign"}`); code != 400 {
 		t.Errorf("poll with forged workspace = %d, want 400", code)
 	}

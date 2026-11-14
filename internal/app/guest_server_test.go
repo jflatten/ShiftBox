@@ -17,8 +17,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/guest"
+	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -66,7 +68,15 @@ func TestGuestListenersSeparateEnrollmentAndPolling(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	cfg := GuestListenerConfig{EnrollmentAddress: "127.0.0.1:0", PollAddress: "127.0.0.1:0", PublicHost: "127.0.0.1"}
+	keyStore, err := cryptostore.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	github, err := identity.NewGitHub(db, keyStore, "fixture-app", "fixture-secret", 1, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := GuestListenerConfig{EnrollmentAddress: "127.0.0.1:0", PollAddress: "127.0.0.1:0", PublicHost: "127.0.0.1", GitHub: github}
 	listeners, err := ListenGuests(cfg, guest.NewEnrollment(db, ca), ca, web.GuestCompatibility{Protocol: "1", CurrentRelease: "test"}, time.Now)
 	if err != nil {
 		t.Fatal(err)
@@ -94,9 +104,14 @@ func TestGuestListenersSeparateEnrollmentAndPolling(t *testing.T) {
 	}
 	post(listeners.EnrollURL, 409)
 	post(strings.Replace(listeners.EnrollURL, "/internal/v1/enroll", "/internal/v1/guest/poll", 1), 404)
+	post(strings.Replace(listeners.EnrollURL, "/internal/v1/enroll", guest.GitAccessTokenPath, 1), 404)
 	if resp, err := client.Post(listeners.PollURL, "application/json", bytes.NewBufferString("{}")); err == nil {
 		resp.Body.Close()
 		t.Error("poll listener accepted TLS without a client certificate")
+	}
+	if resp, err := client.Post(strings.Replace(listeners.PollURL, "/internal/v1/guest/poll", guest.GitAccessTokenPath, 1), "", nil); err == nil {
+		resp.Body.Close()
+		t.Error("Git token listener accepted TLS without a client certificate")
 	}
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {

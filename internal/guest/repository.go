@@ -49,7 +49,7 @@ func (r repositoryPreparation) prepare(ctx context.Context, source repositorySou
 		return repositoryEvidence{}, errors.New("owner Git authorization is unavailable")
 	}
 	token, err := r.token(ctx)
-	if err != nil || !validGitAccessToken(token) {
+	if err != nil || !ValidGitAccessToken(token) {
 		if ctx.Err() != nil {
 			return repositoryEvidence{}, ctx.Err()
 		}

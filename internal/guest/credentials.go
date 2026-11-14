@@ -8,7 +8,8 @@ import (
 	"strings"
 )
 
-const gitAccessTokenPath = "/internal/v1/guest/git/github:access-token"
+// GitAccessTokenPath is served only on the authenticated guest listener.
+const GitAccessTokenPath = "/internal/v1/guest/git/github:access-token"
 
 func guestGitAccessToken(ctx context.Context, client *http.Client, pollEndpoint string) (string, error) {
 	if !validPollEndpoint(pollEndpoint) {
@@ -18,7 +19,7 @@ func guestGitAccessToken(ctx context.Context, client *http.Client, pollEndpoint 
 	if err != nil {
 		return "", errors.New("invalid guest credential endpoint")
 	}
-	endpoint.Path = gitAccessTokenPath
+	endpoint.Path = GitAccessTokenPath
 	endpoint.RawPath = ""
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
 	if err != nil {
@@ -38,12 +39,13 @@ func guestGitAccessToken(ctx context.Context, client *http.Client, pollEndpoint 
 	var result struct {
 		AccessToken string `json:"accessToken"`
 	}
-	if err := decodeAgentJSON(response.Body, &result); err != nil || !validGitAccessToken(result.AccessToken) {
+	if err := decodeAgentJSON(response.Body, &result); err != nil || !ValidGitAccessToken(result.AccessToken) {
 		return "", errors.New("controller returned an invalid guest Git credential")
 	}
 	return result.AccessToken, nil
 }
 
-func validGitAccessToken(token string) bool {
+// ValidGitAccessToken checks the format and size before delivering or using a token.
+func ValidGitAccessToken(token string) bool {
 	return token != "" && len(token) <= 4096 && !strings.ContainsAny(token, " \r\n\t\x00")
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/guest"
+	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -21,6 +22,7 @@ type GuestListenerConfig struct {
 	EnrollmentAddress string
 	PollAddress       string
 	PublicHost        string
+	GitHub            *identity.GitHub
 }
 
 // GuestListeners owns the initial enrollment and authenticated poll listeners.
@@ -54,8 +56,12 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 	if err != nil {
 		return nil, err
 	}
-	poll, err := listenGuest(config.PollAddress, guest.ServerTLS(tls.Certificate{}, authority),
-		web.GuestPollHandler(compatibility, enrollment.Exchange, now), certificates)
+	internal := http.NewServeMux()
+	internal.Handle("/internal/v1/guest/poll", web.GuestPollHandler(compatibility, enrollment.Exchange, now))
+	if config.GitHub != nil {
+		internal.Handle(guest.GitAccessTokenPath, web.GuestGitTokenHandler(enrollment.Authenticate, config.GitHub.AccessToken, now))
+	}
+	poll, err := listenGuest(config.PollAddress, guest.ServerTLS(tls.Certificate{}, authority), internal, certificates)
 	if err != nil {
 		_ = enroll.network.Close()
 		return nil, err

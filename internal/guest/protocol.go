@@ -19,6 +19,8 @@ var ErrGuestUnauthorized = errors.New("guest identity is not authorized")
 // Contact describes the workspace authority established by an authenticated poll.
 type Contact struct {
 	WorkspaceID  string
+	OwnerID      string
+	Repository   string
 	Generation   int64
 	DesiredState string
 	RenewAfter   time.Time
@@ -66,9 +68,11 @@ func (e *Enrollment) authenticate(ctx context.Context, db pollQueryer, leaf *x50
 		    JOIN users u ON u.id=w.owner_user_id
 		    WHERE w.id=$2 AND w.generation=$3 AND w.installation_id=$7 AND i.state='active'
 		      AND u.membership_state='active' AND w.desired_state<>'deleted' AND w.provider_instance_id IS NOT NULL)
-		RETURNING (SELECT desired_state FROM workspaces WHERE id=$2)`,
+		RETURNING (SELECT desired_state FROM workspaces WHERE id=$2),
+		          (SELECT owner_user_id FROM workspaces WHERE id=$2),
+		          (SELECT repository_url FROM workspaces WHERE id=$2)`,
 		stamp, parts[2], generation, leaf.SerialNumber.Text(16), hex.EncodeToString(fingerprint[:]), expiry, identity.Host).
-		Scan(&contact.DesiredState)
+		Scan(&contact.DesiredState, &contact.OwnerID, &contact.Repository)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Contact{}, ErrGuestUnauthorized
 	}
