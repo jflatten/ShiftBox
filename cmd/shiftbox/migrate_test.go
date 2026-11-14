@@ -156,3 +156,22 @@ func TestMigrationDexRequiresPinnedExecutable(t *testing.T) {
 		t.Error("migrationDexMatches(non-executable fixture) = true, want refusal")
 	}
 }
+
+// TestMigrationStorageRequiresBothDirectories checks that a writable
+// installation directory cannot mask unavailable workspace storage.
+func TestMigrationStorageRequiresBothDirectories(t *testing.T) {
+	installation := t.TempDir()
+	workspaceStorage := t.TempDir()
+	if !migrationStorageWritable(installation, workspaceStorage) {
+		t.Error("migrationStorageWritable rejected both existing writable directories")
+	}
+	if migrationStorageWritable(installation, filepath.Join(workspaceStorage, "missing")) {
+		t.Error("migrationStorageWritable accepted a missing workspace directory")
+	}
+	for _, dir := range []string{installation, workspaceStorage} {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 0 {
+			t.Errorf("migrationStorageWritable left %d entries in a probe directory (%v)", len(entries), err)
+		}
+	}
+}

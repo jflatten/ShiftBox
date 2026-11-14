@@ -1,13 +1,58 @@
 package app
 
 import (
+	"bytes"
 	"database/sql"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/database"
 )
+
+// TestMigrationKeyAccessible covers key loss and replacement while a running
+// controller still has a usable copy in memory.
+func TestMigrationKeyAccessible(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "installation")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "installation.key")
+	original := bytes.Repeat([]byte{1}, 32)
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cipher, err := loadControllerCipher(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &ControllerState{cipher: cipher}
+	if !state.migrationKeyAccessible(dir) {
+		t.Error("migrationKeyAccessible rejected the retained installation key")
+	}
+	if err := os.WriteFile(path, bytes.Repeat([]byte{2}, 32), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if state.migrationKeyAccessible(dir) {
+		t.Error("migrationKeyAccessible accepted a different key on disk")
+	}
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if state.migrationKeyAccessible(dir) {
+		t.Error("migrationKeyAccessible accepted a key without private permissions")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if state.migrationKeyAccessible(dir) {
+		t.Error("migrationKeyAccessible accepted a missing key on disk")
+	}
+}
 
 // TestMigrationDatabaseOwned checks that preflight rejects a missing identity
 // login, the wrong identity role, and drift on the application connection.

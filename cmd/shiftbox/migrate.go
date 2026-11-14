@@ -95,10 +95,10 @@ func assessControllerMigration(ctx context.Context, cfg config.Config, state *ap
 	evidence := release.MigrationEvidence{
 		ProviderCompatible: manifest.ProtocolVersion == guestProtocol && caps.Version == manifest.UTM.Version &&
 			caps.Architecture == "amd64" && caps.Create && caps.Start && caps.Stop && caps.Delete,
-		StorageWritable: migrationStorageWritable(cfg.InstallationDir),
+		StorageWritable: migrationStorageWritable(cfg.InstallationDir, cfg.Runtime.UTMStorage),
 		ToolsCompatible: migrationDexMatches(cfg.Runtime.DexBinary, manifest.Dex) && migrationBackupTools(ctx, state, cfg.DataProfile),
 	}
-	evidence, err := state.MigrationEvidence(ctx, evidence, guestProtocol, now)
+	evidence, err := state.MigrationEvidence(ctx, evidence, cfg.InstallationDir, guestProtocol, now)
 	if err != nil {
 		return release.MigrationReport{}, err
 	}
@@ -125,12 +125,17 @@ func migrationBackupTools(ctx context.Context, state *app.ControllerState, profi
 	return true
 }
 
-func migrationStorageWritable(dir string) bool {
-	file, err := os.CreateTemp(dir, ".migration-preflight-")
-	if err != nil {
-		return false
+func migrationStorageWritable(installation, workspaceStorage string) bool {
+	for _, dir := range []string{installation, workspaceStorage} {
+		if !filepath.IsAbs(dir) {
+			return false
+		}
+		file, err := os.CreateTemp(dir, ".migration-preflight-")
+		if err != nil || errors.Join(file.Close(), os.Remove(file.Name())) != nil {
+			return false
+		}
 	}
-	return errors.Join(file.Close(), os.Remove(file.Name())) == nil
+	return true
 }
 
 func migrationDexMatches(path string, expected release.ArtifactComponent) bool {

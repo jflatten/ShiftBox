@@ -1711,6 +1711,10 @@ This checkpoint does not itself change the goal status.
   beside the configuration passed to `shiftbox serve`, with private
   directories and file permissions. Admission persists the release ID
   for retries, and the worker reports blockers on the operation.
+- Preflight confirms the private installation key on disk matches the key
+  in use and verifies write access to both installation and UTM storage.
+  Tests cover replaced, missing, and non-private keys and unavailable UTM
+  storage.
 - Live irreversible-migration acceptance remains open under T097.
   Preflight does not apply migrations.
 
