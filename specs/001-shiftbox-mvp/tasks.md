@@ -2482,3 +2482,16 @@ This checkpoint does not itself change the goal status.
   The release recipe test passed, and Docker verified code-server 4.145.2
   in the built image with image pulls and networking disabled. Guest
   repair commands and a UTM artifact containing the image remain pending.
+
+### Guest repair entry and exit
+
+- T052 handles the fixed `enter-repair` and `exit-repair` commands. It
+  reads the immutable repair image ID recorded by Packer, quiesces the
+  normal container, and starts code-server offline with a separate home
+  and socket. It mounts the retained checkout and leaves the normal
+  container and retained data on disk after repair exit.
+- Guest tests cover initial entry, a lost container creation response,
+  duplicate dispatches, and scoped deletion. A disposable amd64 Docker
+  test verified repair HTTP health and an edited file after exit.
+- T052 and T055 remain open for controller dispatch and access, repair
+  workflow validation, and native UTM acceptance.

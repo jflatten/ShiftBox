@@ -148,6 +148,15 @@ func applyGuestPoll(ctx context.Context, journal *localJournal, runtime devConta
 	if err := decodeAgentJSON(bytes.NewReader(raw), &dispatch); err != nil {
 		return errors.New("invalid guest operation dispatch")
 	}
+	if dispatch.Command == enterRepairCommand || dispatch.Command == exitRepairCommand {
+		if desiredState != "running" || dispatch.Type != "repair" || dispatch.Arguments.RepositoryURL != "" ||
+			dispatch.Arguments.RepositoryRef != "" || dispatch.Arguments.Devcontainer != "" || len(dispatch.Arguments.RetainedMounts) != 0 {
+			return errors.New("invalid repair dispatch")
+		}
+		return journal.repair(ctx, guestDispatch{
+			ID: dispatch.ID, Version: dispatch.Version, Generation: generation, Command: dispatch.Command,
+		}, runtime)
+	}
 	if dispatch.Command == "shutdown-for-stop" {
 		if desiredState != "stopped" || dispatch.Type != "stop" || dispatch.Arguments.RepositoryURL != "" ||
 			dispatch.Arguments.RepositoryRef != "" || dispatch.Arguments.Devcontainer != "" || len(dispatch.Arguments.RetainedMounts) != 0 {
@@ -214,12 +223,13 @@ func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release, secr
 		return err
 	}
 	project := filepath.Join(stateDir, "project")
-	runtime := devContainer{workspace: project, credentials: secretSocket != "", ide: true, retainHome: true, repository: &repositoryPreparation{
-		project: project,
-		token: func(ctx context.Context) (string, error) {
-			return guestGitAccessToken(ctx, client, identity.PollEndpoint)
-		},
-	}}
+	runtime := devContainer{workspace: project, credentials: secretSocket != "", ide: true, retainHome: true,
+		repairImageFile: "/usr/local/share/shiftbox/repair-image", repairSocketDir: repairDirectory, repository: &repositoryPreparation{
+			project: project,
+			token: func(ctx context.Context) (string, error) {
+				return guestGitAccessToken(ctx, client, identity.PollEndpoint)
+			},
+		}}
 	var sampler cpuSampler
 	for {
 		input := newGuestPollRequest(protocol, release, journal)

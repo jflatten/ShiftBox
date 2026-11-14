@@ -31,7 +31,7 @@ func (d guestDispatch) valid() bool {
 	switch d.Command {
 	case "ensure-development-container", rebuildDevelopmentCommand:
 		return d.Config == "" || validDevContainerPath(d.Config)
-	case "shutdown-for-stop":
+	case "shutdown-for-stop", enterRepairCommand, exitRepairCommand:
 		return d.Config == "" && d.Repository == "" && d.Ref == ""
 	default:
 		return false
@@ -161,6 +161,19 @@ func (s localJournalState) valid() bool {
 	}
 	hasConnection := dockerContainerID.MatchString(op.Connection.ID) && validWaitFor(op.Connection.WaitFor)
 	noConnection := op.Connection == (containerConnection{})
+	if op.Command == enterRepairCommand || op.Command == exitRepairCommand {
+		switch op.Phase {
+		case localPending, localRequired:
+			return noConnection && op.Problem == ""
+		case localSucceeded:
+			return op.Problem == "" && op.Connection.WaitFor == "" &&
+				(op.Command == enterRepairCommand && dockerContainerID.MatchString(op.Connection.ID) || op.Command == exitRepairCommand && noConnection)
+		case localFailed:
+			return noConnection && op.Problem == problemRepairFailed
+		default:
+			return false
+		}
+	}
 	if op.Command == "shutdown-for-stop" {
 		if !noConnection {
 			return false

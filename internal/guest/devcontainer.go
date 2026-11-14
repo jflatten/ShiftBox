@@ -30,6 +30,8 @@ type devContainer struct {
 	credentials     bool
 	ide             bool
 	retainHome      bool
+	repairImageFile string
+	repairSocketDir string
 	run             func(context.Context, string, ...string) ([]byte, error)
 	setProjectOwner func(context.Context, string, int, int) error
 }

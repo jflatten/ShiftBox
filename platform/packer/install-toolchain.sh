@@ -88,6 +88,7 @@ COPY . /opt/shiftbox-code-server/
 REPAIR
 docker run --rm --pull=never --network=none "$repair_image" \
     /opt/shiftbox-code-server/bin/code-server --version | grep -F "$CODE_SERVER_VERSION"
+docker image inspect --format '{{.Id}}' "$repair_image" > /usr/local/share/shiftbox/repair-image
 
 test "$(node --version)" = "$node_version"
 test "$(devcontainer --version)" = "$devcontainer_version"
