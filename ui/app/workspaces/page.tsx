@@ -6,7 +6,8 @@ import { Text } from '@mantine/core';
 import { Workspaces } from '../../features/workspaces/workspaces';
 
 function SelectedWorkspace() {
-  return <Workspaces workspaceId={useSearchParams().get('id')} />;
+  const search = useSearchParams();
+  return <Workspaces workspaceId={search.get('id')} launch={search.get('launch') === '1'} />;
 }
 
 export default function WorkspacesPage() {

@@ -1791,5 +1791,13 @@ This checkpoint does not itself change the goal status.
   ID drives the shared WorkflowStepper.
 - UI tests cover listing, paging, separate state, workflow failures, and
   start/stop request wiring. Chrome verified the exported route with
-  fixture API responses. Launch, repair and production composition remain
-  open under T059 and T060.
+  fixture API responses.
+
+### Workspace launch UI
+
+- Added keyboard-selectable templates, review of the exact saved revision,
+  and launch with CSRF and an idempotency key retained across retries for
+  that revision. The operation response drives the shared WorkflowStepper.
+- All 29 UI tests and the production build passed. Chrome verified review
+  by keyboard and the accepted launch with fixture API responses. Template
+  creation, repair and live controller validation remain open.

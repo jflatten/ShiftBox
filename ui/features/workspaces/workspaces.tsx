@@ -7,11 +7,12 @@ import { ShiftBoxShell } from '../../components/app-shell';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
 import { useSession } from '../../lib/use-session';
+import { LaunchFlow } from './launch-flow';
 import { WorkspaceDetail } from './workspace-detail';
 
 import { workspaceState, type Workspace } from './workspace';
 
-export function Workspaces({ workspaceId }: { workspaceId: string | null }) {
+export function Workspaces({ workspaceId, launch = false }: { workspaceId: string | null; launch?: boolean }) {
   const session = useSession();
   const current = session.session?.mode === 'normal' && session.session.installationState === 'active' ? session.session : undefined;
   return (
@@ -22,7 +23,8 @@ export function Workspaces({ workspaceId }: { workspaceId: string | null }) {
           {session.isPending ? <Text role="status">Checking your session…</Text> : null}
           {session.data === null ? <Button component="a" href="/auth/login" style={{ alignSelf: 'flex-start' }}>Sign in</Button> : null}
         </>
-      ) : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken} /> : <WorkspaceList />}
+      ) : launch ? <LaunchFlow csrfToken={current.csrfToken} />
+        : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken} /> : <WorkspaceList />}
     </ShiftBoxShell>
   );
 }
@@ -42,7 +44,10 @@ function WorkspaceList() {
   const data = !page.isError ? page.data : undefined;
   return (
     <>
-      <Title order={1}>Workspaces</Title>
+      <Group justify="space-between">
+        <Title order={1}>Workspaces</Title>
+        <Button component="a" href="/workspaces/?launch=1">Launch workspace</Button>
+      </Group>
       {page.isError ? <APIProblemView error={page.error} /> : null}
       {page.isPending ? <Text role="status">Loading workspaces…</Text> : null}
       {data && data.items.length === 0 ? <Text>{cursor ? 'No workspaces on this page.' : 'No workspaces yet.'}</Text> : null}
