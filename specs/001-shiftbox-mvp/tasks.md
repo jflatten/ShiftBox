@@ -1745,3 +1745,15 @@ This checkpoint does not itself change the goal status.
   on SQLite and fresh PostgreSQL. Wiring workspace resolution to the
   authenticated guest endpoint and surfacing fallback in the UI remain
   open.
+
+### Guest secret delivery
+
+- Wired the workspace secret endpoint on the internal mTLS listener.
+  Authentication and resolution share one transaction, and the listener
+  uses the application's encrypted secret store. The endpoint accepts
+  the name without any caller-selected scope or owner and marks responses
+  non-cacheable.
+- The real TLS test covers an empty user override, organization fallback,
+  absent names, scope injection, a stopped VM and a revoked registration.
+  Guest, app, web, secret and contract race suites passed.
+- The in-guest command and its exit codes remain open under T075.

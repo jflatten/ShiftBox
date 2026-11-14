@@ -16,6 +16,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/proxy"
+	"github.com/jflatten/ShiftBox/internal/secret"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -25,6 +26,7 @@ type GuestListenerConfig struct {
 	PollAddress       string
 	PublicHost        string
 	GitHub            *identity.GitHub
+	Secrets           *secret.Service
 	TunnelAddress     string
 	Tunnels           *proxy.Tunnels
 }
@@ -69,6 +71,12 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 	internal := http.NewServeMux()
 	if config.GitHub != nil {
 		internal.Handle(guest.GitAccessTokenPath, web.GuestGitTokenHandler(enrollment.Authenticate, config.GitHub.AccessToken, now))
+	}
+	if config.Secrets != nil {
+		internal.Handle("POST "+guest.SecretResolvePrefix, web.GuestSecretHandler(
+			func(ctx context.Context, leaf *x509.Certificate, stamp time.Time, name string) ([]byte, string, error) {
+				return enrollment.ResolveSecret(ctx, leaf, stamp, config.Secrets, name)
+			}, now))
 	}
 	poll, err := listenGuest(config.PollAddress, guest.ServerTLS(tls.Certificate{}, authority), internal, certificates)
 	if err != nil {

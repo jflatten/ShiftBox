@@ -35,6 +35,7 @@ func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfi
 		return nil, err
 	}
 	enrollment := guest.NewEnrollment(state.DB, state.GuestCA)
+	listeners.Secrets = state.Secrets
 	endpoints, err := ListenGuests(listeners, enrollment, state.GuestCA, compatibility, now)
 	if err != nil {
 		return nil, err

@@ -91,7 +91,7 @@ func TestSecretOverrides(t *testing.T) {
 	checkValue := func(want string) {
 		t.Helper()
 		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
-			value, err := service.ResolveWorkspace(ctx, tx, "work", 1, "TOKEN")
+			value, _, err := service.ResolveWorkspace(ctx, tx, "work", 1, "TOKEN")
 			if err != nil || string(value) != want {
 				t.Fatalf("workspace secret = %q, %v, want %q", value, err, want)
 			}
@@ -120,7 +120,7 @@ func TestSecretOverrides(t *testing.T) {
 	}
 	checkValue("organization-fixture")
 	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
-		if _, err := service.ResolveWorkspace(ctx, tx, "work", 2, "TOKEN"); !errors.Is(err, ErrWorkspaceDenied) {
+		if _, _, err := service.ResolveWorkspace(ctx, tx, "work", 2, "TOKEN"); !errors.Is(err, ErrWorkspaceDenied) {
 			t.Fatalf("stale workspace generation = %v, want denial", err)
 		}
 		return nil
@@ -139,7 +139,7 @@ func TestSecretOverrides(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, "UPDATE secret_values SET scope_id=$1,name='COPIED' WHERE scope_type='organization'", installation); err != nil {
 			return err
 		}
-		value, err := service.ResolveWorkspace(ctx, tx, "work", 1, "COPIED")
+		value, _, err := service.ResolveWorkspace(ctx, tx, "work", 1, "COPIED")
 		if err == nil || len(value) != 0 {
 			t.Fatal("copied ciphertext authenticated under another name")
 		}

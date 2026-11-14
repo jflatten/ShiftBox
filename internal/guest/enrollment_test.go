@@ -9,23 +9,28 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jflatten/ShiftBox/internal/app"
+	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/proxy"
+	"github.com/jflatten/ShiftBox/internal/secret"
 	"github.com/jflatten/ShiftBox/internal/web"
 	_ "modernc.org/sqlite"
 )
@@ -226,8 +231,28 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		registry := &proxy.Registry{}
 		tunnels := &proxy.Tunnels{Registry: registry}
 		const bind = "127.0.0.1:0"
+		cipher, err := cryptostore.New(make([]byte, 32))
+		if err != nil {
+			t.Fatal(err)
+		}
+		secrets := secret.NewService(cipher)
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			if _, err := tx.Exec("UPDATE workspaces SET observed_state='running' WHERE id='work'"); err != nil {
+				return err
+			}
+			for _, item := range []struct{ scope, id, value string }{
+				{"organization", install, "fallback-fixture"}, {"user", "owner", ""},
+			} {
+				if err := secrets.Set(ctx, tx, secret.Scope{Type: item.scope, ID: item.id}, "TOKEN", []byte(item.value), "owner", now); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
 		listeners, err := app.ListenGuests(app.GuestListenerConfig{
-			EnrollmentAddress: bind, PollAddress: bind, TunnelAddress: bind, PublicHost: "127.0.0.1", Tunnels: tunnels,
+			EnrollmentAddress: bind, PollAddress: bind, TunnelAddress: bind, PublicHost: "127.0.0.1", Tunnels: tunnels, Secrets: secrets,
 		}, enrollment, ca, web.GuestCompatibility{Protocol: "1", CurrentRelease: "test"}, clock)
 		if err != nil {
 			t.Fatal(err)
@@ -241,6 +266,42 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 			tls.Certificate{Certificate: [][]byte{first}, PrivateKey: clientKey}, ca, "127.0.0.1")}
 		defer pollTransport.CloseIdleConnections()
 		pollClient := &http.Client{Transport: pollTransport, Timeout: time.Second}
+		secretURL := strings.TrimSuffix(listeners.PollURL, "/poll") + "/secrets/TOKEN:resolve"
+		checkSecret := func(url, payload string, code int, want string) {
+			t.Helper()
+			reply, err := pollClient.Post(url, "application/json", bytes.NewBufferString(payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reply.Body.Close()
+			raw, err := io.ReadAll(reply.Body)
+			if err != nil || reply.StatusCode != code || !bytes.Contains(raw, []byte(want)) {
+				t.Fatalf("guest secret status = %d, %v, want %d and expected response", reply.StatusCode, err, code)
+			}
+			if code == 200 && reply.Header.Get("Cache-Control") != "no-store" {
+				t.Error("guest secret response was cacheable")
+			}
+		}
+		checkSecret(secretURL, `{"scopeId":"another"}`, 400, "request.invalid_body")
+		checkSecret(secretURL, "{}", 200, `"value":"","source":"user"`)
+		checkSecret(strings.Replace(secretURL, "TOKEN", "MISSING", 1), "{}", 404, "secret.not_found")
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			return secrets.Delete(ctx, tx, secret.Scope{Type: "user", ID: "owner"}, "TOKEN", "owner", now)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		checkSecret(secretURL, "", 200, `"value":"fallback-fixture","source":"organization"`)
+		if _, err := db.Exec("UPDATE workspaces SET observed_state='stopped' WHERE id='work'"); err != nil {
+			t.Fatal(err)
+		}
+		checkSecret(secretURL, "{}", 403, "guest.identity_denied")
+		if _, err := db.Exec("UPDATE guest_registrations SET state='revoked' WHERE workspace_id='work'"); err != nil {
+			t.Fatal(err)
+		}
+		checkSecret(secretURL, "{}", 403, "guest.identity_denied")
+		if _, err := db.Exec("UPDATE guest_registrations SET state='active' WHERE workspace_id='work'"); err != nil {
+			t.Fatal(err)
+		}
 		reply, err := pollClient.Post(listeners.PollURL, "application/json",
 			bytes.NewBufferString(`{"protocolVersion":"1","guestRelease":"test"}`))
 		if err != nil {

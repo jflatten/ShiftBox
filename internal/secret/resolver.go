@@ -12,9 +12,9 @@ import (
 // ResolveWorkspace derives current owner and template access for a verified
 // workspace generation. The caller must authenticate the guest in the same
 // transaction. A value that fails authentication never falls through.
-func (s *Service) ResolveWorkspace(ctx context.Context, tx *sql.Tx, workspace string, generation int64, name string) ([]byte, error) {
+func (s *Service) ResolveWorkspace(ctx context.Context, tx *sql.Tx, workspace string, generation int64, name string) ([]byte, string, error) {
 	if !ValidName(name) {
-		return nil, ErrInvalidKey
+		return nil, "", ErrInvalidKey
 	}
 	var installation, owner, template string
 	var templateAllowed bool
@@ -29,10 +29,10 @@ func (s *Service) ResolveWorkspace(ctx context.Context, tx *sql.Tx, workspace st
 		  AND i.state='active' AND u.membership_state='active'`, workspace, generation).
 		Scan(&installation, &owner, &template, &templateAllowed)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrWorkspaceDenied
+		return nil, "", ErrWorkspaceDenied
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	scopes := []Scope{{"user", owner}}
 	if templateAllowed {
@@ -48,13 +48,14 @@ func (s *Service) ResolveWorkspace(ctx context.Context, tx *sql.Tx, workspace st
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		var value cryptostore.Value
 		if err := json.Unmarshal([]byte(raw), &value); err != nil {
-			return nil, errors.New("invalid protected secret")
+			return nil, "", errors.New("invalid protected secret")
 		}
-		return s.cipher.Open(binding(scope, id, name, version), value)
+		plaintext, err := s.cipher.Open(binding(scope, id, name, version), value)
+		return plaintext, scope.Type, err
 	}
-	return nil, sql.ErrNoRows
+	return nil, "", sql.ErrNoRows
 }
