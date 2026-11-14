@@ -26,6 +26,9 @@ func NewProvisionExecutor(store *Store, machines provider.Provider) *ProvisionEx
 
 // Observe checks the provider before creating or retrying the workspace VM.
 func (p *ProvisionExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
+	if step.Key != "provision" {
+		return "", false, provider.ErrInvalidState
+	}
 	req, err := p.request(ctx, op, step)
 	if err != nil {
 		return "", false, err
@@ -43,6 +46,9 @@ func (p *ProvisionExecutor) Observe(ctx context.Context, op operation.Operation,
 
 // Apply creates a stopped workspace VM from the pinned launch inputs.
 func (p *ProvisionExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
+	if step.Key != "provision" {
+		return "", provider.ErrInvalidState
+	}
 	req, err := p.request(ctx, op, step)
 	if err != nil {
 		return "", err
@@ -59,7 +65,7 @@ func (p *ProvisionExecutor) Apply(ctx context.Context, op operation.Operation, s
 
 func (p *ProvisionExecutor) request(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, error) {
 	if op.Type != "provision" || op.OriginatingAction != "workspace.launch" || op.WorkspaceID == nil ||
-		op.Status != "running" || step.Key != "provision" || step.Status != "active" {
+		op.Status != "running" || step.Status != "active" {
 		return provider.CreateRequest{}, provider.ErrInvalidState
 	}
 
@@ -69,7 +75,9 @@ func (p *ProvisionExecutor) request(ctx context.Context, op operation.Operation,
 	err := p.store.db.QueryRowContext(ctx, `SELECT w.installation_id,w.ownership_marker,COALESCE(w.provider_instance_id,''),
 		w.platform_artifact_id,a.release_id,w.cpu_count,w.memory_mib,w.disk_mib,w.network_policy_snapshot_json
 		FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id JOIN reservations r ON r.workspace_id=w.id
+		JOIN users u ON u.id=w.owner_user_id JOIN installations i ON i.id=w.installation_id
 		WHERE w.id=$1 AND w.generation=$2 AND w.owner_user_id=$3 AND w.desired_state='running'
+		  AND i.state='active' AND u.membership_state='active'
 		  AND a.state='available' AND r.cpu_memory_state='reserved' AND r.disk_state='reserved'`,
 		req.Ref.WorkspaceID, op.Generation, op.Actor).
 		Scan(&req.Ref.InstallationID, &req.Ref.OwnershipMarker, &req.Ref.InstanceID, &req.ArtifactID, &req.Release,

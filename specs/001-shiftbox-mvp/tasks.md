@@ -1359,3 +1359,15 @@ This checkpoint does not itself change the goal status.
   contact, forged workspace input, revocation and media cleanup.
 - Guest operation dispatch, poll replay and bounded execution evidence
   still need implementation.
+
+### Workspace worker enrollment step
+
+- Launch reconciliation now attaches the operation's enrollment media to
+  the verified stopped VM, rechecks current launch authority, and starts
+  it. A running VM is reconciled without replacing media or starting again.
+- Enrollment completes only when the exact VM and generation have a
+  consumed grant for this operation and current authenticated guest
+  contact. Cleanup follows that evidence.
+- Worker tests cover a lost start reply and contact arriving after worker
+  restart. The Ubuntu agent, live boot and remaining guest workflow steps
+  are still pending.
