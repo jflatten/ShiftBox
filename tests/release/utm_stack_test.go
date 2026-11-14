@@ -21,6 +21,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/provider/utm"
@@ -35,10 +36,19 @@ import (
 // media, verifies an authenticated guest poll, then checks the offboarding
 // stop and retained disk before deleting the disposable VM.
 func TestUTMGuestEnrollment(t *testing.T) {
-	runUTMGuestFixture(t, nil)
+	runUTMGuestFixture(t, nil, false)
 }
 
-func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture) {
+// TestUTMExpiredGuestRecovery verifies fresh provider enrollment and preserved
+// disk identity after a real short-lived guest certificate expires offline.
+func TestUTMExpiredGuestRecovery(t *testing.T) {
+	if os.Getenv("SHIFTBOX_TEST_UTM_EXPIRED_GUEST") != "1" {
+		t.Skip("set SHIFTBOX_TEST_UTM_EXPIRED_GUEST=1 for native recovery")
+	}
+	runUTMGuestFixture(t, nil, true)
+}
+
+func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, recoverExpiredGuest bool) {
 	t.Helper()
 	if os.Getenv("SHIFTBOX_TEST_UTM_MUTATIONS") != "5.0.8" {
 		t.Skip("set SHIFTBOX_TEST_UTM_MUTATIONS=5.0.8 to enable the disposable VM journey")
@@ -51,6 +61,9 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture) {
 	timeout := 8 * time.Minute
 	if maintenance != nil {
 		timeout = 18 * time.Minute
+	}
+	if recoverExpiredGuest {
+		timeout = 15 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	defer cancel()
@@ -116,24 +129,49 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture) {
 	}
 	bind := net.JoinHostPort(host, "0")
 	journal := operation.NewJournal(db, time.Now, uuid.NewString)
-	tunnels := &proxy.Tunnels{Registry: &proxy.Registry{}}
 	state := &app.ControllerState{DB: db, GuestCA: ca}
 	state.Installation.InstallationID = id
 	state.Installation.Settings.ManagementOrigin = "https://management.test"
 	state.Installation.Settings.IDEHostPattern = "{workspace}.ide.test"
 	state.Installation.Settings.PreviewHostPattern = "{service}--{workspace}.preview.test"
-	listeners := app.GuestListenerConfig{
-		EnrollmentAddress: bind, PollAddress: bind, TunnelAddress: bind, PublicHost: host, Tunnels: tunnels,
+	startRuntime := func(authority *guest.Authority) (*proxy.Registry, func()) {
+		t.Helper()
+		registry := &proxy.Registry{}
+		listeners := app.GuestListenerConfig{
+			EnrollmentAddress: bind, PollAddress: bind, TunnelAddress: bind, PublicHost: host,
+			Tunnels: &proxy.Tunnels{Registry: registry},
+		}
+		if maintenance != nil {
+			listeners.GuestUpdates = maintenance.load
+		}
+		state.GuestCA = authority
+		runtime, err := app.ListenWorkspaceRuntime(state, listeners,
+			web.GuestCompatibility{Protocol: metadata.ProtocolVersion, CurrentRelease: guestRelease}, journal, machines, dir, time.Now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runCtx, stop := context.WithCancel(ctx)
+		served := make(chan error, 1)
+		go func() { served <- runtime.Serve(runCtx) }()
+		return registry, func() {
+			stop()
+			if err := <-served; !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("workspace runtime stopped: %v", err)
+			}
+			runtime.Close()
+		}
 	}
-	if maintenance != nil {
-		listeners.GuestUpdates = maintenance.load
+	issuer := ca
+	if recoverExpiredGuest {
+		// Keep the genuine CA DER, subject, and signing key. This copy caps only
+		// initial certificate issuance so the native guest can expire offline.
+		shortIssuer, shortCertificate := *ca, *ca.Certificate
+		shortCertificate.NotAfter = time.Now().Add(4 * time.Minute).Truncate(time.Second)
+		shortIssuer.Certificate = &shortCertificate
+		issuer = &shortIssuer
 	}
-	runtime, err := app.ListenWorkspaceRuntime(state, listeners,
-		web.GuestCompatibility{Protocol: metadata.ProtocolVersion, CurrentRelease: guestRelease}, journal, machines, dir, time.Now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer runtime.Close()
+	registry, stopRuntime := startRuntime(issuer)
+	defer func() { stopRuntime() }()
 
 	var op operation.Operation
 	err = database.Transaction(ctx, db, func(tx *sql.Tx) error {
@@ -150,15 +188,6 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture) {
 	}
 	ref := provider.WorkspaceRef{InstallationID: id, WorkspaceID: workspaceID, Generation: 1, OwnershipMarker: marker}
 	t.Cleanup(func() { cleanupEnrollmentVM(t, machines, ref) })
-	runCtx, stop := context.WithCancel(ctx)
-	served := make(chan error, 1)
-	go func() { served <- runtime.Serve(runCtx) }()
-	defer func() {
-		stop()
-		if err := <-served; !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("workspace runtime stopped: %v", err)
-		}
-	}()
 	started := time.Now()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -185,7 +214,16 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture) {
 		maintenance.verify(t, ctx, db, journal, machines, before, op.ID, owner, metadata)
 		return
 	}
-	stopID := disableEnrollmentFixtureOwner(t, db, journal, tunnels.Registry, owner, workspaceID)
+	if recoverExpiredGuest {
+		stopped := stopUTMEnrolledFixture(t, ctx, db, journal, machines, before, op.ID, owner)
+		stopRuntime()
+		stopRuntime = func() {}
+		prior := waitForNativeGuestExpiry(t, ctx, db, stopped.Ref)
+		_, stopRuntime = startRuntime(ca)
+		verifyNativeGuestRecovery(t, ctx, db, journal, machines, stopped, owner, prior)
+		return
+	}
+	stopID := disableEnrollmentFixtureOwner(t, db, journal, registry, owner, workspaceID)
 	for {
 		stop, err := journal.Get(ctx, stopID)
 		if err != nil {

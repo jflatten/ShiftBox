@@ -44,7 +44,7 @@ and zero after replacement.
 | --- | --- |
 | Section 3 | Protected SQLite setup, image validation and fresh administrator sign-in on `mvp-rc1`. |
 | Section 4 | Native Chrome lifecycle and retained checkout through repair and retry, plus the exact Go journal. A subsequent Chrome run verified actual developer-home and named-volume data after stop/start and rebuild on the same workspace. |
-| Sections 8–9 | Authenticated native guest enrollment and stopped-state signed maintenance with rollback and successful replacement. |
+| Sections 8–9 | Authenticated native guest enrollment and stopped-state signed maintenance with rollback and successful replacement. A native restart after the stopped guest's certificate expired verified a fresh identity, cleared enrollment media, and the same VM and owned disk. |
 | Section 10 | Populated SQLite backup, protected restore, native provider and authority review, explicit activation and copied-grant revocation. |
 
 The engineering rerun after `17374f4` passed the serial Go suite and race

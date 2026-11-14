@@ -36,6 +36,20 @@ administrator offboarding route stopped the exact clone and preserved its
 owned disk and disk reservation while releasing compute. The test then
 removed the disposable clone.
 
+## Expired guest recovery
+
+The race-enabled `TestUTMExpiredGuestRecovery` passed against the
+`mvp-rc1` image in 289.46 seconds. The guest first authenticated with a
+short-lived certificate. The test stopped the guest and waited for that
+certificate to expire. The ordinary start operation issued fresh
+enrollment media. The guest authenticated with a new key and certificate
+on the same VM and owned disk. The previous grant was invalidated and the
+one-use media was cleared after enrollment.
+
+Use the same native fixture settings as `TestUTMGuestEnrollment` plus
+`SHIFTBOX_TEST_UTM_EXPIRED_GUEST=1`. The test caps the issuer validity in
+memory for the first enrollment and uses the original issuer for recovery.
+
 ## Signed maintenance fixture
 
 `TestUTMGuestMaintenance` reuses the enrollment fixture and only needs one

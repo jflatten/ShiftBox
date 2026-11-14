@@ -33,7 +33,7 @@ func TestUTMGuestMaintenance(t *testing.T) {
 	if !filepath.IsAbs(failing) || !filepath.IsAbs(working) || failing == working {
 		t.Fatal("set distinct absolute rollback and update release directories")
 	}
-	runUTMGuestFixture(t, &nativeMaintenanceFixture{failing: failing, working: working})
+	runUTMGuestFixture(t, &nativeMaintenanceFixture{failing: failing, working: working}, false)
 }
 
 type nativeMaintenanceFixture struct {
@@ -75,26 +75,7 @@ func (f *nativeMaintenanceFixture) verify(t *testing.T, ctx context.Context, db 
 ) {
 	t.Helper()
 	ref := before.Ref
-	var stop operation.Operation
-	err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
-		now := time.Now()
-		// This fixture exercises the enrolled management agent without checkout.
-		if err := journal.CancelInTx(ctx, tx, provisionID, now); err != nil {
-			return err
-		}
-		var version int64
-		if err := tx.QueryRowContext(ctx, "SELECT version FROM workspaces WHERE id=$1", ref.WorkspaceID).Scan(&version); err != nil {
-			return err
-		}
-		var err error
-		stop, err = workspace.AdmitPower(ctx, tx, journal, workspace.PowerIntent{WorkspaceID: ref.WorkspaceID,
-			ActorID: owner, RequestKey: "native-maintenance-stop", Action: "stop", Version: version}, now)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	waitNativeOperation(t, ctx, journal, stop.ID, "succeeded")
+	stopUTMEnrolledFixture(t, ctx, db, journal, machines, before, provisionID, owner)
 	for _, scenario := range []struct {
 		key, campaign, operation, activation, digest string
 		retry                                        bool
