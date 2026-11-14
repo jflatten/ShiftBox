@@ -10,7 +10,8 @@ The [release manifest](../../platform/manifests/release.json) records hashes
 for the exact candidate components. These are the versions used in this run.
 The local controller binary was built with the setup release change recorded
 in commit `4c3cb95` and pinned to `development-repair`. Its digest identifies
-that local binary.
+that local binary. The companion UTM export's artifact manifest SHA-256 was
+`bc0f0bf860c21b984216089579cc5c6f1485854f2a585829c85344ce54c9c301`.
 
 ## Evidence
 
@@ -18,6 +19,7 @@ that local binary.
 | --- | --- |
 | Native protected setup | A fresh SQLite installation used the pinned Dex build, rotated the temporary password, accepted fixture HTTPS, and saved capacity. |
 | Native UTM platform validation | Setup booted the imported image in a disposable VM, confirmed an authenticated guest poll, removed the VM, and recorded the image as available. |
+| Go native UTM enrollment and stop | `TestUTMGuestEnrollment` passed in 63.76 seconds. The guest enrolled in 45 seconds, and offboarding stopped the VM while preserving its owned disk. The test removed the disposable VM afterward. |
 | Chrome management handoff | The controller required a fresh sign-in after activation. Chrome signed in through Dex and reached the GitHub authorization step. |
 | Chrome workspace journey | The run reached GitHub and timed out waiting for authorization. Repository clone, Dev Container launch, IDE, stop and start, rebuild, and repair remain pending. |
 | Go workspace journal check | Pending a completed workspace journey. |
