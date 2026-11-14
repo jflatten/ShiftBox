@@ -156,6 +156,25 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 		!strings.HasPrefix(repairGrant.ExchangeURL, "https://"+workspace+".repair.test/_shiftbox/entry?grant=") {
 		t.Fatalf("repair entry response = %s, %v, want a grant for the repair hostname", response.Body, err)
 	}
+	// The retry intent closes repair access immediately, including a grant
+	// issued before exit. Normal access waits for the new verification.
+	power := web.WorkspacePowerHandler(db, origin, func() time.Time { return bootTime.Add(time.Second) }, journal)
+	r := httptest.NewRequest(http.MethodPost, origin+"/api/v1/workspaces/"+workspace+"/actions/retry", nil)
+	r.SetPathValue("workspaceId", workspace)
+	r.SetPathValue("action", "retry")
+	r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+	r.Header.Set("Origin", origin)
+	r.Header.Set("X-CSRF-Token", csrf)
+	r.Header.Set("If-Match", `"1"`)
+	r.Header.Set("Idempotency-Key", "workspace-exit-repair")
+	retryResponse := httptest.NewRecorder()
+	bootTime = bootTime.Add(time.Second)
+	power.ServeHTTP(retryResponse, r)
+	if retryResponse.Code != http.StatusAccepted {
+		t.Fatalf("exit repair and retry = %d %s, want 202", retryResponse.Code, retryResponse.Body)
+	}
+	request(workspace, "repair", csrf, 403)
+	request(workspace, "ide", csrf, 403)
 	forwarded := 0
 	registry := &proxy.Registry{}
 	streamStarted := make(chan struct{})
@@ -195,6 +214,7 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 		return response
 	}
 	serviceOrigin := "https://" + destination.Host
+	send("GET", repairGrant.ExchangeURL, "", nil, 403)
 	sibling := strings.Replace(serviceOrigin, "preview-8080", "preview-9000", 1)
 	send("GET", sibling+destination.RequestURI(), "", nil, 403)
 	redeemed := send("GET", grant.ExchangeURL, "", nil, 303)

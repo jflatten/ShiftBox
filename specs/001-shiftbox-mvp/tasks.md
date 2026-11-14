@@ -2509,3 +2509,14 @@ This checkpoint does not itself change the goal status.
 - The approved combined exit and retry action still needs controller
   dispatch, setup reconciliation, and UI wiring. Native UTM and browser
   repair acceptance remain open.
+
+### Exit repair and retry setup
+
+- T055 exposes the combined action when repair is active. Accepting it
+  immediately closes admission to the repair origin. The guest stops
+  the repair container before retrying the captured Dev Container
+  configuration, preserving the checkout and retained mounts. The
+  controller requires fresh development IDE verification before entry.
+- Guest, authenticated polling, API, worker, and UI tests cover the
+  combined action. A release artifact and full UTM browser journey
+  remain to be exercised under T039 and T061.

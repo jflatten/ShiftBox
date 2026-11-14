@@ -136,3 +136,42 @@ func testGuestRepair(t *testing.T, resumed bool) {
 		}
 	}
 }
+
+// TestRetryAfterRepairExitsBeforeSetup covers repair after an invalid project
+// configuration, before any normal developer home or container exists.
+func TestRetryAfterRepairExitsBeforeSetup(t *testing.T) {
+	state := t.TempDir()
+	repair := strings.Repeat("a", 64)
+	development := strings.Repeat("b", 64)
+	var effects []string
+	d := devContainer{workspace: filepath.Join(state, "project"), repairSocketDir: state,
+		run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
+			if executable == devContainerCLI {
+				effects = append(effects, args[0])
+				return []byte(`{"outcome":"success","containerId":"` + development + `","mergedConfiguration":{}}`), nil
+			}
+			if executable != "/usr/bin/docker" || args[0] != "container" {
+				t.Fatalf("retry command = %q %q, want managed Docker or Dev Container commands", executable, args)
+			}
+			effects = append(effects, args[1])
+			if args[1] == "ls" {
+				return []byte(repair), nil
+			}
+			return nil, nil
+		}}
+	journal, err := loadLocalJournal(filepath.Join(state, "journal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := json.RawMessage(`{"id":"99999999-0000-4000-8000-000000000053","version":7,"type":"rebuild",
+		"command":"retry-development-after-repair","arguments":{"devcontainerPath":".devcontainer.json"}}`)
+	for range 3 {
+		if err := applyGuestPoll(t.Context(), journal, d, 1, "running", raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{"ls", "stop", "rm", "up", "run-user-commands"}
+	if got := journal.report(); got.Status != "succeeded" || got.Evidence.ContainerID != development || !slices.Equal(effects, want) {
+		t.Errorf("repair retry = %+v, %v; want new development evidence after %v", got, effects, want)
+	}
+}

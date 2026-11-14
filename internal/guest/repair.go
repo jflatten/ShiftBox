@@ -157,6 +157,21 @@ func (d devContainer) exitRepair(ctx context.Context) error {
 	return d.removeRepairSocket()
 }
 
+func (d devContainer) retryAfterRepair(ctx context.Context) (containerConnection, error) {
+	if err := d.exitRepair(ctx); err != nil {
+		return containerConnection{}, err
+	}
+	home, err := d.retainedHome()
+	if err != nil {
+		return containerConnection{}, err
+	}
+	if home != "" {
+		return d.replaceDevelopment(ctx, true)
+	}
+	// A configuration or build failure can precede the first developer home.
+	return d.ensure(ctx)
+}
+
 func (d devContainer) removeRepairSocket() error {
 	if !filepath.IsAbs(d.repairSocketDir) {
 		return errors.New("invalid repair socket directory")

@@ -29,6 +29,7 @@ type PowerIntent struct {
 // caller's transaction. Provider state and stop accounting change during reconciliation.
 func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, intent PowerIntent, now time.Time) (operation.Operation, error) {
 	var desired, label string
+	kind, action := intent.Action, "workspace."+intent.Action
 	switch intent.Action {
 	case "start":
 		desired, label = "running", "Start workspace"
@@ -38,6 +39,9 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		desired, label = "running", "Rebuild the development container"
 	case "repair":
 		desired, label = "running", "Start the repair environment"
+	case "retry":
+		desired, label = "running", "Exit repair and retry development setup"
+		kind, action = "rebuild", "workspace.repair"
 	default:
 		return operation.Operation{}, provider.ErrInvalidState
 	}
@@ -60,8 +64,7 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		if err != nil {
 			return operation.Operation{}, err
 		}
-		if op.WorkspaceID == nil || *op.WorkspaceID != intent.WorkspaceID || op.Type != intent.Action ||
-			op.OriginatingAction != "workspace."+intent.Action {
+		if op.WorkspaceID == nil || *op.WorkspaceID != intent.WorkspaceID || op.Type != kind || op.OriginatingAction != action {
 			return operation.Operation{}, ErrPowerConflict
 		}
 		return op, nil
@@ -91,7 +94,7 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 	if current == "deleted" || observed == "deleted" || instance == "" {
 		return operation.Operation{}, provider.ErrInvalidState
 	}
-	if (intent.Action == "rebuild" || intent.Action == "repair") && (current != "running" || observed != "running") {
+	if desired == "running" && intent.Action != "start" && (current != "running" || observed != "running") {
 		return operation.Operation{}, provider.ErrInvalidState
 	}
 	if intent.Action == "repair" {
@@ -100,6 +103,15 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 			return operation.Operation{}, err
 		}
 		if !eligible {
+			return operation.Operation{}, provider.ErrInvalidState
+		}
+	}
+	if intent.Action == "retry" || intent.Action == "rebuild" {
+		ready, err := RepairActive(ctx, tx, intent.WorkspaceID, generation)
+		if err != nil {
+			return operation.Operation{}, err
+		}
+		if ready != (intent.Action == "retry") {
 			return operation.Operation{}, provider.ErrInvalidState
 		}
 	}
@@ -122,15 +134,26 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		steps = []operation.Step{{Key: "shutdown", Label: "Stop workspace workloads"}, {Key: "stop", Label: label}}
 	case "start":
 		steps = append([]operation.Step{{Key: "start", Label: label}}, developmentSteps("Start the development container")...)
-	case "rebuild":
+	case "rebuild", "retry":
 		steps = developmentSteps(label)
 	case "repair":
 		steps = []operation.Step{{Key: "repair_enter", Label: label}, {Key: "verify_repair", Label: "Verify the repair IDE"}}
 	}
 	return journal.CreateInTx(ctx, tx, operation.Request{
-		Actor: intent.ActorID, Key: intent.RequestKey, Type: intent.Action, OriginatingAction: "workspace." + intent.Action,
+		Actor: intent.ActorID, Key: intent.RequestKey, Type: kind, OriginatingAction: action,
 		WorkspaceID: &intent.WorkspaceID, Generation: generation, Steps: steps,
 	})
+}
+
+// RepairActive reports whether the latest workspace lifecycle verified repair.
+func RepairActive(ctx context.Context, tx *sql.Tx, id string, generation int64) (bool, error) {
+	var active bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM operations WHERE id=(SELECT id FROM operations WHERE workspace_id=$1 AND generation=$2
+			AND type IN ('provision','start','stop','rebuild','repair','delete') ORDER BY created_at DESC,id DESC LIMIT 1)
+		AND type='repair' AND originating_action='workspace.repair' AND status='succeeded'
+	)`, id, generation).Scan(&active)
+	return active, err
 }
 
 // RepairAvailable checks for a failed setup step and recent authenticated guest contact.

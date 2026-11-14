@@ -632,6 +632,28 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		if _, err := db.Exec("UPDATE operations SET status='succeeded' WHERE id=$1", repairID); err != nil {
 			t.Fatal(err)
 		}
+		const retryID = "99999999-0000-4000-8000-000000000016"
+		for _, query := range []string{
+			`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,version,originating_action)
+			 VALUES($1,'work','rebuild',1,'owner','fixture-repair-retry','waiting','configure','now',7,'workspace.repair')`,
+			`INSERT INTO operation_steps(operation_id,step_index,step_key,label,status) VALUES($1,0,'configure','Retry setup','active')`,
+		} {
+			if _, err := db.Exec(query, retryID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		code, body = pollResponse(report)
+		if code != 200 || json.Unmarshal([]byte(body), &repair) != nil || repair.Operation.ID != retryID ||
+			repair.Operation.Command != "retry-development-after-repair" || repair.Operation.Arguments.Devcontainer != "devcontainer.json" {
+			t.Fatalf("repair retry poll = %d %s, want fixed command and captured project configuration", code, body)
+		}
+		retried := strings.ReplaceAll(makeReport("7", "1", "running", "devcontainer.wait_for", containerID), configureID, retryID)
+		if code := poll(retried); code != 200 {
+			t.Fatalf("retried setup waitFor report = %d, want 200", code)
+		}
+		if _, err := db.Exec("UPDATE operations SET status='succeeded' WHERE id=$1", retryID); err != nil {
+			t.Fatal(err)
+		}
 	})
 	t.Run("guest workload shutdown", func(t *testing.T) {
 		const stopID = "99999999-0000-4000-8000-000000000003"

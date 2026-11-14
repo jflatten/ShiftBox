@@ -19,6 +19,10 @@ type namedVolume struct {
 }
 
 func (d devContainer) rebuild(ctx context.Context) (containerConnection, error) {
+	return d.replaceDevelopment(ctx, false)
+}
+
+func (d devContainer) replaceDevelopment(ctx context.Context, afterRepair bool) (containerConnection, error) {
 	home, err := d.retainedHome()
 	if err != nil || !d.retainHome || home == "" {
 		return containerConnection{}, errors.New("rebuild requires a retained developer home")
@@ -28,6 +32,10 @@ func (d devContainer) rebuild(ctx context.Context) (containerConnection, error) 
 		return containerConnection{}, err
 	}
 	id := strings.TrimSpace(string(out))
+	if id == "" && afterRepair {
+		// A failed build may have already removed the disposable container.
+		return d.ensure(ctx)
+	}
 	if !dockerContainerID.MatchString(id) {
 		return containerConnection{}, errors.New("rebuild requires exactly one development container")
 	}

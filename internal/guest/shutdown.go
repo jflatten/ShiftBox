@@ -34,6 +34,9 @@ func (j *localJournal) shutdown(ctx context.Context, dispatch guestDispatch, run
 	shutdownCtx, cancel := context.WithTimeout(ctx, shutdownTimeout)
 	defer cancel()
 	err := runtime.stopWorkload(shutdownCtx)
+	if err == nil && runtime.repairSocketDir != "" {
+		err = runtime.exitRepair(shutdownCtx)
+	}
 	if ctx.Err() != nil {
 		return OperationReport{}, ctx.Err()
 	}

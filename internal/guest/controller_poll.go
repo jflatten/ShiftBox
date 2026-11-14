@@ -109,7 +109,7 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 		return nil, nil
 	}
 	// The worker records the active step before the poll can dispatch it.
-	rows, err := tx.QueryContext(ctx, `SELECT o.id,o.type,o.version,w.repository_url,COALESCE(w.repository_ref,''),w.devcontainer_path,s.step_key
+	rows, err := tx.QueryContext(ctx, `SELECT o.id,o.type,o.version,w.repository_url,COALESCE(w.repository_ref,''),w.devcontainer_path,s.step_key,o.originating_action
 		FROM operations o JOIN workspaces w ON w.id=o.workspace_id
 		JOIN operation_steps s ON s.operation_id=o.id AND (s.step_key=$3 OR ($4='running' AND s.step_key='repair_enter'))
 		LEFT JOIN guest_dispatches g ON g.operation_id=o.id
@@ -124,7 +124,7 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 		      OR s.step_key='repair_enter' AND o.type='repair' AND o.originating_action='workspace.repair'
 		        AND EXISTS (SELECT 1 FROM reservations r WHERE r.workspace_id=w.id
 		                    AND r.cpu_memory_state='reserved' AND r.disk_state='reserved')
-		      OR $3='configure' AND o.type='rebuild' AND o.originating_action='workspace.rebuild'
+		      OR s.step_key='configure' AND o.type='rebuild' AND o.originating_action IN ('workspace.rebuild','workspace.repair')
 		        AND EXISTS (SELECT 1 FROM reservations r WHERE r.workspace_id=w.id
 		                    AND r.cpu_memory_state='reserved' AND r.disk_state='reserved'))
 		      AND EXISTS(SELECT 1 FROM users actor WHERE actor.id=o.requested_by AND actor.membership_state='active'
@@ -138,11 +138,11 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 		return nil, err
 	}
 	var count int
-	var dispatchStep string
+	var dispatchStep, action string
 	for rows.Next() {
 		count++
 		if err = rows.Scan(&dispatch.ID, &dispatch.Type, &dispatch.Version,
-			&dispatch.Arguments.RepositoryURL, &dispatch.Arguments.RepositoryRef, &dispatch.Arguments.Devcontainer, &dispatchStep); err != nil {
+			&dispatch.Arguments.RepositoryURL, &dispatch.Arguments.RepositoryRef, &dispatch.Arguments.Devcontainer, &dispatchStep, &action); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -156,6 +156,9 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 	dispatch.Arguments.RetainedMounts = []string{}
 	if dispatch.Type == "rebuild" {
 		dispatch.Command = rebuildDevelopmentCommand
+		if action == "workspace.repair" {
+			dispatch.Command = retryAfterRepairCommand
+		}
 	}
 	if dispatchStep == "repair_enter" {
 		dispatch.Command = enterRepairCommand

@@ -90,7 +90,7 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 				return nil, err
 			}
 			var lastFailedID *string
-			var canStartRepair bool
+			var canStartRepair, canRetryAfterRepair bool
 			if view.CurrentOperationID == nil {
 				// A later successful workflow supersedes an older failure.
 				err := tx.QueryRowContext(ctx, `SELECT CASE WHEN status='failed' THEN id END
@@ -99,11 +99,17 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 				if err != nil && !errors.Is(err, sql.ErrNoRows) {
 					return nil, err
 				}
-				if lastFailedID != nil && view.DesiredState == "running" && view.ObservedState == "running" &&
+				if view.DesiredState == "running" && view.ObservedState == "running" &&
 					auth.Authorize(principal, "workspace.repair", target.Resource, nil, now()).Allowed {
-					canStartRepair, err = workspace.RepairAvailable(ctx, tx, view.ID, view.Generation, now())
+					canRetryAfterRepair, err = workspace.RepairActive(ctx, tx, view.ID, view.Generation)
 					if err != nil {
 						return nil, err
+					}
+					if lastFailedID != nil && !canRetryAfterRepair {
+						canStartRepair, err = workspace.RepairAvailable(ctx, tx, view.ID, view.Generation, now())
+						if err != nil {
+							return nil, err
+						}
 					}
 				}
 			}
@@ -113,6 +119,7 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 				CanOpenIDE            bool                      `json:"canOpenIde"`
 				CanOpenRepair         bool                      `json:"canOpenRepair"`
 				CanStartRepair        bool                      `json:"canStartRepair"`
+				CanRetryAfterRepair   bool                      `json:"canRetryAfterRepair"`
 				LastFailedOperationID *string                   `json:"lastFailedOperationId"`
 				Retention             *WorkspaceRetentionStatus `json:"retention,omitempty"`
 			}{
@@ -120,6 +127,7 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 				CanOpenIDE:            auth.Authorize(principal, entry.Action, entry.Resource, entry.Grants, now()).Allowed,
 				CanOpenRepair:         auth.Authorize(principal, repairEntry.Action, repairEntry.Resource, repairEntry.Grants, now()).Allowed,
 				CanStartRepair:        canStartRepair,
+				CanRetryAfterRepair:   canRetryAfterRepair,
 				LastFailedOperationID: lastFailedID,
 			}
 			if retention != nil && view.RetentionDeadline != nil {

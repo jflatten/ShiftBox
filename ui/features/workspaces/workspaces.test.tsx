@@ -32,7 +32,11 @@ test('requests a repair entry grant for a verified repair workspace', async () =
   const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/workspaces/workspace-one') return json({
-      ...workspace, observedState: 'running', currentOperationId: null, canOpenRepair: true,
+      ...workspace, observedState: 'running', currentOperationId: null, canOpenRepair: true, canRetryAfterRepair: true,
+    });
+    if (input === '/api/v1/workspaces/workspace-one/actions/retry' && init?.method === 'POST') return json({ id: 'retry-op' });
+    if (input === '/api/v1/operations/retry-op') return json({
+      id: 'retry-op', version: 1, status: 'succeeded', currentStep: null, steps: [],
     });
     if (input === '/api/v1/workspaces/workspace-one/entry-grants' && init?.method === 'POST') return {
       ok: false, status: 403, headers: new Headers({ 'Content-Type': 'application/problem+json' }),
@@ -47,6 +51,12 @@ test('requests a repair entry grant for a verified repair workspace', async () =
   expect(await screen.findByRole('alert')).toHaveTextContent('Workspace service access denied');
   expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces/workspace-one/entry-grants', expect.objectContaining({
     method: 'POST', body: '{"service":"repair"}',
+  }));
+  expect(screen.queryByRole('button', { name: 'Rebuild container' })).toBeNull();
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Exit repair and retry setup' }));
+  expect(await screen.findByText('Completed')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces/workspace-one/actions/retry', expect.objectContaining({
+    method: 'POST', headers: expect.objectContaining({ 'If-Match': '"4"', 'Idempotency-Key': expect.any(String) }),
   }));
 });
 

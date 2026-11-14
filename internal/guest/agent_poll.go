@@ -167,11 +167,12 @@ func applyGuestPoll(ctx context.Context, journal *localJournal, runtime devConta
 		}, runtime)
 		return err
 	}
-	if dispatch.Command != "ensure-development-container" && dispatch.Command != rebuildDevelopmentCommand || len(dispatch.Arguments.RetainedMounts) != 0 {
+	replacement := dispatch.Command == rebuildDevelopmentCommand || dispatch.Command == retryAfterRepairCommand
+	if dispatch.Command != "ensure-development-container" && !replacement || len(dispatch.Arguments.RetainedMounts) != 0 {
 		return errAgentOperationPending
 	}
 	if desiredState != "running" || !validDevContainerPath(dispatch.Arguments.Devcontainer) ||
-		(dispatch.Command == rebuildDevelopmentCommand) != (dispatch.Type == "rebuild") {
+		replacement != (dispatch.Type == "rebuild") {
 		return errors.New("invalid development container dispatch")
 	}
 	runtime.config = dispatch.Arguments.Devcontainer

@@ -190,6 +190,17 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	}
 	checkState(repair, "running", "succeeded")
 	checkReservation(t, db, id, "reserved", "reserved")
+
+	// Exiting repair and retrying setup uses one operation and fresh IDE evidence.
+	retry := admit("retry")
+	run(retry, errGuestConfigurationPending)
+	exec("INSERT INTO guest_dispatches(operation_id,dispatch_version,status,container_id) VALUES($1,1,'running','retried')", retry.ID)
+	run(retry, nil)
+	run(retry, nil)
+	run(retry, errGuestConfigurationPending)
+	exec("UPDATE guest_dispatches SET status='succeeded' WHERE operation_id=$1", retry.ID)
+	run(retry, nil)
+	checkState(retry, "running", "succeeded")
 	if machines.starts != 1 || machines.stops != 1 {
 		t.Fatalf("provider calls = %d starts and %d stops, want one per operation", machines.starts, machines.stops)
 	}

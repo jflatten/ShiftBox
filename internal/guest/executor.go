@@ -65,10 +65,11 @@ func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDisp
 	switch next.Phase {
 	case localPending:
 		rebuild := dispatch.Command == rebuildDevelopmentCommand
+		repairRetry := dispatch.Command == retryAfterRepairCommand
 		if runtime.repository != nil {
 			source := repositorySource{URL: dispatch.Repository, Ref: dispatch.Ref, Config: dispatch.Config}
 			var err error
-			if rebuild {
+			if rebuild || repairRetry {
 				_, err = runtime.repository.prepared(source)
 			} else {
 				_, err = runtime.repository.prepare(ctx, source)
@@ -85,7 +86,9 @@ func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDisp
 		if err := j.saveOperation(next); err != nil {
 			return OperationReport{}, err
 		}
-		if rebuild {
+		if repairRetry {
+			next.Connection, effectErr = runtime.retryAfterRepair(ctx)
+		} else if rebuild {
 			next.Connection, effectErr = runtime.rebuild(ctx)
 		} else {
 			next.Connection, effectErr = runtime.ensure(ctx)

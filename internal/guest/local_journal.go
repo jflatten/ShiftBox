@@ -12,6 +12,7 @@ import (
 var errGuestDispatchConflict = errors.New("guest operation dispatch is stale or conflicts with local work")
 
 const rebuildDevelopmentCommand = "rebuild-development-container"
+const retryAfterRepairCommand = "retry-development-after-repair"
 
 type guestDispatch struct {
 	ID         string `json:"id"`
@@ -29,7 +30,7 @@ func (d guestDispatch) valid() bool {
 		return false
 	}
 	switch d.Command {
-	case "ensure-development-container", rebuildDevelopmentCommand:
+	case "ensure-development-container", rebuildDevelopmentCommand, retryAfterRepairCommand:
 		return d.Config == "" || validDevContainerPath(d.Config)
 	case "shutdown-for-stop", enterRepairCommand, exitRepairCommand:
 		return d.Config == "" && d.Repository == "" && d.Ref == ""

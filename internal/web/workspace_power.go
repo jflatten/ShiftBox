@@ -26,6 +26,11 @@ func WorkspacePowerHandler(db *sql.DB, origin string, now func() time.Time, jour
 				return AuthorizationTarget{}, err
 			}
 			action := r.PathValue("action")
+			if action == "retry" {
+				// This endpoint retries setup as part of leaving repair and
+				// therefore uses the permission that admitted repair.
+				action = "repair"
+			}
 			if action != "start" && action != "stop" && action != "rebuild" && action != "repair" {
 				return AuthorizationTarget{}, Problem{Status: 400, Code: "workspace.invalid_action", Title: "Choose a supported workspace action"}
 			}

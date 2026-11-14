@@ -11,6 +11,7 @@ export interface Workspace {
   canOpenIde?: boolean;
   canOpenRepair?: boolean;
   canStartRepair?: boolean;
+  canRetryAfterRepair?: boolean;
   lastActivityAt: string | null;
   retentionDeadline: string | null;
   retention?: { state: 'disabled' | 'paused' | 'grace' | 'ready'; graceUntil?: string };

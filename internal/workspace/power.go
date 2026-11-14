@@ -129,7 +129,7 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 
 func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, error) {
 	offboarding := op.OriginatingAction == "user.disable" && op.Type == "stop" && step.Key == "stop"
-	if (!offboarding && op.OriginatingAction != "workspace."+op.Type) ||
+	if (!offboarding && !isRepairRetry(op) && op.OriginatingAction != "workspace."+op.Type) ||
 		op.WorkspaceID == nil || op.StartedAt == nil || op.Status != "running" || step.Status != "active" ||
 		!validPowerStep(op.Type, step.Key) {
 		return provider.CreateRequest{}, provider.ErrInvalidState
@@ -163,6 +163,10 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 	}
 	req.NetworkMode = network.Mode
 	return req, nil
+}
+
+func isRepairRetry(op operation.Operation) bool {
+	return op.Type == "rebuild" && op.OriginatingAction == "workspace.repair"
 }
 
 func validPowerStep(action, step string) bool {

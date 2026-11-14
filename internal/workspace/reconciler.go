@@ -30,7 +30,7 @@ func (e workspaceExecutor) executor(op operation.Operation) operation.Executor {
 			return e.launch
 		}
 	case "workspace.start", "workspace.stop", "workspace.rebuild", "workspace.repair":
-		if op.OriginatingAction == "workspace."+op.Type && e.power != nil {
+		if (op.OriginatingAction == "workspace."+op.Type || isRepairRetry(op)) && e.power != nil {
 			return e.power
 		}
 	case "user.disable":

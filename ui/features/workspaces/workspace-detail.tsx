@@ -8,7 +8,7 @@ import { useOperation } from '../../lib/use-operation';
 import { workspaceState, type Workspace } from './workspace';
 import { RetentionWarning } from './retention';
 
-type WorkspaceAction = 'start' | 'stop' | 'rebuild' | 'repair';
+type WorkspaceAction = 'start' | 'stop' | 'rebuild' | 'repair' | 'retry';
 
 export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: string }) {
   const workspace = useQuery<Workspace>({
@@ -100,7 +100,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
                 onClick={() => void requestAction(action)}>
                 {action === 'start' ? 'Start workspace' : 'Stop workspace'}
               </Button>
-              {action === 'stop' ? (
+              {action === 'stop' && !data.canOpenRepair && !data.canRetryAfterRepair ? (
                 <Button variant="default" loading={submitting === 'rebuild'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
                   onClick={() => void requestAction('rebuild')}>
                   Rebuild container
@@ -110,6 +110,12 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
                 <Button variant="default" loading={submitting === 'repair'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
                   onClick={() => void requestAction('repair')}>
                   Start repair
+                </Button>
+              ) : null}
+              {data.canRetryAfterRepair ? (
+                <Button variant="default" loading={submitting === 'retry'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
+                  onClick={() => void requestAction('retry')}>
+                  Exit repair and retry setup
                 </Button>
               ) : null}
             </Group>
