@@ -2116,3 +2116,12 @@ This checkpoint does not itself change the goal status.
 - Go vet and the relevant race tests passed. Native Dex verified the lock,
   refusal of the original password, and acceptance of the replacement on
   SQLite. PostgreSQL recovery and signed-in administrator resets remain open.
+
+### PostgreSQL administrator recovery verification
+
+- Ran the native recovery command test against SQLite and PostgreSQL.
+  PostgreSQL used separate application and Dex schema owners with verified
+  TLS and the encrypted Dex connection record. The test confirmed that
+  Dex rejects the old credential and accepts the replacement, with no
+  local Dex database created. The disposable database and Dex role were
+  removed after the run.
