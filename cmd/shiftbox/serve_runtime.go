@@ -106,6 +106,20 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		identity.ExternalConnectorAdmin{Client: connectors}, time.Now)
 	services.Handlers[reauthorize.Route.OperationID] = reauthorize
 	services.Handlers[configureExternal.Route.OperationID] = configureExternal
+	artifactStore := release.NewStore(state.DB)
+	catalog := release.NewCatalog(artifactStore, filepath.Join(cfg.InstallationDir, "platform-artifacts"))
+	platform := setupPlatform{installation: cfg.InstallationDir, runtime: settings}
+	imports := app.NewPlatformImport(state.DB, journal, origin, active.InstallationID, time.Now,
+		func(ctx context.Context, id, actor, folder string, makeDefault bool) error {
+			// Stable operation identity lets a retry reconcile its validation VM.
+			validationID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(active.InstallationID+":platform-import:"+id)).String()
+			marker := uuid.NewSHA1(uuid.NameSpaceOID, []byte(validationID+":owner")).String()
+			ref := provider.WorkspaceRef{InstallationID: active.InstallationID, WorkspaceID: validationID, Generation: 1, OwnershipMarker: marker}
+			return platform.importPlatform(ctx, artifactStore, catalog, machines, caps, ref,
+				actor, folder, active.ActiveRelease, active.MinimumGuestRelease, makeDefault)
+		})
+	importRoute := imports.Handler()
+	services.Handlers[importRoute.Route.OperationID] = importRoute
 	api, err := web.NewActiveManagementRouter(services.Session, services.Handlers, services.GitHubCallback)
 	if err != nil {
 		return err
@@ -129,7 +143,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	defer workspaces.Close()
 	err = app.ServeController(ctx, dexDone, browser.Serve, workspaces.Serve, func(ctx context.Context) error {
 		return app.RunHistoryRetention(ctx, state.DB, cfg)
-	})
+	}, imports.Run)
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return nil
 	}

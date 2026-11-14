@@ -52,33 +52,41 @@ func (p setupPlatform) validator(db *sql.DB, installationID string) func(context
 		if err != nil {
 			return err
 		}
-		if !caps.Create || !caps.Start || !caps.Stop || !caps.Delete || caps.Architecture != "amd64" {
-			return provider.ErrCapabilityUnsupported
-		}
-		entry, err := catalog.ImportLocal(ctx, actor, time.Now(), p.folder)
-		if err != nil {
-			return err
-		}
-		manifest := entry.Artifact.Manifest
-		if manifest.ProtocolVersion != guestProtocol || (manifest.Guest.Version != current && manifest.Guest.Version != previous) {
-			return release.ErrCatalogConflict
-		}
-		enrollHost, _, _ := net.SplitHostPort(p.runtime.EnrollmentAddress)
-		pollHost, _, _ := net.SplitHostPort(p.runtime.PollAddress)
-		listeners := app.GuestListenerConfig{PublicHost: p.runtime.GuestHost,
-			EnrollmentAddress: net.JoinHostPort(enrollHost, "0"), PollAddress: net.JoinHostPort(pollHost, "0")}
-		// Keep the identity stable across setup restarts. The separate marker
-		// namespace keeps validation cleanup scoped to disposable VMs.
 		validationID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(installationID+":boot-validation")).String()
 		marker := uuid.NewSHA1(uuid.NameSpaceOID, []byte(installationID+":boot-validation-owner")).String()
-		req := provider.CreateRequest{Ref: provider.WorkspaceRef{InstallationID: installationID, WorkspaceID: validationID,
-			Generation: 1, OwnershipMarker: marker}, OperationID: validationID, ArtifactID: entry.ID,
-			Release: manifest.ReleaseID, NetworkMode: "shared", Resources: caps.Minimum}
-		if err := catalog.ValidateImport(ctx, entry.ID, func(ctx context.Context, artifact release.Artifact) error {
-			return app.ValidatePlatformBoot(ctx, p.installation, machines, req, artifact, listeners)
-		}); err != nil {
-			return err
-		}
+		return p.importPlatform(ctx, store, catalog, machines, caps,
+			provider.WorkspaceRef{InstallationID: installationID, WorkspaceID: validationID, Generation: 1, OwnershipMarker: marker},
+			actor, p.folder, current, previous, true)
+	}
+}
+
+func (p setupPlatform) importPlatform(ctx context.Context, store *release.Store, catalog *release.Catalog, machines app.PlatformBootProvider,
+	caps provider.Capabilities, ref provider.WorkspaceRef, actor, folder, current, previous string, makeDefault bool,
+) error {
+	enrollHost, _, _ := net.SplitHostPort(p.runtime.EnrollmentAddress)
+	pollHost, _, _ := net.SplitHostPort(p.runtime.PollAddress)
+	listeners := app.GuestListenerConfig{PublicHost: p.runtime.GuestHost,
+		EnrollmentAddress: net.JoinHostPort(enrollHost, "0"), PollAddress: net.JoinHostPort(pollHost, "0")}
+	if !caps.Create || !caps.Start || !caps.Stop || !caps.Delete || caps.Architecture != "amd64" {
+		return provider.ErrCapabilityUnsupported
+	}
+	entry, err := catalog.ImportLocal(ctx, actor, time.Now(), folder)
+	if err != nil {
+		return err
+	}
+	manifest := entry.Artifact.Manifest
+	if manifest.ProtocolVersion != guestProtocol || (manifest.Guest.Version != current && manifest.Guest.Version != previous) {
+		return release.ErrCatalogConflict
+	}
+	req := provider.CreateRequest{Ref: ref, OperationID: ref.WorkspaceID, ArtifactID: entry.ID,
+		Release: manifest.ReleaseID, NetworkMode: "shared", Resources: caps.Minimum}
+	if err := catalog.ValidateImport(ctx, entry.ID, func(ctx context.Context, artifact release.Artifact) error {
+		return app.ValidatePlatformBoot(ctx, p.installation, machines, req, artifact, listeners)
+	}); err != nil {
+		return err
+	}
+	if makeDefault {
 		return store.SelectDefault(ctx, entry.ID, []string{guestProtocol})
 	}
+	return nil
 }

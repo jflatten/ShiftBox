@@ -10,10 +10,10 @@ var ErrControllerIdentityStopped = errors.New("controller identity service stopp
 
 // ServeController runs browser HTTPS, workspaces and history cleanup under
 // the same lifetime as Dex. It joins the services before returning.
-func ServeController(ctx context.Context, dexDone <-chan struct{}, browser, workspaces, history func(context.Context) error) error {
+func ServeController(ctx context.Context, dexDone <-chan struct{}, browser, workspaces, history func(context.Context) error, additional ...func(context.Context) error) error {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	services := []func(context.Context) error{browser, workspaces, history}
+	services := append([]func(context.Context) error{browser, workspaces, history}, additional...)
 	results := make(chan error, len(services))
 	for _, serve := range services {
 		go func() { results <- serve(runCtx) }()

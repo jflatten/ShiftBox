@@ -1660,6 +1660,19 @@ This checkpoint does not itself change the goal status.
 - The disposable PostgreSQL schema was recreated from current
   migrations after its stale development schema failed verification.
   The PostgreSQL contract and release parity tests then passed.
+
+### Active platform import
+
+- T099 wires administrator platform import to the controller. The
+  request contains an absolute local folder and an optional default
+  selection. Its actor-scoped key binds both values to a durable
+  operation, and the worker rechecks administrator membership before
+  staging. Setup and active import share the manifest, compatibility,
+  disposable boot, and catalog verification path.
+- The Go race suite passed with the local PostgreSQL fixture. A real
+  controller startup advanced past the platform import route and
+  stopped at the next missing handler, `listMaintenanceCampaigns`.
+  T060, T061, and the remaining T099 handlers stay open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.

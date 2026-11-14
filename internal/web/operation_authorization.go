@@ -21,6 +21,8 @@ func OperationViewTarget(op operation.Operation, resource auth.Resource) (Author
 		return AuthorizationTarget{}, errors.New("operation installation context is missing")
 	}
 	switch op.OriginatingAction {
+	case "infrastructure.import_platform":
+		return AuthorizationTarget{Action: "infrastructure.manage", Resource: resource}, nil
 	case "setup.mutate", "infrastructure.manage", "maintenance.manage", "backup.create", "restore.validate", "restore.activate", "recovery.activate", "migration.preflight":
 		return AuthorizationTarget{Action: op.OriginatingAction, Resource: resource}, nil
 	default:
