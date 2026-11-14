@@ -563,6 +563,163 @@ func (p *restartProvisionProvider) Create(ctx context.Context, request provider.
 	return p.Provider.Create(ctx, request)
 }
 
+// TestRestartWorkspaceDeletion reopens the controller database after a
+// graceful shutdown receipt, an uncertain stop, and partial and uncertain
+// removal. Accounting and the guest registration follow verified inventory.
+func TestRestartWorkspaceDeletion(t *testing.T) {
+	ctx, now := t.Context(), time.Now().UTC()
+	clock := func() time.Time { return now }
+	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "deletion.db")}
+	open := func() *sql.DB {
+		t.Helper()
+		db, err := database.Open(ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return db
+	}
+	db := open()
+	if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	machines := &restartDeletionProvider{Provider: fake.New()}
+	ref := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		Generation: 1, OwnershipMarker: "fixture-owner"}
+	created, err := machines.Create(ctx, provider.CreateRequest{Ref: ref, OperationID: "fixture-create",
+		ArtifactID: "fixture-image", Release: "fixture", NetworkMode: "nat",
+		Resources: provider.Resources{CPU: 2, MemoryBytes: 1024 << 20, DiskBytes: 40 << 20}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref = created.Ref
+	if _, err := machines.Start(ctx, provider.StartRequest{Ref: ref, OperationID: "fixture-start"}); err != nil {
+		t.Fatal(err)
+	}
+	owner := uuid.NewString()
+	seedRecoveryRestart(t, db, ref, owner, now)
+	exec("UPDATE workspaces SET desired_state='running' WHERE id=$1", ref.WorkspaceID)
+	exec(`INSERT INTO reservations(workspace_id,cpu_count,memory_mib,disk_mib,cpu_memory_state,disk_state,reserved_at)
+		VALUES($1,2,1024,40,'reserved','reserved',$2)`, ref.WorkspaceID, now.Format(time.RFC3339Nano))
+	exec("INSERT INTO guest_registrations(workspace_id,generation,state) VALUES($1,$2,'active')", ref.WorkspaceID, ref.Generation)
+	journal := operation.NewJournal(db, clock, uuid.NewString)
+	var deletion operation.Operation
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		var err error
+		deletion, err = workspace.AdmitPower(ctx, tx, journal, workspace.PowerIntent{
+			WorkspaceID: ref.WorkspaceID, ActorID: owner, Action: "delete", RequestKey: "delete-with-restart", Version: 1,
+		}, now)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const lease = time.Minute
+	claim, err := journal.Claim(ctx, deletion.ID, "interrupted-controller", lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.StartStep(ctx, claim, 0); err != nil {
+		t.Fatal(err)
+	}
+	exec("INSERT INTO guest_dispatches(operation_id,dispatch_version,status) VALUES($1,1,'succeeded')", deletion.ID)
+	restart := func() {
+		t.Helper()
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		db = open()
+		journal = operation.NewJournal(db, clock, uuid.NewString)
+	}
+	run := func(step string, want error) {
+		t.Helper()
+		power := workspace.NewPowerExecutor(workspace.NewStore(db), machines, clock, nil)
+		worker := workspace.NewWorker(journal, nil, power)
+		if err := worker.RunOnce(ctx, deletion.ID); !errors.Is(err, want) {
+			t.Fatalf("RunOnce(%s) = %v, want %v", step, err, want)
+		}
+	}
+	assertState := func(wantObserved, wantCPU, wantDisk, wantGuest string) {
+		t.Helper()
+		var desired, observed, cpu, disk, guestState string
+		err := db.QueryRowContext(ctx, `SELECT w.desired_state,w.observed_state,r.cpu_memory_state,r.disk_state,g.state
+			FROM workspaces w JOIN reservations r ON r.workspace_id=w.id
+			JOIN guest_registrations g ON g.workspace_id=w.id AND g.generation=w.generation WHERE w.id=$1`,
+			ref.WorkspaceID).Scan(&desired, &observed, &cpu, &disk, &guestState)
+		if err != nil || desired != "deleted" || observed != wantObserved || cpu != wantCPU || disk != wantDisk || guestState != wantGuest {
+			t.Fatalf("deletion state = %s/%s %s/%s guest=%s (%v), want deleted/%s %s/%s guest=%s",
+				desired, observed, cpu, disk, guestState, err, wantObserved, wantCPU, wantDisk, wantGuest)
+		}
+	}
+	restart()
+	run("shutdown before lease expiry", operation.ErrConflict)
+	now = now.Add(lease + time.Second)
+	run("shutdown", nil)
+	assertState("running", "reserved", "reserved", "active")
+	machines.LoseReply("stop")
+	run("stop without reply", provider.ErrOutcomeUnknown)
+	restart()
+	assertState("running", "reserved", "reserved", "active")
+	run("verify stopped", nil)
+	restart()
+	assertState("stopped", "released", "reserved", "active")
+	machines.FailDelete()
+	run("partial deletion", provider.ErrPartial)
+	restart()
+	assertState("stopped", "released", "reserved", "active")
+	partial, err := journal.Get(ctx, deletion.ID)
+	if err != nil || partial.Status != "waiting" || len(partial.Steps) != 3 || partial.Steps[2].Status != "active" {
+		t.Fatalf("partial deletion after restart = %s, steps %+v (%v), want waiting with active delete", partial.Status, partial.Steps, err)
+	}
+	machines.LoseReply("delete")
+	run("deletion without reply", provider.ErrOutcomeUnknown)
+	restart()
+	assertState("stopped", "released", "reserved", "active")
+	run("verify deletion", nil)
+	restart()
+	assertState("deleted", "released", "released", "deleted")
+	finished, err := journal.Get(ctx, deletion.ID)
+	if err != nil || finished.Status != "succeeded" || machines.stops != 1 || machines.deletes != 2 || machines.forcedStop {
+		t.Fatalf("deletion after restart = %s (%v), stops=%d deletes=%d force=%t, want success, one graceful stop, two delete attempts",
+			finished.Status, err, machines.stops, machines.deletes, machines.forcedStop)
+	}
+	for _, step := range finished.Steps {
+		if step.Status != "succeeded" {
+			t.Errorf("step %s = %s, want succeeded", step.Key, step.Status)
+		}
+	}
+	events, err := journal.Events(ctx, deletion.ID, 0)
+	if err != nil || len(events) == 0 {
+		t.Fatalf("Events(deletion) = %d (%v), want recorded workflow", len(events), err)
+	}
+	last := events[len(events)-1]
+	if last.Operation.Status != "succeeded" || last.Evidence != "Provider verified that the workspace and its owned resources were removed." {
+		t.Errorf("final deletion event = %s/%q, want success with verified removal evidence", last.Operation.Status, last.Evidence)
+	}
+}
+
+type restartDeletionProvider struct {
+	*fake.Provider
+	stops, deletes int
+	forcedStop     bool
+}
+
+func (p *restartDeletionProvider) Stop(ctx context.Context, req provider.StopRequest) (provider.Inventory, error) {
+	p.stops++
+	p.forcedStop = p.forcedStop || req.ForceRetentionDelete
+	return p.Provider.Stop(ctx, req)
+}
+
+func (p *restartDeletionProvider) Delete(ctx context.Context, req provider.DeleteRequest) (provider.Inventory, error) {
+	p.deletes++
+	return p.Provider.Delete(ctx, req)
+}
+
 // TestRestartRecoveryReview reopens the controller database after each review
 // decision, including a provider conflict, then checks the activation fence.
 func TestRestartRecoveryReview(t *testing.T) {

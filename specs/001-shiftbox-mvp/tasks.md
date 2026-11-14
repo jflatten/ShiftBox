@@ -3032,6 +3032,11 @@ This checkpoint does not itself change the goal status.
   shutdown step, and verified provider deletion retires the registration
   alongside reservation release. Race-enabled contract, worker, and TLS
   integration suites passed.
+- T120 restarts the deletion worker after the shutdown receipt, a lost stop
+  reply, partial removal, and a lost delete reply. Verified stop releases
+  CPU and memory. Verified removal releases disk and retires the guest
+  registration. The restarted worker makes no duplicate provider call after
+  an effect has been verified.
 
 ### Sharing persistence and Git refresh fencing
 
