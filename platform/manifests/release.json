@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "development-repair",
+  "protocolVersion": "1",
+  "controller": {
+    "version": "4c3cb9507b6edc377a7195a21bf5354fa145e0cd",
+    "sha256": "926eaa6aaa6b77986761aaf915f1f980afc0345bdd275b3e324fad1524b7ebb1"
+  },
+  "dex": {
+    "version": "v0.0.0-20261021142137-75eb19238e10",
+    "sha256": "9c8253c3f1cea663e75747fdac8e6fa5d0920c7a5b6af6664c29902306c03a21",
+    "source": "https://github.com/dexidp/dex"
+  },
+  "utm": {
+    "version": "5.0.8",
+    "sha256": "44432006665adef896a43f9b2ff52524f4f23d3b932158be78e228143fc27c9f",
+    "source": "https://github.com/utmapp/UTM"
+  },
+  "packerFork": {
+    "version": "4.0.0+fccda3be64189b5c057f6076184be7906475a1f2",
+    "sha256": "680d4010129ad628c04fea6b8b86e94dc72a00bb228444dd831b3c0b4943dbd7",
+    "source": "https://github.com/naveenrajm7/packer-plugin-utm"
+  },
+  "ubuntu": {
+    "version": "24.04-minimal-amd64-20260716",
+    "sha256": "d99d1abe3284e568161b3b7dabfbd6cf67956a7f4274b13842f10aa9c7807a2c",
+    "source": "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20260716/ubuntu-24.04-minimal-cloudimg-amd64.img"
+  },
+  "guest": {
+    "version": "development-repair",
+    "sha256": "8d08c8ef8af5eec5e4b0b1523f1ce0f558e18806392bd53b20df0220774f8b44",
+    "source": "https://github.com/jflatten/ShiftBox/tree/18b411551e220a5ebc3accc9cbc2f73bd264ff9f"
+  },
+  "ide": {
+    "version": "4.145.2",
+    "sha256": "2f6db6c3e8b733dd6b3aeee83532e148b2bae2e392353ba85452d03572348962",
+    "source": "https://github.com/coder/code-server"
+  }
+}

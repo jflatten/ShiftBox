@@ -31,6 +31,7 @@ type WorkspaceFixture = {
 const fixturePath = process.env.SHIFTBOX_MVP_FIXTURE;
 const startupTimeout = 4 * 60_000;
 const workbenchTimeout = 3 * 60_000;
+const githubConsentTimeout = 9 * 60_000;
 
 // This fixture contains disposable passwords. Keep reproductions and
 // recordings on the fixture host, with browser capture disabled.
@@ -45,7 +46,7 @@ test.skip(({ browserName }) => browserName !== 'chromium', 'The exact-stack MVP 
 // The runner starts the controller on the same installation after activation
 // and writes workspaceFixturePath when the artifact and profile are ready.
 test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => {
-  test.setTimeout(20 * 60_000);
+  test.setTimeout(25 * 60_000);
   if (!fixturePath || !isAbsolute(fixturePath)) throw new Error('SHIFTBOX_MVP_FIXTURE must be an absolute path');
   const installation: InstallationFixture = JSON.parse(await readFile(fixturePath, 'utf8'));
   const setupOrigin = new URL(installation.setupURL).origin;
@@ -128,8 +129,9 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     if (!await connected.isVisible()) {
       await activate(connect);
       await activate(page.getByRole('link', { name: 'Continue to GitHub' }));
-      // The disposable GitHub App owner can grant consent in a headed run.
-      await page.waitForURL(url => url.origin === managementOrigin && url.pathname === '/', { timeout: startupTimeout });
+      // Allow the fixture owner time for sign-in and consent within the
+      // controller's ten-minute OAuth state lifetime.
+      await page.waitForURL(url => url.origin === managementOrigin && url.pathname === '/', { timeout: githubConsentTimeout });
       await page.goto(new URL('/account/', managementOrigin).href);
       await expect(connected).toBeVisible({ timeout: startupTimeout });
     }

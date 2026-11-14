@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -30,6 +31,17 @@ func TestActivatePostgresReplacement(t *testing.T) {
 	defer source.Close()
 	if err := database.Migrate(ctx, source, "postgres"); err != nil {
 		t.Fatal(err)
+	}
+	dex, err := sql.Open("pgx", sourceDex)
+	if err != nil {
+		t.Fatal("open disposable Dex source")
+	}
+	t.Cleanup(func() { dex.Close() })
+	if _, err := dex.ExecContext(ctx, "CREATE TABLE dex.restore_probe (value integer)"); err != nil {
+		t.Fatal("initialize disposable Dex source")
+	}
+	if _, err := dex.ExecContext(ctx, "INSERT INTO dex.restore_probe VALUES (42)"); err != nil {
+		t.Fatal("seed disposable Dex source")
 	}
 	id := uuid.NewString()
 	if _, err := source.ExecContext(ctx, `INSERT INTO installations(id,state,organization_name,data_profile,management_origin,
@@ -97,6 +109,22 @@ func TestActivatePostgresReplacement(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dest, name)); !os.IsNotExist(err) {
 			t.Fatalf("published dump %s: %v", name, err)
 		}
+	}
+	identityURI, err := url.Parse(targetDex)
+	if err != nil {
+		t.Fatal("build restored Dex connection")
+	}
+	query := identityURI.Query()
+	query.Set("sslrootcert", ca)
+	identityURI.RawQuery = query.Encode()
+	identity, err := sql.Open("pgx", identityURI.String())
+	if err != nil {
+		t.Fatal("open restored Dex schema")
+	}
+	t.Cleanup(func() { identity.Close() })
+	var value int
+	if err := identity.QueryRowContext(ctx, "SELECT value FROM dex.restore_probe").Scan(&value); err != nil || value != 42 {
+		t.Fatalf("restored Dex probe value = %d, query succeeded = %t; want 42 and a successful query", value, err == nil)
 	}
 	var original string
 	if err := source.QueryRowContext(ctx, "SELECT state FROM installations").Scan(&original); err != nil || original != "active" {

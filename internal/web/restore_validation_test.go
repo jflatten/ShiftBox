@@ -51,10 +51,13 @@ func TestRestoreValidationRoute(t *testing.T) {
 			InstallationID: org, InstallationState: "active"}, nil
 	}
 	const password = "fixture-private-passphrase"
+	const appSecret = "app-private-password"
 	const dexSecret = "dex-private-password"
-	send := func(want int) {
+	const appURI = "postgres://app:" + appSecret + "@localhost/replacement?sslmode=verify-full"
+	const dexURI = "postgres://dex:" + dexSecret + "@localhost/replacement?sslmode=verify-full"
+	send := func(dexLogin string, want int) {
 		t.Helper()
-		body := `{"archivePath":"/private/backup.age","password":"` + password + `","replacementPostgres":{"profile":"postgres","tlsMode":"verify-full","connectionUri":"postgres://app:private@localhost/replacement?sslmode=verify-full","dexConnectionUri":"postgres://dex:` + dexSecret + `@localhost/replacement?sslmode=verify-full"}}`
+		body := `{"archivePath":"/private/backup.age","password":"` + password + `","replacementPostgres":{"profile":"postgres","tlsMode":"verify-full","connectionUri":"` + appURI + `"` + dexLogin + `}}`
 		r := httptest.NewRequest("POST", "https://management.test/api/v1/restores/validate", strings.NewReader(body))
 		r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
 		r.Header.Set("Origin", "https://management.test")
@@ -62,16 +65,23 @@ func TestRestoreValidationRoute(t *testing.T) {
 		r.Header.Set("Idempotency-Key", "restore-fixture-key")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
-		if w.Code != want || strings.Contains(w.Body.String(), password) || strings.Contains(w.Body.String(), dexSecret) {
+		if w.Code != want || strings.Contains(w.Body.String(), password) ||
+			strings.Contains(w.Body.String(), appSecret) || strings.Contains(w.Body.String(), dexSecret) {
 			t.Fatalf("restore response status = %d; want %d and no credentials", w.Code, want)
 		}
 	}
-	send(403)
+	const dexLogin = `,"dexConnectionUri":"` + dexURI + `"`
+	send(dexLogin, 403)
 	role = "administrator"
-	send(202)
+	send("", 400)
+	if len(jobs) != 0 {
+		t.Fatal("validation queued a PostgreSQL replacement without a Dex login")
+	}
+	send(dexLogin, 202)
 	job := <-jobs
-	send(202)
-	if len(jobs) != 0 || job.Password != password || job.Postgres == nil || !strings.Contains(job.Postgres.DexConnectionURI, dexSecret) {
+	send(dexLogin, 202)
+	if len(jobs) != 0 || job.Password != password || job.Postgres == nil ||
+		job.Postgres.ConnectionURI != appURI || job.Postgres.DexConnectionURI != dexURI {
 		t.Fatal("validation handoff omitted protected input or repeated admission")
 	}
 	id := uuid.NewString()
@@ -84,7 +94,7 @@ func TestRestoreValidationRoute(t *testing.T) {
 	}
 	events, err := journal.Events(ctx, job.OperationID, 0)
 	for _, event := range events {
-		if strings.Contains(event.Evidence, password) || strings.Contains(event.Evidence, dexSecret) {
+		if strings.Contains(event.Evidence, password) || strings.Contains(event.Evidence, appSecret) || strings.Contains(event.Evidence, dexSecret) {
 			t.Fatal("operation evidence retained credentials")
 		}
 	}

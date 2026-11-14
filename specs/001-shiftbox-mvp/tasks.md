@@ -1791,6 +1791,11 @@ This checkpoint does not itself change the goal status.
   the current installation identity and retained key, records the
   validation ID as operation evidence, and retains the passphrase
   and replacement database logins only in memory.
+- T113 requires the write-only Dex login for PostgreSQL replacements.
+  The route test rejects an omitted login and checks that neither database
+  login nor the archive passphrase appears in the response or operation
+  history. T111 PostgreSQL validation and activation tests passed with
+  separately owned fixture schemas and verified restored Dex data.
 - T060 starts the native controller with its embedded UI and full active
   route catalog. A disposable activated SQLite fixture served the UI
   over trusted HTTPS and returned 401 for a signed-out session. The CLI
@@ -1798,6 +1803,10 @@ This checkpoint does not itself change the goal status.
   that archive without creating a replacement. Tagged race tests passed
   for embedded assets, native setup with pinned Dex, and agent CLI
   dispatch. T061 still requires the complete fresh UTM and Chrome journey.
+- T061 repeated fresh protected setup and UTM image validation in Chrome,
+  signed in again on the management origin, and reached the GitHub
+  authorization page. The run timed out waiting for authorization.
+  The pinned candidate manifest and read-only Go journal check are in place.
 - T114 exposes `shiftbox restore validate` with terminal or explicit
   stdin passphrase input. It checks against the installed executable's
   schema and the operator-supplied installation and release IDs, then
