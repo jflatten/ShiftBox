@@ -185,6 +185,58 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	checkReservation(t, db, id, "released", "reserved")
 }
 
+// TestPowerRequestUsesEditedNetworkPolicy verifies a stopped workspace's
+// current policy takes precedence over its immutable launch mode on start.
+func TestPowerRequestUsesEditedNetworkPolicy(t *testing.T) {
+	ctx := t.Context()
+	db := openWorkspaceDatabase(t, "sqlite")
+	seedReservationWorkspaces(t, db)
+	const id = "power-policy-workspace"
+	t.Cleanup(func() {
+		for _, query := range []string{"DELETE FROM reservations WHERE workspace_id=$1", "DELETE FROM workspaces WHERE id=$1"} {
+			if _, err := db.Exec(query, id); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	if _, err := db.ExecContext(ctx, `INSERT INTO workspaces(id,installation_id,owner_user_id,template_id,template_revision,
+		platform_artifact_id,repository_url,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,
+		network_policy_override_json,desired_state,observed_state,generation,ownership_marker,provider_instance_id,created_at,updated_at,version)
+		VALUES($1,$2,'reservation-owner','template',1,'reservation-artifact','https://github.com/example/project',
+		'.devcontainer/devcontainer.json',2,1024,40,'{"mode":"nat"}','{"mode":"shared"}','stopped','stopped',1,'owned','instance',$3,$3,1)`,
+		id, testInstallation, testStamp); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(db)
+	if err := store.SetCapacityBudget(ctx, testInstallation, Allocation{CPU: 2, MemoryMiB: 1024, DiskMiB: 40}, 0, "reservation-owner", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	journal := operation.NewJournal(db, time.Now, uuid.NewString)
+	var op operation.Operation
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		var err error
+		op, err = AdmitPower(ctx, tx, journal, PowerIntent{
+			WorkspaceID: id, ActorID: "reservation-owner", Action: "start", RequestKey: uuid.NewString(), Version: 1,
+		}, time.Now())
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := journal.Claim(ctx, op.ID, "fixture", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	op, err := journal.Get(ctx, op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := op.Steps[0]
+	step.Status = "active"
+	req, err := NewPowerExecutor(store, nil, time.Now, nil).request(ctx, op, step)
+	if err != nil || req.NetworkMode != "shared" {
+		t.Fatalf("start request network = %q (%v), want shared", req.NetworkMode, err)
+	}
+}
+
 type powerFixtureProvider struct {
 	*fake.Provider
 	starts, stops int

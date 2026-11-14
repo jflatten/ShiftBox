@@ -124,7 +124,7 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 	req := provider.CreateRequest{OperationID: op.ID, Ref: provider.WorkspaceRef{WorkspaceID: *op.WorkspaceID, Generation: op.Generation}}
 	var policy string
 	err := e.store.db.QueryRowContext(ctx, `SELECT w.installation_id,w.ownership_marker,COALESCE(w.provider_instance_id,''),
-		w.platform_artifact_id,a.release_id,w.network_policy_snapshot_json
+		w.platform_artifact_id,a.release_id,COALESCE(w.network_policy_override_json,w.network_policy_snapshot_json)
 		FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id
 		JOIN installations i ON i.id=w.installation_id JOIN users owner ON owner.id=w.owner_user_id
 		JOIN users actor ON actor.id=$3 JOIN operations o ON o.id=$5 AND o.workspace_id=w.id AND o.generation=w.generation

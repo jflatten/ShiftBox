@@ -1,0 +1,89 @@
+package contract_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jflatten/ShiftBox/internal/auth"
+	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/web"
+)
+
+// TestWorkspacePolicyUpdate verifies only a stopped, idle workspace can
+// change network policy without rewriting its original launch evidence.
+func TestWorkspacePolicyUpdate(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "workspace.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	const origin = "https://management.test"
+	now := time.Now().UTC()
+	id, templateID, policyID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	token := strings.Repeat("A", 43)
+	seedWorkspaceLaunch(t, db, templateID, token, now)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO workspaces(id,installation_id,owner_user_id,template_id,template_revision,platform_artifact_id,
+		repository_url,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,desired_state,observed_state,
+		generation,ownership_marker,created_at,updated_at,version)
+		SELECT $1,id,'member',$2,1,'artifact','https://github.com/example/repo','.devcontainer/devcontainer.json',
+		2,1024,40,'{"mode":"shared"}','stopped','running',1,'owned','now','now',1 FROM installations`, id, templateID)
+	exec(`INSERT INTO network_policies(id,name,mode,rules_json,required_exceptions_json,provider_capability_version)
+		VALUES($1,'Outbound access','all','[]','[]','5.0.8')`, policyID)
+	limit := int64(86400)
+	handler := web.WorkspacePolicyHandler(db, origin, func() time.Time { return now }, web.WorkspaceLaunchPolicy{
+		Capabilities: provider.Capabilities{Version: "5.0.8", NetworkModes: []string{"shared"}}, RetentionMaximum: &limit,
+	})
+	mux := http.NewServeMux()
+	mux.Handle("PATCH /api/v1/workspaces/{workspaceId}", &handler)
+	send := func(body, version string, want int) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPatch, origin+"/api/v1/workspaces/"+id, strings.NewReader(body))
+		r.Header.Set("Origin", origin)
+		r.Header.Set("If-Match", version)
+		r.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+		r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Fatalf("policy edit %s version %s = %d %s, want %d", body, version, w.Code, w.Body.String(), want)
+		}
+	}
+	network := `{"networkPolicyId":"` + policyID + `"}`
+	send(network, `"1"`, 409)
+	exec("UPDATE workspaces SET observed_state='stopped' WHERE id=$1", id)
+	exec(`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,created_at,version)
+		VALUES('policy-active-step',$1,'start',1,'member','policy-active-step','pending','now',1)`, id)
+	send(network, `"1"`, 409)
+	exec("UPDATE operations SET status='cancelled' WHERE id='policy-active-step'")
+	send(network, `"2"`, 412)
+	send(`{"retentionSeconds":86401}`, `"1"`, 409)
+	send(`{"retentionSeconds":3600,"networkPolicyId":"`+policyID+`"}`, `"1"`, 200)
+	var launch, current string
+	var duration int64
+	if err := db.QueryRowContext(ctx, `SELECT network_policy_snapshot_json,network_policy_override_json,retention_seconds
+		FROM workspaces WHERE id=$1`, id).Scan(&launch, &current, &duration); err != nil ||
+		launch != `{"mode":"shared"}` || !strings.Contains(current, policyID) || duration != 3600 {
+		t.Fatalf("stored workspace policy = %s, %s, %d (%v), want unchanged launch, selected policy, 3600 seconds", launch, current, duration, err)
+	}
+	send(`{"retentionSeconds":null}`, `"2"`, 200)
+	var cleared bool
+	if err := db.QueryRowContext(ctx, "SELECT retention_seconds IS NULL FROM workspaces WHERE id=$1", id).Scan(&cleared); err != nil || !cleared {
+		t.Fatalf("retention cleared = %t (%v), want true", cleared, err)
+	}
+}

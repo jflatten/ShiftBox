@@ -2138,3 +2138,13 @@ This checkpoint does not itself change the goal status.
 - Go vet, race-enabled application, template, web, workspace and contract
   tests, and SQLite/PostgreSQL migration parity passed. Stopped-workspace
   policy edits and browser selection remain open.
+
+### Workspace policy edits
+
+- The versioned workspace API saves network policies only when desired
+  and observed state are stopped and no operation is active. The runtime
+  reads the current policy at next start while retaining launch provenance.
+- The API also saves or clears workspace retention settings within the
+  configured limit. Automatic retention enforcement and browser controls
+  remain open under T093 and T101.
+- Go vet, relevant race tests and the focused start-policy test passed.

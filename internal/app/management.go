@@ -59,6 +59,7 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 		web.TemplateUpdateHandler(db, origin, now), grantTemplate, revokeTemplate,
 		web.WorkspaceLaunchHandler(db, origin, now, journal, launchPolicy),
 		web.WorkspacePowerHandler(db, origin, now, journal),
+		web.WorkspacePolicyHandler(db, origin, now, launchPolicy),
 		*web.WorkspaceEntryGrantHandler(db, origin, now, hosts),
 	} {
 		handlers[handler.Route.OperationID] = handler
