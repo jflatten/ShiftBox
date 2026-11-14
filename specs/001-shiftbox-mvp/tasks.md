@@ -1710,3 +1710,15 @@ This checkpoint does not itself change the goal status.
 - Live provider validation and importing the initial workspace artifact
   through setup remain open under T058. The controller still needs T060
   composition before the management sign-in journey can run end to end.
+
+### Management services composition
+
+- Assembled the implemented workspace, template, operation, capacity, and
+  Git handlers over the shared journal, sessions, and connection registry.
+  Production API registration still requires the full reviewed catalog.
+- The management site mounts API requests, interactive Dex, and the
+  embedded UI, with setup pages and internal guest endpoints excluded.
+  A pinned Dex HTTPS test signs in through the composed site and reads the
+  guarded workspace list.
+- Outstanding management handlers still prevent production CLI startup
+  under T060.

@@ -13,12 +13,15 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/app"
+	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/identity"
+	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 	"golang.org/x/crypto/bcrypt"
@@ -115,11 +118,22 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		mux := http.NewServeMux()
-		mux.Handle("/auth/", signIn)
-		mux.Handle("/dex/", dexWeb)
-		mux.Handle("GET /{$}", web.NewSessionHandler(db, origin, &proxy.Registry{}, time.Now))
-		return mux, nil
+		settings := config.InstallationSettings{ManagementOrigin: origin,
+			IDEHostPattern: "{workspace}.ide.test", PreviewHostPattern: "{service}--{workspace}.preview.test"}
+		services, err := app.NewManagementServices(db, settings, operation.NewJournal(db, time.Now, uuid.NewString),
+			&proxy.Registry{}, web.WorkspaceLaunchPolicy{}, nil, time.Now)
+		if err != nil {
+			return nil, err
+		}
+		api := http.NewServeMux()
+		api.Handle("GET /api/v1/session", services.Session)
+		list := services.Handlers["listWorkspaces"]
+		api.Handle("GET /api/v1/workspaces", &list)
+		assets, err := web.NewStaticHandler(fstest.MapFS{"index.html": {Data: []byte("<h1>ShiftBox</h1>")}})
+		if err != nil {
+			return nil, err
+		}
+		return app.NewManagementSite(api, signIn, dexWeb, assets)
 	})
 	if stopDex != nil {
 		defer stopDex()
@@ -197,9 +211,30 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		}
 		defer response.Body.Close()
 		body, err := io.ReadAll(response.Body)
+		if wantMode != "" && err == nil {
+			if response.StatusCode != http.StatusOK || response.Request.URL.Path != "/" || !bytes.Contains(body, []byte("ShiftBox")) {
+				t.Fatal("active sign-in did not return to the management page")
+			}
+			response, err = client.Get(server.Origin + "/api/v1/session")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			body, err = io.ReadAll(response.Body)
+		}
 		if err != nil || response.StatusCode != wantStatus || (wantMode != "" && !bytes.Contains(body, []byte(`"mode":"`+wantMode+`"`))) {
 			t.Fatalf("login status = %d and expected mode %q present = %t, want status %d, read error %v",
 				response.StatusCode, wantMode, bytes.Contains(body, []byte(wantMode)), wantStatus, err)
+		}
+		if wantMode == "normal" {
+			workspaces, err := client.Get(server.Origin + "/api/v1/workspaces")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer workspaces.Body.Close()
+			if workspaces.StatusCode != http.StatusOK {
+				t.Fatalf("signed-in workspace list status = %d, want 200", workspaces.StatusCode)
+			}
 		}
 	}
 	signIn(200, "normal")
