@@ -92,6 +92,7 @@ func TestSetupCertificateUpload(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("PUT /profile", setup.profileHandler())
 	mux.Handle("PUT /certificate", setup.certificateHandler())
+	mux.Handle("POST /activate", setup.activationHandler())
 	handler, err := ProtectBootstrap(origin, mux)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +103,11 @@ func TestSetupCertificateUpload(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r := httptest.NewRequest("PUT", origin+path, strings.NewReader(string(payload)))
+		method := http.MethodPut
+		if path == "/activate" {
+			method = http.MethodPost
+		}
+		r := httptest.NewRequest(method, origin+path, strings.NewReader(string(payload)))
 		r.RemoteAddr = "127.0.0.1:61520"
 		r.TLS = &tls.ConnectionState{}
 		cookie := httptest.NewRecorder()
@@ -142,5 +147,39 @@ func TestSetupCertificateUpload(t *testing.T) {
 	}
 	if strings.Contains(encrypted, "PRIVATE KEY") {
 		t.Fatal("key stored unencrypted")
+	}
+	request("/activate", "setup-activate-0001", nil, 409)
+	if _, err := db.Exec(`UPDATE bootstrap_administrator SET credential_ready=1,delivered_at=$1,password_ciphertext_id=NULL WHERE installation_id=$2`, now.Format(time.RFC3339Nano), id); err != nil {
+		t.Fatal(err)
+	}
+	request("/activate", "setup-activate-0001", nil, 409)
+	if _, err := db.Exec(`INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state,is_default)
+		VALUES('fixture','fixture','amd64','test','development','1','[]','{}','{}','{}','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','fixture.utm',$1,$2,'available',1)`, owner, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO capacity_budgets(installation_id,cpu_limit,memory_mib_limit,disk_mib_limit,updated_by,updated_at,version)
+		VALUES($1,4,4096,10240,$2,$3,1)`, id, owner, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER prevent_session_retirement BEFORE UPDATE OF revoked_at ON sessions
+		BEGIN SELECT RAISE(ABORT, 'fixture retirement failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	request("/activate", "setup-activate-0001", nil, 500)
+	var recorded int
+	if err := db.QueryRow(`SELECT state,(SELECT COUNT(*) FROM operations WHERE request_key='setup-activate-0001')
+		FROM installations WHERE id=$1`, id).Scan(&state, &recorded); err != nil || state != "configuring" || recorded != 0 {
+		t.Fatalf("failed activation left %s / %d operations, %v, want configuring / zero", state, recorded, err)
+	}
+	if _, err := db.Exec("DROP TRIGGER prevent_session_retirement"); err != nil {
+		t.Fatal(err)
+	}
+	request("/activate", "setup-activate-0001", nil, 202)
+	request("/activate", "setup-activate-0001", nil, 401)
+	var revoked string
+	if err := db.QueryRow(`SELECT i.state, s.revocation_reason FROM installations i CROSS JOIN sessions s
+		WHERE i.id=$1 AND s.id=$2 AND s.revoked_at IS NOT NULL`, id, session.ID).Scan(&state, &revoked); err != nil ||
+		state != "active" || revoked != "setup_activated" {
+		t.Fatalf("activation left %s / %s, %v, want active / revoked", state, revoked, err)
 	}
 }

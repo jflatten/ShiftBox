@@ -62,9 +62,13 @@ func (s SetupHTTP) profileHandler() http.Handler {
 }
 
 func (s SetupHTTP) setupMutation(apply func(context.Context, *sql.Tx, *http.Request, auth.Principal, web.AuthorizationTarget, auth.Decision) (http.Handler, error)) http.Handler {
+	return s.setupMethod(http.MethodPut, apply)
+}
+
+func (s SetupHTTP) setupMethod(method string, apply func(context.Context, *sql.Tx, *http.Request, auth.Principal, web.AuthorizationTarget, auth.Decision) (http.Handler, error)) http.Handler {
 	return &web.AuthorizedHandler{
 		DB: s.DB, Origin: s.Origin, Now: s.Now,
-		Route:  web.ManagementRoute{Method: http.MethodPut, Action: "setup.mutate"},
+		Route:  web.ManagementRoute{Method: method, Action: "setup.mutate"},
 		Lookup: s.bootstrapPrincipal,
 		Resolve: func(context.Context, *sql.Tx, *http.Request, auth.Principal) (web.AuthorizationTarget, error) {
 			return web.AuthorizationTarget{Action: "setup.mutate"}, nil

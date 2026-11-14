@@ -66,7 +66,9 @@ func ActivateBrowserCertificate(ctx context.Context, tx *sql.Tx, activation Acti
 // LoadBrowserCertificate decrypts only the active record and revalidates current
 // validity, trust, and configured hostname coverage. An expired replacement never
 // causes a fallback to an older certificate or a temporary production identity.
-func LoadBrowserCertificate(ctx context.Context, db *sql.DB, installationID, id string, cipher *cryptostore.Store, roots *x509.CertPool, now time.Time) (tls.Certificate, error) {
+func LoadBrowserCertificate(ctx context.Context, db interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, installationID, id string, cipher *cryptostore.Store, roots *x509.CertPool, now time.Time) (tls.Certificate, error) {
 	if cipher == nil {
 		return tls.Certificate{}, ErrInvalidBrowserCertificate
 	}

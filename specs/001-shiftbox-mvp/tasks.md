@@ -1439,3 +1439,15 @@ This checkpoint does not itself change the goal status.
   Application, database and contract race tests passed.
 - The setup activation endpoint, authority switch, and controller command
   composition still need wiring.
+
+### SQLite setup activation
+
+- The protected activation route checks owner credential readiness, the
+  selected SQLite profile, browser TLS, a compatible default artifact and
+  a capacity budget. It atomically records activation and retires restricted
+  sessions, then clears the browser cookie after commit.
+- Tests inject failure during session retirement and prove both the active
+  state and operation roll back. A successful retry denies the retired
+  session. CLI, app, configuration and contract race tests passed.
+- The provider/artifact setup UI, PostgreSQL activation switch and fresh
+  production sign-in still need wiring.
