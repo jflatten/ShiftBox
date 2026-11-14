@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"log"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/identity"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -23,14 +25,20 @@ type GuestListenerConfig struct {
 	PollAddress       string
 	PublicHost        string
 	GitHub            *identity.GitHub
+	TunnelAddress     string
+	Tunnels           *proxy.Tunnels
 }
 
 // GuestListeners owns the initial enrollment and authenticated poll listeners.
 type GuestListeners struct {
-	EnrollURL string
-	PollURL   string
-	enroll    guestListener
-	poll      guestListener
+	EnrollURL     string
+	PollURL       string
+	TunnelAddress string
+	enroll        guestListener
+	poll          guestListener
+	tunnel        *guestTunnelListener
+	closed        chan struct{}
+	closeOnce     sync.Once
 }
 
 type guestListener struct {
@@ -44,7 +52,9 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 	compatibility web.GuestCompatibility, now func() time.Time,
 ) (*GuestListeners, error) {
 	if enrollment == nil || authority == nil || now == nil || compatibility.Protocol == "" || compatibility.CurrentRelease == "" ||
-		config.EnrollmentAddress == "" || config.PollAddress == "" {
+		config.EnrollmentAddress == "" || config.PollAddress == "" ||
+		(config.TunnelAddress == "") != (config.Tunnels == nil) ||
+		config.Tunnels != nil && config.Tunnels.Registry == nil {
 		return nil, errors.New("internal guest listeners are incompletely configured")
 	}
 	certificates := &internalServerCertificate{authority: authority, name: config.PublicHost, now: now}
@@ -66,11 +76,32 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		_ = enroll.network.Close()
 		return nil, err
 	}
-	return &GuestListeners{
+	listeners := &GuestListeners{
 		EnrollURL: guestURL(config.PublicHost, enroll.network, "/internal/v1/enroll"),
 		PollURL:   guestURL(config.PublicHost, poll.network, "/internal/v1/guest/poll"),
-		enroll:    enroll, poll: poll,
-	}, nil
+		enroll:    enroll, poll: poll, closed: make(chan struct{}),
+	}
+	if config.Tunnels != nil {
+		tunnel, err := listenGuestTunnel(config.TunnelAddress, authority, certificates, config.Tunnels, compatibility.Protocol,
+			func(ctx context.Context, leaf *x509.Certificate) (proxy.TunnelAuthority, error) {
+				contact, err := enrollment.Authenticate(ctx, leaf, now())
+				if err != nil {
+					return proxy.TunnelAuthority{}, err
+				}
+				if contact.DesiredState != "running" {
+					return proxy.TunnelAuthority{}, guest.ErrGuestUnauthorized
+				}
+				return proxy.TunnelAuthority{WorkspaceID: contact.WorkspaceID, OwnerID: contact.OwnerID,
+					Generation: contact.Generation, ExpiresAt: leaf.NotAfter}, nil
+			})
+		if err != nil {
+			listeners.Close()
+			return nil, err
+		}
+		listeners.tunnel = tunnel
+		listeners.TunnelAddress = guestAddress(config.PublicHost, tunnel.network)
+	}
+	return listeners, nil
 }
 
 func listenGuest(address string, config *tls.Config, handler http.Handler, certificates *internalServerCertificate) (guestListener, error) {
@@ -89,37 +120,56 @@ func listenGuest(address string, config *tls.Config, handler http.Handler, certi
 }
 
 func guestURL(host string, listener net.Listener, path string) string {
-	_, port, _ := net.SplitHostPort(listener.Addr().String())
-	return (&url.URL{Scheme: "https", Host: net.JoinHostPort(host, port), Path: path}).String()
+	return (&url.URL{Scheme: "https", Host: guestAddress(host, listener), Path: path}).String()
 }
 
-// Serve runs both listeners until shutdown or listener failure.
+func guestAddress(host string, listener net.Listener) string {
+	_, port, _ := net.SplitHostPort(listener.Addr().String())
+	return net.JoinHostPort(host, port)
+}
+
+// Serve runs internal listeners until shutdown or listener failure.
 func (s *GuestListeners) Serve(ctx context.Context) error {
-	done := make(chan error, 2)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 3)
+	count := 2
 	for _, endpoint := range []guestListener{s.enroll, s.poll} {
 		go func() { done <- endpoint.server.ServeTLS(endpoint.network, "", "") }()
+	}
+	if s.tunnel != nil {
+		count++
+		go func() { done <- s.tunnel.serve(runCtx) }()
 	}
 	var primary error
 	select {
 	case <-ctx.Done():
 		primary = ctx.Err()
+	case <-s.closed:
+		primary = net.ErrClosed
 	case primary = <-done:
-		s.Close()
-		<-done
-		return primary
+		count--
 	}
+	cancel()
 	s.Close()
-	<-done
-	<-done
+	for range count {
+		<-done
+	}
 	return primary
 }
 
 // Close releases the reserved listeners and active connections.
 func (s *GuestListeners) Close() {
-	for _, endpoint := range []guestListener{s.enroll, s.poll} {
-		_ = endpoint.server.Close()
-		_ = endpoint.network.Close()
-	}
+	s.closeOnce.Do(func() {
+		close(s.closed)
+		for _, endpoint := range []guestListener{s.enroll, s.poll} {
+			_ = endpoint.server.Close()
+			_ = endpoint.network.Close()
+		}
+		if s.tunnel != nil {
+			_ = s.tunnel.network.Close()
+		}
+	})
 }
 
 type internalServerCertificate struct {

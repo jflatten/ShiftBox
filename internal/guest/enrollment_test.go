@@ -20,10 +20,12 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 	_ "modernc.org/sqlite"
 )
@@ -220,6 +222,58 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		tls.Certificate{Certificate: [][]byte{first}, PrivateKey: clientKey}, ca, "controller.test")}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	t.Run("controller tunnel listener", func(t *testing.T) {
+		registry := &proxy.Registry{}
+		tunnels := &proxy.Tunnels{Registry: registry}
+		const bind = "127.0.0.1:0"
+		listeners, err := app.ListenGuests(app.GuestListenerConfig{
+			EnrollmentAddress: bind, PollAddress: bind, TunnelAddress: bind, PublicHost: "127.0.0.1", Tunnels: tunnels,
+		}, enrollment, ca, web.GuestCompatibility{Protocol: "1", CurrentRelease: "test"}, clock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listeners.Close()
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- listeners.Serve(ctx) }()
+		guestDone := make(chan error, 1)
+		go func() {
+			cfg := guest.ClientTLS(tls.Certificate{Certificate: [][]byte{first}, PrivateKey: clientKey}, ca, "127.0.0.1")
+			guestDone <- guest.ServeTunnel(ctx, listeners.TunnelAddress, cfg, "1", 1,
+				[]proxy.TunnelService{{Key: "ide", Target: "127.0.0.1:3000", Protocols: []string{"http"}}})
+		}()
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			stream, err := tunnels.Open(ctx, "work", 1, proxy.StreamHeader{ServiceKey: "ide", RequestID: "fixture", Protocol: "http"})
+			if err == nil {
+				stream.Close()
+				break
+			}
+			select {
+			case err := <-guestDone:
+				t.Fatalf("enrolled guest could not establish a tunnel: %v", err)
+			case <-ctx.Done():
+				t.Fatal("enrolled guest tunnel never became available")
+			case <-ticker.C:
+			}
+		}
+		listeners.Close()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Error("closed listeners returned no shutdown result")
+			}
+		case <-ctx.Done():
+			t.Fatal("controller did not stop its tunnel listener")
+		}
+		select {
+		case <-guestDone:
+		case <-ctx.Done():
+			t.Fatal("guest tunnel did not close with its controller listener")
+		}
+	})
 	pollResponse := func(payload string) (int, string) {
 		t.Helper()
 		response, err := client.Post(server.URL+"/internal/v1/guest/poll", "application/json", bytes.NewBufferString(payload))

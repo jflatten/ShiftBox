@@ -21,6 +21,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/identity"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -76,7 +77,8 @@ func TestGuestListenersSeparateEnrollmentAndPolling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := GuestListenerConfig{EnrollmentAddress: "127.0.0.1:0", PollAddress: "127.0.0.1:0", PublicHost: "127.0.0.1", GitHub: github}
+	cfg := GuestListenerConfig{EnrollmentAddress: "127.0.0.1:0", PollAddress: "127.0.0.1:0", PublicHost: "127.0.0.1", GitHub: github,
+		TunnelAddress: "127.0.0.1:0", Tunnels: &proxy.Tunnels{Registry: &proxy.Registry{}}}
 	listeners, err := ListenGuests(cfg, guest.NewEnrollment(db, ca), ca, web.GuestCompatibility{Protocol: "1", CurrentRelease: "test"}, time.Now)
 	if err != nil {
 		t.Fatal(err)
@@ -112,6 +114,13 @@ func TestGuestListenersSeparateEnrollmentAndPolling(t *testing.T) {
 	if resp, err := client.Post(strings.Replace(listeners.PollURL, "/internal/v1/guest/poll", guest.GitAccessTokenPath, 1), "", nil); err == nil {
 		resp.Body.Close()
 		t.Error("Git token listener accepted TLS without a client certificate")
+	}
+	if listeners.TunnelAddress == "" || strings.Contains(listeners.PollURL, listeners.TunnelAddress+"/") {
+		t.Fatal("Yamux must use a distinct address from HTTPS polling")
+	}
+	if resp, err := client.Get("https://" + listeners.TunnelAddress); err == nil {
+		resp.Body.Close()
+		t.Error("tunnel accepted TLS without a client certificate")
 	}
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
