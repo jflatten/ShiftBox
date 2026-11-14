@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/database"
@@ -85,6 +86,10 @@ func (j *Journal) GetInTx(ctx context.Context, tx *sql.Tx, id string) (Operation
 
 // Claim leases restartable work and gives each worker attempt a distinct fence.
 func (j *Journal) Claim(ctx context.Context, id, worker string, duration time.Duration) (Claim, error) {
+	return j.claim(ctx, id, worker, duration, nil)
+}
+
+func (j *Journal) claim(ctx context.Context, id, worker string, duration time.Duration, actions []string) (Claim, error) {
 	var claim Claim
 	if worker == "" || duration <= 0 {
 		return claim, ErrConflict
@@ -93,6 +98,9 @@ func (j *Journal) Claim(ctx context.Context, id, worker string, duration time.Du
 		op, err := readOperation(ctx, tx, id)
 		if err != nil {
 			return err
+		}
+		if len(actions) > 0 && !slices.Contains(actions, op.OriginatingAction) {
+			return ErrConflict
 		}
 		now := j.now().UTC()
 		if op.Status == "succeeded" || op.Status == "cancelled" || op.Status == "failed" || op.leaseExpiresAt.After(now) {

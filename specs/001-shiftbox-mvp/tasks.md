@@ -1643,3 +1643,15 @@ This checkpoint does not itself change the goal status.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
+
+### Workspace runtime scheduling
+
+- The workspace runtime binds the guest endpoints and starts one durable
+  worker for workspace launch, start, and stop. The worker filters pending
+  operations by their recorded admission action before claiming them.
+- The race-enabled UTM 5.0.8 enrollment test now queues the launch and
+  lets the shared runtime pick it up without direct test-side reconciliation.
+  The guest authenticated in 3m50s. The test passed in 237.68s and removed
+  the disposable VM. The test still ends at authenticated enrollment.
+- Production management composition and full workspace acceptance remain
+  open under T060 and T061.

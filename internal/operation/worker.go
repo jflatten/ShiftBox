@@ -3,11 +3,24 @@ package operation
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
 
-func (j *Journal) due(ctx context.Context) ([]string, error) {
-	rows, err := j.db.QueryContext(ctx, `SELECT id FROM operations WHERE status IN ('pending','running','waiting') AND (lease_expires_at IS NULL OR lease_expires_at <= $1) ORDER BY created_at,id LIMIT 100`, timestamp(j.now()))
+func (j *Journal) due(ctx context.Context, actions []string) ([]string, error) {
+	query := `SELECT id FROM operations WHERE status IN ('pending','running','waiting')
+		AND (lease_expires_at IS NULL OR lease_expires_at <= $1)`
+	args := []any{timestamp(j.now())}
+	if len(actions) > 0 {
+		params := make([]string, 0, len(actions))
+		for _, action := range actions {
+			args = append(args, action)
+			params = append(params, fmt.Sprintf("$%d", len(args)))
+		}
+		query += " AND originating_action IN (" + strings.Join(params, ",") + ")"
+	}
+	rows, err := j.db.QueryContext(ctx, query+" ORDER BY created_at,id LIMIT 100", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +48,7 @@ func (w *Worker) Run(ctx context.Context, interval time.Duration) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		ids, err := w.Journal.due(ctx)
+		ids, err := w.Journal.due(ctx, w.Actions)
 		if err != nil {
 			return err
 		}

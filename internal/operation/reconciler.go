@@ -26,11 +26,13 @@ type Worker struct {
 	Name          string
 	LeaseDuration time.Duration
 	Executor      Executor
+	// Actions optionally limits the worker to the admission actions it owns.
+	Actions []string
 }
 
 // RunOnce always observes before applying, including after a lost response.
 func (w *Worker) RunOnce(ctx context.Context, id string) error {
-	claim, err := w.Journal.Claim(ctx, id, w.Name, w.LeaseDuration)
+	claim, err := w.Journal.claim(ctx, id, w.Name, w.LeaseDuration, w.Actions)
 	if err != nil {
 		return err
 	}

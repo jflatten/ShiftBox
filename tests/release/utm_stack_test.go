@@ -22,10 +22,10 @@ import (
 	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
-	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/provider/utm"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/release"
 	"github.com/jflatten/ShiftBox/internal/web"
 	"github.com/jflatten/ShiftBox/internal/workspace"
@@ -90,19 +90,21 @@ func TestUTMGuestEnrollment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment := guest.NewEnrollment(db, ca)
 	bind := net.JoinHostPort(host, "0")
-	listeners, err := app.ListenGuests(app.GuestListenerConfig{EnrollmentAddress: bind, PollAddress: bind, PublicHost: host},
-		enrollment, ca, web.GuestCompatibility{Protocol: "1", CurrentRelease: guestRelease}, time.Now)
+	journal := operation.NewJournal(db, time.Now, uuid.NewString)
+	tunnels := &proxy.Tunnels{Registry: &proxy.Registry{}}
+	state := &app.ControllerState{DB: db, GuestCA: ca}
+	state.Installation.Settings.ManagementOrigin = "https://management.test"
+	state.Installation.Settings.IDEHostPattern = "{workspace}.ide.test"
+	state.Installation.Settings.PreviewHostPattern = "{service}--{workspace}.preview.test"
+	runtime, err := app.ListenWorkspaceRuntime(state, app.GuestListenerConfig{
+		EnrollmentAddress: bind, PollAddress: bind, TunnelAddress: bind, PublicHost: host, Tunnels: tunnels,
+	}, web.GuestCompatibility{Protocol: "1", CurrentRelease: guestRelease}, journal, machines, dir, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	listenerCtx, stop := context.WithCancel(ctx)
-	served := make(chan error, 1)
-	go func() { served <- listeners.Serve(listenerCtx) }()
-	defer func() { stop(); <-served }()
+	defer runtime.Close()
 
-	journal := operation.NewJournal(db, time.Now, uuid.NewString)
 	var op operation.Operation
 	err = database.Transaction(ctx, db, func(tx *sql.Tx) error {
 		var err error
@@ -118,17 +120,19 @@ func TestUTMGuestEnrollment(t *testing.T) {
 	}
 	ref := provider.WorkspaceRef{InstallationID: id, WorkspaceID: workspaceID, Generation: 1, OwnershipMarker: marker}
 	t.Cleanup(func() { cleanupEnrollmentVM(t, machines, ref) })
-	worker := operation.Worker{Journal: journal, Name: "release-fixture", LeaseDuration: 4 * time.Minute,
-		Executor: workspace.NewLaunchExecutor(store, machines, enrollment, dir, listeners.EnrollURL, listeners.PollURL, time.Now, nil)}
-	if err := worker.RunOnce(ctx, op.ID); err != nil {
-		t.Fatalf("provision %s: %v", workspaceID, err)
-	}
-	t.Logf("provisioned disposable workspace %s", workspaceID)
+	runCtx, stop := context.WithCancel(ctx)
+	served := make(chan error, 1)
+	go func() { served <- runtime.Serve(runCtx) }()
+	defer func() {
+		stop()
+		if err := <-served; !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("workspace runtime stopped: %v", err)
+		}
+	}()
 	started := time.Now()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
-		err := worker.RunOnce(ctx, op.ID)
 		current, readErr := journal.Get(ctx, op.ID)
 		if readErr != nil {
 			t.Fatal(readErr)
@@ -139,7 +143,7 @@ func TestUTMGuestEnrollment(t *testing.T) {
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("no authenticated guest poll for %s, steps %+v, last reconciliation error %v", workspaceID, current.Steps, err)
+			t.Fatalf("no authenticated guest poll for %s, steps %+v", workspaceID, current.Steps)
 		case <-ticker.C:
 		}
 	}

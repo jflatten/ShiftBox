@@ -98,8 +98,8 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	}
 	run := func(op operation.Operation, want error) {
 		t.Helper()
-		worker := operation.Worker{Journal: journal, Name: "test", LeaseDuration: time.Minute,
-			Executor: NewPowerExecutor(store, machines, time.Now, probe)}
+		worker := NewWorker(journal, NewLaunchExecutor(store, machines, nil, "", "", "", time.Now, probe),
+			NewPowerExecutor(store, machines, time.Now, probe))
 		if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, want) {
 			t.Fatalf("run %s = %v, want %v", op.Type, err, want)
 		}

@@ -62,8 +62,9 @@ func TestLaunchWorkerWaitsForGuestContact(t *testing.T) {
 		return nil
 	}
 	newWorker := func() *operation.Worker {
-		return &operation.Worker{Journal: journal, Name: "test", LeaseDuration: time.Minute,
-			Executor: NewLaunchExecutor(store, machines, enrollment, mediaRoot, "https://internal.test/internal/v1/enroll", "https://internal.test:8443/internal/v1/guest/poll", time.Now, probe)}
+		return NewWorker(journal,
+			NewLaunchExecutor(store, machines, enrollment, mediaRoot, "https://internal.test/internal/v1/enroll", "https://internal.test:8443/internal/v1/guest/poll", time.Now, probe),
+			NewPowerExecutor(store, machines, time.Now, probe))
 	}
 	worker := newWorker()
 	if err := worker.RunOnce(ctx, op.ID); err != nil {
