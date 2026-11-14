@@ -8,17 +8,20 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/audit"
+	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/config"
 )
 
 // RunHistoryRetention prunes management history on startup and daily afterward.
 // Cleanup failures are logged without interrupting management or reconciliation.
-func RunHistoryRetention(ctx context.Context, db *sql.DB, cfg config.Config) error {
+func RunHistoryRetention(ctx context.Context, db *sql.DB, cfg config.Config, fence *backup.WriteFence) error {
 	return runHistoryRetention(ctx, 24*time.Hour, func(ctx context.Context) error {
-		now := time.Now().UTC()
-		_, auditErr := audit.Prune(ctx, db, now.AddDate(0, 0, -cfg.AuditHistoryDays()))
-		_, noticeErr := PruneDismissedNotices(ctx, db, now, now.AddDate(0, 0, -cfg.DismissedNoticeHistoryDays()))
-		return errors.Join(auditErr, noticeErr)
+		return withCheckpointActivity(ctx, fence, func() error {
+			now := time.Now().UTC()
+			_, auditErr := audit.Prune(ctx, db, now.AddDate(0, 0, -cfg.AuditHistoryDays()))
+			_, noticeErr := PruneDismissedNotices(ctx, db, now, now.AddDate(0, 0, -cfg.DismissedNoticeHistoryDays()))
+			return errors.Join(auditErr, noticeErr)
+		})
 	}, func(error) {
 		slog.WarnContext(ctx, "Management history cleanup failed; check database availability and schema")
 	})

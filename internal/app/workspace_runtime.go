@@ -60,8 +60,14 @@ func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfi
 	worker := workspace.NewWorker(journal,
 		workspace.NewLaunchExecutor(store, machines, enrollment, mediaRoot, endpoints.EnrollURL, endpoints.PollURL, now, probe),
 		power)
-	return &WorkspaceRuntime{listeners: endpoints, worker: worker,
-		retention: newWorkspaceRetention(state, store, machines, journal, listeners.Tunnels.Registry, now)}, nil
+	retention := newWorkspaceRetention(state, store, machines, journal, listeners.Tunnels.Registry, now)
+	if listeners.Checkpoint != nil {
+		worker.EnterActivity = listeners.Checkpoint.Enter
+		if retention != nil {
+			retention.checkpoint = listeners.Checkpoint
+		}
+	}
+	return &WorkspaceRuntime{listeners: endpoints, worker: worker, retention: retention}, nil
 }
 
 // Serve runs workspace reconciliation, guest communication and configured

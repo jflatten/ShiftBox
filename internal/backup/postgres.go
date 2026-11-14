@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -62,7 +63,13 @@ func StagePostgresCheckpoint(ctx context.Context, dir, applicationURI, dexURI st
 	}()
 	var snapshot string
 	if err := captureCheckpoint(ctx, pause, func(ctx context.Context) error {
-		var err error
+		wait, cancel := context.WithTimeout(ctx, 5*time.Second)
+		release, err := lockPostgresDex(wait, identity)
+		cancel()
+		if err != nil {
+			return err
+		}
+		defer release()
 		tx, err = application.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 		if err != nil {
 			return errors.New("cannot start shared PostgreSQL checkpoint")
@@ -82,6 +89,36 @@ func StagePostgresCheckpoint(ctx context.Context, dir, applicationURI, dexURI st
 		sources[target.filename] = path
 	}
 	return sources, nil
+}
+
+// Dex's own key rotation and cleanup bypass the controller HTTP fence. Wait
+// for their writes to settle and hold a shared lock until snapshot export.
+func lockPostgresDex(ctx context.Context, conn *pgx.Conn) (func(), error) {
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return nil, errors.New("cannot start PostgreSQL identity checkpoint")
+	}
+	release := func() { _ = tx.Rollback(context.Background()) }
+	rows, err := tx.Query(ctx, `SELECT c.relname FROM pg_catalog.pg_class c
+		JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+		WHERE n.nspname='dex' AND c.relkind IN ('r','p') ORDER BY c.relname`)
+	if err != nil {
+		release()
+		return nil, errors.New("cannot read PostgreSQL identity tables")
+	}
+	tables, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil || len(tables) == 0 {
+		release()
+		return nil, errors.New("PostgreSQL identity store is not initialized")
+	}
+	for i, table := range tables {
+		tables[i] = pgx.Identifier{"dex", table}.Sanitize()
+	}
+	if _, err := tx.Exec(ctx, "LOCK TABLE "+strings.Join(tables, ",")+" IN SHARE MODE"); err != nil {
+		release()
+		return nil, errors.New("cannot drain PostgreSQL identity writes for checkpoint")
+	}
+	return release, nil
 }
 
 type dumpTarget struct {

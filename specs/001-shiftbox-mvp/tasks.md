@@ -1741,8 +1741,12 @@ This checkpoint does not itself change the goal status.
   digests, size, and operation completion together. Failed captures
   commit a sanitized failure. T097 checks the completed evidence for
   the same installation, release, profile, and application schema.
-- T104 and T110 stay open for live controller and Dex coordination
-  and uninterrupted workspace computation evidence.
+- T104 and T110 add a cancellable checkpoint fence around controller
+  requests and background writes. SQLite and PostgreSQL independently
+  drain Dex database writers during capture. The controller leaves
+  established workspace tunnels and operation event streams running.
+- T104 and T110 stay open until the active backup route exercises this
+  path and live workspace computation is verified during a backup.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.

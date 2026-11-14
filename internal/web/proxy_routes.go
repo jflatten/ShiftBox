@@ -15,7 +15,8 @@ import (
 	"github.com/jflatten/ShiftBox/internal/proxy"
 )
 
-const serviceEntryPath = "/_shiftbox/entry"
+// ServiceEntryPath exchanges an origin grant before starting a workspace session.
+const ServiceEntryPath = "/_shiftbox/entry"
 const serviceCookie = "__Host-shiftbox_origin"
 
 // ServiceProxyHandler serves configured IDE, preview, and repair origins. Forward
@@ -46,7 +47,7 @@ func (s serviceProxy) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	origin := "https://" + r.Host
-	if r.URL.Path == serviceEntryPath {
+	if r.URL.Path == ServiceEntryPath {
 		s.exchange(w, r, workspace, service, origin)
 		return
 	}
@@ -241,7 +242,7 @@ func WorkspaceEntryGrantHandler(db *sql.DB, origin string, now func() time.Time,
 			result := struct {
 				ExchangeURL string    `json:"exchangeUrl"`
 				ExpiresAt   time.Time `json:"expiresAt"`
-			}{binding.Scope.Origin + serviceEntryPath + "?" + url.Values{"grant": {token}}.Encode(), expiry}
+			}{binding.Scope.Origin + ServiceEntryPath + "?" + url.Values{"grant": {token}}.Encode(), expiry}
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusCreated)

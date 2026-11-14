@@ -39,7 +39,7 @@ func TestBrowserServerSeparatesManagementAndServices(t *testing.T) {
 	server, err := app.ListenBrowser("127.0.0.1:0", state, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Management", "yes")
 		w.WriteHeader(http.StatusNoContent)
-	}), &proxy.Tunnels{Registry: registry}, time.Now)
+	}), &proxy.Tunnels{Registry: registry}, time.Now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -109,8 +109,10 @@ func defaultValue(enabled bool) int {
 }
 
 // Run reconciles catalog imports independently of workspace power operations.
-func (p *PlatformImport) Run(ctx context.Context) error {
-	return p.worker().Run(ctx, time.Second)
+func (p *PlatformImport) Run(ctx context.Context, enter func(context.Context) (func(), error)) error {
+	worker := p.worker()
+	worker.EnterActivity = enter
+	return worker.Run(ctx, time.Second)
 }
 
 func (p *PlatformImport) worker() *operation.Worker {

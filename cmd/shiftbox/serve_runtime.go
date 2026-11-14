@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/app"
+	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/operation"
@@ -78,6 +79,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if !caps.Create || !caps.Start || !caps.Stop || !caps.Delete || caps.Architecture != "amd64" {
 		return errors.New("UTM lacks required amd64 workspace lifecycle capabilities")
 	}
+	checkpoint := &backup.WriteFence{}
 	journal := operation.NewJournal(state.DB, time.Now, uuid.NewString)
 	tunnels := &proxy.Tunnels{Registry: &proxy.Registry{}}
 	origin := active.Settings.ManagementOrigin
@@ -130,6 +132,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 			return assessControllerMigration(ctx, cfg, state, manifest, current)
 		})
 	services.Handlers[preflightRoute.Route.OperationID] = preflightRoute
+	preflightWorker.EnterActivity = checkpoint.Enter
 	api, err := web.NewActiveManagementRouter(services.Session, services.Handlers, services.GitHubCallback)
 	if err != nil {
 		return err
@@ -138,22 +141,24 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if err != nil {
 		return err
 	}
-	browser, err := app.ListenBrowser(settings.BrowserAddress, state, site, tunnels, time.Now)
+	browser, err := app.ListenBrowser(settings.BrowserAddress, state, site, tunnels, time.Now, checkpoint)
 	if err != nil {
 		return err
 	}
 	defer browser.Close()
 	workspaces, err := app.ListenWorkspaceRuntime(state, app.GuestListenerConfig{
 		EnrollmentAddress: settings.EnrollmentAddress, PollAddress: settings.PollAddress,
-		TunnelAddress: settings.TunnelAddress, PublicHost: settings.GuestHost, Tunnels: tunnels, GitHub: github,
+		TunnelAddress: settings.TunnelAddress, PublicHost: settings.GuestHost, Tunnels: tunnels, GitHub: github, Checkpoint: checkpoint,
 	}, compatibility, journal, machines, media, time.Now)
 	if err != nil {
 		return err
 	}
 	defer workspaces.Close()
 	err = app.ServeController(ctx, dexDone, browser.Serve, workspaces.Serve, func(ctx context.Context) error {
-		return app.RunHistoryRetention(ctx, state.DB, cfg)
-	}, imports.Run, func(ctx context.Context) error {
+		return app.RunHistoryRetention(ctx, state.DB, cfg, checkpoint)
+	}, func(ctx context.Context) error {
+		return imports.Run(ctx, checkpoint.Enter)
+	}, func(ctx context.Context) error {
 		return preflightWorker.Run(ctx, time.Second)
 	})
 	if errors.Is(ctx.Err(), context.Canceled) {

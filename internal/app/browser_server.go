@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
@@ -24,7 +25,7 @@ type BrowserServer struct {
 
 // ListenBrowser mounts management and workspace services on their own origins.
 // It uses the browser certificate already validated by controller preflight.
-func ListenBrowser(address string, state *ControllerState, management http.Handler, tunnels *proxy.Tunnels, now func() time.Time) (*BrowserServer, error) {
+func ListenBrowser(address string, state *ControllerState, management http.Handler, tunnels *proxy.Tunnels, now func() time.Time, fence *backup.WriteFence) (*BrowserServer, error) {
 	if address == "" || state == nil || state.DB == nil || tunnels == nil || tunnels.Registry == nil || now == nil {
 		return nil, errors.New("browser listener is incompletely configured")
 	}
@@ -37,7 +38,15 @@ func ListenBrowser(address string, state *ControllerState, management http.Handl
 		return nil, err
 	}
 	service := web.ServiceProxyHandler(state.DB, hosts, tunnels.Registry, now, tunnels.Forward)
-	router, err := web.NewBrowserRouter(hosts, management, service)
+	entry := checkpointRequest(fence, service)
+	workspaceService := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == web.ServiceEntryPath {
+			entry.ServeHTTP(w, r)
+			return
+		}
+		service.ServeHTTP(w, r)
+	})
+	router, err := web.NewBrowserRouter(hosts, CheckpointManagement(fence, management), workspaceService)
 	if err != nil {
 		return nil, err
 	}

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // captureCheckpoint holds the write fence only during checkpoint acquisition.
@@ -63,16 +64,11 @@ func StageSQLiteCheckpoint(ctx context.Context, dir string, application *sql.DB,
 	if !privateCheckpointDirectory(dir) {
 		return nil, errors.New("backup checkpoint requires a private staging directory")
 	}
-	info, err := os.Lstat(dexPath)
-	if err != nil || !filepath.IsAbs(dexPath) || !info.Mode().IsRegular() {
-		return nil, errors.New("Dex SQLite store is unavailable")
-	}
-	uri := url.URL{Scheme: "file", Path: dexPath, RawQuery: "mode=ro"}
-	dex, err := sql.Open("sqlite", uri.String())
+	dex, release, err := lockSQLiteDex(ctx, dexPath)
 	if err != nil {
-		return nil, errors.New("cannot open Dex SQLite store")
+		return nil, err
 	}
-	defer dex.Close()
+	defer release()
 	// The managed Dex always enables the password store. An empty or
 	// unrelated SQLite file can pass VACUUM INTO without this check.
 	var migrations int64
@@ -101,6 +97,45 @@ func StageSQLiteCheckpoint(ctx context.Context, dir string, application *sql.DB,
 		return nil, err
 	}
 	return sources, nil
+}
+
+// Reserve SQLite's writer lock on a separate connection. This drains an
+// in-flight Dex transaction and fences its internal background writers while
+// the read-only connection checkpoints the last committed state.
+func lockSQLiteDex(ctx context.Context, path string) (*sql.DB, func(), error) {
+	info, err := os.Lstat(path)
+	if err != nil || !filepath.IsAbs(path) || !info.Mode().IsRegular() {
+		return nil, nil, errors.New("Dex SQLite store is unavailable")
+	}
+	uri := url.URL{Scheme: "file", Path: path, RawQuery: "mode=rw&_pragma=busy_timeout(5000)"}
+	writer, err := sql.Open("sqlite", uri.String())
+	if err != nil {
+		return nil, nil, errors.New("cannot open Dex SQLite checkpoint lock")
+	}
+	conn, err := writer.Conn(ctx)
+	if err != nil {
+		writer.Close()
+		return nil, nil, errors.New("cannot connect to Dex SQLite checkpoint lock")
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		conn.Close()
+		writer.Close()
+		return nil, nil, errors.New("cannot drain Dex SQLite writes for checkpoint")
+	}
+	uri.RawQuery = "mode=ro"
+	reader, err := sql.Open("sqlite", uri.String())
+	if err != nil {
+		conn.Close()
+		writer.Close()
+		return nil, nil, errors.New("cannot open Dex SQLite store")
+	}
+	release := sync.OnceFunc(func() {
+		reader.Close()
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		conn.Close()
+		writer.Close()
+	})
+	return reader, release, nil
 }
 
 func stageProtectedInputs(ctx context.Context, dir string, inputs ProtectedInputs, sources map[string]string) error {

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/proxy"
@@ -29,6 +30,7 @@ type GuestListenerConfig struct {
 	Secrets           *secret.Service
 	TunnelAddress     string
 	Tunnels           *proxy.Tunnels
+	Checkpoint        *backup.WriteFence
 }
 
 // GuestListeners owns the initial enrollment and authenticated poll listeners.
@@ -64,7 +66,7 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		return nil, err
 	}
 	enroll, err := listenGuest(config.EnrollmentAddress, guest.EnrollmentTLS(tls.Certificate{}),
-		web.GuestEnrollmentHandler(compatibility, enrollment.Enroll, now), certificates)
+		checkpointRequest(config.Checkpoint, web.GuestEnrollmentHandler(compatibility, enrollment.Enroll, now)), certificates)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +80,7 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 				return enrollment.ResolveSecret(ctx, leaf, stamp, config.Secrets, name)
 			}, now))
 	}
-	poll, err := listenGuest(config.PollAddress, guest.ServerTLS(tls.Certificate{}, authority), internal, certificates)
+	poll, err := listenGuest(config.PollAddress, guest.ServerTLS(tls.Certificate{}, authority), checkpointRequest(config.Checkpoint, internal), certificates)
 	if err != nil {
 		_ = enroll.network.Close()
 		return nil, err
@@ -91,7 +93,12 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 	if config.Tunnels != nil {
 		tunnel, err := listenGuestTunnel(config.TunnelAddress, authority, certificates, config.Tunnels, compatibility.Protocol,
 			func(ctx context.Context, leaf *x509.Certificate) (proxy.TunnelAuthority, error) {
-				contact, err := enrollment.Authenticate(ctx, leaf, now())
+				var contact guest.Contact
+				err := withCheckpointActivity(ctx, config.Checkpoint, func() error {
+					var err error
+					contact, err = enrollment.Authenticate(ctx, leaf, now())
+					return err
+				})
 				if err != nil {
 					return proxy.TunnelAuthority{}, err
 				}

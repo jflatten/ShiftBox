@@ -53,7 +53,7 @@ func (w *Worker) Run(ctx context.Context, interval time.Duration) error {
 			return err
 		}
 		for _, id := range ids {
-			if err := w.RunOnce(ctx, id); err != nil && !errors.Is(err, ErrConflict) {
+			if err := w.runActivity(ctx, id); err != nil && !errors.Is(err, ErrConflict) {
 				op, readErr := w.Journal.Get(ctx, id)
 				if readErr != nil {
 					return readErr
@@ -69,4 +69,16 @@ func (w *Worker) Run(ctx context.Context, interval time.Duration) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (w *Worker) runActivity(ctx context.Context, id string) error {
+	if w.EnterActivity == nil {
+		return w.RunOnce(ctx, id)
+	}
+	leave, err := w.EnterActivity(ctx)
+	if err != nil {
+		return err
+	}
+	defer leave()
+	return w.RunOnce(ctx, id)
 }

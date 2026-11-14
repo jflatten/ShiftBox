@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/proxy"
@@ -17,12 +18,13 @@ import (
 const retentionScanInterval = time.Minute
 
 type workspaceRetentionSchedule struct {
-	maximum *int64
-	grace   time.Duration
-	now     func() time.Time
-	probe   func(context.Context) (provider.Capabilities, error)
-	process func(context.Context, time.Time, time.Time) error
-	publish func(retentionSnapshot)
+	checkpoint *backup.WriteFence
+	maximum    *int64
+	grace      time.Duration
+	now        func() time.Time
+	probe      func(context.Context) (provider.Capabilities, error)
+	process    func(context.Context, time.Time, time.Time) error
+	publish    func(retentionSnapshot)
 
 	lastProbe    time.Time
 	reconciledAt time.Time
@@ -90,7 +92,7 @@ func (s *workspaceRetentionSchedule) run(ctx context.Context) error {
 	}()
 	for ctx.Err() == nil {
 		pass, cancel := context.WithTimeout(ctx, retentionScanInterval)
-		err := s.tick(pass)
+		err := withCheckpointActivity(pass, s.checkpoint, func() error { return s.tick(pass) })
 		cancel()
 		if err != nil && ctx.Err() == nil {
 			s.reconciledAt = time.Time{}

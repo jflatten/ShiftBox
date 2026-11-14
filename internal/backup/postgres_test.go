@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -132,5 +133,40 @@ printf 'fixture dump'
 	}
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 2 {
 		t.Fatalf("helper left a password file behind: %v", err)
+	}
+}
+
+// TestPostgresCheckpointDrainsDexWriter checks that the identity-side write
+// lock waits for an already active Dex transaction rather than skipping it.
+func TestPostgresCheckpointDrainsDexWriter(t *testing.T) {
+	uri := os.Getenv("SHIFTBOX_TEST_BACKUP_DEX_URI")
+	if uri == "" {
+		t.Skip("requires the disposable PostgreSQL backup fixture")
+	}
+	ctx := t.Context()
+	db := openFixtureStore(t, uri, "dex")
+	active, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer active.Rollback()
+	if _, err := active.ExecContext(ctx, "INSERT INTO dex.backup_probe VALUES ('transaction')"); err != nil {
+		t.Fatal(err)
+	}
+	target, err := parseDumpTarget(uri, "dex", "dex.dump")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := connectDumpOwner(ctx, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	short, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	release, err := lockPostgresDex(short, conn)
+	if err == nil {
+		release()
+		t.Fatal("checkpoint passed while an existing Dex writer still held its transaction")
 	}
 }

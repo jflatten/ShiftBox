@@ -42,6 +42,8 @@ type Worker struct {
 	Executor      Executor
 	// Actions optionally limits the worker to the admission actions it owns.
 	Actions []string
+	// EnterActivity coordinates each operation with the controller checkpoint.
+	EnterActivity func(context.Context) (func(), error)
 }
 
 // RunOnce always observes before applying, including after a lost response.

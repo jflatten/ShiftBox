@@ -287,3 +287,43 @@ func checkpointDexDatabase(t *testing.T, path string) {
 		}
 	}
 }
+
+// TestSQLiteCheckpointLocksDexWrites checks that a separate connection cannot
+// change Dex while the application snapshot and protected files are captured.
+func TestSQLiteCheckpointLocksDexWrites(t *testing.T) {
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "dex.db")
+	checkpointDexDatabase(t, path)
+	writer, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	dex, release, err := lockSQLiteDex(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	insert := "INSERT INTO profile VALUES ('after cutoff')"
+	if _, err := writer.ExecContext(ctx, insert); err == nil {
+		t.Fatal("separate Dex writer committed during the checkpoint")
+	}
+	snapshot := filepath.Join(checkpointStage(t), "dex.db")
+	if err := SQLiteCheckpoint(ctx, dex, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if _, err := writer.ExecContext(ctx, insert); err != nil {
+		t.Fatalf("Dex writer did not resume: %v", err)
+	}
+	readback, err := sql.Open("sqlite", snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readback.Close()
+	var rows int
+	if err := readback.QueryRowContext(ctx, "SELECT count(*) FROM profile").Scan(&rows); err != nil || rows != 1 {
+		t.Fatalf("Dex checkpoint row count = %d, %v; want 1", rows, err)
+	}
+}
