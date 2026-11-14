@@ -41,10 +41,14 @@ func Sanitize(request *http.Request) {
 		}
 	}
 	for _, cookie := range cookieRequest.Cookies() {
-		name := strings.ToLower(cookie.Name)
-		if strings.HasPrefix(name, "__host-shiftbox_") || strings.HasPrefix(name, "__secure-shiftbox_") || strings.HasPrefix(name, "shiftbox_") {
+		if shiftBoxCookie(cookie.Name) {
 			continue
 		}
 		request.AddCookie(cookie)
 	}
+}
+
+func shiftBoxCookie(name string) bool {
+	name = strings.ToLower(name)
+	return strings.HasPrefix(name, "__host-shiftbox_") || strings.HasPrefix(name, "__secure-shiftbox_") || strings.HasPrefix(name, "shiftbox_")
 }

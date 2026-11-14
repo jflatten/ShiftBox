@@ -27,6 +27,7 @@ func TestGuestTunnelHTTP(t *testing.T) {
 	}
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Received-Path", r.URL.Path)
+		w.Header().Set("X-Received-Cookie", r.Header.Get("Cookie"))
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer local.Close()
@@ -98,6 +99,15 @@ func TestGuestTunnelHTTP(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "https://workspace.ide.test/via-proxy", nil)
+	request.Header.Set("Cookie", "__Host-shiftbox_origin=private; app=fixture")
+	response := httptest.NewRecorder()
+	tunnels.Forward(response, request, "workspace", 4, "ide", "proxy-fixture")
+	if response.Code != http.StatusNoContent || response.Header().Get("X-Received-Path") != "/via-proxy" ||
+		response.Header().Get("X-Received-Cookie") != "app=fixture" {
+		t.Errorf("HTTP through Yamux returned status %d and headers %v, want 204, exact path, and application cookie",
+			response.Code, response.Header())
 	}
 	for _, attempt := range []struct {
 		key        string
