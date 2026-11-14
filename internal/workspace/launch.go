@@ -5,13 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"io/fs"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/template"
 )
 
 // ErrLaunchConflict indicates a reused request key with different launch input.
@@ -124,13 +122,10 @@ func replayLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, i
 
 func (launch LaunchIntent) valid(now time.Time) bool {
 	var network map[string]json.RawMessage
-	repo, err := url.Parse(launch.RepositoryURL)
 	return !now.IsZero() && launch.InstallationID != "" && launch.WorkspaceID != "" && launch.OwnerID != "" &&
 		launch.TemplateID != "" && launch.TemplateRevision > 0 && launch.ArtifactID != "" && launch.OwnershipMarker != "" &&
 		len(launch.RequestKey) >= 16 && len(launch.RequestKey) <= 128 && launch.Allocation.positive() &&
 		(launch.RetentionSeconds == nil || *launch.RetentionSeconds > 0) &&
-		err == nil && repo.Scheme == "https" && strings.EqualFold(repo.Host, "github.com") && repo.User == nil &&
-		repo.RawQuery == "" && repo.Fragment == "" && len(strings.Split(strings.Trim(repo.Path, "/"), "/")) == 2 &&
-		launch.DevcontainerPath != "." && fs.ValidPath(launch.DevcontainerPath) && !strings.Contains(launch.DevcontainerPath, "\\") &&
+		template.ValidSource(launch.RepositoryURL, launch.DevcontainerPath) &&
 		json.Unmarshal([]byte(launch.NetworkPolicyJSON), &network) == nil && len(network) != 0
 }
