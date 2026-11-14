@@ -16,6 +16,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/config"
+	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
@@ -27,7 +28,7 @@ import (
 
 const guestProtocol = "1"
 
-func serveActiveController(ctx context.Context, cfg config.Config, state *app.ControllerState, releasesDir string) error {
+func serveActiveController(ctx context.Context, cfg config.Config, state *app.ControllerState, configPath string) error {
 	if cfg.Runtime == nil {
 		return errors.New("serve requires a runtime configuration for HTTPS, guest listeners, and UTM")
 	}
@@ -124,7 +125,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	services.Handlers[importRoute.Route.OperationID] = importRoute
 	preflightRoute, preflightWorker := web.MigrationPreflightRoute(state.DB, journal, origin, active.InstallationID, time.Now,
 		func(ctx context.Context, id string) (release.MigrationReport, error) {
-			manifest, err := release.ReadLocalMigrationRelease(releasesDir, id)
+			manifest, err := release.ReadLocalMigrationRelease(filepath.Join(filepath.Dir(configPath), "releases"), id)
 			if err != nil {
 				return release.MigrationReport{}, err
 			}
@@ -133,6 +134,19 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		})
 	services.Handlers[preflightRoute.Route.OperationID] = preflightRoute
 	preflightWorker.EnterActivity = checkpoint.Enter
+	schema, err := database.Version(ctx, state.DB, cfg.DataProfile)
+	if err != nil {
+		return err
+	}
+	backups := backup.NewService(state.DB, journal, backup.ArchiveMetadata{InstallationID: active.InstallationID,
+		Release: active.ActiveRelease, Profile: cfg.DataProfile, Schema: schema})
+	if err := backups.InterruptIncomplete(ctx); err != nil {
+		return err
+	}
+	backupJobs := make(chan web.BackupJob, 1)
+	backupRoute := web.BackupRoute(state.DB, backups, origin, active.InstallationID, time.Now,
+		func(job web.BackupJob) { backupJobs <- job })
+	services.Handlers[backupRoute.Route.OperationID] = backupRoute
 	api, err := web.NewActiveManagementRouter(services.Session, services.Handlers, services.GitHubCallback)
 	if err != nil {
 		return err
@@ -160,6 +174,10 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		return imports.Run(ctx, checkpoint.Enter)
 	}, func(ctx context.Context) error {
 		return preflightWorker.Run(ctx, time.Second)
+	}, func(ctx context.Context) error {
+		return web.RunBackupJobs(ctx, backupJobs, backups, func(ctx context.Context, dir string) (map[string]string, error) {
+			return state.CaptureBackupCheckpoint(ctx, dir, configPath, cfg, checkpoint)
+		})
 	})
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return nil

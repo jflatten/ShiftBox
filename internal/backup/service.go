@@ -29,6 +29,73 @@ func NewService(db *sql.DB, journal *operation.Journal, metadata ArchiveMetadata
 	return &Service{db: db, journal: journal, metadata: metadata}
 }
 
+// InterruptIncomplete closes unfinished operations during exclusive startup.
+// Their passphrases were held by the previous process and cannot be replayed.
+func (s *Service) InterruptIncomplete(ctx context.Context) error {
+	return database.Transaction(ctx, s.db, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT operation_id FROM backup_records
+			WHERE state IN ('preparing','checkpointing','encrypting')`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := s.journal.InterruptInTx(ctx, tx, id, "The backup was interrupted. Start a new backup with a passphrase."); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE backup_records SET state='failed',error_code='backup.interrupted' WHERE operation_id=$1", id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// Queue serializes backup admissions and returns whether to start a new
+// in-memory attempt. Replays return the original operation without its inputs.
+func (s *Service) Queue(ctx context.Context, tx *sql.Tx, actor, key string) (operation.Operation, bool, error) {
+	result, err := tx.ExecContext(ctx, "UPDATE installations SET version=version WHERE id=$1 AND state='active'", s.metadata.InstallationID)
+	if err := changedRecord(result, err); err != nil {
+		return operation.Operation{}, false, err
+	}
+	var existing string
+	err = tx.QueryRowContext(ctx, "SELECT id FROM operations WHERE requested_by=$1 AND request_key=$2", actor, key).Scan(&existing)
+	if err == nil {
+		op, err := s.journal.GetInTx(ctx, tx, existing)
+		if err == nil && (op.Type != "backup" || op.OriginatingAction != backupAction) {
+			err = operation.ErrConflict
+		}
+		return op, false, err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return operation.Operation{}, false, err
+	}
+	var busy bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM backup_records
+		WHERE state IN ('preparing','checkpointing','encrypting'))`).Scan(&busy); err != nil {
+		return operation.Operation{}, false, err
+	}
+	if busy {
+		return operation.Operation{}, false, operation.ErrConflict
+	}
+	op, err := s.Admit(ctx, tx, actor, key)
+	return op, err == nil, err
+}
+
 // Admit creates the backup record in the caller's authorization transaction.
 func (s *Service) Admit(ctx context.Context, tx *sql.Tx, actor, key string) (operation.Operation, error) {
 	if !s.metadata.valid() {

@@ -1745,8 +1745,13 @@ This checkpoint does not itself change the goal status.
   requests and background writes. SQLite and PostgreSQL independently
   drain Dex database writers during capture. The controller leaves
   established workspace tunnels and operation event streams running.
-- T104 and T110 stay open until the active backup route exercises this
-  path and live workspace computation is verified during a backup.
+- T113 connects the administrator backup route to the live checkpoint
+  and archive service. Admission is durable and idempotent. The worker
+  receives the passphrase in memory after commit, and startup marks any
+  interrupted attempts failed so a new backup can be submitted.
+- T104 and T110 remain open for live workspace computation evidence.
+  The restore-validation and recovery-activation routes remain open
+  under T113.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.

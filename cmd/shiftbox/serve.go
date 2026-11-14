@@ -50,5 +50,5 @@ func runServe(ctx context.Context, args []string) error {
 		return err
 	}
 	defer state.Close()
-	return serveActiveController(ctx, cfg, state, filepath.Join(filepath.Dir(configPath), "releases"))
+	return serveActiveController(ctx, cfg, state, configPath)
 }

@@ -150,6 +150,33 @@ func lockOperation(ctx context.Context, tx *sql.Tx, id string) error {
 	return err
 }
 
+// InterruptInTx closes an unfinished operation whose volatile input was lost.
+// The caller must have exclusive ownership of the controller at startup.
+func (j *Journal) InterruptInTx(ctx context.Context, tx *sql.Tx, id, detail string) error {
+	if err := lockOperation(ctx, tx, id); err != nil {
+		return err
+	}
+	op, err := readOperation(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	switch op.Status {
+	case "succeeded", "failed", "cancelled":
+		return nil
+	}
+	now := j.now().UTC()
+	op.Status, op.FinishedAt = "failed", &now
+	op.leaseOwner, op.leaseExpiresAt = "", time.Time{}
+	for i := range op.Steps {
+		if op.Steps[i].Status == "pending" || op.Steps[i].Status == "active" {
+			op.Steps[i].Status, op.Steps[i].Detail = "failed", detail
+			op.CurrentStep = &op.Steps[i].Key
+			break
+		}
+	}
+	return saveOperation(ctx, tx, &op, detail, now)
+}
+
 // CancelInTx fences a superseded workflow and publishes its terminal snapshot
 // in the caller's transaction. Completed workflows are left untouched.
 func (j *Journal) CancelInTx(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
