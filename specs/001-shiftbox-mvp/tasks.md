@@ -118,7 +118,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T053 [US1] Implement guest-initiated mTLS Yamux registration, one stream per HTTP/WebSocket request, service allowlisting, heartbeats, and expiry/revocation closure in `internal/guest/tunnel.go` and `internal/proxy/tunnel.go`
 - [X] T054 [US1] Implement template creation/revision validation and workspace admission that snapshots owner, template revision, repository, resources, platform, network policy, and secret references before reserving capacity in `internal/template/service.go` and `internal/workspace/launch.go`
 - [ ] T055 [US1] Implement provision/start/stop/rebuild/repair/open-IDE reconciliation with inspect-before-retry, desired/observed separation, durable steps, readiness evidence, and reservation release rules in `internal/workspace/reconciler.go` and `internal/workspace/lifecycle.go`
-- [ ] T056 [US1] Implement the setup, template, workspace, operation, event, and entry-grant OpenAPI routes proven by T030 and T036 in `internal/web/setup_routes.go`, `internal/web/template_routes.go`, `internal/web/workspace_routes.go`, and `internal/web/operation_routes.go`
+- [X] T056 [US1] Implement the setup, template, workspace, operation, event, and entry-grant OpenAPI routes proven by T030 and T036 in `internal/web/setup_routes.go`, `internal/web/template_routes.go`, `internal/web/workspace_routes.go`, and `internal/web/operation_routes.go`
 - [ ] T057 [US1] Implement owner/audited-admin IDE and preview routing that exchanges a short-lived exact-origin grant for a separate host-only cookie and never forwards management authority in `internal/proxy/grants.go`, `internal/proxy/router.go`, and `internal/web/proxy_routes.go`
 - [X] T058 [US1] Implement the keyboard-accessible Mantine setup Stepper and forms, including one-time password acknowledgement, profile/certificate/provider validation, activation warning, and fresh sign-in in `ui/features/setup/setup-flow.tsx` and `ui/app/setup/page.tsx`
 - [ ] T059 [US1] Implement template creation plus workspace launch/detail/lifecycle/repair screens with Mantine controls and server-derived WorkflowStepper state in `ui/features/templates/template-form.tsx`, `ui/features/workspaces/launch-flow.tsx`, `ui/features/workspaces/workspace-detail.tsx`, and `ui/app/workspaces/page.tsx`
@@ -2802,3 +2802,7 @@ This checkpoint does not itself change the goal status.
   test verifies provider instance and resource records are persisted only
   after confirmed inventory. Guest enrollment and exact-origin grant tests
   verify their durable bindings and one-use exchanges.
+
+- T056 passed the race-enabled management route and authorization matrix
+  comparisons and the setup, template, workspace, event replay, and entry
+  grant handler contracts. T057 still owns manually configured preview ports.
