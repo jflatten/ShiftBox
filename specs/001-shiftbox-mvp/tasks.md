@@ -2422,5 +2422,9 @@ This checkpoint does not itself change the goal status.
   unrelated destinations, startup failure, and the separate proxy gate.
 - Code-server 4.145.2 and Dev Container CLI 0.90.0 returned the actual VS Code
   workbench from a disposable amd64 Ubuntu Dev Container as `vscode`. The
-  Go race suite passed serially. T052 still needs the full UTM workspace
+  Go race suite passed serially. Packer rebuilt the Ubuntu 24.04 image
+  with the modified service. The native UTM 5.0.8 catalog check enrolled
+  the clone and confirmed removal in 49.91s. The development manifest SHA-256
+  is `b6c2f15712a9b33c6fadd00ed6a8a339ae29e390f93373029675d9217d977818`.
+- T052 still needs the full UTM workspace
   journey, project and home retention on rebuild, and repair entry and exit.
