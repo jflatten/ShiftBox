@@ -108,20 +108,9 @@ func (s SetupHTTP) administrator(w http.ResponseWriter, r *http.Request) {
 		setupProblem(w, r, err)
 		return
 	}
-	worker := operation.Worker{Journal: s.Journal, Name: "initial-administrator", LeaseDuration: time.Minute, Executor: &AdministratorExecutor{DB: s.DB, InstallationID: s.InstallationID, Admin: s.Admin}}
-	for count := 0; count < 2 && admission.Operation.Status != "succeeded"; count++ {
-		if err := worker.RunOnce(ctx, admission.Operation.ID); err != nil {
-			setupProblem(w, r, err)
-			return
-		}
-		admission.Operation, err = s.Journal.Get(ctx, admission.Operation.ID)
-		if err != nil {
-			setupProblem(w, r, err)
-			return
-		}
-	}
-	if admission.Operation.Status != "succeeded" {
-		setupProblem(w, r, ErrSetupConflict)
+	admission.Operation, err = FinishAdministrator(ctx, s.DB, s.Journal, s.InstallationID, s.Admin, admission.Operation)
+	if err != nil {
+		setupProblem(w, r, err)
 		return
 	}
 	password, err := ClaimTemporaryPassword(ctx, s.DB, s.InstallationID, s.Cipher, s.Now())

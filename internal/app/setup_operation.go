@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
@@ -95,4 +96,24 @@ func (e *AdministratorExecutor) Apply(ctx context.Context, op operation.Operatio
 		return "", err
 	}
 	return "Local sign-in credential confirmed.", nil
+}
+
+// FinishAdministrator reconciles the two durable initial-administrator steps.
+// Setup HTTP and the local CLI use the same journal and credential executor.
+func FinishAdministrator(ctx context.Context, db *sql.DB, journal *operation.Journal, id string, admin PasswordAdministrator, op operation.Operation) (operation.Operation, error) {
+	worker := operation.Worker{Journal: journal, Name: "initial-administrator", LeaseDuration: time.Minute, Executor: &AdministratorExecutor{DB: db, InstallationID: id, Admin: admin}}
+	for count := 0; count < 2 && op.Status != "succeeded"; count++ {
+		if err := worker.RunOnce(ctx, op.ID); err != nil {
+			return operation.Operation{}, err
+		}
+		var err error
+		op, err = journal.Get(ctx, op.ID)
+		if err != nil {
+			return operation.Operation{}, err
+		}
+	}
+	if op.Status != "succeeded" {
+		return operation.Operation{}, ErrSetupConflict
+	}
+	return op, nil
 }

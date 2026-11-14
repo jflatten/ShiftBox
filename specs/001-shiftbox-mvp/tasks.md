@@ -950,3 +950,19 @@ This checkpoint does not itself change the goal status.
   start with the bootstrap opener instead of a hand-seeded installation.
 - Database, app, and contract race tests pass, as do formatting and vet.
   CLI composition and PostgreSQL preflight and activation remain open.
+
+### Runnable local setup command
+
+- Wired `shiftbox setup` to the SQLite bootstrap database, protected installation
+  key, authenticated native Dex, administrator journal, and loopback HTTPS
+  listener. The operator gets the password once on stdout and the setup origin
+  and certificate fingerprint on stderr.
+- The command locates Dex beside the executable by default. The explicit
+  `--dex-binary` path supports local validation against the pinned executable.
+  Dex uses setup-local ports and its own retained SQLite file. The command holds
+  an installation lock and joins both services during shutdown.
+- The CLI restart test contacts the reported HTTPS endpoint on both runs and
+  checks that the password is absent from the second run and both status streams.
+  CLI, app, database and contract race tests pass, along with formatting and vet.
+- Browser sign-in and forced change, setup UI, activation, certificate/key flags,
+  JSON output, and `shiftbox serve` still require implementation.
