@@ -10,6 +10,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/release"
 )
 
 type maintenancePower struct {
@@ -73,6 +74,14 @@ func (e maintenanceUpdateExecutor) reconcilePower(ctx context.Context, op operat
 	want := provider.Stopped
 	if step.Key == "maintenance_boot" {
 		want = provider.Running
+		if got.Power == provider.Stopped {
+			if !apply {
+				return "", false, nil
+			}
+			if err := e.checkManagementBootRelease(ctx, op.ID); err != nil {
+				return "", false, err
+			}
+		}
 		if got.Power == provider.Stopped && e.power.recovery != nil {
 			if _, err := e.store.needsEnrollment(ctx, req.Ref, "stopped", now); err != nil {
 				return "", false, err
@@ -148,6 +157,25 @@ func (e maintenanceUpdateExecutor) reconcilePower(ctx context.Context, op operat
 		}
 	}
 	return "The provider confirmed the management boot.", true, nil
+}
+
+func (e maintenanceUpdateExecutor) checkManagementBootRelease(ctx context.Context, operationID string) error {
+	var product string
+	err := e.store.db.QueryRowContext(ctx, `SELECT a.guest_release
+		FROM maintenance_targets t JOIN maintenance_campaigns c ON c.operation_id=t.campaign_id
+		JOIN installations i ON i.id=c.installation_id
+		JOIN platform_artifacts a ON a.release_id=c.release_id AND a.state='available' AND a.guest_release=i.active_release
+		WHERE t.operation_id=$1 AND i.id=$2 AND i.state='active' AND c.state='active'`, operationID, e.installation).Scan(&product)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = release.ErrGuestUpdateUnavailable
+	}
+	if err == nil {
+		_, err = e.loadPinnedGuestUpdate(ctx, product)
+	}
+	if errors.Is(err, release.ErrGuestUpdateUnavailable) {
+		return &operation.StepWaiting{Detail: "Restore the pinned guest release files before booting the workspace for maintenance.", Cause: err}
+	}
+	return err
 }
 
 func (e maintenanceUpdateExecutor) startManagementGuest(ctx context.Context, op operation.Operation, step operation.Step,

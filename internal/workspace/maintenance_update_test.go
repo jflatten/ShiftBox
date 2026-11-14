@@ -46,10 +46,25 @@ func TestMaintenancePowerRetainsDesiredState(t *testing.T) {
 	if err := db.QueryRow(`SELECT operation_id FROM maintenance_targets WHERE campaign_id=$1`, campaign.ID).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	worker := store.MaintenanceUpdateWorker(journal, testInstallation, "1", nil)
+	available := false
+	load := func(_ context.Context, product string) (release.GuestUpdate, error) {
+		if !available {
+			return release.GuestUpdate{}, release.ErrGuestUpdateUnavailable
+		}
+		return release.GuestUpdate{Metadata: release.GuestUpdateMetadata{Release: product, Protocol: "1"}}, nil
+	}
+	worker := store.MaintenanceUpdateWorker(journal, testInstallation, "1", load)
 	executor := worker.Executor.(maintenanceUpdateExecutor)
 	executor.power = &maintenancePower{machines: machines, now: time.Now}
 	worker.Executor = executor
+	if err := worker.RunOnce(ctx, id); !errors.Is(err, release.ErrGuestUpdateUnavailable) {
+		t.Fatalf("management boot without a pinned release = %v, want release unavailable", err)
+	}
+	if inventory, err := machines.Inspect(ctx, got.Ref); err != nil || inventory.Power != provider.Stopped {
+		t.Errorf("provider without pinned release = %s (%v), want stopped", inventory.Power, err)
+	}
+	checkReservation(t, db, "retained", "released", "reserved")
+	available = true
 	var waiting *operation.StepWaiting
 	if err := worker.RunOnce(ctx, id); !errors.As(err, &waiting) {
 		t.Fatalf("management boot without capacity = %v, want waiting", err)

@@ -73,12 +73,11 @@ func (e maintenanceUpdateExecutor) Observe(ctx context.Context, op operation.Ope
 		case "failed":
 			return "", false, maintenanceUpdateFailure(op, "The guest could not stage the signed update. Check the release files and the guest's publisher key.")
 		case "succeeded":
-			update, err := e.load(ctx, product)
+			update, err := e.loadPinnedGuestUpdate(ctx, product)
 			if err != nil {
 				return "", false, &operation.StepWaiting{Detail: "Restore the pinned guest release files before continuing maintenance.", Cause: err}
 			}
-			if update.Metadata.Release != product || update.Metadata.Protocol != e.protocol ||
-				digest != hex.EncodeToString(update.Metadata.Digest[:]) {
+			if digest != hex.EncodeToString(update.Metadata.Digest[:]) {
 				return "", false, maintenanceUpdateFailure(op, "The guest staged a different binary from the pinned release.")
 			}
 			return "The authenticated guest staged the pinned binary.", true, nil
@@ -96,6 +95,20 @@ func (e maintenanceUpdateExecutor) Observe(ctx context.Context, op operation.Ope
 		}
 	}
 	return "", false, nil
+}
+
+func (e maintenanceUpdateExecutor) loadPinnedGuestUpdate(ctx context.Context, product string) (release.GuestUpdate, error) {
+	if e.load == nil {
+		return release.GuestUpdate{}, release.ErrGuestUpdateUnavailable
+	}
+	update, err := e.load(ctx, product)
+	if err != nil {
+		return release.GuestUpdate{}, err
+	}
+	if update.Metadata.Release != product || update.Metadata.Protocol != e.protocol {
+		return release.GuestUpdate{}, release.ErrGuestUpdateUnavailable
+	}
+	return update, nil
 }
 
 func maintenanceUpdateFailure(op operation.Operation, detail string) *operation.StepFailure {

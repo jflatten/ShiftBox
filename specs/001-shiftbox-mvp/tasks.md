@@ -1732,6 +1732,8 @@ This checkpoint does not itself change the goal status.
   protocol at verification. The maintenance power executor can reserve
   capacity and boot the exact retained VM while its desired state stays
   stopped, then release compute after a provider-confirmed graceful stop.
+  A stopped target waits for its pinned release files before reserving
+  compute or starting the VM. It resumes when the files become available.
   Failed staging or activation now preserves the failed step, skips
   remaining update steps, and still performs the graceful stop before
   settling the target as failed. When configured with the enrollment
