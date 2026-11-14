@@ -36,7 +36,27 @@ failure as normal service restarted. A fresh replacement from the same
 archive completed review, activation, and the return to normal service
 without a manual restart. The production-profile fixture had no native
 workspace. Matching a live retained workspace while exercising PostgreSQL
-recovery still requires a separate run.
+recovery was exercised on the next candidate below.
+
+### PostgreSQL recovery with a retained UTM workspace
+
+On `mvp-rc2`, the activated PostgreSQL controller admitted a disposable
+workspace through its lifecycle journal. The native guest authenticated
+and the controller stopped it while retaining its owned disk. This
+fixture stopped after enrollment, before project checkout or IDE setup.
+A second local user and a live administrator browser session were also
+present before the checkpoint.
+
+The controller verified the archive and the CLI restored into an empty
+replacement database with separately owned ShiftBox and Dex schemas.
+Chrome denied the copied session, signed in with restricted recovery
+permissions, and matched the retained workspace as stopped during
+provider review. After the operator explicitly activated, both the copied
+and recovery sessions were rejected. Fresh sign-in returned to normal
+mode and showed the restored member and stopped workspace. The replacement
+database and UTM independently reported the original provider instance,
+ownership marker, generation, and disk identity. Cleanup verified removal
+of the disposable VM and disk.
 
 ## Earlier empty-inventory exercise
 

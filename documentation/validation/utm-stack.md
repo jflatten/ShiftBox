@@ -118,6 +118,16 @@ used the same release ID with different signed binaries. The current and
 previous release admission tests exercise version compatibility separately.
 Test cleanup removed the disposable clone.
 
+On `mvp-rc2`, the race-enabled fixture passed in 491.25 seconds.
+The signed failing digest
+`3086460ccbd8dab34db2eafede03b55acc04dfe7b3cd125129b5bae1653238f9`
+rolled back, returned the workspace to stopped and left one retained-guest
+migration blocker. The signed replacement digest
+`7f1117f76060959899ee0a52b22f710a20fe7ba20446d0b6c060eba1321e7f7f`
+authenticated after activation, returned the same VM to stopped and
+cleared the blocker. The same owned disk survived both trials. These
+two signed builds shared the `mvp-rc2` release ID.
+
 ## Dev Container fixtures
 
 `TestDevContainerReleaseFixtures` passed for the digest-pinned Debian
