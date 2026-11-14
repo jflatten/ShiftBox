@@ -44,6 +44,10 @@ func OpenActiveDatabase(ctx context.Context, cfg config.Config) (*sql.DB, Active
 		_ = db.Close()
 		return nil, ActiveInstallation{}, err
 	}
+	if err := database.CheckSchema(ctx, db, cfg.DataProfile); err != nil {
+		_ = db.Close()
+		return nil, ActiveInstallation{}, ErrActiveDatabase
+	}
 	return db, active, nil
 }
 

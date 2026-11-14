@@ -1451,3 +1451,14 @@ This checkpoint does not itself change the goal status.
   session. CLI, app, configuration and contract race tests passed.
 - The provider/artifact setup UI, PostgreSQL activation switch and fresh
   production sign-in still need wiring.
+
+### Controller CLI preflight
+
+- `shiftbox serve --config` now checks the selected active database, complete
+  migration history, private installation directory, retained key and guest
+  CA, and current browser certificate before listener startup.
+- Tests cover missing databases, gaps in migration history and redacted CLI
+  validation. Native setup and controller race tests passed.
+- Successful preflight still stops at the runtime composition boundary.
+  Dex, management and internal HTTPS, proxy and reconciliation need startup
+  wiring before the command can serve an installation.

@@ -53,6 +53,20 @@ func TestOpenActiveDatabaseRequiresActivation(t *testing.T) {
 	if active.InstallationID != id || active.Generation != 1 || active.Settings.BrowserCertificateID != "browser" {
 		t.Errorf("activation = %+v, want committed installation snapshot", active)
 	}
+	// Startup must reject a schema with gaps even if the highest version
+	// still matches the binary's migration set.
+	if _, err := db.Exec("DELETE FROM goose_db_version WHERE version_id=2"); err != nil {
+		t.Fatal(err)
+	}
+	if stale, _, err := OpenActiveDatabase(ctx, cfg); !errors.Is(err, ErrActiveDatabase) {
+		if stale != nil {
+			stale.Close()
+		}
+		t.Errorf("open active database with a schema gap = %v, want activation error", err)
+	}
+	if _, err := db.Exec("INSERT INTO goose_db_version(version_id,is_applied) VALUES(2,1)"); err != nil {
+		t.Fatal(err)
+	}
 	cfg.ManagementOrigin = "https://other.test"
 	if _, _, err := OpenActiveDatabase(ctx, cfg); !errors.Is(err, ErrActiveDatabase) {
 		t.Errorf("open with changed origin = %v, want activation error", err)

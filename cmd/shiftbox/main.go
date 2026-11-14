@@ -20,8 +20,13 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, out, status io.Writer) error {
-	if len(args) == 0 || args[0] != "setup" {
-		return errors.New("usage: shiftbox setup --installation-dir <path> --administrator-email <email>")
+	if len(args) > 0 {
+		switch args[0] {
+		case "setup":
+			return runSetup(ctx, args[1:], out, status)
+		case "serve":
+			return runServe(ctx, args[1:])
+		}
 	}
-	return runSetup(ctx, args[1:], out, status)
+	return errors.New("usage: shiftbox setup --installation-dir <path> --administrator-email <email> | shiftbox serve --config <path>")
 }
