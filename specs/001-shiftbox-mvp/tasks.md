@@ -2775,6 +2775,11 @@ This checkpoint does not itself change the goal status.
   replies result in one VM and one enrollment delivery. The worker waits
   for authenticated guest contact, the connection-ready receipt, a successful
   IDE probe, and the separate final hook receipt.
+- T120 also restarts the workspace worker with an outstanding lease after
+  a rebuild reports a required setup failure, at both repair steps, and
+  at all three exit-and-retry steps. After the lease expires, it consumes
+  the persisted receipts and verifies that the VM identity and owned disks
+  remain the same. The provider and guest evidence are simulated.
 
 ### Writable project checkout
 

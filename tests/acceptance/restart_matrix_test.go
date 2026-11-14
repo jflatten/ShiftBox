@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -712,6 +713,152 @@ func TestRestartWorkspaceLaunch(t *testing.T) {
 	if machines.creates != 1 || machines.starts != 1 || enrollment.deliveries != 1 || enrollment.cleanups != 1 {
 		t.Errorf("launch effects = creates %d, starts %d, deliveries %d, cleanups %d, want one of each",
 			machines.creates, machines.starts, enrollment.deliveries, enrollment.cleanups)
+	}
+}
+
+// TestRestartWorkspaceRepairAndRetry interrupts a failed rebuild and its
+// repair workflow at each active step before consuming the guest evidence.
+func TestRestartWorkspaceRepairAndRetry(t *testing.T) {
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Second)
+	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "repair.db")}
+	open := func() *sql.DB {
+		t.Helper()
+		db, err := database.Open(ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return db
+	}
+	db := open()
+	if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
+		t.Fatal(err)
+	}
+	machines := fake.New()
+	ref := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		Generation: 1, OwnershipMarker: "fixture-owner"}
+	allocation := workspace.Allocation{CPU: 2, MemoryMiB: 1024, DiskMiB: 40}
+	vm, err := machines.Create(ctx, provider.CreateRequest{Ref: ref, OperationID: "repair-fixture-create",
+		ArtifactID: "fixture-image", Release: "fixture", NetworkMode: "nat",
+		Resources: provider.Resources{CPU: 2, MemoryBytes: 1024 << 20, DiskBytes: 40 << 20}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := machines.Start(ctx, provider.StartRequest{Ref: vm.Ref, OperationID: "repair-fixture-start"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref = before.Ref
+	owner := uuid.NewString()
+	seedRecoveryRestart(t, db, ref, owner, now)
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec("UPDATE workspaces SET desired_state='running' WHERE id=$1", ref.WorkspaceID)
+	exec(`INSERT INTO guest_registrations(workspace_id,generation,state,certificate_not_after,last_authenticated_at)
+		VALUES($1,1,'active',$2,$3)`, ref.WorkspaceID, now.Add(time.Hour).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	if err := workspace.NewStore(db).SetCapacityBudget(ctx, ref.InstallationID, allocation, 0, owner, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		return workspace.ReserveStart(ctx, tx, ref.InstallationID, ref.WorkspaceID, ref.Generation, now)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	clock := func() time.Time { return now }
+	journal := operation.NewJournal(db, clock, uuid.NewString)
+	admit := func(action string) operation.Operation {
+		t.Helper()
+		// Separate lifecycle timestamps so repair checks can identify the latest operation.
+		now = now.Add(time.Second)
+		var op operation.Operation
+		err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			var version int64
+			if err := tx.QueryRowContext(ctx, "SELECT version FROM workspaces WHERE id=$1", ref.WorkspaceID).Scan(&version); err != nil {
+				return err
+			}
+			var err error
+			op, err = workspace.AdmitPower(ctx, tx, journal, workspace.PowerIntent{WorkspaceID: ref.WorkspaceID,
+				ActorID: owner, RequestKey: uuid.NewString(), Action: action, Version: version}, now)
+			return err
+		})
+		if err != nil {
+			t.Fatalf("AdmitPower(%s): %v", action, err)
+		}
+		return op
+	}
+	step := func(op operation.Operation, index int, evidence func()) {
+		t.Helper()
+		key := op.Steps[index].Key
+		claim, err := journal.Claim(ctx, op.ID, "interrupted-controller", time.Second)
+		if err != nil {
+			t.Fatalf("claim %s/%s before restart: %v", op.Type, key, err)
+		}
+		if err := journal.StartStep(ctx, claim, index); err != nil {
+			t.Fatalf("start %s/%s before restart: %v", op.Type, key, err)
+		}
+		if evidence != nil {
+			evidence()
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		db = open()
+		journal = operation.NewJournal(db, clock, uuid.NewString)
+		probe := func(_ context.Context, id string, generation int64) error {
+			if id != ref.WorkspaceID || generation != ref.Generation {
+				return errors.New("IDE probe reached the wrong workspace generation")
+			}
+			return nil
+		}
+		power := workspace.NewPowerExecutor(workspace.NewStore(db), machines, clock, probe)
+		power.SetRepairProbe(probe)
+		worker := workspace.NewWorker(journal, nil, power)
+		if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, operation.ErrConflict) {
+			t.Fatalf("resume %s/%s with outstanding lease = %v, want conflict", op.Type, key, err)
+		}
+		now = now.Add(2 * time.Second)
+		if err := worker.RunOnce(ctx, op.ID); err != nil {
+			t.Fatalf("resume %s/%s after lease expiry: %v", op.Type, key, err)
+		}
+	}
+	check := func(op operation.Operation, want string) {
+		t.Helper()
+		got, err := journal.Get(ctx, op.ID)
+		if err != nil || got.Status != want {
+			t.Fatalf("%s after restart = %s (%v), want %s", op.Type, got.Status, err, want)
+		}
+	}
+	rebuild := admit("rebuild")
+	step(rebuild, 0, func() {
+		exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,problem)
+			VALUES($1,1,'failed','guest.required_setup_failed')`, rebuild.ID)
+	})
+	check(rebuild, "failed")
+	repair := admit("repair")
+	step(repair, 0, func() {
+		exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,container_id)
+			VALUES($1,1,'succeeded','repair-container')`, repair.ID)
+	})
+	step(repair, 1, nil)
+	check(repair, "succeeded")
+	retry := admit("retry")
+	step(retry, 0, func() {
+		exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,container_id)
+			VALUES($1,1,'running','development-container')`, retry.ID)
+	})
+	step(retry, 1, nil)
+	step(retry, 2, func() {
+		exec("UPDATE guest_dispatches SET status='succeeded' WHERE operation_id=$1", retry.ID)
+	})
+	check(retry, "succeeded")
+	after, err := machines.Inspect(ctx, ref)
+	if err != nil || after.Ref != before.Ref || after.Power != provider.Running || !slices.Equal(after.Resources, before.Resources) {
+		t.Errorf("retained VM after repair and retry = %+v (%v), want original running VM and resources", after, err)
 	}
 }
 
