@@ -30,6 +30,12 @@ func Sanitize(request *http.Request) {
 			delete(request.Header, key)
 		}
 	}
+	StripAuthorityCookies(request)
+}
+
+// StripAuthorityCookies removes ShiftBox credentials without changing
+// application cookies or WebSocket upgrade headers.
+func StripAuthorityCookies(request *http.Request) {
 	// Normalize even directly constructed headers before using Go's cookie parser.
 	cookieRequest := &http.Request{Header: make(http.Header)}
 	for key, values := range request.Header {

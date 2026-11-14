@@ -11,10 +11,186 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/config"
+	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 )
 
 const serviceEntryPath = "/_shiftbox/entry"
+const serviceCookie = "__Host-shiftbox_origin"
+
+// ServiceProxyHandler serves only configured IDE and preview origins. Forward
+// receives requests whose service credential and current authority were checked.
+func ServiceProxyHandler(db *sql.DB, hosts *config.ServiceHosts, registry *proxy.Registry, now func() time.Time,
+	forward func(http.ResponseWriter, *http.Request, string, int64, string, string),
+) http.Handler {
+	service := serviceProxy{db: db, hosts: hosts, registry: registry, now: now, forward: forward}
+	return WithRequestID(http.HandlerFunc(service.serve))
+}
+
+type serviceProxy struct {
+	db       *sql.DB
+	hosts    *config.ServiceHosts
+	registry *proxy.Registry
+	now      func() time.Time
+	forward  func(http.ResponseWriter, *http.Request, string, int64, string, string)
+}
+
+func (s serviceProxy) serve(w http.ResponseWriter, r *http.Request) {
+	workspace, service, found := s.hosts.Resolve(r.Host)
+	if r.TLS == nil || !found {
+		http.NotFound(w, r)
+		return
+	}
+	if s.db == nil || s.registry == nil || s.now == nil || s.forward == nil {
+		WriteProblem(w, RequestID(r.Context()), errors.New("incomplete service proxy"))
+		return
+	}
+	origin := "https://" + r.Host
+	if r.URL.Path == serviceEntryPath {
+		s.exchange(w, r, workspace, service, origin)
+		return
+	}
+	if !serviceRequestOrigin(r, origin) {
+		writeServiceDenial(w, r, proxy.ErrOriginGrant)
+		return
+	}
+	cookies := r.CookiesNamed(serviceCookie)
+	if len(cookies) != 1 {
+		writeServiceDenial(w, r, proxy.ErrOriginGrant)
+		return
+	}
+	ctx := r.Context()
+	lookup := func(ctx context.Context) (proxy.OriginAuthority, time.Time, error) {
+		var authority proxy.OriginAuthority
+		var deadline time.Time
+		err := database.Transaction(ctx, s.db, func(tx *sql.Tx) error {
+			resource, generation, err := serviceWorkspace(ctx, tx, workspace, service)
+			if err != nil {
+				return err
+			}
+			scope := proxy.OriginScope{WorkspaceID: workspace, Generation: generation, Service: service, Origin: origin}
+			now := s.now()
+			authority, err = proxy.ReadOriginCookie(ctx, tx, scope, cookies[0].Value, now)
+			if err != nil {
+				return err
+			}
+			deadline, err = authorizeService(ctx, tx, authority, resource, now)
+			return err
+		})
+		return authority, deadline, err
+	}
+	authority, deadline, err := lookup(ctx)
+	if err != nil {
+		writeServiceDenial(w, r, err)
+		return
+	}
+	// Include credential expiry and the external authorization deadline in the
+	// active request lifetime. Logout closes the request through the registry.
+	active, cancel := context.WithTimeout(ctx, deadline.Sub(s.now()))
+	defer cancel()
+	unregister, err := s.registry.Register(proxy.Scope{UserID: authority.UserID, SessionID: authority.SessionID,
+		WorkspaceID: workspace, GrantID: authority.ResourceGrantID}, func() error {
+		current, currentDeadline, err := lookup(active)
+		if err == nil && (current != authority || currentDeadline.Before(deadline)) {
+			return proxy.ErrOriginGrant
+		}
+		return err
+	}, func() error { cancel(); return nil })
+	if err != nil {
+		writeServiceDenial(w, r, err)
+		return
+	}
+	defer unregister()
+	outgoing := r.Clone(active)
+	proxy.StripAuthorityCookies(outgoing)
+	s.forward(w, outgoing, workspace, authority.Scope.Generation, service, RequestID(ctx))
+}
+
+func (s serviceProxy) exchange(w http.ResponseWriter, r *http.Request, workspace, service, origin string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if r.Method != http.MethodGet || err != nil || len(query) != 1 || len(query["grant"]) != 1 {
+		writeServiceDenial(w, r, proxy.ErrOriginGrant)
+		return
+	}
+	var exchange proxy.OriginExchange
+	var deadline time.Time
+	ctx := r.Context()
+	err = database.Transaction(ctx, s.db, func(tx *sql.Tx) error {
+		resource, generation, err := serviceWorkspace(ctx, tx, workspace, service)
+		if err != nil {
+			return err
+		}
+		scope := proxy.OriginScope{WorkspaceID: workspace, Generation: generation, Service: service, Origin: origin}
+		now := s.now()
+		exchange, err = proxy.ConsumeOriginGrant(ctx, tx, scope, query.Get("grant"), now)
+		if err != nil {
+			return err
+		}
+		deadline, err = authorizeService(ctx, tx, exchange.Authority, resource, now)
+		return err
+	})
+	if err != nil {
+		writeServiceDenial(w, r, err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: serviceCookie, Value: exchange.Cookie, Path: "/", Expires: deadline,
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	w.Header().Set("Location", "/")
+	w.WriteHeader(http.StatusSeeOther)
+}
+
+func authorizeService(ctx context.Context, tx *sql.Tx, authority proxy.OriginAuthority, resource auth.Resource, now time.Time) (time.Time, error) {
+	store := auth.NewStore(nil)
+	principal, err := store.PrincipalForSession(ctx, tx, authority.SessionID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if principal.User.ID != authority.UserID {
+		return time.Time{}, proxy.ErrOriginGrant
+	}
+	var grants []auth.ResourceGrant
+	if authority.ResourceGrantID != "" {
+		current, err := store.ActiveGrants(ctx, tx, authority.UserID, "workspace", authority.Scope.WorkspaceID)
+		if err != nil {
+			return time.Time{}, err
+		}
+		for _, grant := range current {
+			if grant.ID == authority.ResourceGrantID {
+				grants = append(grants, grant)
+			}
+		}
+	}
+	if !auth.Authorize(principal, authority.Permission, resource, grants, now).Allowed {
+		return time.Time{}, proxy.ErrOriginGrant
+	}
+	deadline := principal.Session.ExpiresAt
+	if principal.User.CredentialMode == "external" {
+		if external := principal.Session.ExternalAuthorizedAt.Add(principal.ExternalAuthInterval); external.Before(deadline) {
+			deadline = external
+		}
+	}
+	if authority.CookieExpiresAt.Before(deadline) {
+		deadline = authority.CookieExpiresAt
+	}
+	return deadline, nil
+}
+
+func serviceRequestOrigin(r *http.Request, origin string) bool {
+	origins := r.Header.Values("Origin")
+	if len(origins) != 0 {
+		return len(origins) == 1 && origins[0] == origin
+	}
+	return r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions
+}
+
+func writeServiceDenial(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, proxy.ErrOriginGrant) {
+		err = Problem{Status: 403, Code: "workspace.entry_denied", Title: "Workspace service access denied"}
+	}
+	WriteProblem(w, RequestID(r.Context()), err)
+}
 
 // WorkspaceEntryGrantHandler issues a short-lived exchange URL for one
 // service after the normal management session, CSRF and policy checks.

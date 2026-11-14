@@ -36,6 +36,7 @@ type OriginAuthority struct {
 	Scope                       OriginScope
 	UserID, SessionID           string
 	Permission, ResourceGrantID string
+	CookieExpiresAt             time.Time
 }
 
 // OriginExchange carries a fresh service credential and its durable authority.
@@ -85,7 +86,7 @@ func ConsumeOriginGrant(ctx context.Context, tx *sql.Tx, scope OriginScope, toke
 		return OriginExchange{}, err
 	}
 	expires := now.UTC().Add(serviceCookieLifetime)
-	authority := OriginAuthority{Scope: scope}
+	authority := OriginAuthority{Scope: scope, CookieExpiresAt: expires}
 	err = tx.QueryRowContext(ctx, `UPDATE origin_grants SET consumed_at=$1,cookie_digest=$2,cookie_expires_at=$3
 		WHERE token_digest=$4 AND workspace_id=$5 AND generation=$6 AND service_key=$7 AND origin=$8
 		  AND expires_at>$1 AND consumed_at IS NULL AND revoked_at IS NULL
@@ -109,18 +110,20 @@ func ReadOriginCookie(ctx context.Context, tx *sql.Tx, scope OriginScope, cookie
 		return OriginAuthority{}, ErrOriginGrant
 	}
 	authority := OriginAuthority{Scope: scope}
-	err := tx.QueryRowContext(ctx, `SELECT id,user_id,session_id,permission_basis,resource_grant_id FROM origin_grants
+	var expires string
+	err := tx.QueryRowContext(ctx, `SELECT id,user_id,session_id,permission_basis,resource_grant_id,cookie_expires_at FROM origin_grants
 		WHERE cookie_digest=$1 AND workspace_id=$2 AND generation=$3 AND service_key=$4 AND origin=$5
 		  AND cookie_expires_at>$6 AND consumed_at IS NOT NULL AND revoked_at IS NULL`,
 		digest, scope.WorkspaceID, scope.Generation, scope.Service, scope.Origin, grantTime(now)).
-		Scan(&authority.ID, &authority.UserID, &authority.SessionID, &authority.Permission, &authority.ResourceGrantID)
+		Scan(&authority.ID, &authority.UserID, &authority.SessionID, &authority.Permission, &authority.ResourceGrantID, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return OriginAuthority{}, ErrOriginGrant
 	}
 	if err != nil {
 		return OriginAuthority{}, err
 	}
-	return authority, nil
+	authority.CookieExpiresAt, err = time.Parse(time.RFC3339Nano, expires)
+	return authority, err
 }
 
 func (s OriginScope) valid() bool {

@@ -1,9 +1,11 @@
 package contract_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -73,6 +76,86 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 	if err := json.Unmarshal(result.Body.Bytes(), &grant); err != nil ||
 		!strings.HasPrefix(grant.ExchangeURL, "https://preview-8080--"+workspace+".preview.test/_shiftbox/entry?grant=") ||
 		!grant.ExpiresAt.Equal(now.Add(time.Minute)) {
-		t.Error("response did not bind a one-minute grant to the exact service origin")
+		t.Fatal("response did not bind a one-minute grant to the exact service origin")
+	}
+	destination, err := url.Parse(grant.ExchangeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forwarded := 0
+	registry := &proxy.Registry{}
+	streamStarted := make(chan struct{})
+	streamClosed := make(chan struct{})
+	router := web.ServiceProxyHandler(db, hosts, registry, func() time.Time { return now },
+		func(w http.ResponseWriter, r *http.Request, id string, generation int64, service, requestID string) {
+			forwarded++
+			if id != workspace || generation != 1 || service != "preview-8080" || requestID == "" || r.Header.Get("Cookie") != "app=fixture" {
+				t.Error("service proxy forwarded incorrect scope or private browser credentials")
+			}
+			if r.URL.Path == "/stream" {
+				close(streamStarted)
+				<-r.Context().Done()
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	send := func(method, uri, requestOrigin string, cookie *http.Cookie, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, uri, nil)
+		if requestOrigin != "" {
+			r.Header.Set("Origin", requestOrigin)
+		}
+		if cookie != nil {
+			r.AddCookie(cookie)
+			r.AddCookie(&http.Cookie{Name: "app", Value: "fixture"})
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, r)
+		if response.Code != want {
+			t.Fatalf("%s %s returned %d, want %d", method, r.URL.Path, response.Code, want)
+		}
+		return response
+	}
+	serviceOrigin := "https://" + destination.Host
+	sibling := strings.Replace(serviceOrigin, "preview-8080", "preview-9000", 1)
+	send("GET", sibling+destination.RequestURI(), "", nil, 403)
+	redeemed := send("GET", grant.ExchangeURL, "", nil, 303)
+	cookies := redeemed.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Domain != "" || cookies[0].Path != "/" || !cookies[0].Secure ||
+		!cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode || redeemed.Header().Get("Location") != "/" ||
+		redeemed.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Fatal("redemption did not produce a host-only cookie and a clean redirect")
+	}
+	send("GET", grant.ExchangeURL, "", nil, 403)
+	send("GET", serviceOrigin+"/", "", nil, 403)
+	send("GET", sibling+"/", "", cookies[0], 403)
+	send("POST", serviceOrigin+"/", sibling, cookies[0], 403)
+	send("GET", serviceOrigin+"/", "", cookies[0], 204)
+	send("POST", serviceOrigin+"/", serviceOrigin, cookies[0], 204)
+	stream := httptest.NewRequest(http.MethodGet, serviceOrigin+"/stream", nil)
+	stream.AddCookie(cookies[0])
+	stream.AddCookie(&http.Cookie{Name: "app", Value: "fixture"})
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		defer close(streamClosed)
+		router.ServeHTTP(httptest.NewRecorder(), stream.WithContext(streamCtx))
+	}()
+	select {
+	case <-streamStarted:
+	case <-time.After(time.Second):
+		t.Fatal("authorized streaming request did not reach forwarding")
+	}
+	if err := auth.NewStore(db).RevokeAndClose(ctx, "launch-session", now, "session.logout", registry); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-streamClosed:
+	case <-time.After(time.Second):
+		t.Fatal("session revocation did not cancel the active proxy request")
+	}
+	send("GET", serviceOrigin+"/", "", cookies[0], 403)
+	if forwarded != 3 {
+		t.Errorf("forwarded %d requests, want three authorized requests", forwarded)
 	}
 }

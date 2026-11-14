@@ -130,6 +130,19 @@ func (s *Store) Session(ctx context.Context, tx *sql.Tx, token string) (Session,
 // statement. Callers evaluate policy and create durable intent in this transaction.
 // LocalBootstrap and RecoveryReady remain false until the protected flow proves them.
 func (s *Store) Principal(ctx context.Context, tx *sql.Tx, token string) (Principal, error) {
+	return s.principal(ctx, tx, TokenDigest(token), "")
+}
+
+// PrincipalForSession rechecks a server-side session ID after a service
+// credential has established its binding. This is not a browser login method.
+func (s *Store) PrincipalForSession(ctx context.Context, tx *sql.Tx, id string) (Principal, error) {
+	if id == "" {
+		return Principal{}, sql.ErrNoRows
+	}
+	return s.principal(ctx, tx, "", id)
+}
+
+func (s *Store) principal(ctx context.Context, tx *sql.Tx, digest, sessionID string) (Principal, error) {
 	var principal Principal
 	var authenticated, expires string
 	var userExternal, sessionExternal, revoked, reason sql.NullString
@@ -139,7 +152,7 @@ func (s *Store) Principal(ctx context.Context, tx *sql.Tx, token string) (Princi
  s.id,s.token_digest,s.user_id,s.mode,s.csrf_digest,s.authenticated_at,s.external_authorized_at,s.expires_at,s.revoked_at,s.revocation_reason,
  i.state,i.external_auth_interval_seconds
  FROM sessions s JOIN users u ON u.id=s.user_id JOIN installations i ON i.singleton=1
- WHERE s.token_digest=$1`, TokenDigest(token)).Scan(
+ WHERE ($1<>'' AND s.token_digest=$1) OR ($2<>'' AND s.id=$2)`, digest, sessionID).Scan(
 		&principal.User.ID, &principal.User.PrimaryEmail, &principal.User.DisplayName, &principal.User.Role, &principal.User.MembershipState, &principal.User.CredentialMode, &principal.User.MustChangePassword, &userExternal, &principal.User.Version,
 		&principal.Session.ID, &principal.Session.TokenDigest, &principal.Session.UserID, &principal.Session.Mode, &principal.Session.CSRFDigest, &authenticated, &sessionExternal, &expires, &revoked, &reason,
 		&principal.InstallationState, &interval,
