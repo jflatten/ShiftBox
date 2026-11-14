@@ -121,7 +121,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T056 [US1] Implement the setup, template, workspace, operation, event, and entry-grant OpenAPI routes proven by T030 and T036 in `internal/web/setup_routes.go`, `internal/web/template_routes.go`, `internal/web/workspace_routes.go`, and `internal/web/operation_routes.go`
 - [X] T057 [US1] Implement owner/audited-admin IDE and preview routing that exchanges a short-lived exact-origin grant for a separate host-only cookie and never forwards management authority in `internal/proxy/grants.go`, `internal/proxy/router.go`, and `internal/web/proxy_routes.go`
 - [X] T058 [US1] Implement the keyboard-accessible Mantine setup Stepper and forms, including one-time password acknowledgement, profile/certificate/provider validation, activation warning, and fresh sign-in in `ui/features/setup/setup-flow.tsx` and `ui/app/setup/page.tsx`
-- [ ] T059 [US1] Implement template creation plus workspace launch/detail/lifecycle/repair screens with Mantine controls and server-derived WorkflowStepper state in `ui/features/templates/template-form.tsx`, `ui/features/workspaces/launch-flow.tsx`, `ui/features/workspaces/workspace-detail.tsx`, and `ui/app/workspaces/page.tsx`
+- [X] T059 [US1] Implement template creation plus workspace launch/detail/lifecycle/repair screens with Mantine controls and server-derived WorkflowStepper state in `ui/features/templates/template-form.tsx`, `ui/features/workspaces/launch-flow.tsx`, `ui/features/workspaces/workspace-detail.tsx`, and `ui/app/workspaces/page.tsx`
   - Named resource profile and platform image choices are implemented and verified in the production export with Chrome, Firefox, and WebKit fixtures. The native workspace journey remains pending.
 - [X] T060 [US1] Wire static UI embedding and controller/agent CLI composition so `shiftbox serve`, `shiftbox setup`, and `shiftbox-agent serve` satisfy their contracts in `internal/web/static.go`, `cmd/shiftbox/main.go`, and `cmd/shiftbox-agent/main.go`
 - [ ] T061 [US1] Add and run the exact-stack Go acceptance test together with the T039 Playwright journey, then record separate test results and pinned release evidence without broadening supported versions in `tests/release/mvp_workspace_test.go`, `documentation/validation/mvp-workspace.md`, and `platform/manifests/release.json`
@@ -2793,6 +2793,10 @@ This checkpoint does not itself change the goal status.
   then passed the focused Chrome repair and retry journey on the same VM.
   The Go workspace journal check passed with the race detector in resumed
   mode. The complete journey on one frozen candidate remains open.
+- T059's template form uses named profile and image choices. The production
+  export and all 87 UI unit tests passed. The native Chrome runs exercised
+  workspace launch progress, detail, stop/start, rebuild, and repair with
+  server-derived workflow steps. T061 tracks the combined candidate run.
 
 ### Writable project checkout
 
