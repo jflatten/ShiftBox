@@ -46,10 +46,15 @@ type guestPollRequest struct {
 
 func newGuestPollRequest(protocol, release string, journal *localJournal) guestPollRequest {
 	input := guestPollRequest{ProtocolVersion: protocol, GuestRelease: release}
-	if journal != nil && journal.state.Operation != nil {
+	if journal == nil || journal.state.Operation == nil {
+		return input
+	}
+	op := journal.state.Operation
+	switch op.Phase {
+	case localWaitReached, localSucceeded, localFailed:
 		report := journal.report()
 		input.LastOperationID = report.ID
-		input.LastOperationVersion = journal.state.Operation.Version
+		input.LastOperationVersion = op.Version
 		input.Report = &report
 	}
 	return input
@@ -139,6 +144,7 @@ func applyGuestPoll(ctx context.Context, journal *localJournal, runtime devConta
 	runtime.config = dispatch.Arguments.Devcontainer
 	_, err := journal.ensureDevelopment(ctx, guestDispatch{
 		ID: dispatch.ID, Version: dispatch.Version, Generation: generation, Command: dispatch.Command, Config: runtime.config,
+		Repository: dispatch.Arguments.RepositoryURL, Ref: dispatch.Arguments.RepositoryRef,
 	}, runtime)
 	return err
 }
@@ -173,7 +179,13 @@ func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release strin
 	if err != nil {
 		return err
 	}
-	runtime := devContainer{workspace: filepath.Join(stateDir, "project")}
+	project := filepath.Join(stateDir, "project")
+	runtime := devContainer{workspace: project, repository: &repositoryPreparation{
+		project: project,
+		token: func(ctx context.Context) (string, error) {
+			return guestGitAccessToken(ctx, client, identity.PollEndpoint)
+		},
+	}}
 	for {
 		if err := pollAgent(ctx, client, identity.PollEndpoint, newGuestPollRequest(protocol, release, journal), journal, runtime); err != nil {
 			return err

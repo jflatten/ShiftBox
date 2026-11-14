@@ -17,6 +17,8 @@ type guestDispatch struct {
 	Version    int64  `json:"version"`
 	Command    string `json:"command"`
 	Config     string `json:"config,omitempty"`
+	Repository string `json:"repository,omitempty"`
+	Ref        string `json:"ref,omitempty"`
 }
 
 func (d guestDispatch) valid() bool {
@@ -36,6 +38,7 @@ const (
 	localSucceeded     localPhase = "succeeded"
 	localFailed        localPhase = "failed"
 	problemInterrupted            = "guest.lifecycle_interrupted"
+	problemRepository             = "guest.repository_preparation_failed"
 	problemRequired               = "guest.required_setup_failed"
 	problemRemaining              = "guest.later_setup_failed"
 )
@@ -96,7 +99,9 @@ func (j *localJournal) accept(dispatch guestDispatch) error {
 	current := j.state.Operation
 	if current != nil && dispatch.Generation == j.state.Generation {
 		if current.ID == dispatch.ID {
-			if dispatch.Version < current.Version || dispatch.Command != current.Command || dispatch.Config != current.Config {
+			bound := current.guestDispatch
+			bound.Version = dispatch.Version
+			if dispatch.Version < current.Version || dispatch != bound {
 				return errGuestDispatchConflict
 			}
 			if dispatch.Version == current.Version {
@@ -152,7 +157,7 @@ func (s localJournalState) valid() bool {
 		return hasConnection && op.Problem == ""
 	case localFailed:
 		switch op.Problem {
-		case problemRequired:
+		case problemRequired, problemRepository:
 			return noConnection
 		case problemRemaining:
 			return hasConnection

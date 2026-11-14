@@ -22,9 +22,10 @@ const (
 var dockerContainerID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type devContainer struct {
-	workspace string
-	config    string
-	run       func(context.Context, string, ...string) ([]byte, error)
+	workspace  string
+	config     string
+	repository *repositoryPreparation
+	run        func(context.Context, string, ...string) ([]byte, error)
 }
 
 // containerConnection records successful execution through the declared waitFor

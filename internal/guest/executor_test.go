@@ -242,6 +242,9 @@ func TestGuestJournalInterruptedHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if request := newGuestPollRequest("1", "test", journal); request.Report != nil || request.LastOperationID != "" {
+		t.Errorf("poll during interrupted hook = %+v, want server to redeliver before reporting the interrupted effect", request)
+	}
 	runtime.run = func(context.Context, string, ...string) ([]byte, error) {
 		t.Fatal("ensureDevelopment resumed uncertain hook without checking its outcome")
 		return nil, nil

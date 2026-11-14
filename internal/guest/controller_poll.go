@@ -160,7 +160,8 @@ func validConfigurationReport(report OperationReport) bool {
 		if reached {
 			return report.Step == "devcontainer.lifecycle" && (report.Problem == problemRemaining || report.Problem == problemInterrupted)
 		}
-		return report.Step == "devcontainer.wait_for" && (report.Problem == problemRequired || report.Problem == problemInterrupted)
+		return report.Step == "devcontainer.wait_for" &&
+			(report.Problem == problemRequired || report.Problem == problemInterrupted || report.Problem == problemRepository)
 	default:
 		return false
 	}

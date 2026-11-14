@@ -117,6 +117,8 @@ func (e *LaunchExecutor) configuration(ctx context.Context, op operation.Operati
 		return "The guest reports that the Dev Container completed its setup hooks.", nil
 	case "failed":
 		switch problem {
+		case "guest.repository_preparation_failed":
+			return "", &operation.StepFailure{Detail: "The guest could not prepare the repository with the owner's Git authorization."}
 		case "guest.required_setup_failed":
 			return "", &operation.StepFailure{Detail: "Required Dev Container setup failed before the connection gate."}
 		case "guest.later_setup_failed":
