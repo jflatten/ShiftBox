@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,7 +18,7 @@ func confirmRunningGuestTrial(ctx context.Context, stateDir, executable string, 
 	if trial.Phase != "testing" {
 		return poll(ctx)
 	}
-	if executable != filepath.Join(stateDir, fmt.Sprintf("update-%x", trial.Candidate)) {
+	if executable != guestUpdateBinaryPath(stateDir, trial.Candidate) {
 		return errGuestUpdateTrialConflict
 	}
 	if err := poll(ctx); err != nil {
@@ -57,7 +56,7 @@ func guestAgentBinary(dir, platform string, digest [sha256.Size]byte) (string, e
 	if digest == ([sha256.Size]byte{}) {
 		return platform, nil
 	}
-	path := filepath.Join(dir, fmt.Sprintf("update-%x", digest))
+	path := guestUpdateBinaryPath(dir, digest)
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() < 1 || info.Size() > maxGuestUpdateBytes {
 		return "", errGuestUpdateInvalid

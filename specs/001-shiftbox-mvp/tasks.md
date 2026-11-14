@@ -1710,8 +1710,10 @@ This checkpoint does not itself change the goal status.
   metadata and rejection of changed or linked artifacts. The internal guest
   listener serves the download only during the authenticated workspace
   generation's staging step and rechecks that assignment before sending
-  bytes. Production key provisioning, guest dispatch and download consumption,
-  and prior-state restoration remain open under T095.
+  bytes. The guest downloader derives its endpoint from the poll origin,
+  rejects redirects, and stages verified downloads by digest. Production key
+  provisioning, command dispatch, and prior-state restoration remain open
+  under T095.
 
 ### Migration preflight CLI
 
