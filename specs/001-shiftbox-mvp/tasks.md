@@ -152,8 +152,8 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T071 [US2] Implement append-only security audit writes and configurable retention that never removes current authority, operations, maintenance, or workspace provenance in `internal/audit/store.go` and `internal/audit/service.go`
 - [X] T072 [US2] Implement immutable template revisions, launch grants with required project-secret acknowledgement, current-state launch authorization, revocation, archival, and administrator archive filtering proven by T063 in `internal/template/sharing.go` and `internal/template/archive.go`
 - [X] T073 [US2] Implement protected three-scope secret storage/resolution, explicit empty handling, authorized fallback preview, and metadata-only management reads proven by T064 in `internal/secret/store.go`, `internal/secret/resolver.go`, and `internal/secret/service.go`
-- [ ] T074 [US2] Implement owner-bound GitHub.com App authorization initiation, state-bound callback, repository coverage, encrypted token storage, single-flight fenced refresh, revoke, and reconnect-required state proven by T065-T066 in `internal/identity/github.go`, `internal/identity/github_oauth.go`, and `internal/identity/github_store.go`
-- [ ] T075 [US2] Implement guest secret resolution and Git token endpoints plus `shiftbox secrets get-secret` and internal credential-helper exit behavior proven by T065 in `internal/web/credential_routes.go`, `internal/guest/credentials.go`, and `cmd/shiftbox-agent/credentials.go`
+- [X] T074 [US2] Implement owner-bound GitHub.com App authorization initiation, state-bound callback, repository coverage, encrypted token storage, single-flight fenced refresh, revoke, and reconnect-required state proven by T065-T066 in `internal/identity/github.go`, `internal/identity/github_oauth.go`, and `internal/identity/github_store.go`
+- [X] T075 [US2] Implement guest secret resolution and Git token endpoints plus `shiftbox secrets get-secret` and internal credential-helper exit behavior proven by T065 in `internal/web/credential_routes.go`, `internal/guest/credentials.go`, and `cmd/shiftbox-agent/credentials.go`
 - [X] T076 [US2] Implement self password/external reauthorization, users/membership/external connector, template update/new revision/grant/revoke/archive, secret metadata/set/delete, Git authorization/callback/revoke, and audit read handlers from the OpenAPI and authorization-matrix contracts in `internal/web/session_routes.go`, `internal/web/user_routes.go`, `internal/web/template_grant_routes.go`, `internal/web/secret_routes.go`, `internal/web/git_routes.go`, and `internal/web/audit_routes.go`
 - [X] T077 [US2] Implement Mantine password change, external reauthorization, People, template revision/sharing/archive, secret metadata/edit/delete, Git connection, and audit screens with the required warnings in `ui/features/session/password.tsx`, `ui/features/session/external-reauthorization.tsx`, `ui/features/admin/people.tsx`, `ui/features/templates/sharing.tsx`, `ui/features/secrets/secrets.tsx`, `ui/features/git/connection.tsx`, and `ui/app/audit/page.tsx`
 - [ ] T078 [US2] Add and run the Go sharing acceptance test together with the T068 Playwright journey, then record separate evidence for privacy, revocation, secret non-disclosure, and owner-bound Git behavior in `tests/acceptance/template_sharing_test.go` and `documentation/validation/template-sharing.md`
@@ -2779,3 +2779,9 @@ This checkpoint does not itself change the goal status.
   template keeps project-secret access for existing grants. GitHub contract
   tests check PKCE, the exact callback address, and rejection of revoked
   state, with refresh and owner token checks using local provider fixtures.
+- T074 and T075 passed the owner-bound identity, guest TLS, socket, and
+  command race tests. Coverage includes encrypted token persistence,
+  repository restrictions, concurrent refresh, reconnect-required state,
+  token delivery after an authority recheck, and secret command exits.
+  The Linux amd64 guest command built successfully. The real GitHub consent
+  and private clone remain part of T061 and T078 acceptance.
