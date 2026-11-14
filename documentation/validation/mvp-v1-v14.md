@@ -12,9 +12,33 @@ Run the release gates against one frozen candidate and record its component
 versions and hashes in `platform/manifests/release.json` before marking a
 gate passed.
 
+## Candidate provenance
+
+The original `mvp-rc1` controller, guest agent, Dex executable, UTM
+executable, installed Packer fork, downloaded Ubuntu image, and
+code-server archive matched the SHA-256 values in the checked-in release
+manifest. The pinned UTM bundle's own artifact manifest SHA-256 was
+`2252ec7cd73f4bd6d1af89365e9bee6734af443924281c6fe46d685cd285844b`.
+
+The PostgreSQL browser checks used the same guest image and a rebuilt
+controller containing the sign-in fix. Its SHA-256 was
+`49e2d06a105e07e5f2441312bc740cb931648d154faa1bc364809e388e24f0b8`.
+The checked-in manifest still identifies the original controller. Repeat
+the integrated gates on one final controller and guest pair before
+changing the manifest.
+
+The November 14 local browser runs used Chrome 157.0.8103.51 on macOS
+26.6.2. The PostgreSQL fixture used server and client tools 18.7 with
+separately owned application and Dex schemas. The application schema was
+27. The trusted localhost test certificate expired December 14, 2026 at
+13:14 UTC. The same public certificate was used by the test browser for
+setup and management.
+
+## Gate results
+
 | Gate | Evidence available | Evidence needed for release |
 | --- | --- | --- |
-| V1 Platform and provider | Pinned Packer build and disposable native UTM boot, stop, and removal | Complete distinct clone identity and owned-disk lifecycle checks on the frozen candidate |
+| V1 Platform and provider | The pinned `mvp-rc1` Packer image passed native boot and removal. The same workspace ID in two installations received distinct VM and disk identities, and deleting either clone left no owned resources. | Repeat on the final frozen candidate |
 | V2 Enrollment delivery | Native initial enrollment and native restart after certificate expiry both passed on `mvp-rc1`. The restart replaced the guest identity, cleared enrollment media and preserved the owned disk. Controller tests cover lost enrollment replies. | Repeat on the final frozen candidate |
 | V3 Certificates | Rotation, expired-leaf rejection, and local TLS revocation tests. The native stopped guest recovered after its short-lived certificate expired. The running `mvp-rc1` guest rejected an unrelated controller CA and a future-dated server certificate, then resumed polling with original trust. | Exercise native expired-CA handling, guest-clock correction and final release revocation checks |
 | V4 Compatibility | Current and previous guest admission, successful migration preflight with an enrolled `mvp-rc1` UTM workspace, and native signed rollback and replacement with the retained-guest gate changing from blocked to clear | Repeat release-gate checks against the final frozen candidate |

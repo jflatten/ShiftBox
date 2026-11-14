@@ -36,6 +36,17 @@ administrator offboarding route stopped the exact clone and preserved its
 owned disk and disk reservation while releasing compute. The test then
 removed the disposable clone.
 
+## Separate installation copies
+
+The race-enabled `TestUTMCatalogValidation` passed against the pinned
+`mvp-rc1` image in 90.51 seconds. The catalog first booted a disposable
+candidate and verified removal before publishing the artifact. Two
+installations then created native VMs from that artifact with the same
+workspace ID and generation. UTM reported distinct VM and disk
+identities and separate ownership markers. Deleting one clone left the
+other stopped with its original disk. The adapter verified both
+deletions, and both clones were absent afterward.
+
 ## Expired guest recovery
 
 The race-enabled `TestUTMExpiredGuestRecovery` passed against the
