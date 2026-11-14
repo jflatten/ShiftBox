@@ -45,6 +45,7 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 	grantTemplate, revokeTemplate := web.TemplateGrantHandlers(db, origin, now)
 	budget, resourceProfile := web.CapacityHandlers(db, origin, now, uuid.NewString, launchPolicy.Capabilities)
 	publishNotice, listNotices, noticeReceipt := web.NoticeHandlers(db, origin, now, uuid.NewString)
+	listMaintenance, createMaintenance := web.MaintenanceHandlers(db, origin, now, journal)
 	handlers := web.GitAuthorizationHandlers(db, origin, now, github)
 	for id, handler := range web.SecretHandlers(db, origin, state.Secrets, now) {
 		handlers[id] = handler
@@ -60,7 +61,7 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 		state.createLocalUserHandler(passwords, now),
 		web.ListUsersHandler(db, origin, now),
 		web.ListAuditEventsHandler(db, origin, now),
-		publishNotice, listNotices, noticeReceipt,
+		publishNotice, listNotices, noticeReceipt, listMaintenance, createMaintenance,
 		web.UpdateMembershipHandler(db, origin, now, registry, journal),
 		web.TemplateUpdateHandler(db, origin, now), grantTemplate, revokeTemplate,
 		web.WorkspaceLaunchHandler(db, origin, now, journal, launchPolicy),

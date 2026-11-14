@@ -1673,6 +1673,17 @@ This checkpoint does not itself change the goal status.
   controller startup advanced past the platform import route and
   stopped at the next missing handler, `listMaintenanceCampaigns`.
   T060, T061, and the remaining T099 handlers stay open.
+
+### Maintenance scheduling
+
+- T095 and T099 add durable campaign and target tables plus the
+  administrator list and schedule routes. Admission records the
+  campaign operation and retained workspace generation and power states
+  in one transaction. The contract test covers administrator and CSRF
+  checks, deadlines, unknown releases, and replay after the deadline.
+- T060 native startup passed both maintenance routes and stopped at
+  `runMigrationPreflight`. Campaign execution, signed guest updates,
+  deadline warnings, and prior-state restoration remain open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
