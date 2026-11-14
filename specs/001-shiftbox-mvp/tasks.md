@@ -122,7 +122,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T057 [US1] Implement owner/audited-admin IDE and preview routing that exchanges a short-lived exact-origin grant for a separate host-only cookie and never forwards management authority in `internal/proxy/grants.go`, `internal/proxy/router.go`, and `internal/web/proxy_routes.go`
 - [X] T058 [US1] Implement the keyboard-accessible Mantine setup Stepper and forms, including one-time password acknowledgement, profile/certificate/provider validation, activation warning, and fresh sign-in in `ui/features/setup/setup-flow.tsx` and `ui/app/setup/page.tsx`
 - [ ] T059 [US1] Implement template creation plus workspace launch/detail/lifecycle/repair screens with Mantine controls and server-derived WorkflowStepper state in `ui/features/templates/template-form.tsx`, `ui/features/workspaces/launch-flow.tsx`, `ui/features/workspaces/workspace-detail.tsx`, and `ui/app/workspaces/page.tsx`
-- [ ] T060 [US1] Wire static UI embedding and controller/agent CLI composition so `shiftbox serve`, `shiftbox setup`, and `shiftbox-agent serve` satisfy their contracts in `internal/web/static.go`, `cmd/shiftbox/main.go`, and `cmd/shiftbox-agent/main.go`
+- [X] T060 [US1] Wire static UI embedding and controller/agent CLI composition so `shiftbox serve`, `shiftbox setup`, and `shiftbox-agent serve` satisfy their contracts in `internal/web/static.go`, `cmd/shiftbox/main.go`, and `cmd/shiftbox-agent/main.go`
 - [ ] T061 [US1] Add and run the exact-stack Go acceptance test together with the T039 Playwright journey, then record separate test results and pinned release evidence without broadening supported versions in `tests/release/mvp_workspace_test.go`, `documentation/validation/mvp-workspace.md`, and `platform/manifests/release.json`
 
 **Checkpoint**: User Story 1 is a demonstrable MVP slice and must pass independently before later stories are required.
@@ -1791,6 +1791,13 @@ This checkpoint does not itself change the goal status.
   the current installation identity and retained key, records the
   validation ID as operation evidence, and retains the passphrase
   and replacement database logins only in memory.
+- T060 starts the native controller with its embedded UI and full active
+  route catalog. A disposable activated SQLite fixture served the UI
+  over trusted HTTPS and returned 401 for a signed-out session. The CLI
+  created a verified backup through the running controller and validated
+  that archive without creating a replacement. Tagged race tests passed
+  for embedded assets, native setup with pinned Dex, and agent CLI
+  dispatch. T061 still requires the complete fresh UTM and Chrome journey.
 - T114 exposes `shiftbox restore validate` with terminal or explicit
   stdin passphrase input. It checks against the installed executable's
   schema and the operator-supplied installation and release IDs, then
