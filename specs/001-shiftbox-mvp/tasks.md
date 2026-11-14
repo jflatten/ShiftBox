@@ -1711,9 +1711,10 @@ This checkpoint does not itself change the goal status.
   listener serves the download only during the authenticated workspace
   generation's staging step and rechecks that assignment before sending
   bytes. The guest downloader derives its endpoint from the poll origin,
-  rejects redirects, and stages verified downloads by digest. Production key
-  provisioning, command dispatch, and prior-state restoration remain open
-  under T095.
+  rejects redirects, and stages verified downloads by digest. The guest poll
+  loop now handles the staging command and journals the digest for replay after
+  restart. Production key provisioning, controller dispatch and receipt,
+  activation, and prior-state restoration remain open under T095.
 
 ### Migration preflight CLI
 

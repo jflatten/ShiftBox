@@ -201,6 +201,9 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 	}
 	shutdown := report.Step == "workload.shutdown"
 	repair := report.Step == "repair.enter"
+	if report.Evidence.UpdateDigest != "" {
+		return ErrGuestReportConflict
+	}
 	if len(report.ID) != 36 || report.Attempt != 1 || report.ID != input.LastOperationID || input.Version < 1 ||
 		report.Generation != contact.Generation || shutdown && !validShutdownReport(*report) ||
 		repair && !validRepairReport(*report) || !shutdown && !repair && !validConfigurationReport(*report) {

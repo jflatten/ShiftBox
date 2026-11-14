@@ -1,12 +1,15 @@
 package guest
 
 import (
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 
 	"github.com/google/uuid"
+	"github.com/jflatten/ShiftBox/internal/release"
 )
 
 var errGuestDispatchConflict = errors.New("guest operation dispatch is stale or conflicts with local work")
@@ -15,18 +18,25 @@ const rebuildDevelopmentCommand = "rebuild-development-container"
 const retryAfterRepairCommand = "retry-development-after-repair"
 
 type guestDispatch struct {
-	ID         string `json:"id"`
-	Generation int64  `json:"generation"`
-	Version    int64  `json:"version"`
-	Command    string `json:"command"`
-	Config     string `json:"config,omitempty"`
-	Repository string `json:"repository,omitempty"`
-	Ref        string `json:"ref,omitempty"`
+	ID             string `json:"id"`
+	Generation     int64  `json:"generation"`
+	Version        int64  `json:"version"`
+	Command        string `json:"command"`
+	Config         string `json:"config,omitempty"`
+	Repository     string `json:"repository,omitempty"`
+	Ref            string `json:"ref,omitempty"`
+	ProductRelease string `json:"productRelease,omitempty"`
 }
 
 func (d guestDispatch) valid() bool {
 	id, err := uuid.Parse(d.ID)
 	if err != nil || id == uuid.Nil || id.String() != d.ID || d.Generation < 1 || d.Version < 1 {
+		return false
+	}
+	if d.Command == stageGuestUpdateCommand {
+		return d.Config == "" && d.Repository == "" && d.Ref == "" && release.ValidMigrationReleaseID(d.ProductRelease)
+	}
+	if d.ProductRelease != "" {
 		return false
 	}
 	switch d.Command {
@@ -57,10 +67,11 @@ const (
 
 type localOperation struct {
 	guestDispatch
-	Attempt    int                 `json:"attempt"`
-	Phase      localPhase          `json:"phase"`
-	Connection containerConnection `json:"connection"`
-	Problem    string              `json:"problem,omitempty"`
+	Attempt      int                 `json:"attempt"`
+	Phase        localPhase          `json:"phase"`
+	Connection   containerConnection `json:"connection"`
+	Problem      string              `json:"problem,omitempty"`
+	UpdateDigest string              `json:"updateDigest,omitempty"`
 }
 
 type localJournalState struct {
@@ -71,8 +82,9 @@ type localJournalState struct {
 // localJournal belongs to the single agent operation loop. Write the durable
 // state before replacing the in-memory view or acknowledging progress.
 type localJournal struct {
-	path  string
-	state localJournalState
+	path           string
+	state          localJournalState
+	downloadUpdate func(context.Context, string) ([sha256.Size]byte, error)
 }
 
 func loadLocalJournal(path string) (*localJournal, error) {
@@ -162,6 +174,24 @@ func (s localJournalState) valid() bool {
 	}
 	hasConnection := dockerContainerID.MatchString(op.Connection.ID) && validWaitFor(op.Connection.WaitFor)
 	noConnection := op.Connection == (containerConnection{})
+	if op.Command == stageGuestUpdateCommand {
+		if !noConnection {
+			return false
+		}
+		switch op.Phase {
+		case localPending:
+			return op.Problem == "" && op.UpdateDigest == ""
+		case localSucceeded:
+			return op.Problem == "" && validStagedUpdateDigest(op.UpdateDigest)
+		case localFailed:
+			return op.Problem == problemGuestUpdateStage && op.UpdateDigest == ""
+		default:
+			return false
+		}
+	}
+	if op.UpdateDigest != "" {
+		return false
+	}
 	if op.Command == enterRepairCommand || op.Command == exitRepairCommand {
 		switch op.Phase {
 		case localPending, localRequired:

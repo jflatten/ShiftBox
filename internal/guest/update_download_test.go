@@ -1,6 +1,7 @@
 package guest
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -16,6 +17,37 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/release"
 )
+
+// TestStageUpdateJournalReplaysEvidence proves that a repeated staging command
+// after agent restart reports the saved digest without downloading again.
+func TestStageUpdateJournalReplaysEvidence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operation.json")
+	journal, err := loadLocalJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatch := guestDispatch{ID: "99999999-0000-4000-8000-000000000001", Generation: 4, Version: 7,
+		Command: "stage-guest-update", ProductRelease: "current"}
+	digest := sha256.Sum256([]byte("verified fixture"))
+	download := func(context.Context, string) ([sha256.Size]byte, error) { return digest, nil }
+	if err := journal.stageUpdate(t.Context(), dispatch, download); err != nil {
+		t.Fatal(err)
+	}
+	journal, err = loadLocalJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.stageUpdate(t.Context(), dispatch, func(context.Context, string) ([sha256.Size]byte, error) {
+		t.Fatal("repeated staging attempted another download")
+		return [sha256.Size]byte{}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	report := journal.report()
+	if report.Step != "update.stage" || report.Status != "succeeded" || report.Evidence.UpdateDigest != hex.EncodeToString(digest[:]) {
+		t.Errorf("staging report = %+v, want successful staging with verified digest", report)
+	}
+}
 
 // TestDownloadGuestUpdate verifies that the guest uses the fixed internal
 // endpoint and only publishes a complete response signed by its trusted key.

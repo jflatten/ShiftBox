@@ -8,6 +8,7 @@ import (
 type localEvidence struct {
 	ContainerID    string `json:"containerId,omitempty"`
 	WaitForReached bool   `json:"waitForReached"`
+	UpdateDigest   string `json:"updateDigest,omitempty"`
 }
 
 // OperationReport contains bounded evidence for an approved guest command.
@@ -40,6 +41,9 @@ func (j *localJournal) report() OperationReport {
 		report.Status = string(op.Phase)
 	}
 	switch op.Command {
+	case stageGuestUpdateCommand:
+		report.Step = "update.stage"
+		report.Evidence.UpdateDigest = op.UpdateDigest
 	case "shutdown-for-stop":
 		report.Step = "workload.shutdown"
 	case enterRepairCommand:

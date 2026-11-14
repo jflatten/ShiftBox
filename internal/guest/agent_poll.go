@@ -3,6 +3,7 @@ package guest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -144,10 +145,23 @@ func applyGuestPoll(ctx context.Context, journal *localJournal, runtime devConta
 			RepositoryRef  string            `json:"repositoryRef"`
 			Devcontainer   string            `json:"devcontainerPath"`
 			RetainedMounts []json.RawMessage `json:"retainedMounts"`
+			ProductRelease string            `json:"productRelease"`
 		} `json:"arguments"`
 	}
 	if err := decodeAgentJSON(bytes.NewReader(raw), &dispatch); err != nil {
 		return errors.New("invalid guest operation dispatch")
+	}
+	if dispatch.Command == stageGuestUpdateCommand {
+		if dispatch.Type != "update" || desiredState != "running" && desiredState != "stopped" ||
+			dispatch.Arguments.RepositoryURL != "" || dispatch.Arguments.RepositoryRef != "" ||
+			dispatch.Arguments.Devcontainer != "" || len(dispatch.Arguments.RetainedMounts) != 0 {
+			return errors.New("invalid guest update dispatch")
+		}
+		return journal.stageUpdate(ctx, guestDispatch{ID: dispatch.ID, Version: dispatch.Version, Generation: generation,
+			Command: dispatch.Command, ProductRelease: dispatch.Arguments.ProductRelease}, journal.downloadUpdate)
+	}
+	if dispatch.Arguments.ProductRelease != "" {
+		return errors.New("unexpected guest update release")
 	}
 	if dispatch.Command == enterRepairCommand || dispatch.Command == exitRepairCommand {
 		if desiredState != "running" || dispatch.Type != "repair" || dispatch.Arguments.RepositoryURL != "" ||
@@ -236,6 +250,13 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 	journal, err := loadLocalJournal(filepath.Join(stateDir, "operation.json"))
 	if err != nil {
 		return err
+	}
+	journal.downloadUpdate = func(ctx context.Context, productRelease string) ([sha256.Size]byte, error) {
+		key, err := loadGuestUpdatePublisherKey(guestUpdatePublisherKeyPath)
+		if err != nil {
+			return [sha256.Size]byte{}, err
+		}
+		return downloadGuestUpdate(ctx, client, identity.PollEndpoint, stateDir, productRelease, protocol, key)
 	}
 	project := filepath.Join(stateDir, "project")
 	runtime := devContainer{workspace: project, credentials: secretSocket != "", ide: true, retainHome: true,
