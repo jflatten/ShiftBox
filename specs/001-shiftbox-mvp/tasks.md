@@ -215,7 +215,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T104 [P] [US4] Write failing backup tests proving management writes pause only while application/Dex checkpoints are acquired, resume before archive assembly/encryption and after checkpoint failure, workspace computation remains uninterrupted, and the canonical age-encrypted verified archive explicitly excludes VM disks in `internal/backup/backup_test.go`
 - [X] T105 [P] [US4] Write failing restore validation tests for wrong password, truncation, digest mismatch, incompatible release/schema, mismatched key, wrong host, non-empty/unowned target, and zero mutation before validation in `internal/backup/restore_test.go`
 - [ ] T106 [P] [US4] Write failing recovery tests for invalidated sessions/origin/enrollment grants/OAuth state, provider inventory matches/conflicts, gated workspace entry/destructive actions, identity/authorization review, and explicit activation in `internal/backup/recovery_test.go`
-- [ ] T107 [P] [US4] Write failing backup/restore API and CLI contract tests for password handling, stable JSON/exit codes, operation steps, validation IDs, separate activation, and no protected data in diagnostics in `tests/contract/backup_restore_test.go`
+- [X] T107 [P] [US4] Write failing backup/restore API and CLI contract tests for password handling, stable JSON/exit codes, operation steps, validation IDs, separate activation, and no protected data in diagnostics in `tests/contract/backup_restore_test.go`
 - [ ] T108 [P] [US4] Write failing UI and Playwright tests for backup scope copy, cleared password state, ordered Stepper, validation findings, recovery gating, invalidated authority, provider conflicts, and keyboard focus in `ui/features/recovery/recovery.test.tsx` and `ui/tests/e2e/backup-recovery.spec.ts`
 
 ### Models and implementation
@@ -1820,8 +1820,10 @@ This checkpoint does not itself change the goal status.
   fixture verified a replacement in recovery and an unchanged source.
   The backup CLI uses the running controller's private Unix socket and
   shares the browser backup service. Its test verifies passphrase
-  confirmation and waits for durable archive verification. Cross-schema
-  failure recovery and the full T107 contract suite remain open.
+  confirmation and waits for durable archive verification. T107 passed
+  race-enabled API and CLI contract tests for passphrase handling, durable
+  steps, stable JSON and exit codes, validation IDs, and explicit
+  activation. Cross-schema failure recovery remains open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
