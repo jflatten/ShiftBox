@@ -38,7 +38,10 @@ type githubService struct {
 
 // GitHub manages owner-authorized Git credentials for one configured App
 // installation. Only AccessToken exposes a current, repository-checked token.
-type GitHub struct{ service githubService }
+type GitHub struct {
+	service githubService
+	http    githubHTTP
+}
 
 // NewGitHub binds credential storage to the installation key and GitHub App.
 func NewGitHub(db *sql.DB, key *cryptostore.Store, clientID, clientSecret string, installationID int64, now func() time.Time) (*GitHub, error) {
@@ -52,7 +55,7 @@ func NewGitHub(db *sql.DB, key *cryptostore.Store, clientID, clientSecret string
 		clientID: clientID, clientSecret: clientSecret, installationID: installationID, now: now,
 	}
 	return &GitHub{service: githubService{store: githubStore{db: db, key: key, appID: clientID},
-		provider: githubProvider{refresh: endpoint.refresh, covers: endpoint.covers}, now: now}}, nil
+		provider: githubProvider{refresh: endpoint.refresh, covers: endpoint.covers}, now: now}, http: endpoint}, nil
 }
 
 // AccessToken returns the current owner token after checking repository coverage.

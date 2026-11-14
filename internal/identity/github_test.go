@@ -3,10 +3,13 @@ package identity
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +23,146 @@ import (
 	"github.com/jflatten/ShiftBox/internal/database"
 	_ "modernc.org/sqlite"
 )
+
+// TestGitHubBrowserAuthorization verifies PKCE, one-use state across
+// reconstruction, and the stable GitHub identifier stored for the owner.
+func TestGitHubBrowserAuthorization(t *testing.T) {
+	app, db, _ := gitHubBrowserFixture(t)
+	const origin = "https://management.test"
+	launch, err := app.BeginAuthorization(t.Context(), "owner", origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := url.Parse(launch.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := target.Query()
+	state := query.Get("state")
+	if target.Host != "github.com" || query.Get("redirect_uri") != origin+"/api/v1/git/authorization/callback" ||
+		state == "" || query.Get("code_challenge_method") != "S256" || query.Has("client_secret") {
+		t.Fatalf("BeginAuthorization() produced unexpected authorization parameters")
+	}
+	var calls int
+	app.http.client.Transport = githubRoundTrip(func(r *http.Request) (*http.Response, error) {
+		calls++
+		switch r.URL.Host + r.URL.Path {
+		case "github.com/login/oauth/access_token":
+			if r.ParseForm() != nil {
+				t.Fatal("invalid upstream OAuth form")
+			}
+			hash := sha256.Sum256([]byte(r.PostForm.Get("code_verifier")))
+			if r.PostForm.Get("code") != "fixture-code" ||
+				r.PostForm.Get("redirect_uri") != query.Get("redirect_uri") ||
+				base64.RawURLEncoding.EncodeToString(hash[:]) != query.Get("code_challenge") {
+				t.Error("upstream exchange did not prove the original PKCE challenge")
+			}
+			return githubResponse(`{"access_token":"fixture-access","token_type":"bearer"}`), nil
+		case "api.github.com/user":
+			if r.Header.Get("Authorization") != "Bearer fixture-access" {
+				t.Error("stable identity lookup did not use the issued user token")
+			}
+			return githubResponse(`{"id":42,"login":"changeable-login"}`), nil
+		default:
+			t.Fatal("unexpected upstream destination")
+			return nil, nil
+		}
+	})
+	reopened := &GitHub{service: githubService{store: app.service.store, now: app.service.now}, http: app.http}
+	if err := reopened.CompleteAuthorization(t.Context(), state, "fixture-code", "https://other.test"); !errors.Is(err, ErrGitHubState) {
+		t.Errorf("CompleteAuthorization(wrong origin) = %v, want state denial", err)
+	}
+	if err := reopened.CompleteAuthorization(t.Context(), state, "fixture-code", origin); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.CompleteAuthorization(t.Context(), state, "fixture-code", origin); !errors.Is(err, ErrGitHubState) || calls != 2 {
+		t.Errorf("CompleteAuthorization(replay) = %v, upstream calls %d, want state denial and 2 calls", err, calls)
+	}
+	var userID string
+	if err := db.QueryRow("SELECT provider_user_id FROM github_authorizations WHERE user_id='owner'").Scan(&userID); err != nil || userID != "42" {
+		t.Errorf("stored provider ID = %q, %v, want 42", userID, err)
+	}
+}
+
+// TestGitHubBrowserRevocationFencesCallback ensures a callback that was
+// already exchanging a code cannot reconnect a revoked account.
+func TestGitHubBrowserRevocationFencesCallback(t *testing.T) {
+	app, _, now := gitHubBrowserFixture(t)
+	const origin = "https://management.test"
+	launch, err := app.BeginAuthorization(t.Context(), "owner", origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := url.Parse(launch.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.http.client.Transport = githubRoundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/user" {
+			if err := app.RevokeAuthorization(t.Context(), "owner"); err != nil {
+				t.Fatal(err)
+			}
+			return githubResponse(`{"id":42}`), nil
+		}
+		return githubResponse(`{"access_token":"fixture-access","token_type":"bearer"}`), nil
+	})
+	if err := app.service.store.connect(t.Context(), "owner", "42", githubTokenFixture(now, "old"), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.CompleteAuthorization(t.Context(), target.Query().Get("state"), "fixture-code", origin); !errors.Is(err, ErrGitHubState) {
+		t.Errorf("CompleteAuthorization(revoked during exchange) = %v, want state denial", err)
+	}
+	auth, err := app.service.store.load(t.Context(), "owner")
+	if err != nil || auth.State != "revoked" || auth.Tokens.Access != "" {
+		t.Errorf("load(revoked owner) state=%q, token=%t, err=%v, want revoked with no token", auth.State, auth.Tokens.Access != "", err)
+	}
+}
+
+// TestGitHubBrowserRejectsExpiredAndSupersededState checks that neither
+// an old browser tab nor an expired callback can reach GitHub's token endpoint.
+func TestGitHubBrowserRejectsExpiredAndSupersededState(t *testing.T) {
+	app, _, now := gitHubBrowserFixture(t)
+	app.service.now = func() time.Time { return now }
+	const origin = "https://management.test"
+	begin := func() string {
+		t.Helper()
+		launch, err := app.BeginAuthorization(t.Context(), "owner", origin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		target, err := url.Parse(launch.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return target.Query().Get("state")
+	}
+	app.http.client.Transport = githubRoundTrip(func(*http.Request) (*http.Response, error) {
+		t.Fatal("invalid OAuth state reached GitHub")
+		return nil, nil
+	})
+	first, next := begin(), begin()
+	if err := app.CompleteAuthorization(t.Context(), first, "fixture-code", origin); !errors.Is(err, ErrGitHubState) {
+		t.Errorf("CompleteAuthorization(superseded state) = %v, want state denial", err)
+	}
+	now = now.Add(10 * time.Minute)
+	if err := app.CompleteAuthorization(t.Context(), next, "fixture-code", origin); !errors.Is(err, ErrGitHubState) {
+		t.Errorf("CompleteAuthorization(expired state) = %v, want state denial", err)
+	}
+}
+
+func gitHubBrowserFixture(t *testing.T) (*GitHub, *sql.DB, time.Time) {
+	t.Helper()
+	store, db, now := gitHubFixture(t)
+	app, err := NewGitHub(db, store.key, store.appID, "fixture-secret", 55, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return app, db, now
+}
+
+func githubResponse(body string) *http.Response {
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}
+}
 
 // TestGitHubProviderUsesAppCoverage verifies the token exchange and paginated
 // installation repository lookup use separate credentials and fixed hosts.
@@ -190,7 +333,7 @@ func gitHubFixture(t *testing.T) (githubStore, *sql.DB, time.Time) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if _, err := db.Exec("DELETE FROM github_authorizations WHERE user_id='owner'; DELETE FROM users WHERE id='owner'"); err != nil {
+		if _, err := db.Exec("DELETE FROM github_oauth_states WHERE user_id='owner'; DELETE FROM github_authorizations WHERE user_id='owner'; DELETE FROM users WHERE id='owner'"); err != nil {
 			t.Errorf("clean up GitHub fixture: %v", err)
 		}
 	})

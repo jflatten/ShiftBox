@@ -29,6 +29,14 @@ type githubTokens struct {
 }
 
 func (s githubStore) connect(ctx context.Context, owner, providerUserID string, tokens githubTokens, now time.Time) error {
+	return s.connectWith(ctx, s.db, owner, providerUserID, tokens, now)
+}
+
+type githubWriter interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func (s githubStore) connectWith(ctx context.Context, db githubWriter, owner, providerUserID string, tokens githubTokens, now time.Time) error {
 	if owner == "" || providerUserID == "" || !tokens.usable(now) {
 		return errors.New("invalid GitHub authorization")
 	}
@@ -36,7 +44,7 @@ func (s githubStore) connect(ctx context.Context, owner, providerUserID string, 
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO github_authorizations(user_id,app_id,provider_user_id,state,nonce,ciphertext,
+	result, err := db.ExecContext(ctx, `INSERT INTO github_authorizations(user_id,app_id,provider_user_id,state,nonce,ciphertext,
 		access_expires_at,refresh_expires_at,updated_at,version)
 		SELECT $1,$2,$3,'connected',$4,$5,$6,$7,$8,1
 		WHERE EXISTS(SELECT 1 FROM users WHERE id=$1 AND membership_state='active')
@@ -106,7 +114,11 @@ func (s githubStore) finishRefresh(ctx context.Context, owner string, version in
 }
 
 func (s githubStore) revoke(ctx context.Context, owner string, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE github_authorizations SET state='revoked',nonce=$1,ciphertext=$1,
+	return s.revokeWith(ctx, s.db, owner, now)
+}
+
+func (s githubStore) revokeWith(ctx context.Context, db githubWriter, owner string, now time.Time) error {
+	_, err := db.ExecContext(ctx, `UPDATE github_authorizations SET state='revoked',nonce=$1,ciphertext=$1,
 		access_expires_at='',refresh_expires_at='',updated_at=$2,version=version+1
 		WHERE user_id=$3 AND app_id=$4 AND state<>'revoked'`, []byte{}, gitHubTimestamp(now), owner, s.appID)
 	return err
