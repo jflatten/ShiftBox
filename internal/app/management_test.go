@@ -43,7 +43,8 @@ func TestManagementServices(t *testing.T) {
 		"createWorkspaceEntryGrant", "getOperation", "streamOperationEvents", "listTemplates", "createTemplate",
 		"createTemplateRevision", "updateTemplate", "grantTemplateLaunch", "revokeTemplateLaunch",
 		"updateCapacityBudget", "createResourceProfile", "getInfrastructureStatus", "replaceBrowserCertificate",
-		"listSecretMetadata", "setSecret", "deleteSecretOverride", "listUsers", "changeOwnPassword", "createLocalUser", "resetLocalUserPassword"} {
+		"listSecretMetadata", "setSecret", "deleteSecretOverride", "listUsers", "changeOwnPassword", "createLocalUser", "resetLocalUserPassword",
+		"getGitAuthorization", "beginGitAuthorization", "revokeGitAuthorization"} {
 		handler, ok := services.Handlers[id]
 		if !ok || handler.Route != catalog[id] || handler.DB != db || handler.Origin != "https://management.test" {
 			t.Errorf("handler for %s = route %+v, want reviewed catalog route %+v", id, handler.Route, catalog[id])

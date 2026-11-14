@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"os"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jflatten/ShiftBox/internal/app"
@@ -24,16 +25,25 @@ func runServe(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	runtime, err := app.PreflightController(ctx, cfg)
-	if err != nil {
-		return err
+	// Hold the installation lock while loading the database and trust state.
+	// Unlike setup, serve never creates an installation directory.
+	if info, err := os.Lstat(cfg.InstallationDir); err != nil || !info.IsDir() {
+		return app.ErrActiveDatabase
 	}
-	defer runtime.Close()
+	if cfg.DataProfile == "sqlite" {
+		if info, err := os.Lstat(cfg.SQLitePath); err != nil || !info.Mode().IsRegular() {
+			return app.ErrActiveDatabase
+		}
+	}
 	lock, err := lockSetup(cfg.InstallationDir)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
-
-	return errors.New("controller startup requires management route composition")
+	state, err := app.PreflightController(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer state.Close()
+	return serveActiveController(ctx, cfg, state)
 }

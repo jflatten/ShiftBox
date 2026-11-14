@@ -10,16 +10,38 @@ import (
 
 // Config holds explicit installation inputs; only composition chooses its path.
 type Config struct {
-	InstallationDir                  string `json:"installationDir"`
-	DataProfile                      string `json:"dataProfile"`
-	SQLitePath                       string `json:"sqlitePath"`
-	PostgresURI                      string `json:"postgresURI"`
-	ManagementOrigin                 string `json:"managementOrigin"`
-	ExternalAuthIntervalSeconds      int64  `json:"externalAuthIntervalSeconds"`
-	AuditRetentionDays               *int   `json:"auditRetentionDays,omitempty"`
-	DismissedNoticeRetentionDays     *int   `json:"dismissedNoticeRetentionDays,omitempty"`
-	WorkspaceRetentionMaximumSeconds *int64 `json:"workspaceRetentionMaximumSeconds,omitempty"`
-	RetentionOutageGraceSeconds      *int64 `json:"retentionOutageGraceSeconds,omitempty"`
+	InstallationDir                  string             `json:"installationDir"`
+	DataProfile                      string             `json:"dataProfile"`
+	SQLitePath                       string             `json:"sqlitePath"`
+	PostgresURI                      string             `json:"postgresURI"`
+	ManagementOrigin                 string             `json:"managementOrigin"`
+	ExternalAuthIntervalSeconds      int64              `json:"externalAuthIntervalSeconds"`
+	AuditRetentionDays               *int               `json:"auditRetentionDays,omitempty"`
+	DismissedNoticeRetentionDays     *int               `json:"dismissedNoticeRetentionDays,omitempty"`
+	WorkspaceRetentionMaximumSeconds *int64             `json:"workspaceRetentionMaximumSeconds,omitempty"`
+	RetentionOutageGraceSeconds      *int64             `json:"retentionOutageGraceSeconds,omitempty"`
+	Runtime                          *ControllerRuntime `json:"runtime,omitempty"`
+}
+
+// ControllerRuntime describes the native listeners and UTM resources for serve.
+type ControllerRuntime struct {
+	BrowserAddress    string      `json:"browserAddress"`
+	GuestHost         string      `json:"guestHost"`
+	EnrollmentAddress string      `json:"enrollmentAddress"`
+	PollAddress       string      `json:"pollAddress"`
+	TunnelAddress     string      `json:"tunnelAddress"`
+	UTMStorage        string      `json:"utmStorage"`
+	UTMMinimum        VMResources `json:"utmMinimum"`
+	UTMMaximum        VMResources `json:"utmMaximum"`
+	DexBinary         string      `json:"dexBinary,omitempty"`
+	GitHubAppFile     string      `json:"githubAppFile,omitempty"`
+}
+
+// VMResources records the validated allocation bounds for the local UTM host.
+type VMResources struct {
+	CPU       int   `json:"cpu"`
+	MemoryMiB int64 `json:"memoryMiB"`
+	DiskMiB   int64 `json:"diskMiB"`
 }
 
 // RetentionOutageGrace returns the configured grace period or ten minutes.

@@ -37,6 +37,11 @@ type ControllerState struct {
 // Close releases the authoritative database on shutdown or failed composition.
 func (s *ControllerState) Close() error { return s.DB.Close() }
 
+// GitHub binds a configured App to the active installation's protected store.
+func (s *ControllerState) GitHub(clientID, clientSecret string, installationID int64) (*identity.GitHub, error) {
+	return identity.NewGitHub(s.DB, s.cipher, clientID, clientSecret, installationID, time.Now)
+}
+
 // PreflightController loads the database and retained TLS material before any
 // listener can be opened. It uses the system roots for browser certificates.
 func PreflightController(ctx context.Context, cfg config.Config) (*ControllerState, error) {

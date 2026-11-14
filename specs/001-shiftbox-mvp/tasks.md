@@ -2234,3 +2234,25 @@ This checkpoint does not itself change the goal status.
   old credential and a restricted password-change session with the
   replacement. UI tests, the static build and a mobile Chrome smoke test
   passed.
+
+### Controller startup composition
+
+- T060 composes the native UTM adapter, pinned Dex, approved management
+  router, embedded UI, browser HTTPS, guest listeners, workspace worker,
+  and history cleanup under the controller supervisor. Startup takes
+  the installation lock before loading active state. Management and
+  guests share one connection registry and, when configured, one GitHub
+  App. An absent App leaves the guarded Git routes available to report
+  their configuration requirement.
+- Runtime bind addresses, the guest-reachable host, and UTM resource
+  bounds are explicit. Startup reads the active and minimum guest releases
+  from the authoritative database. The retained-workspace upgrade gate
+  and backup utility checks still need their T097 implementation.
+- Formatting, Go vet, the embedded build, and the full race suite run
+  one package at a time with pinned Dex passed. The parallel race run
+  timed out waiting for the second probe in an existing Dex test.
+- T060 stays open. The real management router still rejects startup
+  until the required handlers are wired. The next missing handler is
+  external reauthorization, followed by other catalog operations for
+  external identity, platform import, maintenance, migration, backup,
+  and recovery. Live production startup and acceptance remain unverified.

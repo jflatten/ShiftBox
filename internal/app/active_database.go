@@ -18,9 +18,11 @@ var ErrActiveDatabase = errors.New("cannot verify the active installation databa
 
 // ActiveInstallation is the committed settings snapshot selected for startup.
 type ActiveInstallation struct {
-	InstallationID string
-	Generation     int64
-	Settings       config.InstallationSettings
+	InstallationID      string
+	Generation          int64
+	Settings            config.InstallationSettings
+	ActiveRelease       string
+	MinimumGuestRelease string
 }
 
 // OpenActiveDatabase opens only the explicitly configured database and checks
@@ -60,13 +62,14 @@ func readActiveInstallation(ctx context.Context, db *sql.DB, cfg config.Config) 
 	var stored config.InstallationSettings
 	var snapshot string
 	err := db.QueryRowContext(ctx, `SELECT i.id,i.config_generation,i.organization_name,i.data_profile,
-		i.management_origin,i.ide_host_pattern,i.preview_host_pattern,i.external_auth_interval_seconds,a.settings_json
+		i.management_origin,i.ide_host_pattern,i.preview_host_pattern,i.external_auth_interval_seconds,
+		i.active_release,i.min_guest_release,a.settings_json
 		FROM installations i JOIN activated_configurations a
 		ON a.installation_id=i.id AND a.generation=i.config_generation AND a.retired_at IS NULL
 		WHERE i.singleton=1 AND i.state='active' AND i.config_generation>0`).
 		Scan(&active.InstallationID, &active.Generation, &stored.OrganizationName, &stored.DataProfile,
 			&stored.ManagementOrigin, &stored.IDEHostPattern, &stored.PreviewHostPattern,
-			&stored.ExternalAuthIntervalSeconds, &snapshot)
+			&stored.ExternalAuthIntervalSeconds, &active.ActiveRelease, &active.MinimumGuestRelease, &snapshot)
 	if err != nil || json.Unmarshal([]byte(snapshot), &active.Settings) != nil || active.Settings.BrowserCertificateID == "" {
 		return ActiveInstallation{}, ErrActiveDatabase
 	}

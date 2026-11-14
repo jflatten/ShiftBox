@@ -81,4 +81,15 @@ func TestGitAuthorizationAPI(t *testing.T) {
 	}
 	request(callback, "GET", "https://foreign.test/api/v1/git/authorization/callback?code=code&state=invalid", "", "", 400)
 	request(callback, "GET", base+"/callback?code=code&state=invalid", "", "", 400)
+
+	// An unconfigured App still requires session and CSRF checks and
+	// reports a controlled failure once the request is authorized.
+	unconfigured := web.GitAuthorizationHandlers(db, origin, clock, nil)["beginGitAuthorization"]
+	request(&unconfigured, "POST", base, "", csrf, 401)
+	request(&unconfigured, "POST", base, token, "wrong", 403)
+	result := request(&unconfigured, "POST", base, token, csrf, 503)
+	if !strings.Contains(result.Body.String(), "git.unavailable") {
+		t.Error("unconfigured GitHub App did not report its availability problem")
+	}
+	request(web.GitAuthorizationCallback(origin, nil), "GET", base+"/callback?code=code&state=fixture", "", "", 503)
 }

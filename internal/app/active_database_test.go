@@ -53,6 +53,9 @@ func TestOpenActiveDatabaseRequiresActivation(t *testing.T) {
 	if active.InstallationID != id || active.Generation != 1 || active.Settings.BrowserCertificateID != "browser" {
 		t.Errorf("activation = %+v, want committed installation snapshot", active)
 	}
+	if active.ActiveRelease != "test" || active.MinimumGuestRelease != "test" {
+		t.Errorf("activation releases = %q/%q, want both from the active database", active.ActiveRelease, active.MinimumGuestRelease)
+	}
 	// Startup must reject a schema with gaps even if the highest version
 	// still matches the binary's migration set.
 	if _, err := db.Exec("DELETE FROM goose_db_version WHERE version_id=2"); err != nil {

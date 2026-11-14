@@ -16,9 +16,6 @@ import (
 // GitAuthorizationHandlers binds management operations to the signed-in user.
 func GitAuthorizationHandlers(db *sql.DB, origin string, now func() time.Time, github *identity.GitHub) map[string]AuthorizedHandler {
 	handlers := make(map[string]AuthorizedHandler, 3)
-	if github == nil {
-		return handlers
-	}
 	for _, route := range ManagementRoutes() {
 		switch route.OperationID {
 		case "getGitAuthorization", "beginGitAuthorization", "revokeGitAuthorization":
@@ -28,6 +25,9 @@ func GitAuthorizationHandlers(db *sql.DB, origin string, now func() time.Time, g
 					return AuthorizationTarget{Action: "git.manage", Resource: auth.Resource{Type: "user", ID: principal.User.ID}}, nil
 				},
 				Apply: func(ctx context.Context, tx *sql.Tx, _ *http.Request, principal auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
+					if github == nil {
+						return nil, gitNotConfigured()
+					}
 					var result any
 					var err error
 					switch route.Method {
@@ -60,9 +60,16 @@ func GitAuthorizationHandlers(db *sql.DB, origin string, now func() time.Time, g
 // authority. It is restricted to the configured management HTTPS host.
 func GitAuthorizationCallback(origin string, github *identity.GitHub) http.Handler {
 	if github == nil {
-		return nil
+		return gitAuthorizationCallback(origin, func(context.Context, string, string, string) error {
+			return gitNotConfigured()
+		})
 	}
 	return gitAuthorizationCallback(origin, github.CompleteAuthorization)
+}
+
+func gitNotConfigured() Problem {
+	return Problem{Status: 503, Code: "git.unavailable", Title: "GitHub authorization is unavailable",
+		Detail: "Configure the installation's GitHub App to connect an account."}
 }
 
 func gitAuthorizationCallback(origin string, complete func(context.Context, string, string, string) error) http.Handler {
