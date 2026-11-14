@@ -142,7 +142,7 @@ func (p *Provider) Create(ctx context.Context, req provider.CreateRequest) (prov
 	ref := req.Ref
 	ref.InstanceID = id
 	m := &machine{createOperation: req.OperationID, enrolled: req.EnrollmentMedia != "", inventory: provider.Inventory{
-		Ref: ref, InstanceID: id, Power: provider.Stopped, ArtifactID: req.ArtifactID, Release: req.Release, NetworkMode: req.NetworkMode, Effective: req.Resources,
+		Ref: ref, InstanceID: id, Power: provider.Stopped, ArtifactID: req.ArtifactID, Release: req.Release, NetworkMode: req.NetworkMode, Effective: req.Resources, DiskCapacityKnown: true,
 		Resources: []provider.OwnedResource{
 			{ID: id, Type: "vm", OwnershipMarker: ref.OwnershipMarker, Generation: ref.Generation},
 			{ID: id + "-disk", Type: "disk", OwnershipMarker: ref.OwnershipMarker, Generation: ref.Generation},

@@ -2,9 +2,13 @@ package utm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/provider"
@@ -15,7 +19,7 @@ func TestNormalizeInventory(t *testing.T) {
 	ref := provider.WorkspaceRef{InstallationID: "installation", WorkspaceID: "workspace", Generation: 3, OwnershipMarker: "marker"}
 	record := vmRecord{ID: "vm-id", Backend: "qemu", Status: "started", Architecture: "x86_64",
 		Notes: "shiftbox:{\"installationId\":\"installation\",\"workspaceId\":\"workspace\",\"generation\":3,\"marker\":\"marker\",\"artifactId\":\"artifact\",\"release\":\"release\"}",
-		CPU:   2, MemoryMiB: 1024, Drives: []driveRecord{{ID: "disk", GuestMiB: 4096}, {ID: "enrollment", Removable: true}}}
+		CPU:   2, MemoryMiB: 1024, Drives: []driveRecord{{ID: "disk", GuestMiB: int64Ptr(4096)}, {ID: "enrollment", Removable: true}}}
 	got, err := normalizeInventory(ref, []vmRecord{{ID: "unrelated"}, record})
 	if err != nil || got.Power != provider.Running || len(got.Resources) != 3 ||
 		got.Effective.DiskBytes != 4096<<20 || got.Effective.MemoryBytes != 1024<<20 ||
@@ -55,5 +59,73 @@ func TestLiveUTMInventory(t *testing.T) {
 	_, err := (Inspector{Version: version}).Inspect(context.Background(), ref)
 	if !errors.Is(err, provider.ErrNotFound) {
 		t.Fatalf("native inventory did not confirm absence: %v", err)
+	}
+}
+
+func int64Ptr(value int64) *int64 { return &value }
+
+// TestUnknownGuestDiskCapacity keeps host allocation separate from guest capacity.
+func TestUnknownGuestDiskCapacity(t *testing.T) {
+	vm := vmRecord{ID: "vm", Backend: "qemu", Architecture: "x86_64", Status: "stopped", CPU: 1, MemoryMiB: 512,
+		Drives: []driveRecord{{ID: "disk", HostMiB: int64Ptr(12)}}}
+	inventory, err := inventoryFromRecord(provider.WorkspaceRef{}, vm, ownership{ArtifactID: "artifact", Release: "release"})
+	if err != nil || inventory.DiskCapacityKnown || inventory.Effective.DiskBytes != 0 ||
+		len(inventory.Resources) != 2 || inventory.Resources[1].HostBytes == nil ||
+		*inventory.Resources[1].HostBytes != 12<<20 {
+		t.Fatalf("inventory = %+v, error = %v", inventory, err)
+	}
+}
+
+// TestLiveUTMTaggedDrive creates and deletes a stopped, uniquely owned test VM.
+// Mutation is opt-in independently of read-only inventory checks.
+func TestLiveUTMTaggedDrive(t *testing.T) {
+	version := os.Getenv("SHIFTBOX_TEST_UTM_MUTATIONS")
+	if version == "" {
+		t.Skip("set SHIFTBOX_TEST_UTM_MUTATIONS to the exact fixture version")
+	}
+	ref := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(), Generation: 1, OwnershipMarker: uuid.NewString()}
+	marker, err := json.Marshal(ownership{InstallationID: ref.InstallationID, WorkspaceID: ref.WorkspaceID, Generation: 1, Marker: ref.OwnershipMarker, ArtifactID: "fixture", Release: "fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := ownershipPrefix + string(marker)
+	const fixture = `
+on run argv
+    tell application "/Applications/UTM.app"
+        if UTM version is not item 1 of argv then error "unexpected UTM version"
+        if item 2 of argv is "create" then
+            set vm to make new virtual machine with properties {backend:qemu, configuration:{name:item 3 of argv, notes:item 4 of argv, architecture:"x86_64", cpu cores:2, memory:512, drives:{{guest size:64}}}}
+            return id of vm
+        end if
+        set vm to virtual machine id (item 3 of argv)
+        set vmConfig to configuration of vm
+        if notes of vmConfig is not item 4 of argv or status of vm is not stopped then error "fixture does not match"
+        delete vm
+    end tell
+end run
+`
+	run := func(action, value string) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "/usr/bin/osascript", "-e", fixture, "--", version, action, value, notes).Output()
+		return strings.TrimSpace(string(out)), err
+	}
+	ref.InstanceID, err = run("create", "ShiftBox-Inventory-"+ref.WorkspaceID)
+	if err != nil || ref.InstanceID == "" {
+		t.Fatalf("could not create fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := run("delete", ref.InstanceID); err != nil {
+			t.Errorf("could not delete disposable fixture %s: %v", ref.InstanceID, err)
+			return
+		}
+		if _, err := (Inspector{Version: version}).Inspect(context.Background(), ref); !errors.Is(err, provider.ErrNotFound) {
+			t.Errorf("disposable VM remained registered after cleanup: %v", err)
+		}
+	})
+	inventory, err := (Inspector{Version: version}).Inspect(context.Background(), ref)
+	if err != nil || inventory.Power != provider.Stopped || len(inventory.Resources) != 2 ||
+		inventory.Resources[1].Type != "disk" || inventory.Resources[1].HostBytes == nil {
+		t.Fatalf("native tagged inventory = %+v, error = %v", inventory, err)
 	}
 }

@@ -36,6 +36,7 @@ type OwnedResource struct {
 	ID, Type, OwnershipMarker string
 	Generation                int64
 	Immutable, Shared         bool
+	HostBytes, GuestBytes     *int64
 }
 
 type Inventory struct {
@@ -44,6 +45,7 @@ type Inventory struct {
 	Power                                           PowerState
 	Resources                                       []OwnedResource
 	Effective                                       Resources
+	DiskCapacityKnown                               bool
 	NetworkMode, ArtifactID, Release, DiagnosticRef string
 	ObservedAt                                      time.Time
 }

@@ -30,7 +30,7 @@ function run(argv) {
             architecture: configuration.architecture,
             cpu: configuration.cpuCores, memoryMiB: configuration.memory,
             drives: configuration.drives.map(drive => ({
-                id: drive.id, guestMiB: drive.guestSize || 0, removable: drive.removable
+                id: drive.id, guestMiB: drive.guestSize, hostMiB: drive.hostSize, removable: drive.removable
             })),
             networkModes: configuration.networkInterfaces.map(network => network.mode)
         };

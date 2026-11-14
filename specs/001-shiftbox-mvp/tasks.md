@@ -1101,3 +1101,16 @@ This checkpoint does not itself change the goal status.
   for a synthetic workspace. That check does not validate tagged VM drive
   extraction, mutation, artifact boot, or full owned-resource deletion.
   T033 and T048 remain open.
+
+### Native tagged VM inventory
+
+- Verified tagged VM and attached-disk inspection using a disposable stopped
+  QEMU VM on UTM 5.0.8. The opt-in test creates a unique fixture through
+  AppleScript, checks its ownership before cleanup, and confirms the VM is
+  absent afterward.
+- The installed UTM build exposes host allocation but omitted guest capacity
+  for the test drive. Inventory now represents those values separately and
+  exposes whether aggregate guest capacity is known.
+- Native provider and contract race tests, formatting, and vet passed.
+  Artifact import/boot, lifecycle mutations, and complete owned-resource
+  deletion still require the release fixture.

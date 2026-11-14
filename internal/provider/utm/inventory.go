@@ -29,9 +29,9 @@ type vmRecord struct {
 }
 
 type driveRecord struct {
-	ID        string
-	GuestMiB  int64
-	Removable bool
+	ID                string
+	GuestMiB, HostMiB *int64
+	Removable         bool
 }
 
 func normalizeInventory(ref provider.WorkspaceRef, records []vmRecord) (provider.Inventory, error) {
@@ -78,27 +78,42 @@ func inventoryFromRecord(ref provider.WorkspaceRef, vm vmRecord, owner ownership
 	result := provider.Inventory{
 		Ref: ref, InstanceID: vm.ID, Power: powerState(vm.Status),
 		ArtifactID: owner.ArtifactID, Release: owner.Release, ObservedAt: time.Now().UTC(),
-		Effective: provider.Resources{CPU: vm.CPU, MemoryBytes: vm.MemoryMiB * mib},
-		Resources: []provider.OwnedResource{{ID: vm.ID, Type: "vm", OwnershipMarker: owner.Marker, Generation: owner.Generation}},
+		DiskCapacityKnown: true,
+		Effective:         provider.Resources{CPU: vm.CPU, MemoryBytes: vm.MemoryMiB * mib},
+		Resources:         []provider.OwnedResource{{ID: vm.ID, Type: "vm", OwnershipMarker: owner.Marker, Generation: owner.Generation}},
 	}
 	if len(vm.NetworkModes) == 1 {
 		result.NetworkMode = vm.NetworkModes[0]
 	}
 	ids := make(map[string]bool, len(vm.Drives))
 	for _, drive := range vm.Drives {
-		if drive.ID == "" || ids[drive.ID] || drive.GuestMiB < 0 || drive.GuestMiB > (math.MaxInt64-result.Effective.DiskBytes)/mib {
+		if drive.ID == "" || ids[drive.ID] {
 			return provider.Inventory{}, provider.ErrOutcomeUnknown
 		}
 		ids[drive.ID] = true
+		host, hostOK := sizeBytes(drive.HostMiB)
+		guest, guestOK := sizeBytes(drive.GuestMiB)
+		if !hostOK || !guestOK {
+			return provider.Inventory{}, provider.ErrOutcomeUnknown
+		}
 		kind := "disk"
 		if drive.Removable {
 			kind = "media"
+		} else if guest == nil {
+			result.DiskCapacityKnown = false
 		} else {
-			result.Effective.DiskBytes += drive.GuestMiB * mib
+			if *guest > math.MaxInt64-result.Effective.DiskBytes {
+				return provider.Inventory{}, provider.ErrOutcomeUnknown
+			}
+			result.Effective.DiskBytes += *guest
 		}
 		result.Resources = append(result.Resources, provider.OwnedResource{
 			ID: vm.ID + "/" + drive.ID, Type: kind, OwnershipMarker: owner.Marker, Generation: owner.Generation,
+			HostBytes: host, GuestBytes: guest,
 		})
+	}
+	if !result.DiskCapacityKnown {
+		result.Effective.DiskBytes = 0
 	}
 	return result, nil
 }
@@ -116,4 +131,15 @@ func powerState(status string) provider.PowerState {
 	default:
 		return provider.Unknown
 	}
+}
+
+func sizeBytes(mib *int64) (*int64, bool) {
+	if mib == nil {
+		return nil, true
+	}
+	if *mib < 0 || *mib > math.MaxInt64>>20 {
+		return nil, false
+	}
+	value := *mib << 20
+	return &value, true
 }
