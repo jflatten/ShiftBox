@@ -107,7 +107,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T045 [US1] Implement browser certificate chain/key/hostname validation and atomic configuration activation in `internal/config/certificate.go`
 - [X] T046 [US1] Build the pinned Packer Ubuntu 24.04 Minimal amd64 artifact with supervised guest agent and VS Code Browser, then implement immutable artifact import, manifest/digest/provenance validation, default selection, resource profiles, capacity budget, and provider capability admission proven by T033 in `platform/packer/shiftbox.pkr.hcl`, `platform/guest/`, `internal/release/catalog.go`, and `internal/workspace/capacity.go`
 - [X] T047 [US1] Define the consumer-owned Provider interface, complete inventory/types, semantic errors, fake provider, and shared suite adapter proven by T032 in `internal/provider/provider.go`, `internal/provider/types.go`, `internal/provider/errors.go`, and `internal/provider/fake/fake.go`
-- [ ] T048 [US1] Implement the compiled UTM provider using only the supported local scripting surface, complete inventory comparison, serialized mutations, inspect-after-effect, and preserved drive lists proven by T033 in `internal/provider/utm/provider.go`, `internal/provider/utm/inventory.go`, and `internal/provider/utm/script.go`
+- [X] T048 [US1] Implement the compiled UTM provider using only the supported local scripting surface, complete inventory comparison, serialized mutations, inspect-after-effect, and preserved drive lists proven by T033 in `internal/provider/utm/provider.go`, `internal/provider/utm/inventory.go`, and `internal/provider/utm/script.go`
 
 ### Guest, workspace, API, and UI implementation
 
@@ -1101,7 +1101,8 @@ This checkpoint does not itself change the goal status.
 - Race tests passed, including an opt-in read-only inspection of UTM 5.0.8
   for a synthetic workspace. That check does not validate tagged VM drive
   extraction, mutation, artifact boot, or full owned-resource deletion.
-  T033 and T048 remain open.
+  The later native tests documented under T122 verified these provider
+  behaviors, including recovery media and preservation of the source drives.
 
 ### Native tagged VM inventory
 
