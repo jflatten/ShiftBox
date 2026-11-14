@@ -47,6 +47,7 @@ func ManagementRoutes() []ManagementRoute {
 		{Method: "GET", Path: "/admin/users", OperationID: "listUsers", Action: "user.list"},
 		{Method: "POST", Path: "/admin/users", OperationID: "createLocalUser", Action: "user.create"},
 		{Method: "PATCH", Path: "/admin/users/{userId}", OperationID: "updateMembership", Resolver: "membership_update"},
+		{Method: "POST", Path: "/admin/users/{userId}/password-reset", OperationID: "resetLocalUserPassword", Action: "user.reset_password"},
 		{Method: "PUT", Path: "/admin/identity/external", OperationID: "configureExternalIdentity", Action: "infrastructure.manage"},
 		{Method: "POST", Path: "/admin/notices", OperationID: "publishNotice", Action: "notice.publish"},
 		{Method: "GET", Path: "/notices", OperationID: "listNotices", Action: "notice.list"},

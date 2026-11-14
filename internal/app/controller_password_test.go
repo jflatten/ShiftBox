@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -95,7 +96,7 @@ func TestControllerPasswordChange(t *testing.T) {
 		}
 		return nil
 	}}
-	handler := activePasswordHandler(db, origin, registry, passwords, clock)
+	handler := activePasswordHandler(db, origin, registry, passwords, clock, &sync.Mutex{})
 	send := func(token, current string, csrf bool, want int) *httptest.ResponseRecorder {
 		t.Helper()
 		r := httptest.NewRequest(http.MethodPut, origin+"/api/v1/session/password",

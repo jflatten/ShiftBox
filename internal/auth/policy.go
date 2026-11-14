@@ -109,6 +109,10 @@ func Authorize(p Principal, action string, resource Resource, grants []ResourceG
 		if admin && resource.Type == "organization" {
 			return allow
 		}
+	case "user.reset_password":
+		if admin && resource.Type == "user" && resource.ID != "" {
+			return allow
+		}
 	case "user.list", "user.create", "user.approve", "user.disable", "user.change_role", "notice.publish", "audit.list", "infrastructure.view", "infrastructure.manage", "maintenance.manage", "backup.create", "restore.validate", "restore.activate", "migration.preflight":
 		if admin {
 			return allow

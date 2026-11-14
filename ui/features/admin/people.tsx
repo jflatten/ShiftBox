@@ -9,6 +9,7 @@ import { APIProblemError, readProblem } from '../../lib/api-problem';
 import { useSession } from '../../lib/use-session';
 import { CreateLocalAccount } from './create-local-account';
 import { Offboarding } from './offboarding';
+import { ResetPassword } from './reset-password';
 
 interface Person {
   id: string;
@@ -40,6 +41,7 @@ export function People() {
   });
   const data = allowed && !people.isError ? people.data : undefined;
   const [selected, setSelected] = useState<Person>();
+  const [reset, setReset] = useState<Person>();
   return (
     <ShiftBoxShell session={current} alerts={[]} error={session.error ?? (allowed ? people.error : undefined) ?? undefined}>
       <Title order={1}>People</Title>
@@ -59,24 +61,30 @@ export function People() {
         canApprove={current.permissions.includes('user.approve')}
         canChangeRole={current.permissions.includes('user.change_role')}
         onDisable={current.permissions.includes('user.disable') ? setSelected : undefined}
+        onReset={current.permissions.includes('user.reset_password') ? setReset : undefined}
         refresh={people.refetch} /> : null}
       {selected && allowed && current?.permissions.includes('user.disable') ? (
         <Offboarding person={selected} csrfToken={current.csrfToken}
           onClose={() => setSelected(undefined)} refresh={people.refetch} />
       ) : null}
+      {reset && allowed && current.permissions.includes('user.reset_password') ? (
+        <ResetPassword person={reset} csrfToken={current.csrfToken} onClose={() => setReset(undefined)}
+          refresh={reset.id === current.user.id ? session.refetch : people.refetch} />
+      ) : null}
     </ShiftBoxShell>
   );
 }
 
-function PeopleTable({ people, csrfToken, canApprove, canChangeRole, onDisable, refresh }: {
+function PeopleTable({ people, csrfToken, canApprove, canChangeRole, onDisable, onReset, refresh }: {
   people: Person[];
   csrfToken: string;
   canApprove: boolean;
   canChangeRole: boolean;
   onDisable?: (person: Person) => void;
+  onReset?: (person: Person) => void;
   refresh: () => Promise<unknown>;
 }) {
-  const hasActions = canApprove || canChangeRole || !!onDisable;
+  const hasActions = canApprove || canChangeRole || !!onDisable || !!onReset;
   return (
     <Table.ScrollContainer minWidth={520} type="native">
       <Table aria-label="Organization membership">
@@ -86,7 +94,7 @@ function PeopleTable({ people, csrfToken, canApprove, canChangeRole, onDisable, 
             <Table.Th scope="col">Role</Table.Th>
             <Table.Th scope="col">Membership</Table.Th>
             <Table.Th scope="col">Sign-in</Table.Th>
-            {hasActions ? <Table.Th scope="col">Membership actions</Table.Th> : null}
+            {hasActions ? <Table.Th scope="col">Account actions</Table.Th> : null}
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -107,6 +115,9 @@ function PeopleTable({ people, csrfToken, canApprove, canChangeRole, onDisable, 
                 <Table.Td><Stack gap="xs" align="flex-start">{(canApprove && person.membershipState === 'pending') ||
                   (canChangeRole && person.membershipState === 'active') ? (
                   <MembershipRoleForm key={person.version} person={person} csrfToken={csrfToken} refresh={refresh} />
+                ) : null}
+                {onReset && person.membershipState === 'active' && person.credentialMode === 'local' ? (
+                  <Button size="compact-sm" variant="subtle" onClick={() => onReset(person)}>Reset password</Button>
                 ) : null}
                 {onDisable && person.membershipState !== 'disabled' ? (
                   <Button size="compact-sm" color="red" variant="subtle" onClick={() => onDisable(person)}>Disable account</Button>

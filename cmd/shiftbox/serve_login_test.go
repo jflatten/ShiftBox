@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -46,7 +47,8 @@ func TestControllerDexRequiresRetainedSQLite(t *testing.T) {
 }
 
 // TestActiveLoginUsesCurrentMembership drives native Dex and shows that a
-// verified password creates a session only for a current active local member.
+// verified password creates a session only for a current active local member
+// and that a temporary password from a reset forces a password change.
 func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 	binary := os.Getenv("SHIFTBOX_TEST_DEX_BINARY")
 	if binary == "" {
@@ -70,6 +72,8 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 	const uuidOwner = "bf505ecf-2954-4504-8c88-581a09b37c05"
 	const email = "operator@example.test"
 	const password = "disposable-fixture-password"
+	const memberID = "6ea97335-e2cf-4781-9fc0-669b670015df"
+	const memberEmail = "member@example.test"
 	var postgres *identity.DexPostgres
 	if fixture := os.Getenv("SHIFTBOX_TEST_SETUP_DEX_URI"); fixture != "" {
 		u, err := url.Parse(fixture)
@@ -96,6 +100,8 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 			'{service}--{workspace}.preview.test','release','release','now','now',1)`, installation)
 	exec(`INSERT INTO users(id,primary_email,role,membership_state,credential_mode,must_change_password,created_by,created_at,updated_at,version)
 		VALUES($1,$2,'administrator','active','local',0,'setup','now','now',1)`, uuidOwner, email)
+	exec(`INSERT INTO users(id,primary_email,role,membership_state,credential_mode,must_change_password,created_by,created_at,updated_at,version)
+		VALUES($1,$2,'member','active','local',0,'setup','now','now',1)`, memberID, memberEmail)
 	bootstrapAdmin, _, _, closeBootstrap, err := startSetupDex(ctx, dir, binary, "https://127.0.0.1:9999", cert, postgres)
 	if err != nil {
 		t.Fatal(err)
@@ -103,6 +109,9 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err == nil {
 		err = bootstrapAdmin.Ensure(ctx, email, uuidOwner, hash)
+	}
+	if err == nil {
+		err = bootstrapAdmin.Ensure(ctx, memberEmail, memberID, hash)
 	}
 	closeBootstrap()
 	if err != nil {
@@ -133,6 +142,8 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		api.Handle("GET /api/v1/workspaces", &list)
 		change := services.Handlers["changeOwnPassword"]
 		api.Handle("PUT /api/v1/session/password", &change)
+		reset := services.Handlers["resetLocalUserPassword"]
+		api.Handle("POST /api/v1/admin/users/{userId}/password-reset", &reset)
 		assets, err := web.NewStaticHandler(fstest.MapFS{"index.html": {Data: []byte("<h1>ShiftBox</h1>")}})
 		if err != nil {
 			return nil, err
@@ -181,7 +192,7 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 			t.Fatalf("browser request to %s returned %d, want 404", path, response.StatusCode)
 		}
 	}
-	signIn := func(credential string, wantStatus int, wantMode string) *http.Client {
+	signIn := func(email, credential string, wantStatus int, wantMode string) *http.Client {
 		t.Helper()
 		jar, err := cookiejar.New(nil)
 		if err != nil {
@@ -242,19 +253,23 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		}
 		return client
 	}
-	signIn(password, 200, "normal")
+	signIn(email, password, 200, "normal")
 	exec("UPDATE users SET must_change_password=1 WHERE id=$1", uuidOwner)
-	restricted := signIn(password, 200, "password_change")
+	restricted := signIn(email, password, 200, "password_change")
 	const replacement = "disposable-replacement-fixture"
 	managementURL, err := url.Parse(server.Origin)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var token string
-	for _, cookie := range restricted.Jar.Cookies(managementURL) {
-		if cookie.Name == "__Host-shiftbox_session" {
-			token = cookie.Value
+	sessionToken := func(client *http.Client) string {
+		t.Helper()
+		for _, cookie := range client.Jar.Cookies(managementURL) {
+			if cookie.Name == "__Host-shiftbox_session" {
+				return cookie.Value
+			}
 		}
+		t.Fatal("missing management session cookie")
+		return ""
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, server.Origin+"/api/v1/session/password",
 		strings.NewReader(`{"currentPassword":"`+password+`","newPassword":"`+replacement+`"}`))
@@ -262,7 +277,7 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Origin", server.Origin)
-	req.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+	req.Header.Set("X-CSRF-Token", auth.CSRFToken(sessionToken(restricted)))
 	res, err := restricted.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -271,17 +286,47 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 	if res.StatusCode != 204 {
 		t.Fatalf("active password change returned %d, want 204", res.StatusCode)
 	}
-	signIn(replacement, 200, "normal")
+	operator := signIn(email, replacement, 200, "normal")
+	member := signIn(memberEmail, password, 200, "normal")
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, server.Origin+"/api/v1/admin/users/"+memberID+"/password-reset", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", server.Origin)
+	req.Header.Set("X-CSRF-Token", auth.CSRFToken(sessionToken(operator)))
+	req.Header.Set("If-Match", `"1"`)
+	res, err = operator.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reset struct {
+		TemporaryPassword string `json:"temporaryPassword"`
+	}
+	err = json.NewDecoder(res.Body).Decode(&reset)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || err != nil || reset.TemporaryPassword == "" {
+		t.Fatalf("password reset status = %d, want 200 with temporary password (decode error %v)", res.StatusCode, err)
+	}
+	res, err = member.Get(server.Origin + "/api/v1/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("revoked session status = %d, want 401", res.StatusCode)
+	}
+	signIn(memberEmail, password, 401, "")
+	signIn(memberEmail, reset.TemporaryPassword, 200, "password_change")
 	exec("UPDATE users SET membership_state='disabled' WHERE id=$1", uuidOwner)
-	signIn(replacement, 401, "")
+	signIn(email, replacement, 401, "")
 	exec("UPDATE users SET membership_state='active',credential_mode='external' WHERE id=$1", uuidOwner)
-	signIn(replacement, 401, "")
+	signIn(email, replacement, 401, "")
 	exec("UPDATE users SET credential_mode='local' WHERE id=$1", uuidOwner)
 	exec("UPDATE installations SET state='configuring'")
-	signIn(replacement, 401, "")
+	signIn(email, replacement, 401, "")
 	var total int
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions").Scan(&total); err != nil || total != 3 {
-		t.Fatalf("session count = %d, %v, want only three sessions", total, err)
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions").Scan(&total); err != nil || total != 5 {
+		t.Fatalf("session count = %d, %v, want five successful sign-ins", total, err)
 	}
 	if postgres != nil {
 		if _, err := os.Lstat(filepath.Join(dir, "dex.db")); !os.IsNotExist(err) {

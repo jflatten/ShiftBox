@@ -200,3 +200,41 @@ test('confirms offboarding and shows a failed workspace stop', async () => {
     headers: expect.objectContaining({ 'If-Match': '"1"' }),
   }));
 });
+
+// An administrator must confirm the reset, receives the password only on
+// success, and can dismiss it without storing it in the membership view.
+test('confirms a local password reset and clears the temporary password', async () => {
+  const account = { id: 'member', primaryEmail: 'member@example.test', membershipState: 'active',
+    credentialMode: 'local', role: 'member', version: 2 };
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json({ ...session, permissions: ['user.list', 'user.reset_password'] });
+    if (input === '/api/v1/admin/users') return json([account, {
+      ...account, id: 'external', primaryEmail: 'external@example.test', credentialMode: 'external',
+    }]);
+    if (input === '/api/v1/admin/users/member/password-reset' && init?.method === 'POST') {
+      return json({ user: { ...account, version: 3 }, temporaryPassword: 'reset-once-fixture' });
+    }
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><People /></Providers>);
+  const member = await screen.findByRole('row', { name: /member@example.test/ });
+  const external = screen.getByRole('row', { name: /external@example.test/ });
+  expect(within(external).queryByRole('button', { name: 'Reset password' })).toBeNull();
+  await user.click(within(member).getByRole('button', { name: 'Reset password' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Reset password' });
+  expect(within(dialog).getByText(/member@example.test/)).toBeVisible();
+  expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+  await user.click(within(dialog).getByRole('button', { name: 'Generate temporary password' }));
+  expect(await within(dialog).findByText('reset-once-fixture')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/admin/users/member/password-reset', expect.objectContaining({
+    method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'fixture', 'If-Match': '"2"' }),
+  }));
+  const done = within(dialog).getByRole('button', { name: 'Done' });
+  expect(done).toBeDisabled();
+  await user.click(within(dialog).getByRole('checkbox', { name: 'I saved the temporary password' }));
+  await user.click(done);
+  expect(screen.queryByText('reset-once-fixture')).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+});

@@ -157,6 +157,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T076 [US2] Implement self password/external reauthorization, users/membership/external connector, template update/new revision/grant/revoke/archive, secret metadata/set/delete, Git authorization/callback/revoke, and audit read handlers from the OpenAPI and authorization-matrix contracts in `internal/web/session_routes.go`, `internal/web/user_routes.go`, `internal/web/template_grant_routes.go`, `internal/web/secret_routes.go`, `internal/web/git_routes.go`, and `internal/web/audit_routes.go`
 - [ ] T077 [US2] Implement Mantine password change, external reauthorization, People, template revision/sharing/archive, secret metadata/edit/delete, Git connection, and audit screens with the required warnings in `ui/features/session/password.tsx`, `ui/features/session/external-reauthorization.tsx`, `ui/features/admin/people.tsx`, `ui/features/templates/sharing.tsx`, `ui/features/secrets/secrets.tsx`, `ui/features/git/connection.tsx`, and `ui/app/audit/page.tsx`
 - [ ] T078 [US2] Add and run the Go sharing acceptance test together with the T068 Playwright journey, then record separate evidence for privacy, revocation, secret non-disclosure, and owner-bound Git behavior in `tests/acceptance/template_sharing_test.go` and `documentation/validation/template-sharing.md`
+- [X] T127 [US2] Implement and verify signed-in administrator password resets for active local accounts, with dedicated authorization, session and browser grant revocation, forced password change, redacted audit, and one-time delivery from People.
 
 **Checkpoint**: User Story 2 works against the User Story 1 launch path but is independently testable with its own users, template, secrets, and Git authorization.
 
@@ -2219,3 +2220,17 @@ This checkpoint does not itself change the goal status.
   outage grace, the original deadline, and what deletion removes.
   Native UTM automatic cleanup, configurable activity monitoring, and
   production startup wiring remain open under T093.
+
+### Signed-in administrator password reset
+
+- T127 implements the approved `user.reset_password` permission and
+  `POST /api/v1/admin/users/{userId}/password-reset` contract. Reset revokes
+  access before replacing the Dex credential and preserves a usable
+  administrator. Version checks prevent a repeated request from issuing a
+  second password.
+- People shows the temporary password in the reset dialog until the
+  administrator confirms it was saved. Race-enabled controller, auth, web
+  and contract tests passed. The native Dex test confirmed denial of the
+  old credential and a restricted password-change session with the
+  replacement. UI tests, the static build and a mobile Chrome smoke test
+  passed.

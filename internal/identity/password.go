@@ -107,7 +107,7 @@ func (a PasswordAdmin) ReplacePassword(ctx context.Context, email, password stri
 }
 
 // ResetPasswordHash replaces a credential only for the expected Dex subject.
-// The protected local caller holds exclusive ownership of the identity store.
+// The caller serializes password writes for the installation.
 func (a PasswordAdmin) ResetPasswordHash(ctx context.Context, email, userID string, hash []byte) error {
 	if a.Client == nil || email == "" || userID == "" {
 		return ErrPasswordAdministration

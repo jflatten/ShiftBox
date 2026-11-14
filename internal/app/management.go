@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -48,12 +49,14 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 	for id, handler := range web.SecretHandlers(db, origin, state.Secrets, now) {
 		handlers[id] = handler
 	}
+	var passwordChange sync.Mutex
 	for _, handler := range []web.AuthorizedHandler{
 		listWorkspaces, getWorkspace, getOperation, streamEvents, listTemplates, createTemplate, reviseTemplate, budget, resourceProfile,
 		web.InfrastructureStatusHandler(db, origin, now, launchPolicy.Capabilities),
 		web.NetworkPolicyHandler(db, origin, now, uuid.NewString, launchPolicy.Capabilities),
 		state.browserCertificateHandler(journal, now),
-		activePasswordHandler(db, origin, registry, passwords, now),
+		activePasswordHandler(db, origin, registry, passwords, now, &passwordChange),
+		resetPasswordHandler(db, origin, registry, passwords, now, &passwordChange),
 		state.createLocalUserHandler(passwords, now),
 		web.ListUsersHandler(db, origin, now),
 		web.ListAuditEventsHandler(db, origin, now),

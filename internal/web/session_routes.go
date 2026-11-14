@@ -120,7 +120,7 @@ func sessionPermissions(principal auth.Principal, now time.Time) []string {
 		"session.view", "session.logout", "session.change_password", "session.external_reauthorize",
 		"setup.view", "setup.mutate", "recovery.review", "recovery.activate",
 		"template.create", "notice.list", "notice.read", "notice.dismiss", "notice.publish",
-		"user.list", "user.create", "user.approve", "user.disable", "user.change_role",
+		"user.list", "user.create", "user.approve", "user.disable", "user.change_role", "user.reset_password",
 		"audit.list", "infrastructure.view", "infrastructure.manage", "maintenance.manage",
 		"backup.create", "restore.validate", "restore.activate", "migration.preflight",
 		"secret.manage_user", "git.manage",

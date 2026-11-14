@@ -15,9 +15,8 @@ import (
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
-func activePasswordHandler(db *sql.DB, origin string, registry *proxy.Registry, passwords setupPasswords, now func() time.Time) web.AuthorizedHandler {
+func activePasswordHandler(db *sql.DB, origin string, registry *proxy.Registry, passwords setupPasswords, now func() time.Time, change *sync.Mutex) web.AuthorizedHandler {
 	store := auth.NewStore(db)
-	var change sync.Mutex
 	return web.AuthorizedHandler{
 		DB: db, Origin: origin, Now: now,
 		Route: web.ManagementRoute{Method: http.MethodPut, Path: "/session/password", OperationID: "changeOwnPassword", Action: "session.change_password"},
