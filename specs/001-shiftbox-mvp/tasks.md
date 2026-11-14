@@ -388,3 +388,16 @@ This checkpoint does not itself change the goal status.
   npm reports 19 development-tool audit findings, none in production dependencies.
 - User edits to spec.md and untracked contracts/plan/data-model/research/quickstart
   remain untouched. Architecture documents remain read-only. No subagents used.
+
+### Resumed implementation — management cookie boundary
+
+- Added test-first management cookie issuance, extraction, and deletion in
+  `internal/web/session_routes.go` and `internal/web/session_routes_test.go`.
+  Uses the contract's `__Host-shiftbox_session` name, host-only root path,
+  Secure/HttpOnly/SameSite=Strict, and the session's expiry. Missing, duplicate,
+  malformed, and noncanonical tokens are rejected without exposing credentials.
+- Targeted tests failed before implementation and passed afterward. Race checks
+  for web/auth/proxy and repository formatting/vet checks pass.
+- T025 remains unchecked: session read/logout handlers and complete authorization
+  integration still need implementation. Cookie helpers alone do not establish
+  working sign-in, logout, or browser isolation validation.
