@@ -229,6 +229,24 @@ test('confirms workspace deletion and follows its durable operation', async () =
   expect(screen.getByText('Stopped', { exact: true })).toBeVisible();
 });
 
+// A scheduled target warns its owner on the workspace page while the
+// controller still has no maintenance operation for the target.
+test('shows the scheduled maintenance deadline and target release', async () => {
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces/workspace-one') return json({
+      ...workspace, currentOperationId: null,
+      maintenance: { releaseId: 'update-release', deadline: '2026-11-15T14:30:00Z', state: 'pending', operationId: null },
+    });
+    throw new Error('unexpected request');
+  });
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  const warning = await screen.findByRole('alert');
+  expect(warning).toHaveTextContent('Scheduled maintenance');
+  expect(warning).toHaveTextContent('update-release');
+  expect(warning.querySelector('time')).toHaveAttribute('datetime', '2026-11-15T14:30:00Z');
+});
+
 // Rebuild can be requested for a running workspace and displays the durable
 // configuration step while withholding other power actions.
 test('requests a rebuild and shows its progress', async () => {

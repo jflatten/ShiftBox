@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Anchor, Button, Checkbox, Group, Modal, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Anchor, Button, Checkbox, Group, Modal, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { WorkflowStepper } from '../../components/workflow-stepper';
@@ -13,7 +13,7 @@ type WorkspaceAction = 'start' | 'stop' | 'rebuild' | 'repair' | 'retry' | 'dele
 export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: string }) {
   const workspace = useQuery<Workspace>({
     queryKey: ['workspaces', 'detail', id],
-    refetchInterval: query => query.state.data?.retention?.state === 'disabled' || !query.state.data?.retention ? false : 30_000,
+    refetchInterval: query => query.state.data?.desiredState === 'deleted' ? false : 30_000,
     queryFn: async ({ signal }) => {
       const response = await fetch('/api/v1/workspaces/' + encodeURIComponent(id), { signal, cache: 'no-store' });
       if (!response.ok) throw await readProblem(response);
@@ -98,6 +98,9 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
             </div>
           </Stack>
           <RetentionWarning workspace={data} />
+          {data.maintenance ? <Alert title="Scheduled maintenance" color={data.maintenance.state === 'failed' ? 'red' : 'yellow'}>
+            Guest release {data.maintenance.releaseId} · Deadline <WorkspaceTime value={data.maintenance.deadline} fallback="Unavailable" />
+          </Alert> : null}
           <Text size="sm">Stop and start preserve project files, the developer home, and named application volumes. Rebuilding also preserves this data and replaces the container’s writable layer.</Text>
           {data.canStartRepair || data.canOpenRepair || data.canRetryAfterRepair ? (
             <Text id={repairDescriptionId} size="sm">Repair opens your project files in a separate IDE and skips project hooks, tasks, and extensions.</Text>

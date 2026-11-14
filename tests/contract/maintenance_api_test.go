@@ -100,4 +100,42 @@ func TestMaintenanceAdmission(t *testing.T) {
 	if !strings.Contains(items, `"state":"scheduled"`) || !strings.Contains(items, `"operationId":"`+accepted.ID+`"`) {
 		t.Errorf("campaign listing = %s; want the scheduled campaign and operation ID", items)
 	}
+
+	// A workspace owner sees their target warning without access to the
+	// administrator's campaign list or ability to mutate the campaign.
+	if _, err := db.ExecContext(ctx, "UPDATE sessions SET user_id='member'"); err != nil {
+		t.Fatal(err)
+	}
+	_, detail := web.WorkspaceReadHandlers(db, origin, clock, nil)
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/workspaces/{workspaceId}", &detail)
+	readWorkspace := func() *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest("GET", origin+"/api/v1/workspaces/"+workspaceID, nil)
+		r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: adminToken})
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w
+	}
+	response := readWorkspace()
+	var view struct {
+		Maintenance *struct {
+			ReleaseID   string    `json:"releaseId"`
+			Deadline    time.Time `json:"deadline"`
+			State       string    `json:"state"`
+			OperationID *string   `json:"operationId"`
+		} `json:"maintenance"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &view); response.Code != 200 || err != nil ||
+		view.Maintenance == nil || view.Maintenance.ReleaseID != "release" || view.Maintenance.State != "pending" ||
+		!view.Maintenance.Deadline.Equal(time.Date(2026, 11, 14, 8, 15, 0, 0, time.UTC)) || view.Maintenance.OperationID != nil {
+		t.Fatalf("owner workspace response = %d %s; want the pending maintenance warning with its scheduled release and deadline", response.Code, response.Body)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE workspaces SET generation=generation+1 WHERE id=$1", workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	response = readWorkspace()
+	if response.Code != 200 || strings.Contains(response.Body.String(), `"maintenance":`) {
+		t.Fatalf("workspace after generation change = %d %s; want no stale maintenance warning", response.Code, response.Body)
+	}
 }

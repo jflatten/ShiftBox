@@ -27,6 +27,40 @@ type MaintenanceCampaign struct {
 	OperationID string    `json:"operationId"`
 }
 
+// WorkspaceMaintenance describes the current campaign target for a workspace.
+type WorkspaceMaintenance struct {
+	ReleaseID   string    `json:"releaseId"`
+	Deadline    time.Time `json:"deadline"`
+	State       string    `json:"state"`
+	OperationID *string   `json:"operationId"`
+}
+
+// ReadWorkspaceMaintenance returns a target only while its campaign and
+// workspace generation still apply.
+func ReadWorkspaceMaintenance(ctx context.Context, tx *sql.Tx, workspaceID string, generation int64) (*WorkspaceMaintenance, error) {
+	var target WorkspaceMaintenance
+	var deadline string
+	err := tx.QueryRowContext(ctx, `SELECT c.release_id,c.deadline,t.state,t.operation_id
+		FROM maintenance_targets t JOIN maintenance_campaigns c ON c.operation_id=t.campaign_id
+		JOIN workspaces w ON w.id=t.workspace_id AND w.installation_id=c.installation_id
+		WHERE t.workspace_id=$1 AND t.generation=$2 AND w.generation=t.generation
+		AND w.desired_state<>'deleted' AND w.observed_state<>'deleted'
+		AND c.state IN ('scheduled','active','blocked') AND t.state<>'completed'
+		ORDER BY c.created_at DESC,c.operation_id DESC LIMIT 1`, workspaceID, generation).
+		Scan(&target.ReleaseID, &deadline, &target.State, &target.OperationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	target.Deadline, err = time.Parse(maintenanceTime, deadline)
+	if err != nil {
+		return nil, err
+	}
+	return &target, nil
+}
+
 // ScheduleMaintenance records the campaign and its retained workspace targets
 // in the authorization transaction. Scheduling itself performs no guest or VM effects.
 func ScheduleMaintenance(ctx context.Context, tx *sql.Tx, journal *operation.Journal, installation, actor, key, releaseID string, deadline, now time.Time) (operation.Operation, error) {

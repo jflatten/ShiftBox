@@ -89,6 +89,10 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 			if err != nil {
 				return nil, err
 			}
+			maintenance, err := workspace.ReadWorkspaceMaintenance(ctx, tx, view.ID, view.Generation)
+			if err != nil {
+				return nil, err
+			}
 			var lastFailedID *string
 			var canStartRepair, canRetryAfterRepair bool
 			if view.CurrentOperationID == nil {
@@ -116,12 +120,13 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 			// Expose the current entry decision without issuing a grant.
 			response := struct {
 				workspaceView
-				CanOpenIDE            bool                      `json:"canOpenIde"`
-				CanOpenRepair         bool                      `json:"canOpenRepair"`
-				CanStartRepair        bool                      `json:"canStartRepair"`
-				CanRetryAfterRepair   bool                      `json:"canRetryAfterRepair"`
-				LastFailedOperationID *string                   `json:"lastFailedOperationId"`
-				Retention             *WorkspaceRetentionStatus `json:"retention,omitempty"`
+				CanOpenIDE            bool                            `json:"canOpenIde"`
+				CanOpenRepair         bool                            `json:"canOpenRepair"`
+				CanStartRepair        bool                            `json:"canStartRepair"`
+				CanRetryAfterRepair   bool                            `json:"canRetryAfterRepair"`
+				LastFailedOperationID *string                         `json:"lastFailedOperationId"`
+				Retention             *WorkspaceRetentionStatus       `json:"retention,omitempty"`
+				Maintenance           *workspace.WorkspaceMaintenance `json:"maintenance,omitempty"`
 			}{
 				workspaceView:         view,
 				CanOpenIDE:            auth.Authorize(principal, entry.Action, entry.Resource, entry.Grants, now()).Allowed,
@@ -129,6 +134,7 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 				CanStartRepair:        canStartRepair,
 				CanRetryAfterRepair:   canRetryAfterRepair,
 				LastFailedOperationID: lastFailedID,
+				Maintenance:           maintenance,
 			}
 			if retention != nil && view.RetentionDeadline != nil {
 				status := retention(now())

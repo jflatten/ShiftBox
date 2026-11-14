@@ -15,6 +15,12 @@ export interface Workspace {
   lastActivityAt: string | null;
   retentionDeadline: string | null;
   retention?: { state: 'disabled' | 'paused' | 'grace' | 'ready'; graceUntil?: string };
+  maintenance?: {
+    releaseId: string;
+    deadline: string;
+    state: 'pending' | 'waiting_safe' | 'updating' | 'verified' | 'restoring_state' | 'failed';
+    operationId: string | null;
+  };
   version: number;
   resources: { cpuCount: number; memoryMiB: number; diskMiB: number };
 }
