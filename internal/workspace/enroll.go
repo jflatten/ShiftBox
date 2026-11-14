@@ -171,6 +171,8 @@ func (e *LaunchExecutor) inspectEnrollment(ctx context.Context, op operation.Ope
 	return req, got, verifyWorkspaceVM(req, got)
 }
 
+// verifyWorkspaceVM binds provider observations to the retained instance and
+// its pinned artifact and network policy before reconciliation uses them.
 func verifyWorkspaceVM(req provider.CreateRequest, got provider.Inventory) error {
 	if got.Ref != req.Ref || got.InstanceID != req.Ref.InstanceID {
 		return provider.ErrOwnershipMismatch

@@ -27,5 +27,23 @@ and command wrappers. They now describe the provider observation contract,
 operation replay, enrollment, connection closure, and other interface
 behavior. The scoped documentation scan passed for `cmd`, `internal`,
 `migrations`, `platform`, and `ui/export.go`. Formatting and Go vet
-passed again after the comment changes. T126 remains open for the broader
-trust and reconciliation review and outstanding browser coverage.
+passed again after the comment changes.
+
+## November 14 follow-up
+
+Go formatting, vet, the serial standard and race suites, and the tagged
+integration and release suites passed. Native mutation cases used their
+normal opt-in skips during this rerun. The embedded assets test and the
+OpenAPI TypeScript drift check also passed.
+
+The production Go scopes passed the exported API documentation scan again.
+The trust and reconciliation review added context for retained VM identity,
+guest registration and IDE readiness, maintenance completion after restart,
+and preserving the checkout, home, and named volumes during rebuild.
+
+The production export and 88 UI unit tests passed. The browser fixtures
+passed 26 cases each in installed Chrome, Firefox, and WebKit, plus the
+separate Chrome browser-storage case. The reruns corrected an outdated
+recovery completion assertion and a synthetic preview redirect that
+WebKit cannot fulfill. The preview fixture checks entry navigation and
+referrer handling. Live exchange and revocation remain release checks.

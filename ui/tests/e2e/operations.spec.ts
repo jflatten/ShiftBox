@@ -232,19 +232,20 @@ test.describe('operations with a fixture controller', () => {
       }
       return route.fulfill({ status: 404, json: {} });
     });
-    await page.route(`${previewOrigin}/**`, route => {
+    await page.route(url => url.href === exchange, route => {
       const request = route.request();
-      if (request.url() === exchange) {
-        expect(request.headers()['referer']).toBeUndefined();
-        return route.fulfill({ status: 302, headers: { location: '/' } });
-      }
-      return route.fulfill({ contentType: 'text/html', body: '<h1>Private preview fixture</h1>' });
+      expect(request.isNavigationRequest()).toBe(true);
+      expect(request.method()).toBe('GET');
+      expect(request.headers()['referer']).toBeUndefined();
+      // Stop at the entry request. The fixture tests browser navigation and
+      // referrer handling, while the real controller owns the exchange.
+      return route.fulfill({ contentType: 'text/html', body: '<h1>Private preview entry fixture</h1>' });
     });
     await page.goto(`/workspaces/?id=${workspaceId}`);
     const managementOrigin = new URL(page.url()).origin;
     expect(managementOrigin).not.toBe(previewOrigin);
     await page.getByRole('button', { name: 'Open preview 4173' }).click();
-    await expect(page).toHaveURL(`${previewOrigin}/`);
-    await expect(page.getByRole('heading', { name: 'Private preview fixture' })).toBeVisible();
+    await expect(page).toHaveURL(exchange);
+    await expect(page.getByRole('heading', { name: 'Private preview entry fixture' })).toBeVisible();
   });
 });

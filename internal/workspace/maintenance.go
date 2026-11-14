@@ -188,6 +188,8 @@ func (e maintenanceCampaignExecutor) Apply(ctx context.Context, op operation.Ope
 	}
 }
 
+// reconcileMaintenanceCampaign derives completion from durable target results.
+// An unsettled target keeps the campaign active after a worker restart.
 func (s *Store) reconcileMaintenanceCampaign(ctx context.Context, installation, campaign string, now time.Time) (string, error) {
 	var state string
 	err := database.Transaction(ctx, s.db, func(tx *sql.Tx) error {

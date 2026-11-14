@@ -247,7 +247,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T123 Add Debian and Ubuntu glibc/amd64 fixtures that separately exercise prebuilt-image and Dockerfile/build-definition Dev Containers, declared features, lifecycle-hook success/failure, declared connection-ready stages, and retained-data checks in `tests/release/fixtures/debian/` and `tests/release/fixtures/ubuntu/`
 - [ ] T124 Run V1–V14 and a moderated first-use study with at least 10 eligible participants and at least 9 first-attempt successes, recording protocol, eligibility, failures, results, release/browser/database/UTM/platform/guest/IDE/schema/certificate versions, and artifact digests in `documentation/validation/mvp-v1-v14.md`, `documentation/validation/first-use-study.md`, and `platform/manifests/release.json`
 - [ ] T125 Re-run every command and scenario in `specs/001-shiftbox-mvp/quickstart.md`, record failures, route each implementation defect back through its earlier failing test task before correction, and record final results in `documentation/validation/quickstart-results.md`
-- [ ] T126 Review all exported Go APIs and non-obvious trust/reconciliation code for concise application-context comments, run formatting/lint/race/UI/browser checks, and record the clean result in `documentation/validation/final-checks.md`
+- [X] T126 Review all exported Go APIs and non-obvious trust/reconciliation code for concise application-context comments, run formatting/lint/race/UI/browser checks, and record the clean result in `documentation/validation/final-checks.md`
 
 ---
 

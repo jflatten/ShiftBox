@@ -60,6 +60,8 @@ func (d devContainer) verifyReplacement(ctx context.Context, result devContainer
 	return d.verifyHomeOwner(ctx, result, previous.home)
 }
 
+// verifyRebuildMounts confirms both containers point at the same retained
+// checkout, developer home, and previously declared application volumes.
 func (d devContainer) verifyRebuildMounts(ctx context.Context, id string, previous rebuildSource) error {
 	mounts, err := containerMounts(ctx, id, d.runner())
 	if err != nil {

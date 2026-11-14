@@ -200,7 +200,9 @@ test('withholds workspace authority and activation during recovery review', asyn
   await expect(activate).toBeEnabled();
   expect(activations).toBe(0);
   await activate.press('Enter');
-  await expect(page.getByText(/Recovery is complete. Sign in again/i)).toBeVisible();
+  const completed = page.getByRole('heading', { name: 'Recovery complete' });
+  await expect(completed).toBeFocused();
+  await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
   expect(activations).toBe(1);
   await page.reload();
   await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();

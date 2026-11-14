@@ -14,6 +14,8 @@ var errIDEProbePending = errors.New("waiting for a working browser IDE proxy")
 // IDEProbe verifies a workbench on the authenticated workspace tunnel.
 type IDEProbe func(context.Context, string, int64) error
 
+// verifyIDE probes only after the active operation recorded a configured
+// container for the current workspace generation.
 func verifyIDE(ctx context.Context, db *sql.DB, op operation.Operation, probe IDEProbe) (string, error) {
 	if op.WorkspaceID == nil || op.Generation < 1 || probe == nil {
 		return "", provider.ErrInvalidState
