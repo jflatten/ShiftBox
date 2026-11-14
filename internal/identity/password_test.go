@@ -33,7 +33,7 @@ func (f *passwordAPI) ListPasswords(context.Context, *api.ListPasswordReq, ...gr
 
 // TestEnsureLocalPasswordPreservesChangedCredential prevents retried bootstrap from resetting the owner's changed password or claiming another identity.
 func TestEnsureLocalPasswordPreservesChangedCredential(t *testing.T) {
-	hash, err := bcrypt.GenerateFromPassword([]byte("temporary-password"), bcrypt.MinCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte("temporary-password"), bcrypt.DefaultCost)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestEnsureLocalPasswordPreservesChangedCredential(t *testing.T) {
 	if err := admin.Ensure(context.Background(), "owner@example.test", "owner-id", hash); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := bcrypt.GenerateFromPassword([]byte("changed-password"), bcrypt.MinCost)
+	changed, err := bcrypt.GenerateFromPassword([]byte("changed-password"), bcrypt.DefaultCost)
 	if err != nil {
 		t.Fatal(err)
 	}

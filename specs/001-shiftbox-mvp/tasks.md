@@ -812,3 +812,20 @@ This checkpoint does not itself change the goal status.
   against the API boundary; live authenticated gRPC administration, durable
   issuance/delivery state, forced change, and one-time output remain pending.
   T030/T043 remain incomplete.
+
+### Live authenticated Dex administration
+
+- Added a loopback-only gRPC administration client requiring explicit trust,
+  server identity, a client key/certificate, and TLS 1.3. Insecure verification,
+  missing credential material, and public endpoints are rejected.
+- Extended the pinned native Dex test with a separate administrator client trust
+  fixture. Real CreatePassword/UpdatePassword/VerifyPassword calls prove that a
+  setup retry preserves the changed hash; an unrelated client certificate cannot
+  list passwords. Client connections and the native process are closed afterward.
+- Live testing exposed Dex's minimum bcrypt cost (10); corrected the test fixture
+  from the fast unit-test cost (4). The production generator already used 10.
+  One startup failed; fixed possible duplicate ephemeral-port selection by holding
+  all reservations until distinct ports are chosen. Two later live runs pass.
+- Identity race suite and formatting/vet pass. Durable administrator TLS material,
+  bootstrap issuance/delivery state, forced change and controller composition
+  remain pending; T030/T043 are not yet complete.

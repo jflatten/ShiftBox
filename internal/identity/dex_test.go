@@ -3,9 +3,12 @@ package identity_test
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -22,7 +25,9 @@ import (
 	"testing"
 	"time"
 
+	api "github.com/dexidp/dex/api/v2"
 	"github.com/jflatten/ShiftBox/internal/identity"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func oidcFixture(t *testing.T) (*identity.OIDC, *rsa.PrivateKey, string) {
@@ -126,17 +131,22 @@ func TestPinnedDexProcess(t *testing.T) {
 	if binary == "" {
 		t.Skip("set SHIFTBOX_TEST_DEX_BINARY to the pinned native Dex binary")
 	}
+	// Keep reservations open until all three distinct ports have been selected;
+	// closing each immediately can let the OS return the same ephemeral port.
+	var reservations []net.Listener
+	t.Cleanup(func() {
+		for _, listener := range reservations {
+			listener.Close()
+		}
+	})
 	reserveAddress := func() string {
 		t.Helper()
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
-		address := listener.Addr().String()
-		if err := listener.Close(); err != nil {
-			t.Fatal(err)
-		}
-		return address
+		reservations = append(reservations, listener)
+		return listener.Addr().String()
 	}
 	fixture := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	pair := fixture.TLS.Certificates[0]
@@ -147,6 +157,7 @@ func TestPinnedDexProcess(t *testing.T) {
 	cfg.WebAddress = reserveAddress()
 	cfg.TelemetryAddress = reserveAddress()
 	cfg.GRPCAddress = reserveAddress()
+	adminCertificate, adminPEM := adminCertificateFixture(t)
 	cfg.Issuer = "https://" + cfg.WebAddress + "/dex"
 	cfg.RedirectURI = "https://" + cfg.WebAddress + "/auth/callback"
 	keyDER, err := x509.MarshalPKCS8PrivateKey(pair.PrivateKey)
@@ -158,7 +169,7 @@ func TestPinnedDexProcess(t *testing.T) {
 	for _, file := range []struct {
 		path string
 		data []byte
-	}{{cfg.TLSCertFile, certPEM}, {cfg.TLSKeyFile, keyPEM}, {cfg.GRPCCertFile, certPEM}, {cfg.GRPCKeyFile, keyPEM}, {cfg.GRPCClientCAFile, certPEM}} {
+	}{{cfg.TLSCertFile, certPEM}, {cfg.TLSKeyFile, keyPEM}, {cfg.GRPCCertFile, certPEM}, {cfg.GRPCKeyFile, keyPEM}, {cfg.GRPCClientCAFile, adminPEM}} {
 		if err := os.WriteFile(file.path, file.data, 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -166,6 +177,11 @@ func TestPinnedDexProcess(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "dex.json")
 	if err := identity.WriteDexConfig(configPath, cfg); err != nil {
 		t.Fatal(err)
+	}
+	for _, listener := range reservations {
+		if err := listener.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	process := identity.DexProcess{BinaryPath: binary, ConfigPath: configPath, HealthURL: "http://" + cfg.TelemetryAddress + "/healthz/ready", Client: &http.Client{Timeout: time.Second}, PollInterval: 20 * time.Millisecond, StartupTimeout: 5 * time.Second, ShutdownTimeout: time.Second}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -194,6 +210,56 @@ func TestPinnedDexProcess(t *testing.T) {
 	}
 	if _, err := identity.NewOIDC(ctx, cfg.Issuer, cfg.ClientID, client, time.Now); err != nil {
 		t.Fatalf("discover native Dex over verified HTTPS: %v", err)
+	}
+	// Exercise the real authenticated administration API, including a setup retry
+	// after the owner has already changed their initial credential.
+	adminTLS := client.Transport.(*http.Transport).TLSClientConfig.Clone()
+	adminTLS.ServerName = "127.0.0.1"
+	adminTLS.Certificates = []tls.Certificate{adminCertificate}
+	apiClient, connection, err := identity.NewDexAdminClient(cfg.GRPCAddress, adminTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	// A separate client authority cannot use the privileged API, even on loopback.
+	foreignCertificate, _ := adminCertificateFixture(t)
+	foreignTLS := adminTLS.Clone()
+	foreignTLS.Certificates = []tls.Certificate{foreignCertificate}
+	foreignClient, foreignConnection, err := identity.NewDexAdminClient(cfg.GRPCAddress, foreignTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignCtx, cancelForeign := context.WithTimeout(ctx, time.Second)
+	_, foreignErr := foreignClient.ListPasswords(foreignCtx, &api.ListPasswordReq{})
+	cancelForeign()
+	foreignConnection.Close()
+	if foreignErr == nil {
+		t.Fatal("untrusted client certificate accessed Dex administration")
+	}
+	adminCtx, cancelAdmin := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelAdmin()
+	hash, err := bcrypt.GenerateFromPassword([]byte("initial-fixture-password"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := identity.PasswordAdmin{Client: apiClient}
+	if err := admin.Ensure(adminCtx, "owner@example.test", "stable-owner-id", hash); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := bcrypt.GenerateFromPassword([]byte("changed-fixture-password"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := apiClient.UpdatePassword(adminCtx, &api.UpdatePasswordReq{Email: "owner@example.test", NewHash: changed})
+	if err != nil || updated.NotFound {
+		t.Fatal("native Dex password update failed")
+	}
+	if err := admin.Ensure(adminCtx, "owner@example.test", "stable-owner-id", hash); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := apiClient.VerifyPassword(adminCtx, &api.VerifyPasswordReq{Email: "owner@example.test", Password: "changed-fixture-password"})
+	if err != nil || !verified.Verified {
+		t.Fatal("native Dex retry did not preserve changed password")
 	}
 	cancel()
 	select {
@@ -414,4 +480,18 @@ func TestDexConfigProtectsCredentials(t *testing.T) {
 			t.Error("invalid Dex config accepted or secret exposed")
 		}
 	}
+}
+
+func adminCertificateFixture(t *testing.T) (tls.Certificate, []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := &x509.Certificate{SerialNumber: big.NewInt(1), IsCA: true, BasicConstraintsValid: true, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+	der, err := x509.CreateCertificate(rand.Reader, certificate, certificate, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
