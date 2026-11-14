@@ -149,7 +149,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 
 - [ ] T069 [US2] Add sharing/secret/Git/audit migrations in `migrations/sqlite/00004_sharing.sql` and `migrations/postgres/00004_sharing.sql`, preserving these verbatim constraints: TemplateGrant `(template_id, user_id)` is a "Unique active grant pair" and records `project_secret_warning_ack_at`; SecretValue `scope_type` is "`user`, `template`, or `organization` only", `name` is a "Normalized non-empty key; unique within active scope", `is_explicit_empty` "Distinguishes empty override from absence", and values never appear in audit/read models; GitAuthorization has "One record per user and app registration", provider "`github.com` in MVP", state "`connected`, `refreshing`, `reconnect_required`, or `revoked`", and `refresh_generation` fences concurrent results; AuditEvent metadata is "Redacted bounded context; schema rejects known secret fields"
 - [X] T070 [US2] Implement administrator local-user creation, self password change, external connector configuration, external identity approval by stable binding, actual upstream reauthorization within the configured positive interval (initially four hours, never token-refresh-only), role/membership updates, protected local recovery of an existing administrator, and transactional session/grant revocation proven by T062 in `internal/identity/users.go`, `internal/identity/password.go`, `internal/identity/external.go`, `internal/identity/recovery.go`, and `internal/auth/membership.go`
-- [ ] T071 [US2] Implement append-only security audit writes and configurable retention that never removes current authority, operations, maintenance, or workspace provenance in `internal/audit/store.go` and `internal/audit/service.go`
+- [X] T071 [US2] Implement append-only security audit writes and configurable retention that never removes current authority, operations, maintenance, or workspace provenance in `internal/audit/store.go` and `internal/audit/service.go`
 - [X] T072 [US2] Implement immutable template revisions, launch grants with required project-secret acknowledgement, current-state launch authorization, revocation, archival, and administrator archive filtering proven by T063 in `internal/template/sharing.go` and `internal/template/archive.go`
 - [X] T073 [US2] Implement protected three-scope secret storage/resolution, explicit empty handling, authorized fallback preview, and metadata-only management reads proven by T064 in `internal/secret/store.go`, `internal/secret/resolver.go`, and `internal/secret/service.go`
 - [X] T074 [US2] Implement owner-bound GitHub.com App authorization initiation, state-bound callback, repository coverage, encrypted token storage, single-flight fenced refresh, revoke, and reconnect-required state proven by T065-T066 in `internal/identity/github.go`, `internal/identity/github_oauth.go`, and `internal/identity/github_store.go`
@@ -2901,3 +2901,10 @@ This checkpoint does not itself change the goal status.
   pinned Dex recovery test verifies password replacement and excludes the
   password from JSON. Migration preflight retains its stable result and
   exit contract.
+
+### Security audit retention
+
+- T071 passed the configured retention startup test. Pruning keeps events
+  at the cutoff and preserves current authority, in-flight operations,
+  scheduled maintenance, and workspace provenance. SQLite and PostgreSQL
+  both passed the transactional write, rollback, and metadata checks.

@@ -4,16 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/jflatten/ShiftBox/internal/audit"
-	"github.com/jflatten/ShiftBox/internal/database"
-	"github.com/jflatten/ShiftBox/migrations"
-	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jflatten/ShiftBox/internal/audit"
+	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/migrations"
+	_ "modernc.org/sqlite"
 )
 
 // TestPruneHistory checks that the cutoff keeps boundary events and that
@@ -42,6 +43,10 @@ func TestPruneHistory(t *testing.T) {
 		VALUES('grant','admin','workspace','workspace','workspace.connect_admin','admin','old')`)
 	exec(`INSERT INTO operations(id,type,generation,requested_by,request_key,status,created_at,version)
 		VALUES('operation','stop',1,'admin','stop-operation-fixture','waiting','old',1)`)
+	exec(`INSERT INTO operations(id,type,generation,requested_by,request_key,status,created_at,version)
+		VALUES('campaign','update',1,'admin','update-operation-fixture','waiting','old',1)`)
+	exec(`INSERT INTO maintenance_campaigns(operation_id,installation_id,release_id,deadline,created_by,created_at,state)
+		SELECT 'campaign',id,'release','deadline','admin','old','scheduled' FROM installations`)
 	exec(`INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state)
 		VALUES('artifact','release','amd64','test','test','1','[]','{}','{}','{}','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','fixture.utm','admin','now','available')`)
 	exec(`INSERT INTO workspaces(id,installation_id,owner_user_id,template_id,template_revision,platform_artifact_id,
@@ -73,17 +78,19 @@ func TestPruneHistory(t *testing.T) {
 	exec("UPDATE installations SET state='active' WHERE singleton=1")
 	prune(2)
 	prune(0)
-	var events, grants, operations, users, provenance int
+	var events, grants, operations, users, provenance, campaigns int
 	if err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM audit_events),
 		(SELECT count(*) FROM resource_grants WHERE revoked_at IS NULL),
-		(SELECT count(*) FROM operations WHERE status='waiting'),
+		(SELECT count(*) FROM operations WHERE id='operation' AND status='waiting'),
 		(SELECT count(*) FROM users WHERE membership_state='active'),
-		(SELECT count(*) FROM workspaces WHERE template_id='template' AND template_revision=2 AND platform_artifact_id='artifact')`).
-		Scan(&events, &grants, &operations, &users, &provenance); err != nil {
+		(SELECT count(*) FROM workspaces WHERE template_id='template' AND template_revision=2 AND platform_artifact_id='artifact'),
+		(SELECT count(*) FROM maintenance_campaigns WHERE operation_id='campaign' AND state='scheduled')`).
+		Scan(&events, &grants, &operations, &users, &provenance, &campaigns); err != nil {
 		t.Fatal(err)
 	}
-	if events != 2 || grants != 1 || operations != 1 || users != 1 || provenance != 1 {
-		t.Errorf("after prune = %d events, %d grants, %d operations, %d users, %d provenance records, want 2/1/1/1/1", events, grants, operations, users, provenance)
+	if events != 2 || grants != 1 || operations != 1 || users != 1 || provenance != 1 || campaigns != 1 {
+		t.Errorf("after prune = %d events, %d grants, %d operations, %d users, %d provenance records, %d campaigns, want 2/1/1/1/1/1",
+			events, grants, operations, users, provenance, campaigns)
 	}
 }
 

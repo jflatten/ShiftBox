@@ -12,9 +12,9 @@ import (
 	"github.com/jflatten/ShiftBox/internal/database"
 )
 
-// TestControllerPrunesConfiguredNoticeHistory verifies that startup uses the
-// configured age for expired, dismissed notices and preserves active receipts.
-func TestControllerPrunesConfiguredNoticeHistory(t *testing.T) {
+// TestControllerPrunesConfiguredHistory verifies that startup uses the
+// configured ages for audit history and expired, dismissed notices.
+func TestControllerPrunesConfiguredHistory(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "notices.db")})
@@ -41,6 +41,16 @@ func TestControllerPrunesConfiguredNoticeHistory(t *testing.T) {
 	now := time.Now().UTC()
 	published := now.AddDate(0, 0, -10).Format(timestamp)
 	dismissed := now.AddDate(0, 0, -4).Format(timestamp)
+	for _, event := range []struct {
+		id string
+		at time.Time
+	}{
+		{id: "old", at: now.AddDate(0, 0, -4)},
+		{id: "recent", at: now.AddDate(0, 0, -2)},
+	} {
+		exec(`INSERT INTO audit_events(occurred_at,actor_type,actor_id,action,resource_type,resource_id,outcome,reason_code,metadata_json)
+			VALUES($1,'user','member','workspace.inspect','workspace',$2,'allowed','owner','{}')`, event.at.Format(time.RFC3339Nano), event.id)
+	}
 	for _, notice := range []struct {
 		id      string
 		expires time.Time
@@ -55,9 +65,13 @@ func TestControllerPrunesConfiguredNoticeHistory(t *testing.T) {
 	}
 
 	days := 2
+	auditDays := 3
 	finished := make(chan error, 1)
 	go func() {
-		finished <- RunHistoryRetention(ctx, db, config.Config{DismissedNoticeRetentionDays: &days}, &backup.WriteFence{})
+		finished <- RunHistoryRetention(ctx, db, config.Config{
+			DismissedNoticeRetentionDays: &days,
+			AuditRetentionDays:           &auditDays,
+		}, &backup.WriteFence{})
 	}()
 	defer func() {
 		cancel()
@@ -68,21 +82,26 @@ func TestControllerPrunesConfiguredNoticeHistory(t *testing.T) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		var expired, active bool
+		var expired, active, oldAudit, recentAudit bool
 		err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM notice_receipts WHERE notice_id='expired'),
-			EXISTS(SELECT 1 FROM notice_receipts WHERE notice_id='active')`).Scan(&expired, &active)
+			EXISTS(SELECT 1 FROM notice_receipts WHERE notice_id='active'),
+			EXISTS(SELECT 1 FROM audit_events WHERE resource_id='old'),
+			EXISTS(SELECT 1 FROM audit_events WHERE resource_id='recent')`).Scan(&expired, &active, &oldAudit, &recentAudit)
 		if err != nil {
 			t.Fatalf("reading startup notice cleanup result: %v", err)
 		}
 		if !active {
 			t.Fatal("startup cleanup removed the dismissal receipt for a current notice")
 		}
-		if !expired {
+		if !recentAudit {
+			t.Fatal("startup cleanup removed an audit event within the configured window")
+		}
+		if !expired && !oldAudit {
 			break
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatal("startup cleanup did not apply the configured two-day window to the expired notice")
+			t.Fatal("startup cleanup did not apply the configured notice and audit windows")
 		case <-ticker.C:
 		}
 	}
