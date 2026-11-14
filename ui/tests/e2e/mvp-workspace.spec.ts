@@ -247,6 +247,11 @@ async function passwordLogin(page: Page, email: string, password: string) {
   await enter(username, email);
   await enter(page.locator('input[name=password]'), password);
   await activate(page.getByRole('button', { name: 'Login', exact: true }));
+  // The pinned Dex may require consent before returning to ShiftBox.
+  await page.waitForURL(url => !url.pathname.startsWith('/dex/') || url.pathname === '/dex/approval');
+  if (new URL(page.url()).pathname === '/dex/approval') {
+    await activate(page.getByRole('button', { name: 'Grant Access', exact: true }));
+  }
 }
 
 async function stepCompleted(page: Page, label: string) {
