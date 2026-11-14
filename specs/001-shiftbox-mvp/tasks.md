@@ -1167,3 +1167,16 @@ This checkpoint does not itself change the goal status.
   Release, provider, and contract race tests and Go vet passed.
 - Durable catalog publication, default selection, release compatibility,
   and boot validation of the pinned Ubuntu artifact remain pending.
+
+### Platform catalog metadata and default selection
+
+- Added the platform artifact portion of the workspace migration and its
+  store. Import moves from validating to available or rejected against the
+  exact manifest digest. The schema preserves published metadata and allows
+  at most one default. The store checks guest protocol compatibility before
+  switching defaults in one transaction.
+- Race tests passed against SQLite and a disposable TLS PostgreSQL database,
+  including repeated migration, conflicting releases, wrong validation
+  digest, incompatible defaults, and published metadata mutation.
+- The catalog still needs managed artifact publication, provider and guest
+  boot validation, and connection to the administrator import operation.
