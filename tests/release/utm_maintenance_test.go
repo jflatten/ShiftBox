@@ -33,7 +33,7 @@ func TestUTMGuestMaintenance(t *testing.T) {
 	if !filepath.IsAbs(failing) || !filepath.IsAbs(working) || failing == working {
 		t.Fatal("set distinct absolute rollback and update release directories")
 	}
-	runUTMGuestFixture(t, &nativeMaintenanceFixture{failing: failing, working: working}, false)
+	runUTMGuestFixture(t, &nativeMaintenanceFixture{failing: failing, working: working}, nativeNormal)
 }
 
 type nativeMaintenanceFixture struct {

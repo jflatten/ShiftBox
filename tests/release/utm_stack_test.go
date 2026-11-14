@@ -36,7 +36,7 @@ import (
 // media, verifies an authenticated guest poll, then checks the offboarding
 // stop and retained disk before deleting the disposable VM.
 func TestUTMGuestEnrollment(t *testing.T) {
-	runUTMGuestFixture(t, nil, false)
+	runUTMGuestFixture(t, nil, nativeNormal)
 }
 
 // TestUTMExpiredGuestRecovery verifies fresh provider enrollment and preserved
@@ -45,10 +45,27 @@ func TestUTMExpiredGuestRecovery(t *testing.T) {
 	if os.Getenv("SHIFTBOX_TEST_UTM_EXPIRED_GUEST") != "1" {
 		t.Skip("set SHIFTBOX_TEST_UTM_EXPIRED_GUEST=1 for native recovery")
 	}
-	runUTMGuestFixture(t, nil, true)
+	runUTMGuestFixture(t, nil, nativeExpiredLeaf)
 }
 
-func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, recoverExpiredGuest bool) {
+// TestUTMGuestRejectsControllerTrustFailures checks how the real guest handles
+// controller restarts with stale CA trust and a future-dated server leaf.
+func TestUTMGuestRejectsControllerTrustFailures(t *testing.T) {
+	if os.Getenv("SHIFTBOX_TEST_UTM_TRUST_FAILURES") != "1" {
+		t.Skip("set SHIFTBOX_TEST_UTM_TRUST_FAILURES=1 for native trust failures")
+	}
+	runUTMGuestFixture(t, nil, nativeControllerTrust)
+}
+
+type nativeGuestScenario int
+
+const (
+	nativeNormal nativeGuestScenario = iota
+	nativeExpiredLeaf
+	nativeControllerTrust
+)
+
+func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, scenario nativeGuestScenario) {
 	t.Helper()
 	if os.Getenv("SHIFTBOX_TEST_UTM_MUTATIONS") != "5.0.8" {
 		t.Skip("set SHIFTBOX_TEST_UTM_MUTATIONS=5.0.8 to enable the disposable VM journey")
@@ -62,7 +79,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, rec
 	if maintenance != nil {
 		timeout = 18 * time.Minute
 	}
-	if recoverExpiredGuest {
+	if scenario != nativeNormal {
 		timeout = 15 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), timeout)
@@ -128,17 +145,21 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, rec
 		t.Fatal(err)
 	}
 	bind := net.JoinHostPort(host, "0")
+	addresses := [3]string{bind, bind, bind}
+	if scenario == nativeControllerTrust {
+		addresses = reserveNativeGuestAddresses(t, bind)
+	}
 	journal := operation.NewJournal(db, time.Now, uuid.NewString)
 	state := &app.ControllerState{DB: db, GuestCA: ca}
 	state.Installation.InstallationID = id
 	state.Installation.Settings.ManagementOrigin = "https://management.test"
 	state.Installation.Settings.IDEHostPattern = "{workspace}.ide.test"
 	state.Installation.Settings.PreviewHostPattern = "{service}--{workspace}.preview.test"
-	startRuntime := func(authority *guest.Authority) (*proxy.Registry, func()) {
+	startRuntime := func(authority *guest.Authority, now func() time.Time) (*proxy.Registry, func()) {
 		t.Helper()
 		registry := &proxy.Registry{}
 		listeners := app.GuestListenerConfig{
-			EnrollmentAddress: bind, PollAddress: bind, TunnelAddress: bind, PublicHost: host,
+			EnrollmentAddress: addresses[0], PollAddress: addresses[1], TunnelAddress: addresses[2], PublicHost: host,
 			Tunnels: &proxy.Tunnels{Registry: registry},
 		}
 		if maintenance != nil {
@@ -146,7 +167,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, rec
 		}
 		state.GuestCA = authority
 		runtime, err := app.ListenWorkspaceRuntime(state, listeners,
-			web.GuestCompatibility{Protocol: metadata.ProtocolVersion, CurrentRelease: guestRelease}, journal, machines, dir, time.Now)
+			web.GuestCompatibility{Protocol: metadata.ProtocolVersion, CurrentRelease: guestRelease}, journal, machines, dir, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -162,7 +183,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, rec
 		}
 	}
 	issuer := ca
-	if recoverExpiredGuest {
+	if scenario == nativeExpiredLeaf {
 		// Keep the genuine CA DER, subject, and signing key. This copy caps only
 		// initial certificate issuance so the native guest can expire offline.
 		shortIssuer, shortCertificate := *ca, *ca.Certificate
@@ -170,7 +191,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, rec
 		shortIssuer.Certificate = &shortCertificate
 		issuer = &shortIssuer
 	}
-	registry, stopRuntime := startRuntime(issuer)
+	registry, stopRuntime := startRuntime(issuer, time.Now)
 	defer func() { stopRuntime() }()
 
 	var op operation.Operation
@@ -214,13 +235,28 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, rec
 		maintenance.verify(t, ctx, db, journal, machines, before, op.ID, owner, metadata)
 		return
 	}
-	if recoverExpiredGuest {
+	if scenario == nativeExpiredLeaf {
 		stopped := stopUTMEnrolledFixture(t, ctx, db, journal, machines, before, op.ID, owner)
 		stopRuntime()
 		stopRuntime = func() {}
 		prior := waitForNativeGuestExpiry(t, ctx, db, stopped.Ref)
-		_, stopRuntime = startRuntime(ca)
+		_, stopRuntime = startRuntime(ca, time.Now)
 		verifyNativeGuestRecovery(t, ctx, db, journal, machines, stopped, owner, prior)
+		return
+	}
+	if scenario == nativeControllerTrust {
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			return journal.CancelInTx(ctx, tx, op.ID, time.Now())
+		}); err != nil {
+			t.Fatal(err)
+		}
+		stopRuntime()
+		stopRuntime = func() {}
+		restart := func(authority *guest.Authority, now func() time.Time) func() {
+			_, stop := startRuntime(authority, now)
+			return stop
+		}
+		verifyNativeControllerTrust(t, ctx, db, machines, before, ca, dir, restart)
 		return
 	}
 	stopID := disableEnrollmentFixtureOwner(t, db, journal, registry, owner, workspaceID)
