@@ -1854,3 +1854,13 @@ This checkpoint does not itself change the goal status.
   checked again before publication and a failed check leaves it unavailable.
 - The release race suite passed, including a boot-check fixture that modifies
   the staged disk. The import route and live VM boot verification remain open.
+
+### Live enrollment recheck and controller shutdown
+
+- The current controller imported and booted a disposable copy of the local
+  Ubuntu toolchain export on UTM 5.0.8. The guest first authenticated after
+  2m25s. The race-enabled enrollment test passed and verified VM cleanup.
+  This export still uses fixture IDE metadata.
+- Added shared shutdown for the browser listener and workspace runtime when
+  either service fails or Dex exits. Application, CLI, and contract race
+  suites passed. The `serve` command still needs to invoke the supervisor.
