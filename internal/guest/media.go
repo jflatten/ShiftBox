@@ -97,3 +97,31 @@ func BuildEnrollmentMedia(ctx context.Context, root string, seed EnrollmentSeed)
 	keep = true
 	return image, nil
 }
+
+func clearEnrollmentImage(ctx context.Context, image string) error {
+	// Replace the path atomically. The running VM may still hold its old
+	// descriptor, and the next boot needs readable media at the same path.
+	stage, err := os.MkdirTemp(filepath.Dir(image), ".clear-seed-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stage)
+	payload := filepath.Join(stage, "payload")
+	if err := os.Mkdir(payload, 0700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(payload, "README.TXT"), []byte("Empty ShiftBox enrollment media.\n"), 0600); err != nil {
+		return err
+	}
+	blank := filepath.Join(stage, "empty.iso")
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "/usr/bin/hdiutil", "makehybrid", "-iso", "-iso-volume-name", "SHIFTBOX_EMPTY", "-o", blank, payload)
+	if err := cmd.Run(); err != nil {
+		return errors.New("cannot clear consumed enrollment media")
+	}
+	if err := os.Chmod(blank, 0600); err != nil {
+		return err
+	}
+	return os.Rename(blank, image)
+}

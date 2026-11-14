@@ -23,6 +23,7 @@ that local binary. The companion UTM export's artifact manifest SHA-256 was
 | Chrome management handoff | The controller required a fresh sign-in after activation. Chrome signed in through Dex. The resumed run verified a connected fixture GitHub App authorization. |
 | Chrome workspace launch | Chrome created the private-repository template, launched a UTM workspace, and reconnected the operation stream. The four-minute browser timer elapsed during Dev Container setup. The same controller journal later confirmed repository configuration, IDE verification, and completion of the remaining hooks. |
 | Chrome IDE entry | The pinned controller returned a 403 after Chrome stored the Strict service cookie and withheld it on the cross-site redirect. A follow-up build of the same controller source with the entry fix opened the workbench and saved a file. This build was used only for the resumed verification. |
+| Retained workspace restart | Chrome saved the marker file and the controller recorded a graceful VM stop. UTM 5.0.8 refused the subsequent boot because its removable drive still referenced the removed enrollment ISO. The cleanup regression now verifies that consumed media becomes a credential-free ISO at the same path. Native restart, rebuild, and repair still require verification. |
 | Go workspace journal check | Pending a completed workspace journey. |
 
 Run the browser spec with `SHIFTBOX_MVP_FIXTURE` pointing at a fresh local

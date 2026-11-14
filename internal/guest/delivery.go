@@ -125,11 +125,10 @@ func (e *Enrollment) failDelivery(ctx context.Context, id, image string, cause e
 	return "", cause
 }
 
-// CleanupDelivery removes tracked media for an operation after the caller
-// observes successful authenticated guest contact. Invalidated attempts can
-// also be removed here. Any still-issued grant remains available for boot.
+// CleanupDelivery clears tracked enrollment data after authenticated contact.
+// Consumed media keeps a blank ISO at its path for UTM's removable drive.
 func (e *Enrollment) CleanupDelivery(ctx context.Context, operationID string, ref provider.WorkspaceRef, root string) error {
-	rows, err := e.db.QueryContext(ctx, `SELECT g.id,g.media_directory FROM enrollment_grants g
+	rows, err := e.db.QueryContext(ctx, `SELECT g.id,g.media_directory,g.state FROM enrollment_grants g
 		JOIN workspaces w ON w.id=g.workspace_id
 		JOIN guest_registrations r ON r.workspace_id=g.workspace_id AND r.generation=g.generation
 		WHERE g.operation_id=$1 AND g.workspace_id=$2 AND g.generation=$3 AND g.provider_instance_id=$4
@@ -141,11 +140,11 @@ func (e *Enrollment) CleanupDelivery(ctx context.Context, operationID string, re
 	if err != nil {
 		return err
 	}
-	type media struct{ id, dir string }
+	type media struct{ id, dir, state string }
 	var paths []media
 	for rows.Next() {
 		var entry media
-		if err := rows.Scan(&entry.id, &entry.dir); err != nil {
+		if err := rows.Scan(&entry.id, &entry.dir, &entry.state); err != nil {
 			rows.Close()
 			return err
 		}
@@ -160,7 +159,14 @@ func (e *Enrollment) CleanupDelivery(ctx context.Context, operationID string, re
 		if err != nil {
 			return err
 		}
-		if err := e.removeMedia(ctx, entry.id, image); err != nil {
+		if entry.state == "consumed" {
+			if err := clearEnrollmentImage(ctx, image); err != nil {
+				return err
+			}
+			if err := e.clearMediaRecord(ctx, entry.id); err != nil {
+				return err
+			}
+		} else if err := e.removeMedia(ctx, entry.id, image); err != nil {
 			return err
 		}
 	}
@@ -178,6 +184,10 @@ func (e *Enrollment) removeMedia(ctx context.Context, id, image string) error {
 	if err := os.RemoveAll(filepath.Dir(image)); err != nil {
 		return errors.New("cannot remove enrollment media")
 	}
+	return e.clearMediaRecord(ctx, id)
+}
+
+func (e *Enrollment) clearMediaRecord(ctx context.Context, id string) error {
 	_, err := e.db.ExecContext(ctx, `UPDATE enrollment_grants SET media_directory=NULL,media_attached_at=NULL
 		WHERE id=$1 AND state IN ('consumed','invalidated','expired')`, id)
 	return err

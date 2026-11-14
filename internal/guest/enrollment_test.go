@@ -843,8 +843,9 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 				t.Fatalf("cleanup confirmed enrollment: %v", err)
 			}
 		}
-		if _, err := os.Stat(retainedImage); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("media after cleanup = %v, want absent", err)
+		blank, err := os.ReadFile(retainedImage)
+		if err != nil || len(blank) == 0 || bytes.Contains(blank, []byte(token)) || bytes.Contains(blank, []byte("ENROLLMENT.JSON")) {
+			t.Fatalf("media after cleanup must remain bootable as blank media without the seed: %v", err)
 		}
 	}
 	if _, err := enrollment.Enroll(ctx, token, fixtureCSR(t), now); !errors.Is(err, guest.ErrEnrollmentDenied) {
