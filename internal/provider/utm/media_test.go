@@ -10,33 +10,51 @@ import (
 	"github.com/jflatten/ShiftBox/internal/provider"
 )
 
-// TestPreservedMediaInventory rejects changes to the persistent disk, VM
-// provenance, or drive order while allowing a replacement recovery image.
+// TestPreservedMediaInventory rejects changes to either persistent disk, VM
+// provenance, or the complete ordered drive list while allowing new media.
 func TestPreservedMediaInventory(t *testing.T) {
-	before := provider.Inventory{InstanceID: "vm", Power: provider.Stopped, Resources: []provider.OwnedResource{
-		{ID: "vm", Type: "vm"}, {ID: "vm/disk", Type: "disk"}, {ID: "vm/media", Type: "media"},
-	}}
+	before := provider.Inventory{
+		Ref: provider.WorkspaceRef{
+			InstallationID: "installation", WorkspaceID: "workspace", InstanceID: "vm", OwnershipMarker: "owner", Generation: 3,
+		},
+		InstanceID: "vm", Power: provider.Stopped, Resources: []provider.OwnedResource{
+			{ID: "vm", Type: "vm"},
+			{ID: "vm/root-disk", Type: "disk", HostBytes: int64Ptr(32)},
+			{ID: "vm/media", Type: "media"},
+			{ID: "vm/data-disk", Type: "disk", HostBytes: int64Ptr(64)},
+		},
+	}
 	after := before
 	after.Resources = append([]provider.OwnedResource(nil), before.Resources...)
 	after.Resources[2].HostBytes = int64Ptr(16)
 	if err := verifyMediaReplacement(before, after, "vm/media"); err != nil {
-		t.Fatal(err)
+		t.Fatalf("verifyMediaReplacement(changed media size) = %v, want success", err)
 	}
-	after.Resources[1].ID = "vm/different-disk"
-	if err := verifyMediaReplacement(before, after, "vm/media"); !errors.Is(err, provider.ErrOutcomeUnknown) {
-		t.Fatalf("changed disk: %v", err)
+	if err := verifyMediaReplacement(before, before, "vm/root-disk"); !errors.Is(err, provider.ErrOutcomeUnknown) {
+		t.Errorf("verifyMediaReplacement(persistent disk as target) = %v, want %v", err, provider.ErrOutcomeUnknown)
 	}
-	if err := verifyMediaReplacement(before, before, "vm/disk"); !errors.Is(err, provider.ErrOutcomeUnknown) {
-		t.Fatalf("persistent disk replacement: %v", err)
-	}
-	after.Resources[1], after.Resources[2] = before.Resources[2], before.Resources[1]
-	if err := verifyMediaReplacement(before, after, "vm/media"); !errors.Is(err, provider.ErrOutcomeUnknown) {
-		t.Fatalf("reordered drives: %v", err)
-	}
-	after = before
-	after.ArtifactID = "other"
-	if err := verifyMediaReplacement(before, after, "vm/media"); !errors.Is(err, provider.ErrOutcomeUnknown) {
-		t.Fatalf("changed artifact: %v", err)
+	for _, tc := range []struct {
+		name   string
+		change func(*provider.Inventory)
+	}{
+		{"changed root disk", func(got *provider.Inventory) { got.Resources[1].ID = "vm/different-disk" }},
+		{"changed data disk size", func(got *provider.Inventory) { got.Resources[3].HostBytes = int64Ptr(96) }},
+		{"omitted data disk", func(got *provider.Inventory) { got.Resources = got.Resources[:3] }},
+		{"reordered drives", func(got *provider.Inventory) {
+			got.Resources[1], got.Resources[2] = got.Resources[2], got.Resources[1]
+		}},
+		{"changed artifact", func(got *provider.Inventory) { got.ArtifactID = "other" }},
+		{"changed ownership", func(got *provider.Inventory) { got.Ref.OwnershipMarker = "other" }},
+		{"changed generation", func(got *provider.Inventory) { got.Ref.Generation++ }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := after
+			candidate.Resources = append([]provider.OwnedResource(nil), after.Resources...)
+			tc.change(&candidate)
+			if err := verifyMediaReplacement(before, candidate, "vm/media"); !errors.Is(err, provider.ErrOutcomeUnknown) {
+				t.Errorf("verifyMediaReplacement(%s) = %v, want %v", tc.name, err, provider.ErrOutcomeUnknown)
+			}
+		})
 	}
 }
 
