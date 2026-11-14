@@ -3,10 +3,13 @@ export interface Workspace {
   ownerId: string;
   templateId: string;
   templateRevision: number;
+  platformRelease: string;
   desiredState: string;
   observedState: string;
   currentOperationId: string | null;
   canOpenIde?: boolean;
+  lastActivityAt: string | null;
+  retentionDeadline: string | null;
   version: number;
   resources: { cpuCount: number; memoryMiB: number; diskMiB: number };
 }

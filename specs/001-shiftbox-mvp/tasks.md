@@ -1812,3 +1812,11 @@ This checkpoint does not itself change the goal status.
 - Go web and contract race tests, UI tests and the production build
   passed. Chrome verified keyboard entry and the exchange redirect with
   fixture API responses. A live UTM-backed IDE session remains to verify.
+
+### Workspace provenance and retention details
+
+- Workspace details display the pinned template revision and platform
+  release, last activity, and any scheduled retention deadline. The platform
+  release comes from the immutable artifact referenced by the workspace.
+- Go web and contract race tests, 31 UI tests and the production build
+  passed. Rebuild remains open pending verification of retained data.

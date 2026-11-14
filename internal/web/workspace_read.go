@@ -18,6 +18,7 @@ type workspaceView struct {
 	OwnerID            string             `json:"ownerId"`
 	TemplateID         string             `json:"templateId"`
 	TemplateRevision   int64              `json:"templateRevision"`
+	PlatformRelease    string             `json:"platformRelease"`
 	DesiredState       string             `json:"desiredState"`
 	ObservedState      string             `json:"observedState"`
 	Generation         int64              `json:"generation"`
@@ -34,11 +35,13 @@ type workspaceResources struct {
 	DiskMiB   int64 `json:"diskMiB"`
 }
 
-const workspaceProjection = `w.id,w.owner_user_id,w.template_id,w.template_revision,
+const workspaceProjection = `w.id,w.owner_user_id,w.template_id,w.template_revision,a.release_id,
 	w.desired_state,w.observed_state,w.generation,w.cpu_count,w.memory_mib,w.disk_mib,
 	(SELECT o.id FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
 	   AND o.status IN ('pending','running','waiting') ORDER BY o.created_at DESC,o.id DESC LIMIT 1),
 	w.last_activity_at,w.retention_deadline,w.version`
+
+const workspaceFrom = ` FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id`
 
 // WorkspaceReadHandlers returns the list and detail operations for management.
 func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time) (AuthorizedHandler, AuthorizedHandler) {
@@ -56,7 +59,7 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time) (Aut
 		Route:   ManagementRoute{Method: http.MethodGet, Path: "/workspaces/{workspaceId}", OperationID: "getWorkspace", Action: "workspace.view"},
 		Resolve: resolveWorkspaceView,
 		Apply: func(ctx context.Context, tx *sql.Tx, _ *http.Request, principal auth.Principal, target AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
-			view, err := scanWorkspace(tx.QueryRowContext(ctx, `SELECT `+workspaceProjection+` FROM workspaces w WHERE w.id=$1`, target.Resource.ID))
+			view, err := scanWorkspace(tx.QueryRowContext(ctx, `SELECT `+workspaceProjection+workspaceFrom+` WHERE w.id=$1`, target.Resource.ID))
 			if err != nil {
 				return nil, err
 			}
@@ -109,7 +112,7 @@ func listWorkspaces(ctx context.Context, tx *sql.Tx, r *http.Request, principal 
 	}
 	const limit = 50
 	admin := principal.User.Role == "administrator"
-	rows, err := tx.QueryContext(ctx, `SELECT `+workspaceProjection+` FROM workspaces w
+	rows, err := tx.QueryContext(ctx, `SELECT `+workspaceProjection+workspaceFrom+`
 		WHERE ($1 OR w.owner_user_id=$2) AND ($3='' OR w.owner_user_id=$3)
 		  AND ($4='' OR w.observed_state=$4) AND w.id>$5 ORDER BY w.id LIMIT $6`,
 		admin, principal.User.ID, owner, state, cursor, limit+1)
@@ -143,7 +146,7 @@ func listWorkspaces(ctx context.Context, tx *sql.Tx, r *http.Request, principal 
 
 func scanWorkspace(row interface{ Scan(...any) error }) (workspaceView, error) {
 	var view workspaceView
-	err := row.Scan(&view.ID, &view.OwnerID, &view.TemplateID, &view.TemplateRevision,
+	err := row.Scan(&view.ID, &view.OwnerID, &view.TemplateID, &view.TemplateRevision, &view.PlatformRelease,
 		&view.DesiredState, &view.ObservedState, &view.Generation,
 		&view.Resources.CPUCount, &view.Resources.MemoryMiB, &view.Resources.DiskMiB,
 		&view.CurrentOperationID, &view.LastActivityAt, &view.RetentionDeadline, &view.Version)

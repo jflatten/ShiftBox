@@ -6,6 +6,7 @@ import { Workspaces } from './workspaces';
 const workspace = {
   id: 'workspace-one', ownerId: 'member', templateId: 'template-one', templateRevision: 2,
   desiredState: 'running', observedState: 'stopped', currentOperationId: 'operation-one', version: 4,
+  platformRelease: 'ubuntu-amd64-r5', lastActivityAt: '2026-11-14T10:00:00Z', retentionDeadline: '2026-11-15T10:00:00Z',
   resources: { cpuCount: 2, memoryMiB: 4096, diskMiB: 32768 },
 };
 const session = {
@@ -40,6 +41,10 @@ test('shows the saved workspace state and workflow', async () => {
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
   expect(await screen.findByText('Running', { exact: true })).toBeVisible();
   expect(screen.getByText('Stopped', { exact: true })).toBeVisible();
+  expect(screen.getByText('ubuntu-amd64-r5')).toBeVisible();
+  expect(screen.getByText('template-one · Revision 2')).toBeVisible();
+  expect(screen.getByText('Last activity').nextElementSibling?.firstElementChild).toHaveAttribute('datetime', workspace.lastActivityAt);
+  expect(screen.getByText('Retention deadline').nextElementSibling?.firstElementChild).toHaveAttribute('datetime', workspace.retentionDeadline);
   expect(await screen.findByText('Failed — Start workspace')).toBeVisible();
   expect(screen.getByText(/Stop and start preserve/)).toBeVisible();
 });

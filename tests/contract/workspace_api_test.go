@@ -131,12 +131,15 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	check(response, 200, "")
 	var view struct {
 		OwnerID            string `json:"ownerId"`
+		PlatformRelease    string `json:"platformRelease"`
+		TemplateRevision   int    `json:"templateRevision"`
 		DesiredState       string `json:"desiredState"`
 		ObservedState      string `json:"observedState"`
 		CurrentOperationID string `json:"currentOperationId"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil ||
 		view.OwnerID != "member" || view.DesiredState != "running" || view.ObservedState != "unknown" ||
+		view.PlatformRelease != "release" || view.TemplateRevision != 1 ||
 		view.CurrentOperationID != op.ID || response.Header().Get("ETag") != `"1"` {
 		t.Fatalf("workspace view = %+v, %v, want member-owned pending launch", view, err)
 	}

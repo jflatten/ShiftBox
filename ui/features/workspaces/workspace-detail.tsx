@@ -67,6 +67,24 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
             <Stack gap={2}><Text size="sm" c="dimmed">Observed state</Text><Text fw={600}>{workspaceState(data.observedState)}</Text></Stack>
           </Group>
           <Text>{data.resources.cpuCount} vCPU · {data.resources.memoryMiB} MiB memory · {data.resources.diskMiB} MiB disk</Text>
+          <Stack component="dl" gap="xs" m={0}>
+            <div>
+              <Text component="dt" size="sm" c="dimmed">Template</Text>
+              <Text component="dd" m={0}>{data.templateId} · Revision {data.templateRevision}</Text>
+            </div>
+            <div>
+              <Text component="dt" size="sm" c="dimmed">Platform release</Text>
+              <Text component="dd" m={0}>{data.platformRelease}</Text>
+            </div>
+            <div>
+              <Text component="dt" size="sm" c="dimmed">Last activity</Text>
+              <Text component="dd" m={0}><WorkspaceTime value={data.lastActivityAt} fallback="No activity recorded" /></Text>
+            </div>
+            <div>
+              <Text component="dt" size="sm" c="dimmed">Retention deadline</Text>
+              <Text component="dd" m={0}><WorkspaceTime value={data.retentionDeadline} fallback="No deadline scheduled" /></Text>
+            </div>
+          </Stack>
           <Text size="sm">Stop and start preserve project files, the developer home, and configured persistent mounts.</Text>
           {error !== undefined ? <APIProblemView error={error} /> : null}
           {data.canOpenIde ? <OpenIDE id={id} csrfToken={csrfToken} /> : null}
@@ -81,6 +99,13 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
       ) : null}
     </>
   );
+}
+
+function WorkspaceTime({ value, fallback }: { value: string | null; fallback: string }) {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return fallback;
+  return <time dateTime={value}>{date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>;
 }
 
 function OpenIDE({ id, csrfToken }: { id: string; csrfToken: string }) {
