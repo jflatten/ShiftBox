@@ -3,6 +3,8 @@ package utm
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jflatten/ShiftBox/internal/provider"
@@ -77,5 +79,51 @@ func TestPowerRejectsUnverifiedStart(t *testing.T) {
 	req.RequiresEnrollment = true
 	if _, err := p.Start(context.Background(), req); !errors.Is(err, provider.ErrInvalidState) {
 		t.Fatalf("pending enrollment: %v", err)
+	}
+}
+
+// TestPowerRechecksRecoveryAttachment verifies that a fresh controller can
+// use the journaled media path only after UTM confirms the drive replacement.
+func TestPowerRechecksRecoveryAttachment(t *testing.T) {
+	ref := provider.WorkspaceRef{InstanceID: "vm", OwnershipMarker: "owner", Generation: 1}
+	image := filepath.Join(t.TempDir(), "enrollment.iso")
+	if err := os.WriteFile(image, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	attached, running := false, false
+	p := PowerController{
+		inspect: func(context.Context, provider.WorkspaceRef) (provider.Inventory, error) {
+			inventory := provider.Inventory{Ref: ref, InstanceID: ref.InstanceID, Power: provider.Stopped, NetworkMode: "shared",
+				Resources: []provider.OwnedResource{
+					{ID: "vm/disk", Type: "disk"},
+					{ID: "vm/seed", Type: "media", OwnershipMarker: ref.OwnershipMarker, Generation: ref.Generation},
+				}}
+			if attached {
+				inventory.Resources[1].HostBytes = int64Ptr(0)
+			}
+			if running {
+				inventory.Power = provider.Running
+			}
+			return inventory, nil
+		},
+		replace: func(_ context.Context, req provider.EnrollmentRequest, drive string) error {
+			if req.Ref != ref || req.MediaPath != image || req.OperationID != "start" || drive != "seed" || !req.Eligible {
+				t.Errorf("unexpected replacement scope: %+v drive %q", req, drive)
+			}
+			attached = true
+			return nil
+		},
+		apply: func(context.Context, provider.WorkspaceRef, string) error {
+			if !attached {
+				t.Error("UTM start preceded verified recovery attachment")
+			}
+			running = true
+			return nil
+		},
+	}
+	req := provider.StartRequest{Ref: ref, OperationID: "start", NetworkMode: "shared",
+		RequiresEnrollment: true, EnrollmentMedia: image}
+	if got, err := p.Start(t.Context(), req); err != nil || got.Power != provider.Running {
+		t.Fatalf("Start(recovered stopped VM) = %s, %v, want running", got.Power, err)
 	}
 }

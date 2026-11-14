@@ -189,7 +189,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T091 [US3] Implement provider-capability-derived network policies, stopped-only application, explicit required exceptions, post-change verification, and remain-stopped failure behavior proven by T080 in `internal/workspace/network.go` and `internal/provider/utm/network.go`
 - [ ] T092 [US3] Implement transactional user/permission/session/origin/guest revocation publication and closure of all established connection types proven by T081 in `internal/auth/revocation.go`, `internal/proxy/registry.go`, and `internal/guest/tunnel.go`
 - [X] T093 [US3] Implement activity observations, retention deadlines, host-outage grace, precommit authority/activity/state recheck, graceful then provider-enforced deletion, and verified reservation release proven by T082 in `internal/workspace/activity.go`, `internal/workspace/retention.go`, and `internal/workspace/delete.go`
-- [ ] T094 [US3] Implement long-stop eligibility verification and provider-mediated enrollment recovery without disk/identity reset proven by T084 in `internal/workspace/recovery.go` and `internal/provider/utm/enrollment.go`
+- [X] T094 [US3] Implement long-stop eligibility verification and provider-mediated enrollment recovery without disk/identity reset proven by T084 in `internal/workspace/recovery.go` and `internal/provider/utm/enrollment.go`
 - [ ] T095 [US3] Implement maintenance campaign scheduling, warnings, per-target durable operations, safe-boundary activation, signed update staging, verification/rollback evidence, prior-state restoration, and blocked completion proven by T083 in `internal/workspace/maintenance.go` and `internal/guest/update.go`
 - [X] T096 [US3] Implement browser-certificate expiry/invalid notices, storage/provider/controller/key persistent conditions, and no unprotected listener fallback in `internal/app/conditions.go` and `internal/config/certificate.go`
 - [ ] T097 [US3] Implement current/N−1 compatibility evaluation and irreversible migration preflight requiring verified backup, guest gate, tools, keys, provider, database ownership, certificate, and CA lifetime in `internal/release/compatibility.go`, `internal/release/preflight.go`, and `cmd/shiftbox/migrate.go`
@@ -2915,3 +2915,12 @@ This checkpoint does not itself change the goal status.
   generator. The UI CI job checks for drift. The initial failing check,
   clean generation check, intentional drift and regeneration, full Go
   contract suite, and UI typecheck passed.
+
+### Long-stop recovery
+
+- T084 reproduced power-on without fresh enrollment for an expired leaf.
+  T094 verifies the stopped VM's exact identity, delivers a one-use grant,
+  and waits for authenticated contact. An interrupted start resumes without
+  another grant or power request. The UTM adapter drive-inventory checks,
+  recovery integration tests, and affected race suites passed. Live UTM
+  acceptance remains pending under the release gates.

@@ -183,19 +183,27 @@ func (p *Provider) DeliverEnrollment(ctx context.Context, req provider.Enrollmen
 	if err != nil {
 		return provider.DeliveryResult{Inventory: got}, err
 	}
+	mediaID, err := enrollmentDrive(got, req.Ref)
+	if err != nil {
+		return provider.DeliveryResult{Inventory: got}, err
+	}
+	got, err = p.controller.ReplaceRecoveryMedia(ctx, req, mediaID)
+	return provider.DeliveryResult{Inventory: got, MediaID: mediaID}, err
+}
+
+func enrollmentDrive(got provider.Inventory, ref provider.WorkspaceRef) (string, error) {
 	var mediaID string
 	for _, resource := range got.Resources {
 		if resource.Type == "media" && !resource.Shared && !resource.Immutable &&
-			resource.Generation == req.Ref.Generation && resource.OwnershipMarker == req.Ref.OwnershipMarker {
+			resource.Generation == ref.Generation && resource.OwnershipMarker == ref.OwnershipMarker {
 			if mediaID != "" {
-				return provider.DeliveryResult{Inventory: got}, provider.ErrInvalidState
+				return "", provider.ErrInvalidState
 			}
 			mediaID = resource.ID
 		}
 	}
 	if mediaID == "" {
-		return provider.DeliveryResult{Inventory: got}, provider.ErrInvalidState
+		return "", provider.ErrInvalidState
 	}
-	got, err = p.controller.ReplaceRecoveryMedia(ctx, req, mediaID)
-	return provider.DeliveryResult{Inventory: got, MediaID: mediaID}, err
+	return mediaID, nil
 }

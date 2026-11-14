@@ -61,26 +61,48 @@ func TestLongStopRecoveryBeforeBoot(t *testing.T) {
 		"https://controller.test/internal/v1/enroll", "https://controller.test:8443/internal/v1/guest/poll", clock, nil)
 	power := workspace.NewPowerExecutor(store, machines, clock, nil)
 	worker := workspace.NewWorker(journal, launch, power)
-	err := worker.RunOnce(ctx, op.ID)
-	if machines.start != nil {
-		assertRecoveryDeliveryBeforeStart(t, f.ref, op.ID, machines)
-		if err != nil {
-			t.Errorf("RunOnce(start after long stop) = %v, want a verified start", err)
-		}
-	} else {
-		// A separate durable delivery step may advance before the power step.
-		if err != nil {
-			t.Fatalf("RunOnce(start) = %v, want a recovery step or a verified start", err)
-		}
-		if err := worker.RunOnce(ctx, op.ID); err != nil {
-			t.Errorf("RunOnce(start after recovery delivery) = %v, want a verified start", err)
-		}
-		assertRecoveryDeliveryBeforeStart(t, f.ref, op.ID, machines)
+	machines.loseStartReply = true
+	if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, provider.ErrOutcomeUnknown) {
+		t.Fatalf("RunOnce(start with lost provider reply) = %v, want an uncertain outcome", err)
+	}
+	assertRecoveryDeliveryBeforeStart(t, f.ref, op.ID, machines)
+	reopened := workspace.NewWorker(journal, launch, workspace.NewPowerExecutor(store, machines, clock, nil))
+	if err := reopened.RunOnce(ctx, op.ID); err != nil {
+		t.Fatalf("RunOnce(start after controller restart) = %v, want a verified start", err)
+	}
+	if len(machines.deliveries) != 1 || machines.starts != 1 {
+		t.Errorf("retry issued %d attachments and %d starts, want one of each", len(machines.deliveries), machines.starts)
 	}
 	before := f.ref
 	after, err := machines.Inspect(ctx, before)
 	if err != nil || after.Ref != before || after.Power != provider.Running {
 		t.Errorf("Inspect(after recovered start) = %v/%s, %v, want %v/running", after.Ref, after.Power, err, before)
+	}
+	media, err := os.ReadFile(machines.deliveries[0].MediaPath)
+	if err != nil || bytes.Contains(media, []byte(`{"grant":"`)) {
+		t.Errorf("authenticated recovery did not clear the seed while preserving the removable image: %v", err)
+	}
+}
+
+// TestLongStopRevokedRegistrationStaysStopped checks the real start workflow
+// before it can deliver media or power on a VM with revoked guest authority.
+func TestLongStopRevokedRegistrationStaysStopped(t *testing.T) {
+	f, enrollment, now := newLongStopFixture(t)
+	seedPreviousGuest(t, f, enrollment, now)
+	capacityExec(t, f.db, "UPDATE guest_registrations SET state='revoked' WHERE workspace_id=$1", f.ref.WorkspaceID)
+	clock := func() time.Time { return now }
+	journal := operation.NewJournal(f.db, clock, uuid.NewString)
+	op := admitLongStopStart(t, f, journal, now)
+	store := workspace.NewStore(f.db)
+	machines := &recoveryProvider{Provider: f.machines, now: now}
+	worker := workspace.NewWorker(journal, nil, workspace.NewPowerExecutor(store, machines, clock, nil))
+	if err := worker.RunOnce(t.Context(), op.ID); err != nil {
+		t.Fatalf("RunOnce(start with revoked registration) = %v, want recorded failure", err)
+	}
+	status, err := journal.Get(t.Context(), op.ID)
+	if err != nil || status.Status != "failed" || len(machines.deliveries) != 0 || machines.starts != 0 {
+		t.Errorf("revoked guest start = %s, %v, %d deliveries, %d power requests, want failed with no delivery or power request",
+			status.Status, err, len(machines.deliveries), machines.starts)
 	}
 }
 
@@ -346,6 +368,8 @@ type recoveryProvider struct {
 	start                *provider.StartRequest
 	deliveredBeforeStart bool
 	authenticate         func(context.Context, string) error
+	loseStartReply       bool
+	starts               int
 }
 
 func (p *recoveryProvider) DeliverEnrollment(ctx context.Context, req provider.EnrollmentRequest) (provider.DeliveryResult, error) {
@@ -360,12 +384,17 @@ func (p *recoveryProvider) Inspect(ctx context.Context, ref provider.WorkspaceRe
 }
 
 func (p *recoveryProvider) Start(ctx context.Context, req provider.StartRequest) (provider.Inventory, error) {
+	p.starts++
 	p.start = &req
 	p.deliveredBeforeStart = len(p.deliveries) == 1
 	inventory, err := p.Provider.Start(ctx, req)
 	inventory.ObservedAt = p.now
 	if err == nil && p.deliveredBeforeStart && p.authenticate != nil {
 		err = p.authenticate(ctx, p.deliveries[0].MediaPath)
+	}
+	if err == nil && p.loseStartReply {
+		p.loseStartReply = false
+		return provider.Inventory{}, provider.ErrOutcomeUnknown
 	}
 	return inventory, err
 }

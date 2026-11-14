@@ -21,6 +21,7 @@ type PowerExecutor struct {
 	now         func() time.Time
 	probeIDE    IDEProbe
 	probeRepair IDEProbe
+	recovery    *LaunchExecutor
 }
 
 // NewPowerExecutor binds retained workspace power operations to the current provider.
@@ -105,7 +106,7 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 	}
 	var got provider.Inventory
 	if op.Type == "start" {
-		got, err = e.provider.Start(ctx, provider.StartRequest{Ref: req.Ref, OperationID: op.ID, NetworkMode: req.NetworkMode})
+		got, err = e.start(ctx, op, step, req)
 	} else {
 		if req.Ref.InstanceID == "" {
 			// A launch may have imported the VM before recording its instance.
@@ -273,19 +274,30 @@ func (e *PowerExecutor) record(ctx context.Context, op operation.Operation, req 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
-	if !last.Valid || !expiry.Valid {
+	if !expiry.Valid {
+		return "", errGuestContactPending
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, expiry.String)
+	if err != nil {
+		return "", err
+	}
+	if !now.Before(deadline) {
+		return "", &operation.StepWaiting{Detail: "The guest certificate expired while the VM was running. The live VM has been preserved for administrator recovery."}
+	}
+	if !last.Valid {
 		return "", errGuestContactPending
 	}
 	contact, err := time.Parse(time.RFC3339Nano, last.String)
 	if err != nil {
 		return "", err
 	}
-	deadline, err := time.Parse(time.RFC3339Nano, expiry.String)
-	if err != nil {
-		return "", err
-	}
-	if contact.Before(*op.StartedAt) || contact.After(now) || !now.Before(deadline) {
+	if contact.Before(*op.StartedAt) || contact.After(now) {
 		return "", errGuestContactPending
+	}
+	if e.recovery != nil && e.recovery.enrollment != nil {
+		if err := e.recovery.enrollment.CleanupDelivery(ctx, req.OperationID, ref, e.recovery.mediaRoot); err != nil {
+			return "", err
+		}
 	}
 	return "Provider confirmed the VM running and the guest authenticated.", nil
 }

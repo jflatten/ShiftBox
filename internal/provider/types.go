@@ -61,6 +61,8 @@ type StartRequest struct {
 	Ref                      WorkspaceRef
 	OperationID, NetworkMode string
 	RequiresEnrollment       bool
+	// EnrollmentMedia is the controller's journaled image for this start.
+	EnrollmentMedia string
 }
 
 type StopRequest struct {

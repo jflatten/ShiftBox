@@ -11,6 +11,11 @@ import (
 
 // NewWorker reconciles the workspace actions implemented by the controller.
 func NewWorker(journal *operation.Journal, launch *LaunchExecutor, power *PowerExecutor) *operation.Worker {
+	if power != nil {
+		configured := *power
+		configured.recovery = launch
+		power = &configured
+	}
 	return &operation.Worker{
 		Journal: journal, Name: "workspace-controller", LeaseDuration: 4 * time.Minute,
 		Executor: workspaceExecutor{launch: launch, power: power},

@@ -18,6 +18,12 @@ import (
 // ReplaceRecoveryMedia updates a stopped VM and verifies its drive inventory.
 // UTM exposes the replacement's size. Guest consumption requires separate evidence.
 func (p *PowerController) ReplaceRecoveryMedia(ctx context.Context, req provider.EnrollmentRequest, mediaID string) (provider.Inventory, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.replaceRecoveryMediaLocked(ctx, req, mediaID)
+}
+
+func (p *PowerController) replaceRecoveryMediaLocked(ctx context.Context, req provider.EnrollmentRequest, mediaID string) (provider.Inventory, error) {
 	driveID, scoped := strings.CutPrefix(mediaID, req.Ref.InstanceID+"/")
 	if !req.Eligible || req.OperationID == "" || req.Ref.InstanceID == "" || !filepath.IsAbs(req.MediaPath) ||
 		!scoped || driveID == "" {
@@ -27,8 +33,6 @@ func (p *PowerController) ReplaceRecoveryMedia(ctx context.Context, req provider
 	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 		return provider.Inventory{}, provider.ErrInvalidState
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	before, err := p.inspect(ctx, req.Ref)
 	if err != nil {
 		return before, err
@@ -39,7 +43,7 @@ func (p *PowerController) ReplaceRecoveryMedia(ctx context.Context, req provider
 	if err := ctx.Err(); err != nil {
 		return before, err
 	}
-	err = replaceMedia(ctx, p.version, req, driveID)
+	err = p.replace(ctx, req, driveID)
 	after, inspectErr := p.inspect(ctx, req.Ref)
 	if err != nil && !errors.Is(err, provider.ErrOutcomeUnknown) {
 		return after, err
