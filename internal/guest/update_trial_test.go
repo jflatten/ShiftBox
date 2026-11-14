@@ -8,6 +8,11 @@ import (
 	"testing"
 )
 
+const (
+	firstTrialOperation = "99999999-0000-4000-8000-000000000001"
+	nextTrialOperation  = "99999999-0000-4000-8000-000000000002"
+)
+
 // TestActivateStagedGuestUpdate follows the staged operation across a
 // supervisor restart and acknowledges success only after trial confirmation.
 func TestActivateStagedGuestUpdate(t *testing.T) {
@@ -95,6 +100,37 @@ func TestActivateStagedGuestUpdateReportsRollback(t *testing.T) {
 			t.Errorf("rolled-back trial report = %+v, want rollback evidence", report)
 		}
 	}
+	// An administrator's replacement campaign uses a fresh operation ID.
+	// Staging the same signed binary must permit one new supervised trial.
+	replacement := dispatch
+	replacement.ID = "99999999-0000-4000-8000-000000000002"
+	replacement.Command = stageGuestUpdateCommand
+	if err := journal.stageUpdate(t.Context(), replacement, func(context.Context, string) ([sha256.Size]byte, error) {
+		return digest, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	journal, err = loadLocalJournal(filepath.Join(dir, "operation.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement.Command = activateGuestUpdateCommand
+	if err := journal.activateUpdate(replacement); !errors.Is(err, errGuestUpdateRestart) {
+		t.Fatalf("activation for replacement operation = %v, want one new trial", err)
+	}
+	boot, err := nextGuestUpdateBinary(trial)
+	if err != nil || boot.Digest != digest {
+		t.Fatalf("replacement trial = %+v (%v), want same verified digest", boot, err)
+	}
+	if _, err := nextGuestUpdateBinary(trial); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.activateUpdate(replacement); err != nil {
+		t.Fatalf("replacement replay = %v, want rollback recorded without a new trial", err)
+	}
+	if report := journal.report(); report.Status != "failed" || report.Problem != problemGuestUpdateRollback {
+		t.Errorf("replacement rollback = %+v, want failed activation", report)
+	}
 }
 
 // TestGuestUpdateTrialRollback verifies that an interrupted trial falls back
@@ -102,7 +138,7 @@ func TestActivateStagedGuestUpdateReportsRollback(t *testing.T) {
 func TestGuestUpdateTrialRollback(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "update-trial.json")
 	digest := sha256.Sum256([]byte("unhealthy update"))
-	if err := requestGuestUpdateTrial(path, digest, false); err != nil {
+	if err := requestGuestUpdateTrial(path, digest, firstTrialOperation); err != nil {
 		t.Fatal(err)
 	}
 	first, err := nextGuestUpdateBinary(path)
@@ -116,10 +152,10 @@ func TestGuestUpdateTrialRollback(t *testing.T) {
 	if err := confirmGuestUpdateTrial(path, first); !errors.Is(err, errGuestUpdateTrialConflict) {
 		t.Errorf("late trial confirmation = %v, want conflict", err)
 	}
-	if err := requestGuestUpdateTrial(path, digest, false); !errors.Is(err, errGuestUpdateTrialConflict) {
+	if err := requestGuestUpdateTrial(path, digest, firstTrialOperation); !errors.Is(err, errGuestUpdateTrialConflict) {
 		t.Errorf("automatic retry of failed candidate = %v, want conflict", err)
 	}
-	if err := requestGuestUpdateTrial(path, digest, true); err != nil {
+	if err := requestGuestUpdateTrial(path, digest, nextTrialOperation); err != nil {
 		t.Fatalf("explicit trial retry = %v, want success", err)
 	}
 	retry, err := nextGuestUpdateBinary(path)
@@ -137,7 +173,7 @@ func TestGuestUpdateTrialKeepsLastHealthyBinary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "update-trial.json")
 	first := sha256.Sum256([]byte("healthy update"))
 	second := sha256.Sum256([]byte("next update"))
-	if err := requestGuestUpdateTrial(path, first, false); err != nil {
+	if err := requestGuestUpdateTrial(path, first, firstTrialOperation); err != nil {
 		t.Fatal(err)
 	}
 	boot, err := nextGuestUpdateBinary(path)
@@ -153,7 +189,7 @@ func TestGuestUpdateTrialKeepsLastHealthyBinary(t *testing.T) {
 	if err := confirmGuestUpdateTrial(path, boot); err != nil {
 		t.Fatalf("replay successful confirmation = %v, want success", err)
 	}
-	if err := requestGuestUpdateTrial(path, second, false); err != nil {
+	if err := requestGuestUpdateTrial(path, second, nextTrialOperation); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := nextGuestUpdateBinary(path); err != nil || got.Digest != second {

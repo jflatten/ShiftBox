@@ -1753,6 +1753,8 @@ This checkpoint does not itself change the goal status.
   An administrator can schedule a replacement for retained failed targets.
   Migration stays blocked until the replacement succeeds for the exact
   workspace generation or the provider verifies removal.
+  A replacement operation can retry the same signed digest after rollback.
+  Redelivery of a failed operation only reports the recorded rollback.
   T120 reopens the controller database after staging and activation receipt
   writes with an outstanding worker lease. Both confirmed activation and
   rollback settle the same persisted target and campaign after restart.

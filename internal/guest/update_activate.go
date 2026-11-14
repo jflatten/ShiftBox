@@ -42,15 +42,15 @@ func (j *localJournal) activateUpdate(dispatch guestDispatch) error {
 	switch {
 	case trial.Active == digest:
 		return j.saveOperation(next)
-	case trial.Candidate == digest && trial.Phase == "testing":
+	case trial.Candidate == digest && trial.Phase == "testing" && (trial.Operation == "" || trial.Operation == dispatch.ID):
 		// The first authenticated poll is still in progress. Leave the
 		// staging receipt available until it confirms the running trial.
 		return nil
-	case trial.Candidate == digest && trial.Phase == "failed":
+	case trial.Candidate == digest && trial.Phase == "failed" && (trial.Operation == "" || trial.Operation == dispatch.ID):
 		next.Phase, next.Problem = localFailed, problemGuestUpdateRollback
 		return j.saveOperation(next)
 	}
-	if err := requestGuestUpdateTrial(path, digest, false); err != nil {
+	if err := requestGuestUpdateTrial(path, digest, dispatch.ID); err != nil {
 		return err
 	}
 	return errGuestUpdateRestart

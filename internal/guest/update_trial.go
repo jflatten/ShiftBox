@@ -17,6 +17,7 @@ type guestUpdateTrial struct {
 	Candidate [sha256.Size]byte `json:"candidate"`
 	Phase     string            `json:"phase"`
 	Attempt   string            `json:"attempt,omitempty"`
+	Operation string            `json:"operation,omitempty"`
 }
 
 type guestUpdateBoot struct {
@@ -27,26 +28,33 @@ type guestUpdateBoot struct {
 // The guest agent requests activation at a safe boundary. The supervisor
 // records the attempt before starting the candidate. A subsequent supervisor
 // start after an unconfirmed attempt selects the last confirmed binary.
-func requestGuestUpdateTrial(path string, candidate [sha256.Size]byte, retry bool) error {
+// Retrying the same failed digest requires a new controller operation ID.
+func requestGuestUpdateTrial(path string, candidate [sha256.Size]byte, operation string) error {
 	trial, err := loadGuestUpdateTrial(path)
 	if err != nil {
 		return err
 	}
-	if candidate == ([sha256.Size]byte{}) {
+	if candidate == ([sha256.Size]byte{}) || !validGuestUpdateOperation(operation) {
 		return errGuestUpdateTrialConflict
 	}
-	if trial.Phase == "requested" && trial.Candidate == candidate {
+	if trial.Phase == "requested" && trial.Candidate == candidate && trial.Operation == operation {
 		return nil
 	}
 	if trial.Phase == "requested" || trial.Phase == "testing" ||
-		(trial.Phase == "failed" && trial.Candidate == candidate && !retry) {
+		(trial.Phase == "failed" && trial.Candidate == candidate && (trial.Operation == "" || trial.Operation == operation)) {
 		return errGuestUpdateTrialConflict
 	}
 	if trial.Active == candidate {
 		return nil
 	}
 	trial.Candidate, trial.Phase, trial.Attempt = candidate, "requested", ""
+	trial.Operation = operation
 	return trial.save(path)
+}
+
+func validGuestUpdateOperation(operation string) bool {
+	id, err := uuid.Parse(operation)
+	return err == nil && id != uuid.Nil && id.String() == operation
 }
 
 func nextGuestUpdateBinary(path string) (guestUpdateBoot, error) {
@@ -111,7 +119,7 @@ func loadGuestUpdateTrial(path string) (guestUpdateTrial, error) {
 }
 
 func (t guestUpdateTrial) valid() bool {
-	if t.Candidate == ([sha256.Size]byte{}) {
+	if t.Candidate == ([sha256.Size]byte{}) || (t.Operation != "" && !validGuestUpdateOperation(t.Operation)) {
 		return false
 	}
 	switch t.Phase {

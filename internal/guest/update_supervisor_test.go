@@ -16,7 +16,7 @@ func TestConfirmRunningGuestTrial(t *testing.T) {
 	dir := t.TempDir()
 	digest := sha256.Sum256([]byte("fixture agent"))
 	path := filepath.Join(dir, "update-trial.json")
-	if err := requestGuestUpdateTrial(path, digest, false); err != nil {
+	if err := requestGuestUpdateTrial(path, digest, firstTrialOperation); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := nextGuestUpdateBinary(path); err != nil {
@@ -78,7 +78,7 @@ func TestSelectGuestAgent(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := requestGuestUpdateTrial(trialPath, digest, false); err != nil {
+			if err := requestGuestUpdateTrial(trialPath, digest, firstTrialOperation); err != nil {
 				t.Fatal(err)
 			}
 			want, phase := platform, "failed"
