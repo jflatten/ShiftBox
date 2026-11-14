@@ -24,6 +24,12 @@ The PostgreSQL catalog case and the browser workspace journal check were
 skipped in this run. GitHub checkout, the browser IDE, and project repair
 remain part of T061.
 
+On November 14, two disposable QEMU guests remained in UTM's `starting`
+state. After an operator-approved UTM restart, `TestUTMGuestEnrollment`
+passed in 89.89 seconds against the same pinned export. The fresh clone
+made its authenticated poll after 65 seconds. Offboarding preserved its
+owned disk, and test cleanup confirmed removal of the new clone.
+
 ## Dev Container fixtures
 
 `TestDevContainerReleaseFixtures` passed for the digest-pinned Debian

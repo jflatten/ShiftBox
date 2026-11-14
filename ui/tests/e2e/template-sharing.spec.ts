@@ -58,6 +58,7 @@ test('shares a template while preserving workspace and guest owner authority', a
     const templates: { items: { id: string; ownerId: string; name: string; currentRevision: number }[] } = await templateList.json();
     const template = templates.items.find(item => item.name === fixture.templateName);
     if (!template || template.ownerId !== adminSession.user.id) throw new Error('The sharing fixture needs an active template owned by its administrator');
+    const templateGrantsAPI = `/api/v1/templates/${template.id}/grants`;
     const assertLaunchDenied = async () => {
       const response = await member.request.post('/api/v1/workspaces', {
         headers: { Origin: origin, 'X-CSRF-Token': memberSession.csrfToken, 'Idempotency-Key': randomUUID() },
@@ -99,6 +100,13 @@ test('shares a template while preserving workspace and guest owner authority', a
       await templateRow(administrator, fixture.templateName).getByRole('button', { name: 'Project secrets' }).click();
       await saveSecret(administrator, secretKey, values.project);
       await saveSecret(administrator, projectOnlyKey, values.project);
+      const unacknowledged = await administrator.request.post(templateGrantsAPI, {
+        headers: { Origin: origin, 'X-CSRF-Token': adminSession.csrfToken, 'Idempotency-Key': randomUUID() },
+        data: { userId: memberSession.user.id, acknowledgeProjectSecretExposure: false },
+      });
+      expect(unacknowledged.status()).toBe(400);
+      expect((await unacknowledged.json()).code).toBe('template.grant_invalid');
+      await assertLaunchDenied();
       await verifyGuestSecret(memberTerminal, secretKey, values.organization);
       await verifyGuestSecret(memberTerminal, projectOnlyKey, undefined);
 
@@ -120,6 +128,8 @@ test('shares a template while preserving workspace and guest owner authority', a
       await member.getByRole('radio', { name: `${fixture.templateName} · Revision ${template.currentRevision}` }).check();
       await member.getByRole('button', { name: 'Review launch' }).click();
       await expect(member.getByRole('heading', { name: `${fixture.templateName} · Revision ${template.currentRevision}` })).toBeVisible();
+      const projectMetadata = await member.request.get(`/api/v1/secrets?scope=template&scopeId=${encodeURIComponent(template.id)}`);
+      expect(projectMetadata.status()).toBe(403);
       await verifyGuestSecret(memberTerminal, secretKey, values.project);
       await verifyGuestSecret(memberTerminal, projectOnlyKey, values.project);
     });
@@ -205,6 +215,11 @@ test('shares a template while preserving workspace and guest owner authority', a
       // open a second connection once the exact grant is revoked.
       const previousEntry = await adminIDE.reload({ waitUntil: 'domcontentloaded' });
       expect(previousEntry?.status()).toBe(403);
+      const newEntry = await administrator.request.post(`${workspaceAPI}/entry-grants`, {
+        headers: { Origin: origin, 'X-CSRF-Token': adminSession.csrfToken },
+        data: { service: 'ide' },
+      });
+      expect(newEntry.status()).toBe(403);
       await administrator.reload();
       await expect(administrator.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
       await expect(administrator.getByRole('button', { name: 'Open IDE', exact: true })).toHaveCount(0);

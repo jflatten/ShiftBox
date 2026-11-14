@@ -3,6 +3,17 @@ import { expect, test } from '@playwright/test';
 const workspaceId = '42c5a1d9-fc7a-4fc7-9905-0037e6bf0130';
 const operationId = '42c5a1d9-fc7a-4fc7-9905-0037e6bf0131';
 const resources = { cpuCount: 2, memoryMiB: 1024, diskMiB: 4096 };
+const memberSession = {
+  user: { id: 'member', role: 'member' }, mode: 'normal', installationState: 'active',
+  csrfToken: 'operations-fixture', permissions: [],
+};
+
+const retainedWorkspace = {
+  id: workspaceId, name: 'Operations fixture', ownerId: 'member', resources,
+  templateId: 'fixture-template', templateRevision: 1, platformRelease: 'fixture-release',
+  desiredState: 'stopped', observedState: 'stopped', currentOperationId: null,
+  lastActivityAt: null, retentionDeadline: null, version: 1,
+};
 
 test.describe('operations with a fixture controller', () => {
   // Safe-boundary waiting and rollback are server-driven. The browser never
@@ -58,10 +69,7 @@ test.describe('operations with a fixture controller', () => {
     let deleting = false;
     await page.route('**/api/v1/**', route => {
       const { pathname } = new URL(route.request().url());
-      if (pathname.endsWith('/session')) return route.fulfill({ json: {
-        user: { id: 'member', role: 'member' }, mode: 'normal', installationState: 'active',
-        csrfToken: 'operations-fixture', permissions: [],
-      } });
+      if (pathname.endsWith('/session')) return route.fulfill({ json: memberSession });
       if (pathname.endsWith(`/workspaces/${workspaceId}`)) return route.fulfill({ json: {
         id: workspaceId, name: workspaceName, resources, desiredState: deleting ? 'deleted' : 'stopped', observedState: 'stopped',
         currentOperationId: deleting ? operationId : null, version: deleting ? 2 : 1,
@@ -96,5 +104,146 @@ test.describe('operations with a fixture controller', () => {
     await expect(dialog).toBeHidden();
     await expect(page.getByText(/unconfirmed resources remain reserved/i)).toBeVisible();
     expect(deleting).toBe(true);
+  });
+
+  // The workspace renders the server's inactivity clock and keeps cleanup
+  // paused during controller recovery grace.
+  test('retention shows recorded activity and recovery grace', async ({ page }) => {
+    const lastActivity = '2026-11-14T12:00:00Z';
+    const deadline = '2026-11-15T12:00:00Z';
+    const graceUntil = '2026-11-15T13:00:00Z';
+    let state: 'disabled' | 'grace' | 'ready' = 'disabled';
+    await page.route('**/api/v1/**', route => {
+      const { pathname } = new URL(route.request().url());
+      if (pathname.endsWith('/session')) return route.fulfill({ json: memberSession });
+      if (pathname.endsWith(`/workspaces/${workspaceId}`)) return route.fulfill({ json: {
+        ...retainedWorkspace,
+        lastActivityAt: lastActivity,
+        retentionDeadline: state === 'disabled' ? null : deadline,
+        retention: { state, ...(state === 'grace' ? { graceUntil } : {}) },
+      } });
+      return route.fulfill({ status: 404, json: {} });
+    });
+    await page.goto(`/workspaces/?id=${workspaceId}`);
+    await expect(page.locator(`time[datetime="${lastActivity}"]`)).toBeVisible();
+    await expect(page.getByText('No deadline scheduled')).toBeVisible();
+    await expect(page.getByText('Automatic retention cleanup')).toHaveCount(0);
+    state = 'grace';
+    await page.reload();
+    await expect(page.getByText('Retention cleanup paused')).toBeVisible();
+    await expect(page.getByText(/Recovery grace ends/).locator('time')).toHaveAttribute('datetime', graceUntil);
+    await expect(page.locator(`time[datetime="${deadline}"]`)).toBeVisible();
+    await expect(page.getByText('Workspace deletion is in progress')).toHaveCount(0);
+    state = 'ready';
+    await page.reload();
+    await expect(page.getByText('Automatic retention cleanup')).toBeVisible();
+    await expect(page.getByText('Retention cleanup paused')).toHaveCount(0);
+    await expect(page.getByText(/Management backups exclude workspace disks/)).toBeVisible();
+  });
+
+  // A stopped workspace with a refused recovery still has its retained
+  // storage and offers no IDE entry while the controller reports failure.
+  test('a refused long-stop recovery leaves the workspace stopped', async ({ page }) => {
+    const refusal = 'The retained guest identity is ineligible for automatic recovery. Ask an administrator to verify the workspace.';
+    let startRequested = false;
+    let refused = false;
+    await page.route('**/api/v1/**', route => {
+      const request = route.request();
+      const { pathname } = new URL(request.url());
+      if (pathname.endsWith('/session')) return route.fulfill({ json: memberSession });
+      if (pathname.endsWith(`/workspaces/${workspaceId}`)) return route.fulfill({ json: {
+        ...retainedWorkspace,
+        currentOperationId: startRequested && !refused ? operationId : null,
+        lastFailedOperationId: refused ? operationId : null,
+        desiredState: startRequested ? 'running' : 'stopped',
+        canOpenIde: false,
+      } });
+      if (pathname.endsWith('/actions/start')) {
+        expect(request.method()).toBe('POST');
+        expect(request.headers()['if-match']).toBe('"1"');
+        startRequested = true;
+        return route.fulfill({ status: 202, json: { id: operationId } });
+      }
+      if (pathname.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: 'retry: 1000\n\n' });
+      if (pathname.endsWith(`/operations/${operationId}`)) return route.fulfill({ json: {
+        id: operationId, status: refused ? 'failed' : 'waiting', currentStep: 'start', version: refused ? 2 : 1,
+        steps: [{ key: 'start', index: 0, label: 'Start workspace', status: refused ? 'failed' : 'active',
+          detail: refused ? refusal : 'Checking the retained guest identity.' }],
+      } });
+      return route.fulfill({ status: 404, json: {} });
+    });
+    await page.goto(`/workspaces/?id=${workspaceId}`);
+    await page.getByRole('button', { name: 'Start workspace', exact: true }).click();
+    await expect(page.getByText('Checking the retained guest identity.')).toBeVisible();
+    refused = true;
+    await expect(page.getByText(refusal)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start workspace: Failed' })).toBeVisible();
+    await expect(page.getByText('Observed state', { exact: true }).locator('..')).toContainText('Stopped');
+    await expect(page.getByText(/4096 MiB disk/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open IDE' })).toHaveCount(0);
+  });
+
+  // A controller revocation on the active event stream immediately removes
+  // the previously visible operation evidence.
+  test('live operation revocation removes cached progress', async ({ page }) => {
+    let revoked = false;
+    const detail = 'Waiting for this workspace to reach a safe boundary.';
+    await page.route('**/api/v1/**', route => {
+      const { pathname } = new URL(route.request().url());
+      if (pathname.endsWith('/session')) return route.fulfill({ json: memberSession });
+      if (pathname.endsWith(`/workspaces/${workspaceId}`)) return route.fulfill({ json: {
+        ...retainedWorkspace, currentOperationId: operationId,
+      } });
+      if (pathname.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: revoked
+        ? 'event: authorization.revoked\ndata: {}\n\n' : 'retry: 1000\n\n' });
+      if (pathname.endsWith(`/operations/${operationId}`)) return route.fulfill({ json: {
+        id: operationId, status: 'waiting', currentStep: 'update_guests', version: 1,
+        steps: [{ key: 'update_guests', index: 0, label: 'Update workspace', status: 'active', detail }],
+      } });
+      return route.fulfill({ status: 404, json: {} });
+    });
+    await page.goto(`/workspaces/?id=${workspaceId}`);
+    await expect(page.getByText(detail)).toBeVisible();
+    revoked = true;
+    await expect(page.getByText('You no longer have access to this operation.')).toBeVisible();
+    await expect(page.getByText(detail)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Update workspace: In progress' })).toHaveCount(0);
+  });
+
+  // The preview launch uses the selected private service and leaves the
+  // management origin through its scoped, referrer-free entry link.
+  test('a private preview opens on its own HTTPS origin', async ({ page }) => {
+    const previewOrigin = 'https://preview-4173--operations.preview.test';
+    const exchange = `${previewOrigin}/_shiftbox/entry?grant=preview-fixture`;
+    await page.route('**/api/v1/**', route => {
+      const request = route.request();
+      const { pathname } = new URL(request.url());
+      if (pathname.endsWith('/session')) return route.fulfill({ json: memberSession });
+      if (pathname.endsWith(`/workspaces/${workspaceId}`)) return route.fulfill({ json: {
+        ...retainedWorkspace, desiredState: 'running', observedState: 'running',
+        canOpenPreviews: true, previewPorts: [4173],
+      } });
+      if (pathname.endsWith('/entry-grants')) {
+        expect(request.method()).toBe('POST');
+        expect(request.headers()['x-csrf-token']).toBe(memberSession.csrfToken);
+        expect(request.postDataJSON()).toEqual({ service: 'preview-4173' });
+        return route.fulfill({ json: { exchangeUrl: exchange } });
+      }
+      return route.fulfill({ status: 404, json: {} });
+    });
+    await page.route(`${previewOrigin}/**`, route => {
+      const request = route.request();
+      if (request.url() === exchange) {
+        expect(request.headers()['referer']).toBeUndefined();
+        return route.fulfill({ status: 302, headers: { location: '/' } });
+      }
+      return route.fulfill({ contentType: 'text/html', body: '<h1>Private preview fixture</h1>' });
+    });
+    await page.goto(`/workspaces/?id=${workspaceId}`);
+    const managementOrigin = new URL(page.url()).origin;
+    expect(managementOrigin).not.toBe(previewOrigin);
+    await page.getByRole('button', { name: 'Open preview 4173' }).click();
+    await expect(page).toHaveURL(`${previewOrigin}/`);
+    await expect(page.getByRole('heading', { name: 'Private preview fixture' })).toBeVisible();
   });
 });

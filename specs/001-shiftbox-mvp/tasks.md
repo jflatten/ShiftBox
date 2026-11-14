@@ -1777,6 +1777,10 @@ This checkpoint does not itself change the goal status.
   rollback display, destructive confirmation, and unresolved cleanup.
   Both passed using the exported UI and installed Chrome. The broader
   operations journey depends on the native workspace validation in T061.
+  T088 expanded the installed-Chrome fixture run to six passing cases,
+  including inactivity and recovery grace, refused long-stop recovery,
+  workflow access revocation, and private preview navigation. Live proxy,
+  sibling-origin and native recovery checks remain open.
   T120 reopens the controller database after staging and activation receipt
   writes with an outstanding worker lease. Both confirmed activation and
   rollback settle the same persisted target and campaign after restart.

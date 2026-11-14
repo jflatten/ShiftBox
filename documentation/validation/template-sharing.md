@@ -51,5 +51,11 @@ go test ./tests/acceptance -run '^TestTemplateSharingJournal$' -count=1 -v
 | Owner-bound Git | Private repository access before owner disconnection, denied access afterward, and distinct persisted Git authorization states | Pending fixture |
 | Test discovery | TypeScript typecheck, Chrome collection, and Go test discovery | Passed |
 
+T068 covers direct grant refusal without the project-secret acknowledgement,
+management metadata denial to an authorized member, and refusal to issue a
+new IDE entry grant after administrator access is revoked. The corresponding
+Go contract tests passed under the race detector. The native browser and
+journal runs remain pending.
+
 The browser archives the fixture template and revokes Git and workspace grants.
 Provision a fresh fixture for another complete run.
