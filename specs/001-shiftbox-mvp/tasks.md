@@ -1828,3 +1828,11 @@ This checkpoint does not itself change the goal status.
   failure and its detail after a reload. A newer workflow supersedes it.
 - Go contract and web race tests, 31 UI tests, and the production build
   passed. Recovery actions and operation history remain open.
+
+### Infrastructure status API
+
+- The administrator status route reports provider identity and network modes,
+  the saved capacity budget and version, and certificate validity warnings.
+  The 30-day warning is computed from the active certificate's stored dates.
+- Web, application, and contract race tests passed. Infrastructure UI,
+  broader health conditions, and full controller startup remain open.

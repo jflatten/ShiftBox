@@ -46,6 +46,7 @@ func NewManagementServices(db *sql.DB, settings config.InstallationSettings, jou
 	}
 	for _, handler := range []web.AuthorizedHandler{
 		listWorkspaces, getWorkspace, getOperation, streamEvents, listTemplates, createTemplate, reviseTemplate, budget, resourceProfile,
+		web.InfrastructureStatusHandler(db, origin, now, launchPolicy.Capabilities),
 		web.TemplateUpdateHandler(db, origin, now), grantTemplate, revokeTemplate,
 		web.WorkspaceLaunchHandler(db, origin, now, journal, launchPolicy),
 		web.WorkspacePowerHandler(db, origin, now, journal),
