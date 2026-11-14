@@ -8,7 +8,10 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
 
 	"github.com/jflatten/ShiftBox/internal/provider"
 )
@@ -97,4 +100,35 @@ func LaunchNetworkSnapshot(ctx context.Context, tx *sql.Tx, id string, caps prov
 		PolicyID string `json:"policyId"`
 	}{"shared", id})
 	return string(encoded), err
+}
+
+// VerifyStoppedNetwork verifies the exact configured VM while the caller holds
+// the lifecycle admission lock. The MVP shared policy only observes UTM.
+func VerifyStoppedNetwork(ctx context.Context, tx *sql.Tx, id string, generation int64, snapshot string,
+	verify func(context.Context, provider.NetworkRequest) (provider.Inventory, error),
+) error {
+	mode, err := effectiveNetworkMode(snapshot)
+	if err != nil || verify == nil {
+		return provider.ErrOutcomeUnknown
+	}
+	ref := provider.WorkspaceRef{WorkspaceID: id, Generation: generation}
+	var artifact, release string
+	err = tx.QueryRowContext(ctx, `SELECT w.installation_id,w.ownership_marker,COALESCE(w.provider_instance_id,''),w.platform_artifact_id,a.release_id
+		FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id
+		WHERE w.id=$1 AND w.generation=$2 AND w.desired_state='stopped' AND w.observed_state='stopped'`, id, generation).
+		Scan(&ref.InstallationID, &ref.OwnershipMarker, &ref.InstanceID, &artifact, &release)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && ref.InstanceID == "" {
+		return provider.ErrOutcomeUnknown
+	}
+	if err != nil {
+		return err
+	}
+	probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	got, err := verify(probe, provider.NetworkRequest{Ref: ref, OperationID: uuid.NewString(), Mode: mode})
+	if err != nil || got.Ref != ref || got.InstanceID != ref.InstanceID || got.Power != provider.Stopped ||
+		got.NetworkMode != mode || got.ArtifactID != artifact || got.Release != release || got.ObservedAt.IsZero() {
+		return provider.ErrOutcomeUnknown
+	}
+	return nil
 }

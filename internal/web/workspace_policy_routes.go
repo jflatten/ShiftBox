@@ -98,6 +98,14 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 		(network != nil && (view.DesiredState != "stopped" || view.ObservedState != "stopped")) {
 		return nil, Problem{Status: 409, Code: "workspace.policy_unavailable", Title: "Wait for current work to finish and stop the workspace before changing its network policy"}
 	}
+	if network != nil {
+		if err := workspace.VerifyStoppedNetwork(ctx, tx, id, view.Generation, *network, policy.VerifyNetwork); err != nil {
+			if errors.Is(err, provider.ErrOutcomeUnknown) {
+				return nil, Problem{Status: 409, Code: "workspace.network_policy_unverified", Title: "Verify the stopped workspace network in the provider before saving this policy"}
+			}
+			return nil, err
+		}
+	}
 	var baseline string
 	var deadline *string
 	removed := map[string]bool{}

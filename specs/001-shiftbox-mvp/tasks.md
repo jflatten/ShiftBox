@@ -186,7 +186,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 
 - [ ] T089 [US3] Add network/activity/maintenance/notice migrations in `migrations/sqlite/00005_operations.sql` and `migrations/postgres/00005_operations.sql`, preserving these verbatim constraints: NetworkPolicy `name` is a "Unique display name", mode is "`all`, `no_network`, or `allowlist`", and required exceptions include controller/proxy, DNS, Git, and approved auxiliary destinations; any selected active ActivityPolicy signal resets the deadline and an idle report does not; MaintenanceCampaign state is "`scheduled`, `active`, `blocked`, `completed`, `cancelled`" and MaintenanceTarget state is "`pending`, `waiting_safe`, `updating`, `verified`, `restoring_state`, `failed`, `completed`"; persistent operational notices remain visible while their condition is active regardless of dismissal history
 - [ ] T090 [US3] Complete admission/reconciliation behavior for explicit limiting-resource errors, no queue/eviction/resize, retained reservations, orphan/conflict visibility, and restart-safe inspection proven by T079 in `internal/workspace/capacity.go`, `internal/workspace/reconciler.go`, and `internal/provider/reconcile.go`
-- [ ] T091 [US3] Implement provider-capability-derived network policies, stopped-only application, explicit required exceptions, post-change verification, and remain-stopped failure behavior proven by T080 in `internal/workspace/network.go` and `internal/provider/utm/network.go`
+- [X] T091 [US3] Implement provider-capability-derived network policies, stopped-only application, explicit required exceptions, post-change verification, and remain-stopped failure behavior proven by T080 in `internal/workspace/network.go` and `internal/provider/utm/network.go`
 - [ ] T092 [US3] Implement transactional user/permission/session/origin/guest revocation publication and closure of all established connection types proven by T081 in `internal/auth/revocation.go`, `internal/proxy/registry.go`, and `internal/guest/tunnel.go`
 - [X] T093 [US3] Implement activity observations, retention deadlines, host-outage grace, precommit authority/activity/state recheck, graceful then provider-enforced deletion, and verified reservation release proven by T082 in `internal/workspace/activity.go`, `internal/workspace/retention.go`, and `internal/workspace/delete.go`
 - [ ] T094 [US3] Implement long-stop eligibility verification and provider-mediated enrollment recovery without disk/identity reset proven by T084 in `internal/workspace/recovery.go` and `internal/provider/utm/enrollment.go`
@@ -2843,3 +2843,13 @@ This checkpoint does not itself change the goal status.
   credentials. SQLite and PostgreSQL migrations, TypeScript, and 84 UI
   tests passed. Native UTM preview and browser isolation remain part of the
   release acceptance tests.
+
+### Stopped-workspace network verification
+
+- T091 verifies the exact stopped instance, generation, ownership, artifact,
+  and effective network mode through the UTM provider before committing a
+  network policy edit. A failed or mismatched observation leaves the
+  stopped workspace and its settings intact. The only verified UTM mode
+  remains shared outbound access, with no exception rules required.
+- Race-enabled policy contracts and the native UTM 5.0.8 stopped fixture
+  passed. The native fixture was removed after verification.

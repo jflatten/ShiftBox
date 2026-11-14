@@ -98,7 +98,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if err != nil {
 		return err
 	}
-	policy := web.WorkspaceLaunchPolicy{Capabilities: caps, Protocols: []string{guestProtocol}}
+	policy := web.WorkspaceLaunchPolicy{Capabilities: caps, Protocols: []string{guestProtocol}, VerifyNetwork: machines.ApplyNetwork}
 	services, err := app.NewManagementServices(state, journal, tunnels.Registry, policy, github, passwords, time.Now)
 	if err != nil {
 		return err

@@ -1,6 +1,7 @@
 package contract_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -40,14 +41,27 @@ func TestWorkspacePolicyUpdate(t *testing.T) {
 	}
 	exec(`INSERT INTO workspaces(id,installation_id,owner_user_id,template_id,template_revision,platform_artifact_id,
 		repository_url,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,desired_state,observed_state,
-		generation,ownership_marker,created_at,updated_at,version)
+		generation,ownership_marker,provider_instance_id,created_at,updated_at,version)
 		SELECT $1,id,'member',$2,1,'artifact','https://github.com/example/repo','.devcontainer/devcontainer.json',
-		2,1024,40,'{"mode":"shared"}','stopped','running',1,'owned',$3,$3,1 FROM installations`, id, templateID, now.Add(-2*time.Hour).Format(time.RFC3339Nano))
+		2,1024,40,'{"mode":"shared"}','stopped','running',1,'owned','fixture-vm',$3,$3,1 FROM installations`, id, templateID, now.Add(-2*time.Hour).Format(time.RFC3339Nano))
 	exec(`INSERT INTO network_policies(id,name,mode,rules_json,required_exceptions_json,provider_capability_version)
 		VALUES($1,'Outbound access','all','[]','[]','5.0.8')`, policyID)
 	limit := int64(86400)
+	verified, drift := 0, true
 	handler := web.WorkspacePolicyHandler(db, origin, func() time.Time { return now }, web.WorkspaceLaunchPolicy{
 		Capabilities: provider.Capabilities{Version: "5.0.8", NetworkModes: []string{"shared"}}, RetentionMaximum: &limit,
+		VerifyNetwork: func(ctx context.Context, req provider.NetworkRequest) (provider.Inventory, error) {
+			verified++
+			if req.Ref.WorkspaceID != id || req.Ref.InstanceID != "fixture-vm" || req.Ref.Generation != 1 || req.Mode != "shared" {
+				t.Errorf("network verification target = %+v, want exact stopped workspace with shared networking", req)
+			}
+			mode := req.Mode
+			if drift {
+				mode = "different"
+			}
+			return provider.Inventory{Ref: req.Ref, InstanceID: req.Ref.InstanceID, Power: provider.Stopped, NetworkMode: mode,
+				ArtifactID: "artifact", Release: "release", ObservedAt: now}, ctx.Err()
+		},
 	}, nil)
 	mux := http.NewServeMux()
 	mux.Handle("PATCH /api/v1/workspaces/{workspaceId}", &handler)
@@ -72,6 +86,15 @@ func TestWorkspacePolicyUpdate(t *testing.T) {
 	send(network, `"1"`, 409)
 	exec("UPDATE operations SET status='cancelled' WHERE id='policy-active-step'")
 	send(network, `"2"`, 412)
+	if verified != 0 {
+		t.Fatal("stale or busy policy requests reached provider verification")
+	}
+	send(network, `"1"`, 409)
+	var unchanged bool
+	if err := db.QueryRowContext(ctx, `SELECT version=1 AND observed_state='stopped' AND network_policy_override_json IS NULL FROM workspaces WHERE id=$1`, id).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatalf("failed verification left stopped workspace unchanged = %t (%v), want true", unchanged, err)
+	}
+	drift = false
 	send(`{"retentionSeconds":86401}`, `"1"`, 409)
 	send(`{"retentionSeconds":3600}`, `"1"`, 200)
 	var initialDeadline string
@@ -81,6 +104,9 @@ func TestWorkspacePolicyUpdate(t *testing.T) {
 	}
 	exec("UPDATE workspaces SET last_activity_at=$1 WHERE id=$2", now.Add(-10*time.Minute).Format(time.RFC3339Nano), id)
 	send(`{"retentionSeconds":3600,"networkPolicyId":"`+policyID+`"}`, `"2"`, 200)
+	if verified != 2 {
+		t.Errorf("network verification ran %d times, want two", verified)
+	}
 	var launch, current string
 	var deadline *string
 	var duration int64

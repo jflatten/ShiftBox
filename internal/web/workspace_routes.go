@@ -22,6 +22,8 @@ type WorkspaceLaunchPolicy struct {
 	Capabilities     provider.Capabilities
 	Protocols        []string
 	RetentionMaximum *int64
+	// VerifyNetwork observes the provider's supported stopped-VM network mode.
+	VerifyNetwork func(context.Context, provider.NetworkRequest) (provider.Inventory, error)
 }
 
 type workspaceLaunchRequest struct {
