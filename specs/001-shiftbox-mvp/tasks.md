@@ -92,7 +92,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T036 [P] [US1] Write failing workspace API tests for `/workspaces`, lifecycle actions, operation lookup/events, conditional versions, idempotency, capacity problems, and short-lived entry grants in `tests/contract/workspace_api_test.go`
 - [X] T037 [P] [US1] Write failing guest executor tests for persisted operation attempts, repository preparation, prebuilt-image and Dockerfile/build-definition Dev Containers, declared features, lifecycle-hook ordering/failure, separate declared `waitFor` and proxy readiness, rebuild retention checks, and repair without project automation in `internal/guest/executor_test.go`
 - [X] T038 [P] [US1] Write failing UI tests for setup forms, first-invalid focus, launch review, capacity refusal, server-driven progress, desired/observed state, retained-data copy, and repair explanation in `ui/features/setup/setup.test.tsx` and `ui/features/workspaces/workspaces.test.tsx`
-- [ ] T039 [P] [US1] Write failing Playwright MVP journey for keyboard-only setup, launch through SSE reconnect, delayed IDE readiness, file persistence across stop/start/rebuild, and repair access in `ui/tests/e2e/mvp-workspace.spec.ts`
+- [X] T039 [P] [US1] Write failing Playwright MVP journey for keyboard-only setup, launch through SSE reconnect, delayed IDE readiness, file persistence across stop/start/rebuild, and repair access in `ui/tests/e2e/mvp-workspace.spec.ts`
 
 ### Models and stores
 
@@ -1641,6 +1641,11 @@ This checkpoint does not itself change the goal status.
   export, authenticated the guest in 3m50s, and cleaned up the copy. The
   full test took 244.10s. Packer recipe validation and release race tests
   passed.
+
+- T039 supplies the real Chrome journey for setup, SSE reconnection, IDE
+  readiness, retained edits, and repair. Playwright discovery and a local
+  Chrome editor smoke test with pinned code-server passed. The complete
+  native journey remains T061.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
