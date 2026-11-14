@@ -1803,6 +1803,12 @@ This checkpoint does not itself change the goal status.
   separate schemas and use the expected search paths. A disposable PostgreSQL
   test passed with scoped roles and verified refusal when the Dex login was
   missing or unusable, or the application search path had changed.
+- The native PostgreSQL tool check passed with matching `pg_dump` and
+  `pg_restore` against a disposable database. It blocked when `pg_dump`
+  reported an incompatible major or `pg_restore` failed to run. The CLI
+  returned exit 7 with `migration.installation_unverified` against the older
+  SQLite acceptance snapshots, whose schema versions were 17 and 19 while
+  the current executable expects 27.
   Irreversible migration acceptance remains open.
 
 ### Migration preflight management route

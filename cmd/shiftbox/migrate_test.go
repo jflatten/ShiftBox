@@ -11,7 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/config"
+	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/release"
 	"github.com/jflatten/ShiftBox/internal/web"
@@ -173,5 +175,42 @@ func TestMigrationStorageRequiresBothDirectories(t *testing.T) {
 		if err != nil || len(entries) != 0 {
 			t.Errorf("migrationStorageWritable left %d entries in a probe directory (%v)", len(entries), err)
 		}
+	}
+}
+
+// TestMigrationBackupToolsAgainstPostgres checks that an otherwise usable
+// PostgreSQL installation is blocked if either native backup utility differs
+// from the live server major version or cannot be run.
+func TestMigrationBackupToolsAgainstPostgres(t *testing.T) {
+	uri := os.Getenv("SHIFTBOX_TEST_BACKUP_APP_URI")
+	if uri == "" {
+		t.Skip("requires a disposable PostgreSQL application database")
+	}
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "postgres", PostgresURI: uri, Schema: "shiftbox"})
+	if err != nil {
+		t.Fatal("could not connect to the PostgreSQL fixture")
+	}
+	t.Cleanup(func() { db.Close() })
+	state := &app.ControllerState{DB: db}
+	if !migrationBackupTools(ctx, state, "postgres") {
+		t.Fatal("migrationBackupTools with native matching tools = false, want true")
+	}
+	for _, test := range []struct {
+		name, tool, script string
+	}{
+		{name: "mismatched dump", tool: "pg_dump", script: "#!/bin/sh\nprintf 'pg_dump (PostgreSQL) 1.0\\n'\n"},
+		{name: "unavailable restore", tool: "pg_restore", script: "#!/bin/sh\nexit 1\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, test.tool), []byte(test.script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if migrationBackupTools(t.Context(), state, "postgres") {
+				t.Errorf("migrationBackupTools with %s = true, want false", test.name)
+			}
+		})
 	}
 }
