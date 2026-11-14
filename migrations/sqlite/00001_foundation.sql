@@ -1,7 +1,7 @@
 -- +goose Up
 -- One stable installation UUID is activated; generations advance in activation transactions.
 CREATE TABLE installations (
- id TEXT PRIMARY KEY,
+ id TEXT NOT NULL PRIMARY KEY CHECK (length(id) = 36 AND substr(id,9,1) = '-' AND substr(id,14,1) = '-' AND substr(id,19,1) = '-' AND substr(id,24,1) = '-' AND length(replace(id,'-','')) = 32 AND replace(id,'-','') NOT GLOB '*[^0-9a-fA-F]*'),
  singleton INTEGER NOT NULL DEFAULT 1 UNIQUE CHECK (singleton = 1),
  state TEXT NOT NULL CHECK (state IN ('bootstrap','configuring','active','recovery','blocked')),
  organization_name TEXT NOT NULL CHECK (length(trim(organization_name)) > 0),

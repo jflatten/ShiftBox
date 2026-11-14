@@ -572,3 +572,15 @@ This checkpoint does not itself change the goal status.
   certificate, hostname, restore, or authorization validation. Those consuming
   gates and the remaining T018 constraints are still pending. No additional task
   is marked complete, and the architecture documents remain unchanged.
+
+### Installation identity constraints
+
+- Added explicit non-null UUID-format constraints to the initial installation
+  table in both dialects. The test exposed SQLite accepting a null TEXT primary
+  key; the new NOT NULL constraint closes that gap.
+- Raw-SQL tests reject null/empty/malformed identities and verify that two valid,
+  distinct UUIDs with distinct management origins still cannot bypass the singleton
+  installation rule. Updated test fixtures to use valid installation UUIDs.
+- Contract/config/auth/web race suites pass with the PostgreSQL fixture enabled;
+  formatting and vet pass. These are initial-schema changes, not a migration of
+  the existing development database. T018 remains incomplete for its other gates.

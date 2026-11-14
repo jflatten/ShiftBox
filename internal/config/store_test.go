@@ -47,10 +47,10 @@ func checkActivationGeneration(t *testing.T, profile string) {
 	if _, err := db.ExecContext(ctx, strings.ReplaceAll(string(ddl), "CREATE TABLE ", "CREATE TEMPORARY TABLE ")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO installations(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version) VALUES('installation','configuring','ShiftBox','sqlite','https://management.test','{workspace}.ide.test','{workspace}-{service}.preview.test','release','release','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z',1)`); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO installations(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version) VALUES('00000000-0000-4000-8000-000000000001','configuring','ShiftBox','sqlite','https://management.test','{workspace}.ide.test','{workspace}-{service}.preview.test','release','release','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z',1)`); err != nil {
 		t.Fatal(err)
 	}
-	activation := config.Activation{InstallationID: "installation", ExpectedGeneration: 0, SettingsJSON: `{"profile":"sqlite"}`, ActorID: "setup", ActivatedAt: time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)}
+	activation := config.Activation{InstallationID: "00000000-0000-4000-8000-000000000001", ExpectedGeneration: 0, SettingsJSON: `{"profile":"sqlite"}`, ActorID: "setup", ActivatedAt: time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)}
 	apply := func(tx *sql.Tx) error {
 		generation, err := config.RecordActivation(ctx, tx, activation)
 		if err == nil && generation != activation.ExpectedGeneration+1 {
@@ -77,7 +77,7 @@ func checkActivationGeneration(t *testing.T, profile string) {
 	check := func(want int64) {
 		t.Helper()
 		var generation, active, count int64
-		if err := db.QueryRowContext(ctx, `SELECT config_generation FROM installations WHERE id='installation'`).Scan(&generation); err != nil {
+		if err := db.QueryRowContext(ctx, `SELECT config_generation FROM installations WHERE id='00000000-0000-4000-8000-000000000001'`).Scan(&generation); err != nil {
 			t.Fatal(err)
 		}
 		if err := db.QueryRowContext(ctx, `SELECT generation FROM activated_configurations WHERE retired_at IS NULL`).Scan(&active); err != nil {

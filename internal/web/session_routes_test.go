@@ -33,7 +33,7 @@ func TestLogoutPersistsRevocationBeforeConnectionClose(t *testing.T) {
 	}
 	store := auth.NewStore(db)
 	principal.User.PrimaryEmail = "member@example.test"
-	if _, err := db.ExecContext(ctx, `INSERT INTO installations(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version) VALUES('installation','active','ShiftBox','sqlite','https://management.test','{workspace}.ide.test','{workspace}-{service}.preview.test','release','release','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z',1)`); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO installations(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version) VALUES('00000000-0000-4000-8000-000000000001','active','ShiftBox','sqlite','https://management.test','{workspace}.ide.test','{workspace}-{service}.preview.test','release','release','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z',1)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
