@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/provider"
@@ -30,18 +31,22 @@ import (
 // for the same key, and denial after expiry or registration revocation.
 func TestEnrollmentGrantReplay(t *testing.T) {
 	ctx := context.Background()
-	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "guest.db")})
+	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "guest.db")}
+	if uri := os.Getenv("SHIFTBOX_TEST_GUEST_POSTGRES_URI"); uri != "" {
+		cfg = database.Config{Profile: "postgres", PostgresURI: uri, Schema: "shiftbox_test"}
+	}
+	db, err := database.Open(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+	if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
 		t.Fatal(err)
 	}
 	const install = "00000000-0000-4000-8000-000000000001"
 	_, err = db.Exec(`
 	INSERT INTO installations(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version)
-	VALUES('` + install + `','active','ShiftBox','sqlite','https://management.test','ide.test','preview.test','release','release','now','now',1);
+	VALUES('` + install + `','active','ShiftBox','` + cfg.Profile + `','https://management.test','ide.test','preview.test','release','release','now','now',1);
 	INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
 	VALUES('owner','a@example.test','member','active','local','setup','now','now',1);
 	INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state)
@@ -183,7 +188,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		}
 	}
 	server := httptest.NewUnstartedServer(web.GuestPollHandler(
-		web.GuestCompatibility{Protocol: "1", CurrentRelease: "test"}, enrollment.Authenticate, func() time.Time { return now }))
+		web.GuestCompatibility{Protocol: "1", CurrentRelease: "test", PreviousRelease: "previous"}, enrollment.Exchange, func() time.Time { return now }))
 	server.TLS = guest.ServerTLS(leafFixture(t, issuerKey, issuer, false), ca)
 	server.StartTLS()
 	defer server.Close()
@@ -191,21 +196,121 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		tls.Certificate{Certificate: [][]byte{first}, PrivateKey: clientKey}, ca, "controller.test")}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
-	poll := func(payload string) int {
+	pollResponse := func(payload string) (int, string) {
 		t.Helper()
 		response, err := client.Post(server.URL+"/internal/v1/guest/poll", "application/json", bytes.NewBufferString(payload))
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer response.Body.Close()
-		return response.StatusCode
+		var body bytes.Buffer
+		if _, err := body.ReadFrom(response.Body); err != nil {
+			t.Fatal(err)
+		}
+		return response.StatusCode, body.String()
 	}
+	poll := func(payload string) int { code, _ := pollResponse(payload); return code }
 	const hello = `{"protocolVersion":"1","guestRelease":"test"}`
 	if code := poll(hello); code != 200 {
 		t.Fatalf("registered poll = %d, want 200", code)
 	}
 	if code := poll(`{"protocolVersion":"1","guestRelease":"test","workspaceId":"foreign"}`); code != 400 {
 		t.Errorf("poll with forged workspace = %d, want 400", code)
+	}
+	// The previous release may still poll, but unsupported releases do not.
+	if code := poll(`{"protocolVersion":"1","guestRelease":"previous"}`); code != 200 {
+		t.Errorf("previous-release poll = %d, want 200", code)
+	}
+	if code := poll(`{"protocolVersion":"1","guestRelease":"unsupported"}`); code != 409 {
+		t.Errorf("unsupported-release poll = %d, want 409", code)
+	}
+	const configureID = "99999999-0000-4000-8000-000000000001"
+	if _, err := db.Exec(`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,version,originating_action)
+		VALUES($1,'work','provision',1,'owner','fixture-configuration','waiting','configure','now',7,'workspace.launch');
+	`, configureID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO operation_steps(operation_id,step_index,step_key,label,status)
+		VALUES($1,0,'configure','Configure','active')`, configureID); err != nil {
+		t.Fatal(err)
+	}
+	// Enrolled guests poll before the provider worker confirms that the VM is running.
+	if code, body := pollResponse(hello); code != 200 || !bytes.Contains([]byte(body), []byte(`"operation":null`)) {
+		t.Fatalf("stopped workspace poll = %d %s, want no configuration dispatch", code, body)
+	}
+	if _, err := db.Exec(`UPDATE workspaces SET observed_state='running' WHERE id='work'`); err != nil {
+		t.Fatal(err)
+	}
+	var dispatch struct {
+		Operation struct {
+			ID        string
+			Version   int64
+			Command   string
+			Arguments struct{ DevcontainerPath string }
+		}
+	}
+	code, body := pollResponse(hello)
+	if code != 200 || json.Unmarshal([]byte(body), &dispatch) != nil || dispatch.Operation.ID != configureID ||
+		dispatch.Operation.Version != 7 || dispatch.Operation.Command != "ensure-development-container" ||
+		dispatch.Operation.Arguments.DevcontainerPath != "devcontainer.json" {
+		t.Fatalf("configure poll = %d %s, want version-7 dispatch for the enrolled workspace snapshot", code, body)
+	}
+	if _, err := db.Exec(`UPDATE operations SET version=version+1 WHERE id=$1`, configureID); err != nil {
+		t.Fatal(err)
+	}
+	// Worker leases can advance the operation version while an already issued
+	// dispatch remains in flight.
+	if code, replay := pollResponse(hello); code != 200 || replay != body {
+		t.Fatalf("lost-dispatch replay = %d %s, want the original response %s", code, replay, body)
+	}
+	const containerID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	makeReport := func(version, generation, status, step, container string) string {
+		return `{"protocolVersion":"1","guestRelease":"test","lastOperationId":"` + configureID + `","lastOperationVersion":` + version +
+			`,"operationReport":{"operationId":"` + configureID + `","workspaceGeneration":` + generation + `,"status":"` + status +
+			`","step":"` + step + `","attempt":1,"evidence":{"containerId":"` + container + `","waitForReached":true}}}`
+	}
+	if code := poll(makeReport("6", "1", "running", "devcontainer.wait_for", containerID)); code != 409 {
+		t.Errorf("stale version poll = %d, want 409", code)
+	}
+	if code := poll(makeReport("7", "2", "running", "devcontainer.wait_for", containerID)); code != 409 {
+		t.Errorf("forged generation poll = %d, want 409", code)
+	}
+	if code := poll(makeReport("7", "1", "running", "devcontainer.wait_for", "unbounded evidence")); code != 409 {
+		t.Errorf("invalid container ID poll = %d, want 409", code)
+	}
+	if code := poll(makeReport("7", "1", "succeeded", "devcontainer.lifecycle", containerID)); code != 409 {
+		t.Errorf("completion before waitFor poll = %d, want 409", code)
+	}
+	const otherID = "99999999-0000-4000-8000-000000000002"
+	if _, err := db.Exec(`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,version)
+		VALUES($1,'other-workspace','provision',1,'owner','other-configuration','waiting','configure','now',7)`, otherID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO guest_configurations(operation_id,dispatch_version,status) VALUES($1,7,'pending')`, otherID); err != nil {
+		t.Fatal(err)
+	}
+	runningReport := makeReport("7", "1", "running", "devcontainer.wait_for", containerID)
+	if code := poll(string(bytes.ReplaceAll([]byte(runningReport), []byte(configureID), []byte(otherID)))); code != 409 {
+		t.Errorf("cross-workspace report = %d, want 409", code)
+	}
+	for range 2 {
+		if code := poll(runningReport); code != 200 {
+			t.Fatalf("waitFor report or replay = %d, want 200", code)
+		}
+	}
+	var status, storedContainer string
+	if err := db.QueryRow(`SELECT status,container_id FROM guest_configurations WHERE operation_id=$1`, configureID).Scan(&status, &storedContainer); err != nil ||
+		status != "running" || storedContainer != containerID {
+		t.Fatalf("persisted waitFor report = (%q, %q, %v), want running with container evidence", status, storedContainer, err)
+	}
+	done := makeReport("7", "1", "succeeded", "devcontainer.lifecycle", containerID)
+	for range 2 {
+		if code, body := pollResponse(done); code != 200 || !bytes.Contains([]byte(body), []byte(`"operation":null`)) {
+			t.Fatalf("terminal report or replay = %d %s, want no new dispatch", code, body)
+		}
+	}
+	if code := poll(runningReport); code != 409 {
+		t.Errorf("regressing terminal report = %d, want 409", code)
 	}
 	var authenticated string
 	if err := db.QueryRow("SELECT last_authenticated_at FROM guest_registrations WHERE workspace_id='work'").Scan(&authenticated); err != nil ||

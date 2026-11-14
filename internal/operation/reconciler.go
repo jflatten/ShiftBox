@@ -13,6 +13,13 @@ type Executor interface {
 	Apply(context.Context, Operation, Step) (evidence string, err error)
 }
 
+// StepFailure is a terminal effect outcome with a public, bounded description.
+type StepFailure struct {
+	Detail string
+}
+
+func (f *StepFailure) Error() string { return f.Detail }
+
 // Worker processes one operation step at a time with durable intent and fencing.
 type Worker struct {
 	Journal       *Journal
@@ -59,6 +66,9 @@ func (w *Worker) RunOnce(ctx context.Context, id string) error {
 		}
 	}
 	if err != nil {
+		if failure, ok := errors.AsType[*StepFailure](err); ok {
+			return w.Journal.failStep(ctx, claim, index, failure.Detail)
+		}
 		waitErr := w.Journal.wait(ctx, claim, "Waiting for a verified observation before retrying.")
 		return errors.Join(err, waitErr)
 	}
@@ -69,6 +79,25 @@ func (w *Worker) RunOnce(ctx context.Context, id string) error {
 		return w.Journal.wait(ctx, claim, "")
 	}
 	return nil
+}
+
+func (j *Journal) failStep(ctx context.Context, claim Claim, index int, detail string) error {
+	if detail == "" || len(detail) > 4096 {
+		return errors.New("failure requires bounded non-secret evidence")
+	}
+	return j.change(ctx, claim, detail, func(op *Operation) error {
+		if index < 0 || index >= len(op.Steps) || op.Steps[index].Status != "active" {
+			return ErrConflict
+		}
+		op.Steps[index].Status = "failed"
+		op.Steps[index].Detail = detail
+		op.Status = "failed"
+		op.leaseOwner = ""
+		op.leaseExpiresAt = time.Time{}
+		now := j.now().UTC()
+		op.FinishedAt = &now
+		return nil
+	})
 }
 
 func (j *Journal) wait(ctx context.Context, claim Claim, detail string) error {

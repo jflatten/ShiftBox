@@ -85,7 +85,7 @@ func GuestEnrollmentHandler(compatibility GuestCompatibility,
 // GuestPollHandler verifies current authority on every poll, including requests
 // on an existing TLS connection. Mount it on the internal mTLS listener.
 func GuestPollHandler(compatibility GuestCompatibility,
-	authenticate func(context.Context, *x509.Certificate, time.Time) (guest.Contact, error), now func() time.Time,
+	exchange func(context.Context, *x509.Certificate, time.Time, guest.PollReport) (guest.Contact, *guest.PollOperation, error), now func() time.Time,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /internal/v1/guest/poll", func(w http.ResponseWriter, r *http.Request) {
@@ -97,11 +97,11 @@ func GuestPollHandler(compatibility GuestCompatibility,
 			return
 		}
 		var input struct {
-			ProtocolVersion      string          `json:"protocolVersion"`
-			GuestRelease         string          `json:"guestRelease"`
-			LastOperationID      *string         `json:"lastOperationId"`
-			LastOperationVersion int64           `json:"lastOperationVersion"`
-			OperationReport      json.RawMessage `json:"operationReport"`
+			ProtocolVersion      string                 `json:"protocolVersion"`
+			GuestRelease         string                 `json:"guestRelease"`
+			LastOperationID      *string                `json:"lastOperationId"`
+			LastOperationVersion int64                  `json:"lastOperationVersion"`
+			OperationReport      *guest.OperationReport `json:"operationReport"`
 			Activity             *struct {
 				SampledAt      time.Time `json:"sampledAt"`
 				CPUPercent     float64   `json:"cpuPercent"`
@@ -120,18 +120,22 @@ func GuestPollHandler(compatibility GuestCompatibility,
 			WriteProblem(w, requestID, Problem{Status: 409, Code: "guest.release_unsupported", Title: "Guest release or protocol is unsupported"})
 			return
 		}
-		if len(input.OperationReport) != 0 && string(input.OperationReport) != "null" {
-			WriteProblem(w, requestID, Problem{Status: 409, Code: "operation.conflict", Title: "No guest operation has been dispatched"})
-			return
-		}
-		if authenticate == nil || now == nil {
+		if exchange == nil || now == nil {
 			WriteProblem(w, requestID, errors.New("guest polling is incompletely wired"))
 			return
 		}
 		stamp := now().UTC()
-		contact, err := authenticate(r.Context(), r.TLS.VerifiedChains[0][0], stamp)
+		report := guest.PollReport{Version: input.LastOperationVersion, Operation: input.OperationReport}
+		if input.LastOperationID != nil {
+			report.LastOperationID = *input.LastOperationID
+		}
+		contact, dispatch, err := exchange(r.Context(), r.TLS.VerifiedChains[0][0], stamp, report)
 		if errors.Is(err, guest.ErrGuestUnauthorized) {
 			WriteProblem(w, requestID, guestDenied)
+			return
+		}
+		if errors.Is(err, guest.ErrGuestReportConflict) {
+			WriteProblem(w, requestID, Problem{Status: 409, Code: "operation.conflict", Title: "Guest operation report conflicted with the current dispatch"})
 			return
 		}
 		if err != nil {
@@ -141,7 +145,7 @@ func GuestPollHandler(compatibility GuestCompatibility,
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"protocolVersion": compatibility.Protocol, "serverTime": stamp,
-			"workspaceGeneration": contact.Generation, "desiredState": contact.DesiredState, "operation": nil,
+			"workspaceGeneration": contact.Generation, "desiredState": contact.DesiredState, "operation": dispatch,
 			"certificate":          map[string]time.Time{"renewAfter": contact.RenewAfter},
 			"nextPollAfterSeconds": 30,
 		})

@@ -95,6 +95,58 @@ func TestLaunchWorkerWaitsForGuestContact(t *testing.T) {
 	if err != nil || op.Steps[1].Status != "succeeded" || op.Steps[2].Status != "pending" || enrollment.cleanups != 1 {
 		t.Fatalf("enrollment completion = %+v, %v, cleanup %d, want verified enrollment and pending configure", op, err, enrollment.cleanups)
 	}
+	if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, errGuestConfigurationPending) {
+		t.Fatalf("configure without guest report = %v, want pending", err)
+	}
+	const container = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if _, err := db.Exec(`INSERT INTO guest_configurations(operation_id,dispatch_version,status,container_id) VALUES($1,1,'running',$2)`, op.ID, container); err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, errGuestConfigurationPending) {
+		t.Fatalf("configure at waitFor = %v, want pending remaining hooks", err)
+	}
+	if _, err := db.Exec(`UPDATE guest_configurations SET status='succeeded' WHERE operation_id=$1`, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.RunOnce(ctx, op.ID); err != nil {
+		t.Fatalf("configure with guest success = %v, want nil", err)
+	}
+	op, err = journal.Get(ctx, op.ID)
+	if err != nil || op.Steps[2].Status != "succeeded" || op.Steps[3].Status != "pending" {
+		t.Fatalf("configuration completion = %+v, %v, want configured with browser IDE verification pending", op, err)
+	}
+}
+
+// TestLaunchWorkerRecordsGuestFailure verifies a terminal guest setup report
+// becomes a visible operation failure and leaves IDE verification pending.
+func TestLaunchWorkerRecordsGuestFailure(t *testing.T) {
+	ctx := t.Context()
+	db := openWorkspaceDatabase(t, "sqlite")
+	seedReservationWorkspaces(t, db)
+	journal := operation.NewJournal(db, time.Now, uuid.NewString)
+	workspaceID := "configuration-failure"
+	op, err := journal.Create(ctx, operation.Request{
+		Actor: "reservation-owner", Key: "guest-configuration-failure", Type: "provision",
+		OriginatingAction: "workspace.launch", WorkspaceID: &workspaceID, Generation: 1,
+		Steps: []operation.Step{{Key: "configure", Label: "Configure"}, {Key: "verify_ide", Label: "Verify IDE"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO guest_configurations(operation_id,dispatch_version,status,problem)
+		VALUES($1,1,'failed','guest.required_setup_failed')`, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	executor := NewLaunchExecutor(NewStore(db), fake.New(), nil, "", "", "", time.Now)
+	worker := &operation.Worker{Journal: journal, Name: "test", LeaseDuration: time.Minute, Executor: executor}
+	if err := worker.RunOnce(ctx, op.ID); err != nil {
+		t.Fatalf("run with terminal guest result = %v, want a recorded failure", err)
+	}
+	op, err = journal.Get(ctx, op.ID)
+	if err != nil || op.Status != "failed" || op.Steps[0].Status != "failed" ||
+		op.Steps[0].Detail == "" || op.Steps[1].Status != "pending" || op.FinishedAt == nil {
+		t.Errorf("operation after guest failure = %+v, %v, want a failed configuration step with IDE pending", op, err)
+	}
 }
 
 type stubEnrollment struct {

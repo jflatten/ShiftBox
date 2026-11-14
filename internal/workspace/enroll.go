@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 
@@ -10,6 +11,8 @@ import (
 )
 
 var errGuestContactPending = errors.New("waiting for authenticated guest contact")
+
+var errGuestConfigurationPending = errors.New("waiting for guest configuration")
 
 // EnrollmentDelivery handles the private recovery image for one operation.
 type EnrollmentDelivery interface {
@@ -34,6 +37,10 @@ func NewLaunchExecutor(store *Store, machines provider.Provider, enrollment Enro
 }
 
 func (e *LaunchExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
+	if step.Key == "configure" {
+		evidence, err := e.configuration(ctx, op)
+		return evidence, err == nil, err
+	}
 	if step.Key != "enroll" {
 		return e.provision.Observe(ctx, op, step)
 	}
@@ -53,6 +60,9 @@ func (e *LaunchExecutor) Observe(ctx context.Context, op operation.Operation, st
 }
 
 func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
+	if step.Key == "configure" {
+		return e.configuration(ctx, op)
+	}
 	if step.Key != "enroll" {
 		return e.provision.Apply(ctx, op, step)
 	}
@@ -90,6 +100,35 @@ func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step
 		return "", provider.ErrOutcomeUnknown
 	}
 	return e.confirmContact(ctx, req)
+}
+
+func (e *LaunchExecutor) configuration(ctx context.Context, op operation.Operation) (string, error) {
+	var status, problem string
+	err := e.provision.store.db.QueryRowContext(ctx, `SELECT status,problem FROM guest_configurations WHERE operation_id=$1`, op.ID).
+		Scan(&status, &problem)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errGuestConfigurationPending
+	}
+	if err != nil {
+		return "", err
+	}
+	switch status {
+	case "succeeded":
+		return "The guest reports that the Dev Container completed its setup hooks.", nil
+	case "failed":
+		switch problem {
+		case "guest.required_setup_failed":
+			return "", &operation.StepFailure{Detail: "Required Dev Container setup failed before the connection gate."}
+		case "guest.later_setup_failed":
+			return "", &operation.StepFailure{Detail: "A Dev Container hook failed after the connection gate."}
+		case "guest.lifecycle_interrupted":
+			return "", &operation.StepFailure{Detail: "The guest restarted during a Dev Container setup hook."}
+		default:
+			return "", errors.New("invalid persisted guest configuration failure")
+		}
+	default:
+		return "", errGuestConfigurationPending
+	}
 }
 
 func (e *LaunchExecutor) inspectEnrollment(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, provider.Inventory, error) {

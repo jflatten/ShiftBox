@@ -37,11 +37,11 @@ func (identity AgentIdentity) pollClient(serverName string) *http.Client {
 }
 
 type guestPollRequest struct {
-	ProtocolVersion      string       `json:"protocolVersion"`
-	GuestRelease         string       `json:"guestRelease"`
-	LastOperationID      string       `json:"lastOperationId,omitempty"`
-	LastOperationVersion int64        `json:"lastOperationVersion,omitempty"`
-	Report               *localReport `json:"operationReport,omitempty"`
+	ProtocolVersion      string           `json:"protocolVersion"`
+	GuestRelease         string           `json:"guestRelease"`
+	LastOperationID      string           `json:"lastOperationId,omitempty"`
+	LastOperationVersion int64            `json:"lastOperationVersion,omitempty"`
+	Report               *OperationReport `json:"operationReport,omitempty"`
 }
 
 func newGuestPollRequest(protocol, release string, journal *localJournal) guestPollRequest {

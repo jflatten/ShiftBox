@@ -18,6 +18,7 @@ var ErrGuestUnauthorized = errors.New("guest identity is not authorized")
 
 // Contact describes the workspace authority established by an authenticated poll.
 type Contact struct {
+	WorkspaceID  string
 	Generation   int64
 	DesiredState string
 	RenewAfter   time.Time
@@ -26,6 +27,14 @@ type Contact struct {
 // Authenticate checks the leaf against current registration and records
 // authenticated contact. The caller obtains the leaf from the verified TLS peer.
 func (e *Enrollment) Authenticate(ctx context.Context, leaf *x509.Certificate, now time.Time) (Contact, error) {
+	return e.authenticate(ctx, e.db, leaf, now)
+}
+
+type pollQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func (e *Enrollment) authenticate(ctx context.Context, db pollQueryer, leaf *x509.Certificate, now time.Time) (Contact, error) {
 	if e.authority == nil || leaf == nil || leaf.SerialNumber == nil || len(leaf.URIs) != 1 {
 		return Contact{}, ErrGuestUnauthorized
 	}
@@ -46,11 +55,11 @@ func (e *Enrollment) Authenticate(ctx context.Context, leaf *x509.Certificate, n
 	fingerprint := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
 	stamp := now.UTC().Format("2006-01-02T15:04:05.000000000Z")
 	expiry := leaf.NotAfter.UTC().Format(time.RFC3339Nano)
-	contact := Contact{Generation: generation, RenewAfter: leaf.NotBefore.Add(leafReplacement)}
+	contact := Contact{WorkspaceID: parts[2], Generation: generation, RenewAfter: leaf.NotBefore.Add(leafReplacement)}
 	if leaf.NotAfter.Before(contact.RenewAfter) {
 		contact.RenewAfter = leaf.NotBefore
 	}
-	err = e.db.QueryRowContext(ctx, `UPDATE guest_registrations SET last_authenticated_at=$1
+	err = db.QueryRowContext(ctx, `UPDATE guest_registrations SET last_authenticated_at=$1
 		WHERE workspace_id=$2 AND generation=$3 AND certificate_serial=$4 AND public_key_fingerprint=$5
 		  AND certificate_not_after=$6 AND state='active'
 		  AND EXISTS (SELECT 1 FROM workspaces w JOIN installations i ON i.id=w.installation_id

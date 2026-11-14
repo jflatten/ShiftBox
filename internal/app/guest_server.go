@@ -55,7 +55,7 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		return nil, err
 	}
 	poll, err := listenGuest(config.PollAddress, guest.ServerTLS(tls.Certificate{}, authority),
-		web.GuestPollHandler(compatibility, enrollment.Authenticate, now), certificates)
+		web.GuestPollHandler(compatibility, enrollment.Exchange, now), certificates)
 	if err != nil {
 		_ = enroll.network.Close()
 		return nil, err

@@ -7,7 +7,8 @@ type localEvidence struct {
 	WaitForReached bool   `json:"waitForReached"`
 }
 
-type localReport struct {
+// OperationReport contains bounded evidence for an approved guest command.
+type OperationReport struct {
 	ID         string        `json:"operationId"`
 	Generation int64         `json:"workspaceGeneration"`
 	Status     string        `json:"status"`
@@ -17,12 +18,12 @@ type localReport struct {
 	Problem    string        `json:"problem,omitempty"`
 }
 
-func (j *localJournal) report() localReport {
+func (j *localJournal) report() OperationReport {
 	op := j.state.Operation
 	if op == nil {
-		return localReport{}
+		return OperationReport{}
 	}
-	report := localReport{
+	report := OperationReport{
 		ID: op.ID, Generation: op.Generation, Status: "running", Attempt: op.Attempt, Problem: op.Problem,
 		Step: "devcontainer.wait_for",
 		Evidence: localEvidence{
@@ -40,12 +41,12 @@ func (j *localJournal) report() localReport {
 
 // ensureDevelopment advances one lifecycle stage per dispatch. This lets the
 // next poll carry the waitFor milestone even if later hooks are slow or fail.
-func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDispatch, runtime devContainer) (localReport, error) {
+func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDispatch, runtime devContainer) (OperationReport, error) {
 	if err := ctx.Err(); err != nil {
-		return localReport{}, err
+		return OperationReport{}, err
 	}
 	if err := j.accept(dispatch); err != nil {
-		return localReport{}, err
+		return OperationReport{}, err
 	}
 	next := *j.state.Operation
 	var effectErr error
@@ -53,7 +54,7 @@ func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDisp
 	case localPending:
 		next.Phase = localRequired
 		if err := j.saveOperation(next); err != nil {
-			return localReport{}, err
+			return OperationReport{}, err
 		}
 		next.Connection, effectErr = runtime.ensure(ctx)
 		next.Phase = localWaitReached
@@ -63,7 +64,7 @@ func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDisp
 	case localWaitReached:
 		next.Phase = localRemaining
 		if err := j.saveOperation(next); err != nil {
-			return localReport{}, err
+			return OperationReport{}, err
 		}
 		effectErr = runtime.finishSetup(ctx, next.Connection)
 		next.Phase = localSucceeded
@@ -78,10 +79,10 @@ func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDisp
 		return j.report(), nil
 	}
 	if effectErr != nil && ctx.Err() != nil {
-		return localReport{}, ctx.Err()
+		return OperationReport{}, ctx.Err()
 	}
 	if err := j.saveOperation(next); err != nil {
-		return localReport{}, err
+		return OperationReport{}, err
 	}
 	return j.report(), nil
 }
