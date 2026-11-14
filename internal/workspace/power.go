@@ -99,7 +99,8 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 }
 
 func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, error) {
-	if (op.Type != "start" && op.Type != "stop") || op.OriginatingAction != "workspace."+op.Type ||
+	offboarding := op.OriginatingAction == "user.disable" && op.Type == "stop" && step.Key == "stop"
+	if (op.Type != "start" && op.Type != "stop") || (!offboarding && op.OriginatingAction != "workspace."+op.Type) ||
 		op.WorkspaceID == nil || op.StartedAt == nil || op.Status != "running" || step.Status != "active" ||
 		(step.Key != op.Type && !(op.Type == "stop" && step.Key == "shutdown") &&
 			!(op.Type == "start" && (step.Key == "configure" || step.Key == "verify_ide" || step.Key == "finish_setup"))) {
@@ -113,13 +114,14 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 		JOIN installations i ON i.id=w.installation_id JOIN users owner ON owner.id=w.owner_user_id
 		JOIN users actor ON actor.id=$3 JOIN operations o ON o.id=$5 AND o.workspace_id=w.id AND o.generation=w.generation
 		WHERE w.id=$1 AND w.generation=$2 AND w.provider_instance_id IS NOT NULL AND w.observed_state<>'deleted'
-		  AND i.state='active' AND o.status='running' AND actor.membership_state='active'
-		  AND (actor.id=owner.id OR actor.role='administrator')
+		  AND i.state='active' AND o.status='running' AND o.originating_action=$7
+		  AND (($6 AND owner.membership_state IN ('pending','disabled')) OR
+		       (NOT $6 AND actor.membership_state='active' AND (actor.id=owner.id OR actor.role='administrator')))
 		  AND (($4='stop' AND w.desired_state='stopped') OR
 		       ($4='start' AND w.desired_state='running' AND owner.membership_state='active'
 		        AND EXISTS (SELECT 1 FROM reservations r WHERE r.workspace_id=w.id
 		                     AND r.cpu_memory_state='reserved' AND r.disk_state='reserved')))`,
-		req.Ref.WorkspaceID, op.Generation, op.Actor, op.Type, op.ID).
+		req.Ref.WorkspaceID, op.Generation, op.Actor, op.Type, op.ID, offboarding, op.OriginatingAction).
 		Scan(&req.Ref.InstallationID, &req.Ref.OwnershipMarker, &req.Ref.InstanceID, &req.ArtifactID, &req.Release, &policy)
 	if err != nil {
 		return provider.CreateRequest{}, err

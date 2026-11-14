@@ -155,6 +155,26 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	if machines.starts != 1 || machines.stops != 1 {
 		t.Fatalf("provider calls = %d starts and %d stops, want one per operation", machines.starts, machines.stops)
 	}
+
+	// Offboarding revokes guest access before requesting a provider stop.
+	// The worker must proceed using the committed stop intent without a poll.
+	exec("UPDATE users SET membership_state='disabled' WHERE id='reservation-owner'")
+	exec("UPDATE workspaces SET desired_state='stopped' WHERE id=$1", id)
+	workspaceID := id
+	offboard, err := journal.Create(ctx, operation.Request{
+		Actor: "reservation-owner", Key: uuid.NewString(), OriginatingAction: "user.disable",
+		Type: "stop", WorkspaceID: &workspaceID, Generation: 1,
+		Steps: []operation.Step{{Key: "stop", Label: "Stop workspace"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	machines.LoseReply("stop")
+	run(offboard, provider.ErrOutcomeUnknown)
+	checkReservation(t, db, id, "reserved", "reserved")
+	run(offboard, nil)
+	checkState(offboard, "stopped", "succeeded")
+	checkReservation(t, db, id, "released", "reserved")
 }
 
 type powerFixtureProvider struct {

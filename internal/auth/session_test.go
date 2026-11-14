@@ -169,6 +169,87 @@ func TestRevocationCommitsBeforeClosing(t *testing.T) {
 	}
 }
 
+// TestRevokeUserSessions commits revocation for every current session and
+// preserves earlier revocations and unrelated sessions across retries.
+func TestRevokeUserSessions(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "offboarding.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	store := auth.NewStore(db)
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	target, other := testsupport.ID(1), testsupport.ID(2)
+	owners := []string{target, target, target, other}
+	tokens := make([]string, len(owners))
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		for id, email := range map[string]string{target: "member@example.test", other: "other@example.test"} {
+			if _, err := store.CreateUser(ctx, tx, auth.User{ID: id, PrimaryEmail: email, Role: "member", MembershipState: "active", CredentialMode: "local"}, "setup", now); err != nil {
+				return err
+			}
+		}
+		for i, id := range owners {
+			session, token, err := auth.NewSession(testsupport.ID(10+uint32(i)), id, "normal", now, time.Hour)
+			if err != nil {
+				return err
+			}
+			tokens[i] = token
+			if err := store.SaveSession(ctx, tx, session); err != nil {
+				return err
+			}
+		}
+		return store.RevokeSession(ctx, tx, testsupport.ID(12), now, "session.logout")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	locallyRejected := errors.New("workspace stop intent could not be queued")
+	disableAt := now.Add(time.Minute)
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		if err := store.RevokeUserSessions(ctx, tx, target, disableAt, "membership_disabled"); err != nil {
+			return err
+		}
+		return locallyRejected
+	}); !errors.Is(err, locallyRejected) {
+		t.Fatalf("rolled-back offboarding = %v, want injected stop admission failure", err)
+	}
+	check := func(index int, want string, at time.Time) {
+		t.Helper()
+		err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			session, err := store.Session(ctx, tx, tokens[index])
+			if err != nil {
+				return err
+			}
+			switch {
+			case at.IsZero() && session.RevokedAt != nil:
+				t.Errorf("session %d unexpectedly revoked", index)
+			case !at.IsZero() && (session.RevokedAt == nil || !session.RevokedAt.Equal(at) ||
+				session.RevocationReason != want):
+				t.Errorf("session %d revocation = %v, reason %v, want %v (%s)", index, session.RevokedAt, session.RevocationReason, at, want)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	check(0, "", time.Time{})
+	for _, at := range []time.Time{disableAt, disableAt.Add(time.Minute)} {
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			return store.RevokeUserSessions(ctx, tx, target, at, "membership_disabled")
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check(0, "membership_disabled", disableAt)
+	check(1, "membership_disabled", disableAt)
+	check(2, "session.logout", now)
+	check(3, "", time.Time{})
+}
+
 // TestIdentityAndSessionPersistence keeps equal email profiles separate and persists only digests.
 func TestIdentityAndSessionPersistence(t *testing.T) {
 	ctx := context.Background()

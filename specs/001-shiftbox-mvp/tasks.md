@@ -1902,3 +1902,13 @@ This checkpoint does not itself change the goal status.
 - Contract tests cover a member's denial, rejected self-demotion, and
   post-commit closure. Web, app and contract race suites, all 38 UI tests,
   and the production build passed. Offboarding remains open.
+
+### Offboarding stop execution
+
+- Added transactional revocation for all sessions of one user. It preserves
+  earlier revocations and rolls back if the surrounding transaction fails.
+- The workspace worker can reconcile a committed offboarding stop directly
+  through the provider, even when the member cannot authenticate a guest
+  poll. Race tests verify recovery from a lost stop response and retention
+  of the disk reservation. Membership admission must still atomically queue
+  these operations and close the affected connections.
