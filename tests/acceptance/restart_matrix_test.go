@@ -28,8 +28,15 @@ import (
 )
 
 // TestRestartResumesMaintenancePower stops the worker after the provider
-// changes power but before the controller can record the result.
+// changes power but before the controller can record the result, for both
+// successful guest updates and failed staging.
 func TestRestartResumesMaintenancePower(t *testing.T) {
+	t.Run("verified update", func(t *testing.T) { checkRestartMaintenancePower(t, true) })
+	t.Run("failed staging", func(t *testing.T) { checkRestartMaintenancePower(t, false) })
+}
+
+func checkRestartMaintenancePower(t *testing.T, staged bool) {
+	t.Helper()
 	ctx, now := t.Context(), time.Now().UTC()
 	clock := func() time.Time { return now }
 	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "maintenance-power.db")}
@@ -92,8 +99,9 @@ func TestRestartResumesMaintenancePower(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT operation_id FROM maintenance_targets WHERE campaign_id=$1", campaign.ID).Scan(&target); err != nil {
 		t.Fatal(err)
 	}
+	metadata := release.GuestUpdateMetadata{Release: "fixture", Protocol: "1", Digest: sha256.Sum256([]byte("pinned restart fixture"))}
 	load := func(context.Context, string) (release.GuestUpdate, error) {
-		return release.GuestUpdate{Metadata: release.GuestUpdateMetadata{Release: "fixture", Protocol: "1"}}, nil
+		return release.GuestUpdate{Metadata: metadata}, nil
 	}
 	newWorker := func() *operation.Worker {
 		// The guest already has a valid certificate. Reconciliation only needs
@@ -150,22 +158,53 @@ func TestRestartResumesMaintenancePower(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertStates("running", "reserved")
-	exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,problem)
-		VALUES($1,1,'failed','guest.update_stage_failed')`, target)
-	if err := worker.RunOnce(ctx, target); err != nil {
-		t.Fatal(err)
+	wantStatus, wantCampaign := "failed", "blocked"
+	wantSteps := []string{"succeeded", "failed", "skipped", "skipped", "succeeded"}
+	run := func(step string) {
+		t.Helper()
+		if err := worker.RunOnce(ctx, target); err != nil {
+			t.Fatalf("RunOnce(%s) = %v, want success", step, err)
+		}
+	}
+	if staged {
+		wantStatus, wantCampaign = "succeeded", "completed"
+		wantSteps = []string{"succeeded", "succeeded", "succeeded", "succeeded", "succeeded"}
+		exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,update_digest)
+			VALUES($1,1,'succeeded',$2)`, target, hex.EncodeToString(metadata.Digest[:]))
+		run("stage update")
+		exec("UPDATE guest_dispatches SET activation_status='succeeded' WHERE operation_id=$1", target)
+		run("activate update")
+		exec("UPDATE workspaces SET guest_release='fixture',protocol_version='1' WHERE id=$1", ref.WorkspaceID)
+		run("verify update")
+	} else {
+		exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,problem)
+			VALUES($1,1,'failed','guest.update_stage_failed')`, target)
+		run("record staging failure")
 	}
 	interrupt("maintenance_restore", provider.Stopped)
 	assertStates("running", "reserved")
-	if err := worker.RunOnce(ctx, target); err != nil {
-		t.Fatal(err)
+	campaignWorker := store.MaintenanceCampaignWorker(journal, ref.InstallationID, clock)
+	err = campaignWorker.RunOnce(ctx, campaign.ID)
+	if _, ok := errors.AsType[*operation.StepWaiting](err); !ok {
+		t.Fatalf("campaign before restoration is recorded = %v, want waiting", err)
 	}
+	run("verify restored power")
 	assertStates("stopped", "released")
 	op, err := journal.Get(ctx, target)
-	if err != nil || op.Status != "failed" || op.Steps[0].Status != "succeeded" ||
-		op.Steps[1].Status != "failed" || op.Steps[2].Status != "skipped" ||
-		op.Steps[3].Status != "skipped" || op.Steps[4].Status != "succeeded" {
-		t.Fatalf("target after restart = %+v (%v), want successful boot and restore with staging failure", op, err)
+	if err != nil || op.Status != wantStatus || len(op.Steps) != len(wantSteps) {
+		t.Fatalf("target after restart = %+v (%v), want %s with five steps", op, err, wantStatus)
+	}
+	for i, step := range op.Steps {
+		if step.Status != wantSteps[i] {
+			t.Errorf("restart step %s = %s, want %s", step.Key, step.Status, wantSteps[i])
+		}
+	}
+	if err := campaignWorker.RunOnce(ctx, campaign.ID); err != nil {
+		t.Fatal(err)
+	}
+	var campaignState string
+	if err := db.QueryRowContext(ctx, "SELECT state FROM maintenance_campaigns WHERE operation_id=$1", campaign.ID).Scan(&campaignState); err != nil || campaignState != wantCampaign {
+		t.Errorf("campaign after restored power = %s (%v), want %s", campaignState, err, wantCampaign)
 	}
 	if machines.starts != 1 || machines.stops != 1 || machines.forcedStop {
 		t.Errorf("provider requests = %d starts, %d stops, force=%t, want one start and one graceful stop",

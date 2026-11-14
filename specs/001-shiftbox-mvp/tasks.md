@@ -1786,7 +1786,9 @@ This checkpoint does not itself change the goal status.
   The restart suite also interrupts a management boot and graceful shutdown
   after each provider effect. The replacement worker honors the outstanding
   lease, requires fresh guest contact after boot, and verifies stopped power
-  before releasing CPU and memory. Disk stays reserved throughout.
+  after either a verified update or a staging failure. The worker releases
+  CPU and memory only after that verification, while disk stays reserved.
+  The campaign waits for restoration before recording its final outcome.
 
 ### Migration preflight CLI
 
