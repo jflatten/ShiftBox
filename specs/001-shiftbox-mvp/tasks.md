@@ -1793,8 +1793,10 @@ This checkpoint does not itself change the goal status.
   stdin passphrase input. It checks against the installed executable's
   schema and the operator-supplied installation and release IDs, then
   writes a private validation record. Validation does not require a
-  working source database. Restore activation and the backup CLI
-  remain open.
+  working source database. SQLite activation reopens the saved validation,
+  rereads the passphrase, requires the controller installation lock, and
+  publishes a recovery-only replacement with a rebased configuration.
+  PostgreSQL activation and the backup CLI remain open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.

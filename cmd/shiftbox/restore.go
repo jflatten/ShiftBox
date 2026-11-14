@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/backup"
@@ -27,16 +28,18 @@ import (
 )
 
 func runRestore(ctx context.Context, args []string, in io.Reader, out, status io.Writer) error {
-	if len(args) == 0 || args[0] != "validate" {
-		return cliExit{2, "usage: shiftbox restore validate --archive <path> --config <path> --installation-id <id> --release <id> --destination <path>"}
+	if len(args) == 0 || (args[0] != "validate" && args[0] != "activate") {
+		return cliExit{2, "usage: shiftbox restore validate | shiftbox restore activate"}
 	}
-	const command = "restore validate"
+	activating := args[0] == "activate"
+	command := "restore " + args[0]
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	configPath := flags.String("config", "", "")
 	archivePath := flags.String("archive", "", "")
 	installation := flags.String("installation-id", "", "")
 	release := flags.String("release", "", "")
+	validationID := flags.String("validation-id", "", "")
 	destination := flags.String("destination", "", "")
 	postgresConfig := flags.String("postgres-config", "", "")
 	standardInput := flags.Bool("password-stdin", false, "")
@@ -46,8 +49,9 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 	}
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || !filepath.IsAbs(*configPath) ||
 		!filepath.IsAbs(*archivePath) || !filepath.IsAbs(*destination) || filepath.Clean(*destination) != *destination ||
-		!web.ValidUUID(*installation) || *release == "" {
-		return fail(2, "restore.invalid_input", "Provide the protected configuration, archive, installation ID, release and replacement directory.")
+		(activating && (!web.ValidUUID(*validationID) || *installation != "" || *release != "")) ||
+		(!activating && (!web.ValidUUID(*installation) || *release == "" || *validationID != "")) {
+		return fail(2, "restore.invalid_input", "Provide the protected configuration, archive, replacement directory, and the identifiers required by the restore command.")
 	}
 	info, err := os.Lstat(*configPath)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
@@ -56,6 +60,27 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return fail(2, "restore.invalid_input", "Open a valid controller configuration.")
+	}
+	plans := filepath.Join(cfg.InstallationDir, "restore-validations")
+	info, err = os.Lstat(cfg.InstallationDir)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+		return fail(1, "restore.validation_unavailable", "Use a private installation directory.")
+	}
+	var plan backup.RestorePlan
+	if activating {
+		if cfg.DataProfile != "sqlite" {
+			return fail(5, "restore.activation_unavailable", "PostgreSQL activation requires the replacement publication workflow.")
+		}
+		lock, err := lockSetup(cfg.InstallationDir)
+		if err != nil {
+			return fail(6, "restore.installation_busy", "Stop the controller before applying the reviewed restore plan.")
+		}
+		defer lock.Close()
+		plan, err = backup.LoadRestorePlan(plans, *validationID)
+		if err != nil {
+			return fail(3, "restore.validation_missing", "Open the saved restore validation record.")
+		}
+		*installation, *release = plan.Validation.Evidence.Metadata.InstallationID, plan.Validation.Evidence.Metadata.Release
 	}
 	host, err := app.BackupHostID(ctx)
 	if err != nil {
@@ -88,6 +113,25 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 	if err != nil {
 		return fail(2, "restore.password_input", "Read the passphrase from a terminal or explicitly use --password-stdin.")
 	}
+	if activating {
+		stage, err := backup.StageRestore(ctx, filepath.Dir(*destination), plan, targetDigest, archive, password, expected, checkTarget)
+		if err != nil {
+			return fail(7, "restore.revalidation_failed", "Verify the archive, passphrase, retained key, and empty replacement against the saved validation.")
+		}
+		defer os.RemoveAll(stage)
+		if err := prepareSQLiteRestore(stage, *destination, expected.MountedKey); err != nil {
+			return fail(7, "restore.invalid_configuration", "Verify the archived controller configuration and retained key.")
+		}
+		review, err := backup.ActivateSQLiteRestore(ctx, stage, *destination, *installation, plan.ID, "local-operator", time.Now())
+		if err != nil {
+			return fail(1, "restore.activation_failed", "Cannot publish the replacement in recovery review. Inspect the replacement before retrying.")
+		}
+		result := restoreCLIResult{ValidationID: plan.ID, RecoveryReviewID: review,
+			Configuration: filepath.Join(*destination, "configuration.json"), Release: *release, Profile: cfg.DataProfile,
+			Schema: schema, KeyDisposition: plan.Validation.KeyDisposition,
+			ReviewSteps: []string{"identities", "provider", "authorization_retention", "activate"}}
+		return restoreOutput(command, out, status, *asJSON, &result, 0, "", "")
+	}
 	validation, err := backup.ValidateRestore(ctx, archive, password, expected, checkTarget)
 	if err != nil {
 		code, title := "restore.invalid_archive", "Verify the archive integrity and passphrase."
@@ -101,15 +145,10 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 		}
 		return fail(7, code, title)
 	}
-	plans := filepath.Join(cfg.InstallationDir, "restore-validations")
-	info, err = os.Lstat(cfg.InstallationDir)
-	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
-		return fail(1, "restore.validation_unavailable", "Use a private installation directory.")
-	}
 	if err := os.Mkdir(plans, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 		return fail(1, "restore.validation_unavailable", "Cannot record restore validation in the installation directory.")
 	}
-	plan, err := backup.RecordRestorePlan(ctx, plans, targetDigest, validation)
+	plan, err = backup.RecordRestorePlan(ctx, plans, targetDigest, validation)
 	if err != nil {
 		return fail(1, "restore.validation_unavailable", "Cannot save the private restore validation record.")
 	}
@@ -120,6 +159,38 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 		result.OwnedSchemas = []string{"shiftbox", "dex"}
 	}
 	return restoreOutput(command, out, status, *asJSON, &result, 0, "", "")
+}
+
+func prepareSQLiteRestore(stage, destination string, retainedKey []byte) error {
+	path := filepath.Join(stage, "configuration.json")
+	cfg, err := config.Load(path)
+	if err != nil || cfg.DataProfile != "sqlite" {
+		return backup.ErrRestoreCompatibility
+	}
+	cfg.InstallationDir = destination
+	cfg.SQLitePath = filepath.Join(destination, "application.db")
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	if err := writeRestoreFile(path, encoded, os.O_TRUNC); err != nil {
+		return err
+	}
+	if retainedKey != nil {
+		// The replacement uses the matching retained key. Leave the original
+		// key file in place and provision only the new installation directory.
+		return writeRestoreFile(filepath.Join(stage, "installation.key"), retainedKey, os.O_CREATE|os.O_EXCL)
+	}
+	return nil
+}
+
+func writeRestoreFile(path string, data []byte, flags int) error {
+	file, err := os.OpenFile(path, flags|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, writeErr := file.Write(data)
+	return errors.Join(writeErr, file.Sync(), file.Close())
 }
 
 func restoreTarget(cfg config.Config, destination, postgresPath string) (string, func(context.Context) error, error) {
@@ -222,13 +293,15 @@ func readRecoveryPassphrase(in io.Reader, status io.Writer, standardInput, confi
 }
 
 type restoreCLIResult struct {
-	ValidationID   string   `json:"validationId"`
-	Release        string   `json:"release"`
-	Profile        string   `json:"profile"`
-	Schema         int64    `json:"schema"`
-	KeyDisposition string   `json:"keyDisposition"`
-	OwnedSchemas   []string `json:"ownedSchemas,omitempty"`
-	ReviewSteps    []string `json:"reviewSteps"`
+	RecoveryReviewID string   `json:"recoveryReviewId,omitempty"`
+	Configuration    string   `json:"configuration,omitempty"`
+	ValidationID     string   `json:"validationId"`
+	Release          string   `json:"release"`
+	Profile          string   `json:"profile"`
+	Schema           int64    `json:"schema"`
+	KeyDisposition   string   `json:"keyDisposition"`
+	OwnedSchemas     []string `json:"ownedSchemas,omitempty"`
+	ReviewSteps      []string `json:"reviewSteps"`
 }
 
 func restoreOutput(command string, out, status io.Writer, asJSON bool, result *restoreCLIResult, exit int, code, title string) error {
@@ -241,13 +314,16 @@ func restoreOutput(command string, out, status io.Writer, asJSON bool, result *r
 			Problem    *web.Problem      `json:"problem"`
 		}{APIVersion: "shiftbox.io/cli/v1", Command: command, Status: "succeeded", Result: result}
 		if exit != 0 {
-			statusCode := map[int]int{1: 500, 2: 400, 3: 404, 5: 503, 7: 422}[exit]
+			statusCode := map[int]int{1: 500, 2: 400, 3: 404, 5: 503, 6: 409, 7: 422}[exit]
 			envelope.Status = "failed"
 			envelope.Problem = &web.Problem{Type: "about:blank", Status: statusCode, Code: code, Title: title}
 		}
 		if err := json.NewEncoder(out).Encode(envelope); err != nil {
 			return cliExit{1, "Cannot write restore result."}
 		}
+	} else if result != nil && result.RecoveryReviewID != "" {
+		fmt.Fprintf(status, "Replacement entered recovery review. Start ShiftBox with %s.\n", result.Configuration)
+		fmt.Fprintln(out, result.RecoveryReviewID)
 	} else if result != nil {
 		fmt.Fprintf(status, "Validated %s archive for %s, schema %d.\n", result.Profile, result.Release, result.Schema)
 		fmt.Fprintf(status, "Key disposition %s.\n", result.KeyDisposition)

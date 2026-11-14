@@ -37,5 +37,5 @@ func run(ctx context.Context, args []string, out, status io.Writer) error {
 			return runMigrate(ctx, args[1:], out, status)
 		}
 	}
-	return errors.New("usage: shiftbox setup | shiftbox serve | shiftbox recover-admin | shiftbox migrate preflight | shiftbox restore validate")
+	return errors.New("usage: shiftbox setup | shiftbox serve | shiftbox recover-admin | shiftbox migrate preflight | shiftbox restore")
 }
