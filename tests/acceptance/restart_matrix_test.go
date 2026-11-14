@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -961,14 +962,14 @@ type restartPasswordStore struct {
 	hash   []byte
 }
 
-// TestRestartInterruptsIncompleteBackup starts from each durable backup state
-// and checks that a new controller can admit a fresh backup without treating
-// an interrupted checkpoint or encryption step as verified evidence.
-func TestRestartInterruptsIncompleteBackup(t *testing.T) {
-	for _, state := range []string{"preparing", "checkpointing", "encrypting"} {
+// TestRestartBackup checks startup at every durable backup state, including
+// when an encrypted file was published but its journal transaction failed.
+func TestRestartBackup(t *testing.T) {
+	for _, state := range []string{"preparing", "checkpointing", "encrypting", "published", "completed"} {
 		t.Run(state, func(t *testing.T) {
 			ctx := t.Context()
-			cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "backup.db")}
+			dir := t.TempDir()
+			cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(dir, "backup.db")}
 			db, err := database.Open(ctx, cfg)
 			if err != nil {
 				t.Fatal(err)
@@ -995,7 +996,37 @@ func TestRestartInterruptsIncompleteBackup(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if state != "preparing" {
+			var verified backup.ArchiveEvidence
+			const passphrase = "fixture backup passphrase"
+			output := filepath.Join(dir, "management.age")
+			switch state {
+			case "published", "completed":
+				if state == "published" {
+					// The file is already durable when Run tries this update.
+					if _, err := db.ExecContext(ctx, `CREATE TRIGGER interrupt_backup_completion BEFORE UPDATE OF state ON backup_records
+						WHEN NEW.state='completed' BEGIN SELECT RAISE(ABORT, 'fixture journal failure'); END`); err != nil {
+						t.Fatal(err)
+					}
+				}
+				evidence, err := service.Run(ctx, op.ID, output, passphrase, backupRestartCheckpoint(db))
+				if state == "completed" && err != nil {
+					t.Fatal(err)
+				}
+				if state == "published" && (err == nil || err.Error() != "encrypted archive was published but its completion could not be recorded") {
+					t.Fatalf("Run with interrupted completion = %v, want published archive with uncommitted completion", err)
+				}
+				file, err := os.Open(output)
+				if err != nil {
+					t.Fatal(err)
+				}
+				verified, err = backup.VerifyArchive(ctx, file, passphrase)
+				if err := errors.Join(err, file.Close()); err != nil {
+					t.Fatalf("VerifyArchive(%s) = %v, want a readable, encrypted archive", state, err)
+				}
+				if verified.Metadata != metadata || (state == "completed" && verified != evidence) {
+					t.Fatal("published archive evidence does not match the backup attempt")
+				}
+			case "checkpointing", "encrypting":
 				claim, err := journal.Claim(ctx, op.ID, "management-backup", time.Minute)
 				if err != nil {
 					t.Fatal(err)
@@ -1028,25 +1059,69 @@ func TestRestartInterruptsIncompleteBackup(t *testing.T) {
 			t.Cleanup(func() { _ = reopened.Close() })
 			restartedJournal := operation.NewJournal(reopened, time.Now, uuid.NewString)
 			restarted := backup.NewService(reopened, restartedJournal, metadata)
-			if err := restarted.InterruptIncomplete(ctx); err != nil {
-				t.Fatal(err)
+			for range 2 {
+				if err := restarted.InterruptIncomplete(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			completed := state == "completed"
+			wantState, wantOperation, wantCode := "failed", "failed", "backup.interrupted"
+			if completed {
+				wantState, wantOperation, wantCode = "completed", "succeeded", ""
+				var manifest, digest string
+				var size int64
+				if err := reopened.QueryRowContext(ctx, "SELECT manifest_digest,archive_digest,size_bytes FROM backup_records WHERE operation_id=$1",
+					op.ID).Scan(&manifest, &digest, &size); err != nil || manifest != verified.ManifestDigest || digest != verified.ArchiveDigest || size != verified.Size {
+					t.Errorf("completed archive evidence after restart = %q/%q/%d (%v), want %q/%q/%d",
+						manifest, digest, size, err, verified.ManifestDigest, verified.ArchiveDigest, verified.Size)
+				}
+			}
+			if state == "published" || completed {
+				file, err := os.Stat(output)
+				if err != nil || file.Size() != verified.Size {
+					t.Errorf("published archive changed during startup recovery: %v", err)
+				}
 			}
 			var backupState, code string
-			if err := reopened.QueryRowContext(ctx, "SELECT state,error_code FROM backup_records WHERE operation_id=$1",
-				op.ID).Scan(&backupState, &code); err != nil || backupState != "failed" || code != "backup.interrupted" {
-				t.Errorf("backup after restart = %q/%q (%v), want failed/backup.interrupted", backupState, code, err)
+			if err := reopened.QueryRowContext(ctx, "SELECT state,COALESCE(error_code,'') FROM backup_records WHERE operation_id=$1",
+				op.ID).Scan(&backupState, &code); err != nil || backupState != wantState || code != wantCode {
+				t.Errorf("backup after restart = %q/%q (%v), want %q/%q", backupState, code, err, wantState, wantCode)
 			}
-			if got, err := restartedJournal.Get(ctx, op.ID); err != nil || got.Status != "failed" {
-				t.Errorf("backup operation after restart = %q (%v), want failed", got.Status, err)
+			if got, err := restartedJournal.Get(ctx, op.ID); err != nil || got.Status != wantOperation {
+				t.Errorf("backup operation after restart = %q (%v), want %q", got.Status, err, wantOperation)
 			}
-			if ok, err := backup.HasCompletedBackup(ctx, reopened, metadata); err != nil || ok {
-				t.Errorf("completed backup after interrupted %s = %t (%v), want false", state, ok, err)
+			if ok, err := backup.HasCompletedBackup(ctx, reopened, metadata); err != nil || ok != completed {
+				t.Errorf("completed backup after restart from %s = %t (%v), want %t", state, ok, err, completed)
+			}
+			replay, err := restarted.QueueLocal(ctx, op.RequestKey)
+			if err != nil || replay.ID != op.ID || replay.Status != wantOperation {
+				t.Errorf("replay after restart = %s/%q (%v), want original backup in %q", replay.ID, replay.Status, err, wantOperation)
 			}
 			fresh, err := restarted.QueueLocal(ctx, "new-backup-after-restart")
 			if err != nil || fresh.ID == op.ID || fresh.Status != "pending" {
 				t.Errorf("new backup after restart = %q (%v), want another pending operation", fresh.Status, err)
 			}
 		})
+	}
+}
+
+func backupRestartCheckpoint(db *sql.DB) func(context.Context, string) (map[string]string, error) {
+	return func(ctx context.Context, stage string) (map[string]string, error) {
+		application := filepath.Join(stage, "application.db")
+		if err := backup.SQLiteCheckpoint(ctx, db, application); err != nil {
+			return nil, err
+		}
+		// Only the application checkpoint is needed to exercise completion.
+		// The other archive members are opaque fixture data, never restored.
+		sources := map[string]string{"application.db": application}
+		for _, name := range []string{"configuration.json", "guest-ca.json", "installation.key", "dex.db"} {
+			path := filepath.Join(stage, name)
+			if err := os.WriteFile(path, []byte(name), 0600); err != nil {
+				return nil, err
+			}
+			sources[name] = path
+		}
+		return sources, nil
 	}
 }
 

@@ -1846,6 +1846,10 @@ This checkpoint does not itself change the goal status.
   and archive service. Admission is durable and idempotent. The worker
   receives the passphrase in memory after commit, and startup marks any
   interrupted attempts failed so a new backup can be submitted.
+- T120 covers restart while preparing, checkpointing, and encrypting,
+  after an archive is published without a completion record, and after a
+  completed backup. Startup preserves the published archive and accepts
+  only committed digest and size evidence for migration preflight.
 - T104 and T110 remain open for live workspace computation evidence.
 
 ### Restore validation
