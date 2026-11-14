@@ -8,6 +8,7 @@ import { ShiftBoxShell } from '../../components/app-shell';
 import { readProblem } from '../../lib/api-problem';
 import { useInfrastructure, type Capacity, type InfrastructureStatus } from '../../lib/use-infrastructure';
 import { useSession } from '../../lib/use-session';
+import { BrowserCertificate } from './browser-certificate';
 
 const capacityFields = [
   { name: 'cpuCount', label: 'CPU limit' },
@@ -31,6 +32,9 @@ export function Infrastructure() {
       {allowed && status.isPending ? <Text role="status">Loading infrastructure status…</Text> : null}
       {allowed && status.isError ? (
         <Button variant="default" style={{ alignSelf: 'flex-start' }} onClick={() => void status.refetch()}>Retry</Button>
+      ) : null}
+      {allowed && current.permissions.includes('infrastructure.manage') ? (
+        <BrowserCertificate key={current.user.id} csrfToken={current.csrfToken} refresh={status.refetch} />
       ) : null}
       {data && current ? (
         <>

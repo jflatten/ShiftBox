@@ -2039,3 +2039,13 @@ This checkpoint does not itself change the goal status.
   contract tests passed. A loopback TLS test verified replacement and
   expiry. The Infrastructure upload form and production CLI composition
   remain open under T101 and T060.
+
+### Infrastructure certificate upload
+
+- Administrators with infrastructure management permission can upload the
+  replacement chain and private key. The form preserves the request key
+  when retrying the same files, clears selected files after acceptance, and
+  displays the committed operation in the existing Mantine Stepper.
+- All 47 UI tests and the production build passed. Chrome verified keyboard
+  validation, retry, file clearing and warning refresh against fixture
+  responses. Production startup remains open under T060.

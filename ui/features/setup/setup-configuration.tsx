@@ -3,6 +3,7 @@ import { Button, FileInput, PasswordInput, Radio, Stack, Text, TextInput, Title 
 import { useForm } from '@mantine/form';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
+import { pemFileError } from '../../lib/pem-file';
 
 interface SetupFormProps {
   csrfToken: string;
@@ -104,11 +105,6 @@ function suffixError(value: string, max: number) {
   return value.length <= max && value.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
     ? null : 'Enter a lowercase DNS suffix.';
 }
-
-const pemFileError = (file: File | null) => {
-  if (!file || file.size === 0) return 'Select a PEM file.';
-  return file.size > 256 * 1024 ? 'Choose a PEM file smaller than 256 KiB.' : null;
-};
 
 export function CertificateForm(props: SetupFormProps) {
   const submission = useSetupSave('/api/v1/setup/certificate', props);

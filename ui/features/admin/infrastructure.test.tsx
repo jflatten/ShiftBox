@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Providers } from '../../app/providers';
 import { Infrastructure } from './infrastructure';
@@ -69,4 +69,61 @@ test('gates infrastructure data on the current administrator session', async () 
   render(<Providers><Infrastructure /></Providers>);
   expect(await screen.findByText('Administrator access required.')).toBeVisible();
   expect(fetch.mock.calls.map(([input]) => input)).toEqual(['/api/v1/session']);
+});
+
+// A lost upload response keeps the selected files and request key for retry.
+// Committed progress clears the private key selection and refreshes warnings.
+test('retries a certificate upload and shows the committed replacement', async () => {
+  const requests: RequestInit[] = [];
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json(requests.length > 1 ? { ...status, conditions: [] } : status);
+    if (input === '/api/v1/admin/certificate' && init?.method === 'PUT') {
+      requests.push(init);
+      if (requests.length === 1) throw new TypeError('response lost');
+      return json({ id: 'operation', status: 'succeeded', steps: [
+        { key: 'replace_browser_certificate', index: 0, label: 'Replace browser certificate', status: 'succeeded' },
+      ] });
+    }
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  const { container } = render(<Providers><Infrastructure /></Providers>);
+  const warning = await screen.findByText('Browser certificate expires soon');
+  const submit = screen.getByRole('button', { name: 'Replace certificate' });
+  await user.click(submit);
+  expect(screen.getByLabelText(/^Certificate chain/)).toHaveFocus();
+  expect(requests).toHaveLength(0);
+  const file = (contents: string, name: string) => Object.assign(new File([contents], name), {
+    text: async () => contents,
+  });
+  const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
+  await user.upload(inputs[0], file('chain fixture', 'chain.pem'));
+  await user.upload(inputs[1], file('key fixture', 'private.pem'));
+  await user.click(submit);
+  expect(await screen.findByText('Unable to complete the request')).toBeVisible();
+  expect(warning).toBeVisible();
+  await user.click(submit);
+  expect(await screen.findByRole('button', { name: 'Replace browser certificate: Completed' })).toBeVisible();
+  await waitFor(() => expect(warning).not.toBeInTheDocument());
+  expect(screen.queryByText('private.pem')).toBeNull();
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toEqual(requests[1]);
+  expect(requests[0]).toMatchObject({
+    headers: expect.objectContaining({ 'X-CSRF-Token': 'fixture', 'Idempotency-Key': expect.any(String) }),
+    body: JSON.stringify({ certificateChainPem: 'chain fixture', privateKeyPem: 'key fixture' }),
+  });
+});
+
+// Administrators with infrastructure read access can see warnings without upload controls.
+test('requires infrastructure management permission to replace a certificate', async () => {
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json({ ...session, permissions: ['infrastructure.view'] });
+    if (input === '/api/v1/admin/infrastructure') return json(status);
+    throw new Error('unexpected request');
+  });
+  render(<Providers><Infrastructure /></Providers>);
+  expect(await screen.findByText('Browser certificate expires soon')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Replace certificate' })).toBeNull();
 });
