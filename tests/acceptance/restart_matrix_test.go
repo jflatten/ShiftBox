@@ -4,17 +4,233 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/app"
+	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
+	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/provider/fake"
+	"github.com/jflatten/ShiftBox/internal/workspace"
 )
+
+// TestRestartWorkspaceProvision loses the provider's creation reply, closes
+// the database, and verifies that a new worker adopts the exact existing VM.
+func TestRestartWorkspaceProvision(t *testing.T) {
+	ctx, now := t.Context(), time.Now().UTC()
+	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "provision.db")}
+	open := func() *sql.DB {
+		t.Helper()
+		db, err := database.Open(ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return db
+	}
+	db := open()
+	if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
+		t.Fatal(err)
+	}
+	ref := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		Generation: 1, OwnershipMarker: "fixture-owner"}
+	owner := uuid.NewString()
+	seedRecoveryRestart(t, db, ref, owner, now)
+	if _, err := db.ExecContext(ctx, `UPDATE workspaces SET provider_instance_id=NULL,desired_state='running',
+		observed_state='provisioning' WHERE id=$1`, ref.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO reservations(workspace_id,cpu_count,memory_mib,disk_mib,cpu_memory_state,disk_state,reserved_at)
+		VALUES($1,2,1024,40,'reserved','reserved',$2)`, ref.WorkspaceID, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	journal := operation.NewJournal(db, time.Now, uuid.NewString)
+	op, err := journal.Create(ctx, operation.Request{
+		Actor: owner, Key: "workspace-provision-restart", Type: "provision", OriginatingAction: "workspace.launch",
+		WorkspaceID: &ref.WorkspaceID, Generation: ref.Generation, Steps: []operation.Step{{Key: "provision", Label: "Provision workspace"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	machines := &restartProvisionProvider{Provider: fake.New()}
+	newWorker := func(db *sql.DB, journal *operation.Journal) *operation.Worker {
+		launch := workspace.NewLaunchExecutor(workspace.NewStore(db), machines, nil, "", "", "", time.Now, nil)
+		return workspace.NewWorker(journal, launch, nil)
+	}
+	machines.LoseReply("create")
+	if err := newWorker(db, journal).RunOnce(ctx, op.ID); !errors.Is(err, provider.ErrOutcomeUnknown) {
+		t.Fatalf("provision without reply returned %v, want uncertain outcome", err)
+	}
+	existing, err := machines.Inspect(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db = open()
+	journal = operation.NewJournal(db, time.Now, uuid.NewString)
+	if err := newWorker(db, journal).RunOnce(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	done, err := journal.Get(ctx, op.ID)
+	if err != nil || done.Status != "succeeded" || machines.creates != 1 {
+		t.Errorf("provision after restart = %s, %d create requests (%v), want succeeded and one create", done.Status, machines.creates, err)
+	}
+	var instance, registration string
+	if err := db.QueryRowContext(ctx, `SELECT w.provider_instance_id,g.state FROM workspaces w JOIN guest_registrations g
+		ON w.id=g.workspace_id AND w.generation=g.generation WHERE w.id=$1`, ref.WorkspaceID).Scan(&instance, &registration); err != nil ||
+		instance != existing.InstanceID || registration != "eligible" {
+		t.Errorf("provisioned instance = %q/%q (%v), want existing VM and eligible guest", instance, registration, err)
+	}
+}
+
+type restartProvisionProvider struct {
+	*fake.Provider
+	creates int
+}
+
+func (p *restartProvisionProvider) Create(ctx context.Context, request provider.CreateRequest) (provider.Inventory, error) {
+	p.creates++
+	return p.Provider.Create(ctx, request)
+}
+
+// TestRestartRecoveryReview reopens the controller database after each review
+// decision, including a provider conflict, then checks the activation fence.
+func TestRestartRecoveryReview(t *testing.T) {
+	ctx, now := t.Context(), time.Now().UTC()
+	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "recover.db")}
+	db, err := database.Open(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
+		t.Fatal(err)
+	}
+	ref := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		Generation: 1, InstanceID: "retained-instance", OwnershipMarker: "fixture-owner"}
+	actor := uuid.NewString()
+	seedRecoveryRestart(t, db, ref, actor, now)
+	journal := operation.NewJournal(db, time.Now, uuid.NewString)
+	reviewID, err := backup.EnterRecovery(ctx, db, journal, ref.InstallationID, uuid.NewString(), actor, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restart := func(wantReview, wantInstallation string, wantVersion int64) {
+		t.Helper()
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		db, err = database.Open(ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		journal = operation.NewJournal(db, time.Now, uuid.NewString)
+		review, err := backup.ReadRecoveryReview(ctx, db, reviewID)
+		if err != nil || review.State != wantReview || review.Version != wantVersion {
+			t.Fatalf("review after restart = %s/%d (%v), want %s/%d", review.State, review.Version, err, wantReview, wantVersion)
+		}
+		var installed string
+		if err := db.QueryRowContext(ctx, "SELECT state FROM installations").Scan(&installed); err != nil || installed != wantInstallation {
+			t.Fatalf("installation after restart = %q (%v), want %q", installed, err, wantInstallation)
+		}
+		var revoked bool
+		if err := db.QueryRowContext(ctx, "SELECT revoked_at IS NOT NULL FROM sessions WHERE id='old-session'").Scan(&revoked); err != nil || !revoked {
+			t.Fatalf("copied session revoked after restart = %t (%v), want true", revoked, err)
+		}
+	}
+	update := func(decision backup.RecoveryDecisions) {
+		t.Helper()
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			_, err := backup.UpdateRecoveryReview(ctx, tx, reviewID, actor, decision, now)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe := func(matches bool) []backup.RecoveryWorkspace {
+		t.Helper()
+		got, err := backup.ObserveRecoveryWorkspaces(ctx, db, ref.InstallationID, func(_ context.Context, observed provider.WorkspaceRef) (provider.Inventory, error) {
+			if !matches || observed != ref {
+				return provider.Inventory{}, provider.ErrOwnershipMismatch
+			}
+			return provider.Inventory{Ref: ref, InstanceID: ref.InstanceID, Power: provider.Stopped,
+				ArtifactID: "fixture-image", Release: "fixture", ObservedAt: now}, nil
+		})
+		if err != nil || len(got) != 1 {
+			t.Fatalf("provider inventory after restart has %d entries (%v), want one", len(got), err)
+		}
+		return got
+	}
+	activate := func(fresh []backup.RecoveryWorkspace) error {
+		return database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			_, err := backup.ActivateRecoveryInTx(ctx, tx, journal, reviewID, actor, "reviewed-restart-activation", fresh, now)
+			return err
+		})
+	}
+
+	restart("identity_review", "recovery", 1)
+	update(backup.RecoveryDecisions{Section: "identities", Version: 1, UserIDs: []string{actor}})
+	restart("provider_reconcile", "recovery", 2)
+	update(backup.RecoveryDecisions{Section: "provider", Version: 2, Workspaces: observe(false)})
+	restart("blocked", "recovery", 3)
+	if err := activate(observe(false)); !errors.Is(err, backup.ErrRecoveryReview) {
+		t.Fatalf("activate after unresolved provider restart = %v, want review rejection", err)
+	}
+	update(backup.RecoveryDecisions{Section: "provider", Version: 3, Workspaces: observe(true)})
+	restart("authorization_review", "recovery", 4)
+	update(backup.RecoveryDecisions{Section: "authorization_retention", Version: 4, AcceptRetention: true})
+	restart("ready", "recovery", 5)
+	if err := activate(observe(false)); !errors.Is(err, backup.ErrRecoveryReview) {
+		t.Fatalf("activate with newly conflicting inventory = %v, want review rejection", err)
+	}
+	if err := activate(observe(true)); err != nil {
+		t.Fatal(err)
+	}
+	restart("activated", "active", 6)
+	var power string
+	if err := db.QueryRowContext(ctx, "SELECT observed_state FROM workspaces WHERE id=$1", ref.WorkspaceID).Scan(&power); err != nil || power != "stopped" {
+		t.Fatalf("restored workspace state = %q (%v), want verified stopped state", power, err)
+	}
+}
+
+func seedRecoveryRestart(t *testing.T, db *sql.DB, ref provider.WorkspaceRef, actor string, now time.Time) {
+	t.Helper()
+	ctx, stamp := t.Context(), now.Format(time.RFC3339Nano)
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO installations(id,state,organization_name,data_profile,management_origin,
+		ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version)
+		VALUES($1,'active','Restart fixture','sqlite','https://management.test','{workspace}.ide.test',
+		'{service}--{workspace}.preview.test','fixture','fixture',$2,$2,1)`, ref.InstallationID, stamp)
+	exec(`INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
+		VALUES($1,'owner@example.test','administrator','active','local','setup',$2,$2,1)`, actor, stamp)
+	exec(`INSERT INTO sessions(id,token_digest,user_id,mode,csrf_digest,authenticated_at,expires_at)
+		VALUES('old-session',$1,$2,'normal',$3,$4,$5)`, auth.TokenDigest("fixture login"), actor,
+		auth.TokenDigest("fixture csrf"), stamp, now.Add(time.Hour).Format(time.RFC3339Nano))
+	exec(`INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,
+		owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state)
+		VALUES('fixture-image','fixture','amd64','fixture','fixture','1','[]','{}','{}','{}',
+		'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','fixture.utm',$1,$2,'available')`, actor, stamp)
+	exec(`INSERT INTO workspaces(id,installation_id,owner_user_id,template_id,template_revision,platform_artifact_id,
+		repository_url,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,desired_state,observed_state,
+		generation,ownership_marker,provider_instance_id,created_at,updated_at,version)
+		VALUES($1,$2,$3,'fixture-template',1,'fixture-image','https://github.com/example/fixture','devcontainer.json',2,1024,40,
+		'{"mode":"nat"}','stopped','running',1,$4,$5,$6,$6,1)`,
+		ref.WorkspaceID, ref.InstallationID, actor, ref.OwnershipMarker, ref.InstanceID, stamp)
+}
 
 // TestRestartInitialAdministrator resumes both persisted setup steps after
 // losing a controller before and after the corresponding executor effect.
