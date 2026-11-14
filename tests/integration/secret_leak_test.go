@@ -90,7 +90,11 @@ func TestSecretRedactionAcrossManagementAndBackup(t *testing.T) {
 		if w.Code != want {
 			t.Fatalf("%s returned status %d, want %d", method, w.Code, want)
 		}
-		assertRedacted(t, "management response body and headers", w.Body.String()+w.Header().Get("Location")+w.Header().Get("X-Request-ID"), value, token, csrf)
+		var headers bytes.Buffer
+		if err := w.Header().Write(&headers); err != nil {
+			t.Fatal("cannot inspect management response headers")
+		}
+		assertRedacted(t, "management response body and headers", w.Body.String()+headers.String(), value, token, csrf)
 		if w.Header().Get("Cache-Control") != "no-store" {
 			t.Errorf("%s response did not use no-store", method)
 		}
