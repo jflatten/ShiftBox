@@ -289,6 +289,47 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		if _, _, err := enrollment.Exchange(ctx, leaf, now, input); !errors.Is(err, guest.ErrGuestReportConflict) {
 			t.Errorf("changed activation receipt = %v, want conflict", err)
 		}
+		// A maintenance boot can recover a retained expired identity while
+		// desired state stays stopped. Leaving boot closes that authority.
+		defer func() {
+			if _, err := db.Exec("UPDATE workspaces SET desired_state='running' WHERE id='work'"); err != nil {
+				t.Error(err)
+			}
+			if _, err := db.Exec("UPDATE guest_registrations SET state='active' WHERE workspace_id='work'"); err != nil {
+				t.Error(err)
+			}
+			if _, err := db.Exec("DELETE FROM enrollment_grants WHERE operation_id=$1", target); err != nil {
+				t.Error(err)
+			}
+			if _, err := db.Exec("UPDATE enrollment_grants SET state='consumed' WHERE id=$1 AND operation_id='op'", digest); err != nil {
+				t.Error(err)
+			}
+		}()
+		for _, query := range []string{
+			"UPDATE workspaces SET desired_state='stopped' WHERE id='work'",
+			"UPDATE guest_registrations SET state='expired' WHERE workspace_id='work'",
+		} {
+			if _, err := db.Exec(query); err != nil {
+				t.Fatal(err)
+			}
+		}
+		inventory := provider.Inventory{Ref: ref, InstanceID: ref.InstanceID, Power: provider.Stopped, ObservedAt: now}
+		if _, err := enrollment.Mint(ctx, target, inventory, now); !errors.Is(err, guest.ErrEnrollmentDenied) {
+			t.Errorf("recovery grant during activation = %v, want denial", err)
+		}
+		if _, err := db.Exec("UPDATE maintenance_targets SET prior_desired_state='stopped' WHERE operation_id=$1", target); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("UPDATE operations SET current_step='maintenance_boot' WHERE id=$1", target); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO operation_steps(operation_id,step_index,step_key,label,status)
+			VALUES($1,2,'maintenance_boot','Management boot','active')`, target); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := enrollment.Mint(ctx, target, inventory, now); err != nil {
+			t.Errorf("recovery grant during maintenance boot = %v, want success", err)
+		}
 	})
 	if leaf.Subject.CommonName == "injected" || len(leaf.DNSNames) != 0 || len(leaf.URIs) != 1 ||
 		!leaf.NotAfter.Equal(issuer.NotAfter) || leaf.CheckSignatureFrom(issuer) != nil ||

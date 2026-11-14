@@ -1730,9 +1730,11 @@ This checkpoint does not itself change the goal status.
   stopped, then release compute after a provider-confirmed graceful stop.
   Failed staging or activation now preserves the failed step, skips
   remaining update steps, and still performs the graceful stop before
-  settling the target as failed. Recovery for expired guest identities,
-  production worker wiring, and native signed-update validation remain open
-  under T095.
+  settling the target as failed. When configured with the enrollment
+  service, maintenance can deliver recovery media for an expired guest
+  registration while keeping desired state stopped. The boot step waits
+  for fresh authenticated contact before clearing the media. Production
+  worker wiring and native signed-update validation remain open under T095.
 
 ### Migration preflight CLI
 

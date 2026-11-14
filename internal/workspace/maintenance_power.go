@@ -15,6 +15,7 @@ import (
 type maintenancePower struct {
 	machines provider.Provider
 	now      func() time.Time
+	recovery *LaunchExecutor
 }
 
 func (e maintenanceUpdateExecutor) powerRequest(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, error) {
@@ -72,6 +73,11 @@ func (e maintenanceUpdateExecutor) reconcilePower(ctx context.Context, op operat
 	want := provider.Stopped
 	if step.Key == "maintenance_boot" {
 		want = provider.Running
+		if got.Power == provider.Stopped && e.power.recovery != nil {
+			if _, err := e.store.needsEnrollment(ctx, req.Ref, "stopped", now); err != nil {
+				return "", false, err
+			}
+		}
 		if err := database.Transaction(ctx, e.store.db, func(tx *sql.Tx) error {
 			return reserveStart(ctx, tx, e.installation, req.Ref.WorkspaceID, req.Ref.Generation, "stopped", now)
 		}); err != nil {
@@ -87,7 +93,7 @@ func (e maintenanceUpdateExecutor) reconcilePower(ctx context.Context, op operat
 		}
 		switch {
 		case want == provider.Running && got.Power == provider.Stopped:
-			got, err = e.power.machines.Start(ctx, provider.StartRequest{Ref: req.Ref, OperationID: op.ID, NetworkMode: req.NetworkMode})
+			got, err = e.startManagementGuest(ctx, op, step, req, got, now)
 		case want == provider.Stopped && got.Power == provider.Running:
 			got, err = e.power.machines.Stop(ctx, provider.StopRequest{Ref: req.Ref, OperationID: op.ID})
 		default:
@@ -126,5 +132,52 @@ func (e maintenanceUpdateExecutor) reconcilePower(ctx context.Context, op operat
 	if want == provider.Stopped {
 		return "The provider confirmed the workspace stopped and its disk was retained.", true, nil
 	}
+	if e.power.recovery != nil {
+		var contact string
+		err := e.store.db.QueryRowContext(ctx, `SELECT COALESCE(last_authenticated_at,'') FROM guest_registrations
+			WHERE workspace_id=$1 AND generation=$2 AND state='active'`, req.Ref.WorkspaceID, req.Ref.Generation).Scan(&contact)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", false, err
+		}
+		stamp, err := time.Parse(time.RFC3339Nano, contact)
+		if err != nil || stamp.Before(*op.StartedAt) || stamp.After(now) {
+			return "", false, &operation.StepWaiting{Detail: "Waiting for the maintenance guest to authenticate."}
+		}
+		if err := e.power.recovery.enrollment.CleanupDelivery(ctx, op.ID, req.Ref, e.power.recovery.mediaRoot); err != nil {
+			return "", false, err
+		}
+	}
 	return "The provider confirmed the management boot.", true, nil
+}
+
+func (e maintenanceUpdateExecutor) startManagementGuest(ctx context.Context, op operation.Operation, step operation.Step,
+	req provider.CreateRequest, stopped provider.Inventory, now time.Time,
+) (provider.Inventory, error) {
+	start := provider.StartRequest{Ref: req.Ref, OperationID: op.ID, NetworkMode: req.NetworkMode}
+	recovery := e.power.recovery
+	if recovery != nil {
+		var err error
+		start.RequiresEnrollment, err = e.store.needsEnrollment(ctx, req.Ref, "stopped", now)
+		if err != nil {
+			return stopped, err
+		}
+		if start.RequiresEnrollment {
+			start.EnrollmentMedia, err = recovery.enrollment.Deliver(ctx, op.ID, stopped, now, recovery.mediaRoot,
+				recovery.endpoint, recovery.pollEndpoint, e.power.machines.DeliverEnrollment)
+			if err != nil {
+				return stopped, &operation.StepWaiting{Detail: "Waiting for the provider to attach fresh maintenance enrollment media.", Cause: err}
+			}
+		}
+		if current, err := e.powerRequest(ctx, op, step); err != nil || current != req {
+			return stopped, provider.ErrInvalidState
+		}
+		stillRequires, err := e.store.needsEnrollment(ctx, req.Ref, "stopped", e.power.now())
+		if err != nil {
+			return stopped, err
+		}
+		if stillRequires != start.RequiresEnrollment {
+			return stopped, provider.ErrOutcomeUnknown
+		}
+	}
+	return e.power.machines.Start(ctx, start)
 }

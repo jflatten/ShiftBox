@@ -175,9 +175,16 @@ func enrollmentTarget(ctx context.Context, tx enrollmentQuery, workspace string,
 		FROM workspaces w JOIN guest_registrations r ON r.workspace_id=w.id AND r.generation=w.generation
 		JOIN operations o ON o.workspace_id=w.id AND o.generation=w.generation
 		JOIN users u ON u.id=w.owner_user_id JOIN installations i ON i.id=w.installation_id
-		WHERE w.id=$1 AND w.generation=$2 AND o.id=$3 AND w.desired_state='running' AND i.state='active'
+		WHERE w.id=$1 AND w.generation=$2 AND o.id=$3 AND i.state='active'
 		  AND w.provider_instance_id IS NOT NULL AND u.membership_state='active'
-		  AND o.type IN ('provision','start','recover') AND o.status IN ('running','waiting')`, workspace, generation, op).
+		  AND o.status IN ('running','waiting')
+		  AND ((w.desired_state='running' AND o.type IN ('provision','start','recover')) OR
+		    (w.desired_state='stopped' AND w.deletion_commit_at IS NULL AND o.type='update'
+		    AND o.originating_action='maintenance.update_guest' AND o.current_step='maintenance_boot'
+		    AND EXISTS (SELECT 1 FROM operation_steps s WHERE s.operation_id=o.id AND s.step_key=o.current_step AND s.status='active')
+		    AND EXISTS (SELECT 1 FROM maintenance_targets t JOIN maintenance_campaigns c ON c.operation_id=t.campaign_id
+		      WHERE t.operation_id=o.id AND t.workspace_id=w.id AND t.generation=w.generation
+		      AND t.prior_desired_state='stopped' AND c.installation_id=i.id AND c.state='active')))`, workspace, generation, op).
 		Scan(&ref.InstallationID, &ref.OwnershipMarker, &ref.InstanceID, &state, &proof, &expires)
 	return ref, state, proof, expires, denyMissing(err)
 }
