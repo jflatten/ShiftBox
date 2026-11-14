@@ -40,7 +40,7 @@ func Authorize(p Principal, action string, resource Resource, grants []ResourceG
 		return deny
 	}
 	if p.Session.Mode == "recovery_review" {
-		if admin && p.InstallationState == "recovery" && (action == "recovery.review" || (action == "recovery.activate" && p.RecoveryReady)) {
+		if recoveryActionAllowed(p, action) {
 			return allow
 		}
 		return deny
