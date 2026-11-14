@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Anchor, Button, NativeSelect, Stack, Table, Text, Title } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { ShiftBoxShell } from '../../components/app-shell';
@@ -43,9 +43,18 @@ export function People() {
   const data = allowed && !people.isError ? people.data : undefined;
   const [selected, setSelected] = useState<Person>();
   const [reset, setReset] = useState<Person>();
+  const actionButton = useRef<HTMLButtonElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (selected || reset || !actionButton.current) return;
+    // Disabling an account can remove the trigger from the updated table.
+    const destination = actionButton.current.isConnected ? actionButton.current : heading.current;
+    actionButton.current = null;
+    destination?.focus();
+  }, [reset, selected]);
   return (
     <ShiftBoxShell session={current} alerts={[]} error={session.error ?? (allowed ? people.error : undefined) ?? undefined}>
-      <Title order={1}>People</Title>
+      <Title order={1} ref={heading} tabIndex={-1}>People</Title>
       {session.isPending ? <Text role="status">Checking your session…</Text> : null}
       {session.data === null ? <SignInChoices /> : null}
       {current && !allowed ? <Text>Administrator access required.</Text> : null}
@@ -61,8 +70,14 @@ export function People() {
         csrfToken={current.csrfToken}
         canApprove={current.permissions.includes('user.approve')}
         canChangeRole={current.permissions.includes('user.change_role')}
-        onDisable={current.permissions.includes('user.disable') ? setSelected : undefined}
-        onReset={current.permissions.includes('user.reset_password') ? setReset : undefined}
+        onDisable={current.permissions.includes('user.disable') ? (person, trigger) => {
+          actionButton.current = trigger;
+          setSelected(person);
+        } : undefined}
+        onReset={current.permissions.includes('user.reset_password') ? (person, trigger) => {
+          actionButton.current = trigger;
+          setReset(person);
+        } : undefined}
         refresh={people.refetch} /> : null}
       {selected && allowed && current?.permissions.includes('user.disable') ? (
         <Offboarding person={selected} csrfToken={current.csrfToken}
@@ -81,8 +96,8 @@ function PeopleTable({ people, csrfToken, canApprove, canChangeRole, onDisable, 
   csrfToken: string;
   canApprove: boolean;
   canChangeRole: boolean;
-  onDisable?: (person: Person) => void;
-  onReset?: (person: Person) => void;
+  onDisable?: (person: Person, trigger: HTMLButtonElement) => void;
+  onReset?: (person: Person, trigger: HTMLButtonElement) => void;
   refresh: () => Promise<unknown>;
 }) {
   const hasActions = canApprove || canChangeRole || !!onDisable || !!onReset;
@@ -118,10 +133,10 @@ function PeopleTable({ people, csrfToken, canApprove, canChangeRole, onDisable, 
                   <MembershipRoleForm key={person.version} person={person} csrfToken={csrfToken} refresh={refresh} />
                 ) : null}
                 {onReset && person.membershipState === 'active' && person.credentialMode === 'local' ? (
-                  <Button size="compact-sm" variant="subtle" onClick={() => onReset(person)}>Reset password</Button>
+                  <Button size="compact-sm" variant="subtle" onClick={event => onReset(person, event.currentTarget)}>Reset password</Button>
                 ) : null}
                 {onDisable && person.membershipState !== 'disabled' ? (
-                  <Button size="compact-sm" color="red" variant="subtle" onClick={() => onDisable(person)}>Disable account</Button>
+                  <Button size="compact-sm" color="red" variant="subtle" onClick={event => onDisable(person, event.currentTarget)}>Disable account</Button>
                 ) : null}</Stack></Table.Td>
               ) : null}
             </Table.Tr>

@@ -37,7 +37,7 @@ export function ResetPassword({ person, csrfToken, onClose, refresh }: {
   };
 
   return (
-    <Modal opened title="Reset password" onClose={canClose ? onClose : () => {}}
+    <Modal opened returnFocus={false} title="Reset password" onClose={canClose ? onClose : () => {}}
       closeOnEscape={canClose} closeOnClickOutside={canClose} withCloseButton={canClose}
       transitionProps={{ duration: 0 }}>
       <Stack>

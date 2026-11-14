@@ -17,8 +17,30 @@ session, and returned the installation to active. The source installation
 remained active.
 
 This fixture contained zero workspaces. The live check covered the provider
-review request with an empty inventory. T116 still needs the populated
-workspace fixture, live provider reconciliation, and the Go acceptance test.
+review request with an empty inventory. The new Go acceptance verifier
+successfully matched the archive against its recorded digest and size and
+found the activated review, then rejected the empty inventory. T116 still
+needs the populated workspace fixture and live provider reconciliation.
+
+## Populated recovery acceptance
+
+Before capturing the archive, retain a ready workspace and mint a browser
+entry grant for it. Use a disposable source installation with the source
+database and archive available after restore. Preserve the source database
+through verification, including the recorded backup. After the protected
+restore and browser review, set `SHIFTBOX_RECOVERY_SOURCE_DATABASE`,
+`SHIFTBOX_RECOVERY_RESTORED_DATABASE`, and `SHIFTBOX_RECOVERY_ARCHIVE` to
+absolute paths and run:
+
+```sh
+go test ./tests/acceptance -run '^TestBackupRecoveryJournal$' -count=1 -v
+```
+
+The verifier reads both databases without writes. It checks the exact
+archive bytes against the source backup record, the same logical
+installation and retained workspace ownership, matched provider review,
+explicit activation, and revocation of copied authority. It only verifies
+management records and recorded provider observations.
 
 ## Supporting checks
 

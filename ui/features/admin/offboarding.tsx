@@ -68,7 +68,7 @@ export function Offboarding({ person, csrfToken, onClose, refresh }: {
   };
 
   return (
-    <Modal opened onClose={saving ? () => {} : onClose} closeOnEscape={!saving} closeOnClickOutside={!saving}
+    <Modal opened returnFocus={false} onClose={saving ? () => {} : onClose} closeOnEscape={!saving} closeOnClickOutside={!saving}
       withCloseButton={!saving} title={stops ? 'Account disabled' : 'Disable account'}>
       <Stack>
         <Text fw={600}>{person.primaryEmail}</Text>
