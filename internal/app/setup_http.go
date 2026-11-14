@@ -29,6 +29,7 @@ type SetupHTTP struct {
 	BrowserAssets    http.Handler
 	CertificateRoots *x509.CertPool
 	Postgres         *PostgresProfileSetup
+	Platform         func(ctx context.Context, actor, currentRelease, previousRelease string) error
 	transferPostgres PostgresCredentialTransfer
 	Journal          *operation.Journal
 	Now              func() time.Time
@@ -61,6 +62,7 @@ func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 		mux.Handle("PUT /api/v1/setup/data-profile", setup.profileHandler(database.PreflightPostgresSetup))
 		mux.Handle("PUT /api/v1/setup/certificate", setup.certificateHandler())
 		mux.Handle("PUT /api/v1/admin/capacity", setup.capacityHandler())
+		mux.Handle("POST /api/v1/setup/platform", setup.platformHandler())
 		mux.Handle("POST /api/v1/setup/activate", setup.activationHandler())
 		if passwords, ok := setup.Admin.(setupPasswords); ok {
 			mux.Handle("PUT /api/v1/session/password", setup.passwordHandler(sessions, passwords))

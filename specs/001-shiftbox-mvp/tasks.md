@@ -105,7 +105,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T043 [US1] Implement resumable protected setup state, first-administrator creation, one-time password output, password-change gate, and exact activation transitions proven by T030 in `internal/app/setup.go` and `cmd/shiftbox/setup.go`
 - [ ] T044 [US1] Implement SQLite bootstrap and PostgreSQL profile preflight/activation with separate ShiftBox/Dex ownership and no fallback after activation proven by T031 in `internal/database/profile.go` and `internal/app/activate.go`
 - [X] T045 [US1] Implement browser certificate chain/key/hostname validation and atomic configuration activation in `internal/config/certificate.go`
-- [ ] T046 [US1] Build the pinned Packer Ubuntu 24.04 Minimal amd64 artifact with supervised guest agent and VS Code Browser, then implement immutable artifact import, manifest/digest/provenance validation, default selection, resource profiles, capacity budget, and provider capability admission proven by T033 in `platform/packer/shiftbox.pkr.hcl`, `platform/guest/`, `internal/release/catalog.go`, and `internal/workspace/capacity.go`
+- [X] T046 [US1] Build the pinned Packer Ubuntu 24.04 Minimal amd64 artifact with supervised guest agent and VS Code Browser, then implement immutable artifact import, manifest/digest/provenance validation, default selection, resource profiles, capacity budget, and provider capability admission proven by T033 in `platform/packer/shiftbox.pkr.hcl`, `platform/guest/`, `internal/release/catalog.go`, and `internal/workspace/capacity.go`
 - [X] T047 [US1] Define the consumer-owned Provider interface, complete inventory/types, semantic errors, fake provider, and shared suite adapter proven by T032 in `internal/provider/provider.go`, `internal/provider/types.go`, `internal/provider/errors.go`, and `internal/provider/fake/fake.go`
 - [ ] T048 [US1] Implement the compiled UTM provider using only the supported local scripting surface, complete inventory comparison, serialized mutations, inspect-after-effect, and preserved drive lists proven by T033 in `internal/provider/utm/provider.go`, `internal/provider/utm/inventory.go`, and `internal/provider/utm/script.go`
 
@@ -120,7 +120,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T055 [US1] Implement provision/start/stop/rebuild/repair/open-IDE reconciliation with inspect-before-retry, desired/observed separation, durable steps, readiness evidence, and reservation release rules in `internal/workspace/reconciler.go` and `internal/workspace/lifecycle.go`
 - [ ] T056 [US1] Implement the setup, template, workspace, operation, event, and entry-grant OpenAPI routes proven by T030 and T036 in `internal/web/setup_routes.go`, `internal/web/template_routes.go`, `internal/web/workspace_routes.go`, and `internal/web/operation_routes.go`
 - [ ] T057 [US1] Implement owner/audited-admin IDE and preview routing that exchanges a short-lived exact-origin grant for a separate host-only cookie and never forwards management authority in `internal/proxy/grants.go`, `internal/proxy/router.go`, and `internal/web/proxy_routes.go`
-- [ ] T058 [US1] Implement the keyboard-accessible Mantine setup Stepper and forms, including one-time password acknowledgement, profile/certificate/provider validation, activation warning, and fresh sign-in in `ui/features/setup/setup-flow.tsx` and `ui/app/setup/page.tsx`
+- [X] T058 [US1] Implement the keyboard-accessible Mantine setup Stepper and forms, including one-time password acknowledgement, profile/certificate/provider validation, activation warning, and fresh sign-in in `ui/features/setup/setup-flow.tsx` and `ui/app/setup/page.tsx`
 - [ ] T059 [US1] Implement template creation plus workspace launch/detail/lifecycle/repair screens with Mantine controls and server-derived WorkflowStepper state in `ui/features/templates/template-form.tsx`, `ui/features/workspaces/launch-flow.tsx`, `ui/features/workspaces/workspace-detail.tsx`, and `ui/app/workspaces/page.tsx`
 - [ ] T060 [US1] Wire static UI embedding and controller/agent CLI composition so `shiftbox serve`, `shiftbox setup`, and `shiftbox-agent serve` satisfy their contracts in `internal/web/static.go`, `cmd/shiftbox/main.go`, and `cmd/shiftbox-agent/main.go`
 - [ ] T061 [US1] Add and run the exact-stack Go acceptance test together with the T039 Playwright journey, then record separate test results and pinned release evidence without broadening supported versions in `tests/release/mvp_workspace_test.go`, `documentation/validation/mvp-workspace.md`, and `platform/manifests/release.json`
@@ -2396,3 +2396,17 @@ This checkpoint does not itself change the goal status.
   reproduced the missing record and passed after the fix.
 - T046 and T058 remain open for connecting the setup screen to local import
   and the production boot-and-enrollment validator.
+
+### Setup platform validation
+
+- T046 and T058 are complete. The protected setup provider step validates
+  the operator's local bundle and manifest, checks UTM capability and guest
+  compatibility, and uses a disposable copy with separate enrollment trust
+  and no project dispatch. The catalog is published and selected only after
+  an authenticated poll and confirmed clone deletion.
+- UTM 5.0.8 passed the native validation test in 148.75s with an 8 GiB
+  configured disk minimum and the actual 32 GiB image. Regression tests
+  covered a lost import reply, and Chrome exercised keyboard validation,
+  progress, retry and activation acknowledgement with local fixtures.
+- T052 remains open for starting code-server in the project Dev Container.
+  The complete launch journey and release evidence remain T039 and T061.

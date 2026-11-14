@@ -159,6 +159,38 @@ test('keeps a failed PostgreSQL profile available for retry', async () => {
   expect(screen.getByRole('alert')).not.toHaveTextContent(connectionUri);
 });
 
+// The configured local image can be checked again after a boot failure.
+test('validates the configured platform image before activation', async () => {
+  let attempts = 0;
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/setup/status') return response(200, {
+      ...bootstrap(attempts === 2 ? 'activation' : 'provider'), capacityVersion: 1, compatibleArtifact: attempts === 2,
+    }) as Response;
+    if (input === '/api/v1/session') return response(200, { mode: 'bootstrap_restricted', csrfToken: 'csrf-fixture' }) as Response;
+    if (input === '/api/v1/setup/platform' && init?.method === 'POST') {
+      attempts++;
+      if (attempts === 2) return response(204) as Response;
+      return {
+        ...response(409, { type: 'about:blank', title: 'Platform image validation failed', status: 409,
+          code: 'setup.platform_validation_failed', requestId: '' }),
+        headers: new Headers({ 'Content-Type': 'application/problem+json' }),
+      } as Response;
+    }
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><SetupFlow /></Providers>);
+  const validate = await screen.findByRole('button', { name: 'Validate platform image' });
+  await user.click(validate);
+  expect(await screen.findByText('Platform image validation failed')).toBeVisible();
+  await user.click(validate);
+  expect(await screen.findByRole('button', { name: 'Activate installation' })).toBeDisabled();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/setup/platform', {
+    method: 'POST', headers: { 'X-CSRF-Token': 'csrf-fixture' },
+  });
+});
+
 // Capacity uses the server revision and activation waits for acknowledgement.
 test('saves capacity and confirms activation before submitting', async () => {
   let stage = 'provider';

@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
 import { PasswordForm } from '../session/password';
-import { ActivateForm, CapacityForm, SetupComplete } from './setup-activation';
+import { ActivateForm, CapacityForm, PlatformCheck, SetupComplete } from './setup-activation';
 import { CertificateForm, DatabaseForm } from './setup-configuration';
 
 const steps = [
@@ -97,8 +97,12 @@ export function SetupFlow() {
           <CertificateForm csrfToken={currentSession.csrfToken} onSaved={refreshStatus} />
         ) : null}
         {!error && stage === 'provider' && currentSession && !passwordChanged ? (
-          <CapacityForm csrfToken={currentSession.csrfToken} version={status.data?.capacityVersion ?? 0}
-            compatibleArtifact={status.data?.compatibleArtifact === true} onSaved={refreshStatus} />
+          <Stack gap="xl">
+            {status.data?.compatibleArtifact === true ? null : (
+              <PlatformCheck csrfToken={currentSession.csrfToken} onValidated={refreshStatus} />
+            )}
+            <CapacityForm csrfToken={currentSession.csrfToken} version={status.data?.capacityVersion ?? 0} onSaved={refreshStatus} />
+          </Stack>
         ) : null}
         {!error && stage === 'activation' && currentSession && !passwordChanged ? (
           <ActivateForm csrfToken={currentSession.csrfToken} onActivated={() => setActivated(true)} />

@@ -114,6 +114,27 @@ func (p *Provider) Create(ctx context.Context, req provider.CreateRequest) (prov
 	return p.controller.importStagedArtifact(ctx, req, artifact, p.staging, p.storage)
 }
 
+// ImportCandidate imports the disposable copy supplied by catalog validation.
+func (p *Provider) ImportCandidate(ctx context.Context, req provider.CreateRequest, artifact release.Artifact) (provider.Inventory, error) {
+	disk, err := stagedDiskCapacity(ctx, artifact)
+	if err != nil {
+		return provider.Inventory{}, err
+	}
+	req.Resources.DiskBytes = disk
+	if req.Resources.CPU < p.minimum.CPU || req.Resources.CPU > p.maximum.CPU ||
+		req.Resources.MemoryBytes < p.minimum.MemoryBytes || req.Resources.MemoryBytes > p.maximum.MemoryBytes ||
+		req.Resources.DiskBytes < p.minimum.DiskBytes || req.Resources.DiskBytes > p.maximum.DiskBytes {
+		return provider.Inventory{}, provider.ErrCapabilityUnsupported
+	}
+	artifactDir := filepath.Dir(artifact.Bundle)
+	bundle := filepath.Join(artifactDir, managedBundleName(req.Ref))
+	if err := os.Rename(artifact.Bundle, bundle); err != nil {
+		return provider.Inventory{}, err
+	}
+	artifact.Bundle = bundle
+	return p.controller.importStagedArtifact(ctx, req, artifact, p.staging, p.storage)
+}
+
 func (p *Provider) Start(ctx context.Context, req provider.StartRequest) (provider.Inventory, error) {
 	return p.controller.Start(ctx, req)
 }

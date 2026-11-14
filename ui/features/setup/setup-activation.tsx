@@ -4,10 +4,41 @@ import { useForm } from '@mantine/form';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
 
-export function CapacityForm({ csrfToken, version, compatibleArtifact, onSaved }: {
+export function PlatformCheck({ csrfToken, onValidated }: {
+  csrfToken: string;
+  onValidated: () => Promise<void>;
+}) {
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState<unknown>();
+  const validate = async () => {
+    setChecking(true);
+    setError(undefined);
+    try {
+      const response = await fetch('/api/v1/setup/platform', {
+        method: 'POST', headers: { 'X-CSRF-Token': csrfToken },
+      });
+      if (!response.ok) throw await readProblem(response);
+      await onValidated();
+    } catch (error) {
+      setError(error);
+    } finally {
+      setChecking(false);
+    }
+  };
+  return (
+    <Stack align="flex-start">
+      <Title order={2}>Platform image</Title>
+      <Text size="sm">ShiftBox checks the configured local image by booting a temporary UTM VM.</Text>
+      {checking ? <Text role="status">Validating the platform image. This can take several minutes.</Text> : null}
+      {error !== undefined ? <APIProblemView error={error} /> : null}
+      <Button loading={checking} onClick={() => void validate()}>Validate platform image</Button>
+    </Stack>
+  );
+}
+
+export function CapacityForm({ csrfToken, version, onSaved }: {
   csrfToken: string;
   version: number;
-  compatibleArtifact: boolean;
   onSaved: () => Promise<void>;
 }) {
   const [error, setError] = useState<unknown>();
@@ -35,11 +66,6 @@ export function CapacityForm({ csrfToken, version, compatibleArtifact, onSaved }
   return (
     <Stack>
       <Title order={2}>Workspace capacity</Title>
-      {!compatibleArtifact ? (
-        <Alert color="yellow" title="Compatible platform image required">
-          Setup needs a validated default workspace image before activation.
-        </Alert>
-      ) : null}
       {version > 0 ? <Text size="sm">Capacity limits are saved.</Text> : null}
       <form noValidate onSubmit={form.onSubmit(save, errors => form.getInputNode(Object.keys(errors)[0])?.focus())}>
         <Stack>

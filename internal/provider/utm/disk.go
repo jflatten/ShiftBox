@@ -16,12 +16,23 @@ import (
 // verifyStagedDisk checks the one persistent disk in the MVP artifact through
 // the public QCOW2 header. This measures the staged source before import.
 func verifyStagedDisk(ctx context.Context, artifact release.Artifact, requested int64) error {
-	if err := ctx.Err(); err != nil {
+	size, err := stagedDiskCapacity(ctx, artifact)
+	if err != nil {
 		return err
+	}
+	if size != requested {
+		return provider.ErrCapabilityUnsupported
+	}
+	return nil
+}
+
+func stagedDiskCapacity(ctx context.Context, artifact release.Artifact) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
 	}
 	root, err := os.OpenRoot(artifact.Bundle)
 	if err != nil {
-		return provider.ErrOutcomeUnknown
+		return 0, provider.ErrOutcomeUnknown
 	}
 	defer root.Close()
 
@@ -32,21 +43,14 @@ func verifyStagedDisk(ctx context.Context, artifact release.Artifact, requested 
 		}
 		_, relative, ok := strings.Cut(resource.Path, "/")
 		if !ok || image != "" || path.Ext(relative) != ".qcow2" {
-			return provider.ErrCapabilityUnsupported
+			return 0, provider.ErrCapabilityUnsupported
 		}
 		image = relative
 	}
 	if image == "" {
-		return provider.ErrCapabilityUnsupported
+		return 0, provider.ErrCapabilityUnsupported
 	}
-	size, err := qcowCapacity(root, image)
-	if err != nil {
-		return err
-	}
-	if size != requested {
-		return provider.ErrCapabilityUnsupported
-	}
-	return nil
+	return qcowCapacity(root, image)
 }
 
 func qcowCapacity(root *os.Root, name string) (int64, error) {

@@ -34,6 +34,8 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	email := flags.String("administrator-email", "", "")
 	dex := flags.String("dex-binary", "", "")
 	postgresPath := flags.String("postgres-identity-config", "", "")
+	configPath := flags.String("config", "", "")
+	platformFolder := flags.String("platform-folder", "", "")
 	reset := flags.Bool("reset-temporary-password", false, "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(*dir) {
 		return errors.New("setup requires an absolute installation directory and administrator email")
@@ -55,6 +57,10 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	}
 	if *reset {
 		return resetSetupPassword(ctx, *dir, *dex, normalized, out)
+	}
+	platform, err := readSetupPlatform(*dir, *configPath, *platformFolder)
+	if err != nil {
+		return err
 	}
 	postgres, err := readSetupPostgresProfile(*postgresPath)
 	if err != nil {
@@ -117,6 +123,9 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 		dexDone, closeDex = done, cleanup
 		setup = app.SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Admin: admin, Login: login, BrowserAssets: assets, CertificateRoots: roots, Postgres: postgres,
 			Journal: operation.NewJournal(db, time.Now, uuid.NewString), Now: time.Now, NewID: uuid.NewString}
+		if platform != nil {
+			setup.Platform = platform.validator(db, id)
+		}
 		setup = setup.WithPostgresTransfer(func(ctx context.Context, storage identity.DexPostgres, email, userID string) error {
 			target, _, _, cleanup, err := startSetupDex(ctx, *dir, *dex, origin, cert, &storage)
 			if err != nil {

@@ -18,6 +18,7 @@ func ManagementRoutes() []ManagementRoute {
 		{Method: "POST", Path: "/setup/administrator", OperationID: "createInitialAdministrator", Action: "setup.mutate"},
 		{Method: "PUT", Path: "/setup/data-profile", OperationID: "configureDataProfile", Action: "setup.mutate"},
 		{Method: "PUT", Path: "/setup/certificate", OperationID: "configureBrowserCertificate", Action: "setup.mutate"},
+		{Method: "POST", Path: "/setup/platform", OperationID: "validateSetupPlatform", Action: "setup.mutate"},
 		{Method: "POST", Path: "/setup/activate", OperationID: "activateInstallation", Action: "setup.mutate"},
 		{Method: "GET", Path: "/session", OperationID: "getSession", Action: "session.view"},
 		{Method: "DELETE", Path: "/session", OperationID: "logout", Action: "session.logout"},

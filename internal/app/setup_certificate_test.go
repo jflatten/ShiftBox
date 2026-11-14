@@ -89,11 +89,20 @@ func TestSetupCertificateUpload(t *testing.T) {
 	}
 	setup := SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, CertificateRoots: roots,
 		Now: func() time.Time { return now }, NewID: uuid.NewString, Journal: operation.NewJournal(db, time.Now, uuid.NewString)}
+	validationCalls := 0
+	setup.Platform = func(_ context.Context, actor, current, previous string) error {
+		validationCalls++
+		if actor != owner || current != "development" || previous != "development" {
+			t.Errorf("platform validation authority = %q/%q/%q, want bootstrap owner and development releases", actor, current, previous)
+		}
+		return nil
+	}
 	mux := http.NewServeMux()
 	mux.Handle("PUT /profile", setup.profileHandler(database.PreflightPostgresSetup))
 	mux.Handle("PUT /certificate", setup.certificateHandler())
 	mux.Handle("POST /activate", setup.activationHandler())
 	mux.Handle("PUT /capacity", setup.capacityHandler())
+	mux.Handle("POST /platform", setup.platformHandler())
 	mux.HandleFunc("GET /status", setup.status)
 	handler, err := ProtectBootstrap(origin, mux)
 	if err != nil {
@@ -106,7 +115,7 @@ func TestSetupCertificateUpload(t *testing.T) {
 			t.Fatal(err)
 		}
 		method := http.MethodPut
-		if path == "/activate" {
+		if path == "/activate" || path == "/platform" {
 			method = http.MethodPost
 		}
 		r := httptest.NewRequest(method, origin+path, strings.NewReader(string(payload)))
@@ -152,6 +161,7 @@ func TestSetupCertificateUpload(t *testing.T) {
 		}
 	}
 	request("/capacity", "", budget, 409)
+	request("/platform", "", nil, 409)
 	request("/certificate", "setup-cert-upload-001", input, 409)
 	request("/profile", "setup-profile-select-1", map[string]string{"profile": "sqlite"}, 202)
 	input["privateKeyPem"] = "malformed private key"
@@ -180,6 +190,10 @@ func TestSetupCertificateUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkStatus("provider", false, 0)
+	request("/platform", "", nil, 204)
+	if validationCalls != 1 {
+		t.Fatalf("platform validator called %d times, want one call after certificate setup", validationCalls)
+	}
 	request("/activate", "setup-activate-0001", nil, 409)
 	if _, err := db.Exec(`INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state,is_default)
 		VALUES('fixture','fixture','amd64','test','development','1','[]','{}','{}','{}','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','fixture.utm',$1,$2,'available',1)`, owner, now.Format(time.RFC3339Nano)); err != nil {

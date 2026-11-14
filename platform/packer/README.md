@@ -50,6 +50,23 @@ go run ./platform/packer/manifest /absolute/path/to/final/shiftbox.utm \
 The tool hashes the exported files in place. Release validation uses the
 candidate bundle and its manifest for UTM clone, boot, and enrollment checks.
 
+To import the candidate during local setup, pass its `final` directory to
+the setup command. Use the controller configuration for the same installation
+directory. The provider settings must include the UTM Documents directory,
+a host address the guest can reach, and resource bounds that include the
+image's virtual disk size.
+
+```sh
+shiftbox setup --installation-dir /absolute/path/to/installation \
+    --administrator-email owner@example.com \
+    --config /absolute/path/to/shiftbox.json \
+    --platform-folder /absolute/path/to/final
+```
+
+Choose **Validate platform image** in the provider step. Setup checks the
+manifest, imports a disposable clone, waits for an authenticated agent poll,
+and verifies VM removal before selecting the default image.
+
 To verify that a prepared development export can enroll, run the opt-in
 `utm_release` test with UTM 5.0.8 running. Set the guest host to a local IP
 address reachable from the VM and point storage at UTM's Documents directory.
