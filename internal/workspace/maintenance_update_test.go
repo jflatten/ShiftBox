@@ -188,6 +188,15 @@ func TestMaintenanceUpdateWorker(t *testing.T) {
 					t.Fatal(err)
 				}
 				if outcome == "succeeded" {
+					maintenanceExec(t, db, `UPDATE workspaces SET guest_release='previous',protocol_version='1' WHERE id='retained'`)
+					if err := worker.RunOnce(ctx, id); !errors.As(err, &waiting) {
+						t.Fatalf("verification with previous release = %v, want waiting", err)
+					}
+					maintenanceExec(t, db, `UPDATE workspaces SET guest_release='test',protocol_version='2' WHERE id='retained'`)
+					if err := worker.RunOnce(ctx, id); !errors.As(err, &waiting) {
+						t.Fatalf("verification with mismatched protocol = %v, want waiting", err)
+					}
+					maintenanceExec(t, db, `UPDATE workspaces SET protocol_version='1' WHERE id='retained'`)
 					if err := worker.RunOnce(ctx, id); err != nil {
 						t.Fatal(err)
 					}
