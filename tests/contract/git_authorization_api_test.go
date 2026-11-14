@@ -1,8 +1,10 @@
 package contract_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,7 +71,22 @@ func TestGitAuthorizationAPI(t *testing.T) {
 	if !strings.Contains(metadata.Body.String(), `"state":"revoked"`) || strings.Contains(metadata.Body.String(), "fixture-secret") {
 		t.Error("GET Git authorization did not return credential-free metadata for an unlinked owner")
 	}
-	request(handler("beginGitAuthorization"), "POST", base, token, csrf, 200)
+	var start identity.GitHubAuthorizationStart
+	started := request(handler("beginGitAuthorization"), "POST", base, token, csrf, 200)
+	if err := json.Unmarshal(started.Body.Bytes(), &start); err != nil {
+		t.Fatal(err)
+	}
+	authorize, err := url.Parse(start.URL)
+	if err != nil {
+		t.Fatal("begin authorization returned an invalid URL")
+	}
+	params := authorize.Query()
+	if authorize.Scheme != "https" || authorize.Host != "github.com" || authorize.Path != "/login/oauth/authorize" ||
+		params.Get("redirect_uri") != base+"/callback" || params.Get("client_id") != "fixture-client" ||
+		params.Get("code_challenge_method") != "S256" || params.Get("code_challenge") == "" || len(params.Get("state")) != 43 ||
+		!start.ExpiresAt.After(now) || strings.Contains(started.Body.String(), "fixture-secret") {
+		t.Error("begin authorization did not return a credential-free, state-bound GitHub consent URL")
+	}
 	var owner string
 	if err := db.QueryRow("SELECT user_id FROM github_oauth_states").Scan(&owner); err != nil || owner != "member" {
 		t.Fatalf("begin authorization stored owner %q, %v, want member", owner, err)
@@ -78,6 +95,11 @@ func TestGitAuthorizationAPI(t *testing.T) {
 	var remaining int
 	if err := db.QueryRow("SELECT count(*) FROM github_oauth_states").Scan(&remaining); err != nil || remaining != 0 {
 		t.Errorf("revoke left %d states, %v, want zero", remaining, err)
+	}
+	query := url.Values{"code": {"fixture-code"}, "state": {params.Get("state")}}
+	revoked := request(callback, "GET", base+"/callback?"+query.Encode(), "", "", 400)
+	if revoked.Header().Get("Referrer-Policy") != "no-referrer" || !strings.Contains(revoked.Body.String(), "git.invalid_state") {
+		t.Error("callback using revoked state did not return the protected invalid-state response")
 	}
 	request(callback, "GET", "https://foreign.test/api/v1/git/authorization/callback?code=code&state=invalid", "", "", 400)
 	request(callback, "GET", base+"/callback?code=code&state=invalid", "", "", 400)

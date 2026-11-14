@@ -31,6 +31,51 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// TestSQLiteSetupBootstrap verifies that the setup identity is durable across
+// a restart and that the runtime cannot serve an unfinished installation.
+func TestSQLiteSetupBootstrap(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bootstrap.db")
+	seed := database.BootstrapSeed{
+		ID: uuid.NewString(), Organization: "Fixture", Origin: "https://management.test",
+		IDEPattern: "{workspace}.ide.test", PreviewPattern: "{service}--{workspace}.preview.test",
+		Release: "test", MinGuestRelease: "test", Now: time.Now(),
+	}
+	db, initial, err := database.OpenBootstrap(ctx, path, seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE installations SET state='configuring' WHERE id=$1", initial); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	seed.ID = uuid.NewString()
+	db, resumed, err := database.OpenBootstrap(ctx, path, seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	var profile, state string
+	if err := db.QueryRowContext(ctx, "SELECT data_profile,state FROM installations WHERE id=$1", resumed).Scan(&profile, &state); err != nil {
+		t.Fatal(err)
+	}
+	if resumed != initial || profile != "sqlite" || state != "configuring" {
+		t.Errorf("reopened bootstrap = %s/%s/%s, want %s/sqlite/configuring", resumed, profile, state, initial)
+	}
+	cfg := config.Config{InstallationDir: dir, DataProfile: "sqlite", SQLitePath: path,
+		ManagementOrigin: seed.Origin, ExternalAuthIntervalSeconds: 14400}
+	if active, _, err := app.OpenActiveDatabase(ctx, cfg); !errors.Is(err, app.ErrActiveDatabase) {
+		if active != nil {
+			active.Close()
+		}
+		t.Errorf("OpenActiveDatabase(configuring SQLite fixture) = %v, want unavailable authority", err)
+	}
+}
+
 // TestPostgresSetupPreflight checks verified connections to two isolated schema
 // owners and rejects invalid trust, misplaced search paths, shared logins, and occupied schemas.
 func TestPostgresSetupPreflight(t *testing.T) {
@@ -63,6 +108,9 @@ func TestPostgresSetupPreflight(t *testing.T) {
 	for _, change := range []func(*database.PostgresSetupTarget){
 		func(target *database.PostgresSetupTarget) { target.Roots = x509.NewCertPool() },
 		func(target *database.PostgresSetupTarget) { target.DexURI = target.ApplicationURI },
+		func(target *database.PostgresSetupTarget) {
+			target.ApplicationURI, target.DexURI = target.DexURI, target.ApplicationURI
+		},
 		func(target *database.PostgresSetupTarget) {
 			dex, err := url.Parse(target.DexURI)
 			if err != nil {
@@ -178,7 +226,9 @@ func TestStagePostgresSetup(t *testing.T) {
 	defer dst.Close()
 	now := time.Now().UTC()
 	seed := database.BootstrapSeed{ID: "00000000-0000-4000-8000-000000000001", Organization: "ShiftBox", Origin: "https://management.test", IDEPattern: "{workspace}.ide.test", PreviewPattern: "{service}--{workspace}.preview.test", Release: "development", MinGuestRelease: "development", Now: now}
-	src, id, err := database.OpenBootstrap(ctx, filepath.Join(t.TempDir(), "bootstrap.db"), seed)
+	dir := t.TempDir()
+	bootstrapPath := filepath.Join(dir, "bootstrap.db")
+	src, id, err := database.OpenBootstrap(ctx, bootstrapPath, seed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,14 +416,34 @@ func TestStagePostgresSetup(t *testing.T) {
 	query := runtimeURI.Query()
 	query.Set("sslrootcert", credentials.CAFile)
 	runtimeURI.RawQuery = query.Encode()
-	runtimeDB, active, err := app.OpenActiveDatabase(ctx, config.Config{InstallationDir: t.TempDir(), DataProfile: "postgres",
-		PostgresURI: runtimeURI.String(), ManagementOrigin: seed.Origin, ExternalAuthIntervalSeconds: 14400})
+	cfg := config.Config{InstallationDir: dir, DataProfile: "postgres", PostgresURI: runtimeURI.String(),
+		ManagementOrigin: seed.Origin, ExternalAuthIntervalSeconds: 14400}
+	runtimeDB, active, err := app.OpenActiveDatabase(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	runtimeDB.Close()
 	if active.InstallationID != id || active.Settings.DataProfile != "postgres" {
 		t.Fatal("runtime selected a different installation or data profile")
+	}
+	// Reject an unavailable configured PostgreSQL database with the actual
+	// retired SQLite database still in its usual place beside the installation.
+	query.Set("sslrootcert", filepath.Join(dir, "missing-ca.pem"))
+	runtimeURI.RawQuery = query.Encode()
+	cfg.PostgresURI = runtimeURI.String()
+	runtimeDB, _, err = app.OpenActiveDatabase(ctx, cfg)
+	if runtimeDB != nil {
+		runtimeDB.Close()
+	}
+	if runtimeDB != nil || !errors.Is(err, app.ErrActiveDatabase) {
+		t.Errorf("OpenActiveDatabase(PostgreSQL with missing trust) = %v, want unavailable authority without SQLite fallback", err)
+	}
+	bootstrap, _, err := database.OpenBootstrap(ctx, bootstrapPath, seed)
+	if bootstrap != nil {
+		bootstrap.Close()
+	}
+	if bootstrap != nil || !errors.Is(err, database.ErrBootstrapUnavailable) {
+		t.Errorf("OpenBootstrap(retired SQLite fixture) = %v, want unavailable bootstrap", err)
 	}
 	var revoked string
 	if err := src.QueryRowContext(ctx, `SELECT i.state,s.revocation_reason FROM installations i CROSS JOIN sessions s

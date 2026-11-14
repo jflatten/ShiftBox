@@ -84,7 +84,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 ### Tests first
 
 - [ ] T030 [P] [US1] Write failing setup and controller CLI contract tests for protected loopback access, one-time temporary password, forced change, resumable steps, certificate/profile validation, activation, bootstrap-session retirement, fresh sign-in, `shiftbox serve`, and secret-safe command output in `tests/contract/setup_api_test.go` and `cmd/shiftbox/main_test.go`
-- [ ] T031 [P] [US1] Write failing setup integration tests for SQLite bootstrap, PostgreSQL ownership/TLS/schema preflight, activation copy of only initial administrator/setup state, and prohibition on SQLite fallback in `tests/integration/setup_activation_test.go`
+- [X] T031 [P] [US1] Write failing setup integration tests for SQLite bootstrap, PostgreSQL ownership/TLS/schema preflight, activation copy of only initial administrator/setup state, and prohibition on SQLite fallback in `tests/integration/setup_activation_test.go`
 - [X] T032 [P] [US1] Write the reusable failing provider contract suite for inspect-before-retry, idempotent create/start, complete inventory, partial deletion, shared-resource preservation, generation fencing, and typed failures in `tests/contract/provider_suite_test.go`
 - [X] T033 [P] [US1] Write failing platform-image and UTM adapter tests for pinned Packer inputs, Ubuntu 24.04 Minimal amd64, supervised guest agent, VS Code Browser, immutable artifact manifest/digests, import/boot health, normalized complete inventory, preserved drive lists, supported capabilities, lost responses, and no direct bundle edits in `tests/release/platform_image_test.go` and `internal/provider/utm/provider_test.go`
 - [X] T034 [P] [US1] Write failing guest protocol tests for mTLS-derived identity, N/N−1 compatibility, poll replay, operation fencing, enrollment replay/alternate-key denial, and readiness evidence in `tests/contract/guest_protocol_test.go`
@@ -140,7 +140,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T062 [P] [US2] Write failing membership, identity, password, and audit API/store tests for local users, pending external users, stable issuer/subject/connector binding, explicit role approval, self password change, actual upstream reauthorization, protected recovery boundaries, disable revocation, append-only redacted events, and protected retention in `tests/contract/users_api_test.go` and `internal/audit/store_test.go`
 - [X] T063 [P] [US2] Write failing template service/API tests for immutable revisions, owner/admin edit rules, update/new-revision routes, acknowledged launch grants, owner-private launches, revocation, archival, and preserved provenance in `internal/template/service_test.go` and `tests/contract/templates_api_test.go`
 - [X] T064 [P] [US2] Write failing secret service/API tests for metadata-only listing, exactly three scopes, User → Project Template → Organization precedence, explicit empty override, fallback preview on delete, ciphertext context binding, and management/audit omission in `internal/secret/service_test.go` and `tests/contract/secrets_api_test.go`
-- [ ] T065 [P] [US2] Write failing management and guest secret/Git contract tests for metadata-only secret listing, mTLS-derived owner/template context, denied guest-supplied scope, exit codes 0/3/4/5, no persistent cache, authorization initiation/state-bound callback/revocation, current owner token, coordinated refresh, and reconnect-required failure in `tests/contract/credentials_test.go` and `tests/contract/git_authorization_api_test.go`
+- [X] T065 [P] [US2] Write failing management and guest secret/Git contract tests for metadata-only secret listing, mTLS-derived owner/template context, denied guest-supplied scope, exit codes 0/3/4/5, no persistent cache, authorization initiation/state-bound callback/revocation, current owner token, coordinated refresh, and reconnect-required failure in `tests/contract/credentials_test.go` and `tests/contract/git_authorization_api_test.go`
 - [X] T066 [P] [US2] Write failing GitHub authorization tests for repository coverage, stable provider identity, fenced concurrent renewal, app/refresh credential exclusion, revocation, and permanent renewal failure in `internal/identity/github_test.go`
 - [X] T067 [P] [US2] Write failing UI tests for people states, template grant exposure warning, secret metadata-only views, empty override, fallback deletion warning, archival filters, and no secret value rendering in `ui/features/admin/people.test.tsx`, `ui/features/templates/sharing.test.tsx`, and `ui/features/secrets/secrets.test.tsx`
 - [ ] T068 [P] [US2] Write failing Playwright sharing journey covering two users, owner privacy, project-secret warning, precedence, administrator connection owner context, Git authority, revoke, and archive in `ui/tests/e2e/template-sharing.spec.ts`
@@ -2761,3 +2761,16 @@ This checkpoint does not itself change the goal status.
   mutually authenticated Yamux registration, scoped HTTP streams, a browser
   WebSocket upgrade, and closure on revocation and expiry. Both sides use
   the pinned Yamux keepalive configuration.
+
+### Setup and guest credential contracts
+
+- T031 passed against SQLite and a fresh local PostgreSQL fixture over TLS.
+  It covers setup restart, swapped schema owners, the exact bootstrap data
+  allowed through activation, and refusal to reopen the retired SQLite
+  bootstrap after PostgreSQL cutover.
+- T065 passed the race-enabled guest, management, identity, and command
+  contracts. The mTLS test distinguishes workspace owner secrets from
+  template author secrets and verifies fallback on revocation. An archived
+  template keeps project-secret access for existing grants. GitHub contract
+  tests check PKCE, the exact callback address, and rejection of revoked
+  state, with refresh and owner token checks using local provider fixtures.
