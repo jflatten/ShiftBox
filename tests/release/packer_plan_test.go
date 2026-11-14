@@ -45,3 +45,28 @@ func TestPackerBuildPlan(t *testing.T) {
 		t.Fatalf("packer validate: %v\n%s", err, out)
 	}
 }
+
+// TestPackerGuestToolchain ensures the image recipe installs pinned tools
+// and verifies the running Docker service before sealing the artifact.
+func TestPackerGuestToolchain(t *testing.T) {
+	root := filepath.Join("..", "..", "platform")
+	for file, expected := range map[string][]string{
+		"packer/shiftbox.pkr.hcl": {"install-toolchain.sh", "sudo /bin/sh /tmp/shiftbox-install-toolchain"},
+		"packer/install-toolchain.sh": {"5:29.9.3-1~ubuntu.24.04~noble", "2.4.2-4~ubuntu.24.04~noble",
+			"0.39.0-1~ubuntu.24.04~noble", "v24.22.3", "0.90.0", "sha256sum --check",
+			"docker version", "docker buildx version", "devcontainer --version", "git --version"},
+		"packer/seal-image.sh": {"/tmp/shiftbox-install-toolchain"},
+	} {
+		path := filepath.Join(root, file)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		for _, marker := range expected {
+			if !strings.Contains(string(raw), marker) {
+				t.Errorf("%s missing pinned install or validation marker %q", path, marker)
+			}
+		}
+	}
+}

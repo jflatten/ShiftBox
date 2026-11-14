@@ -103,9 +103,15 @@ build {
     destination = "/tmp/shiftbox-seal-image"
   }
 
+  provisioner "file" {
+    source      = "${path.root}/install-toolchain.sh"
+    destination = "/tmp/shiftbox-install-toolchain"
+  }
+
   provisioner "shell" {
     inline = [
       "cloud-init status --wait",
+      "sudo /bin/sh /tmp/shiftbox-install-toolchain",
       "sudo install -m 0755 /tmp/shiftbox-agent /usr/local/bin/shiftbox-agent",
       "sudo install -D -m 0755 /tmp/shiftbox-start-agent /usr/local/libexec/shiftbox-start-agent",
       "sudo install -m 0644 /tmp/shiftbox-agent.service /etc/systemd/system/shiftbox-agent.service",

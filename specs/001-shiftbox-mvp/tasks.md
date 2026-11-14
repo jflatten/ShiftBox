@@ -1629,3 +1629,17 @@ This checkpoint does not itself change the goal status.
   after provisioning. The race-enabled release test passed in 134s,
   including verified clone cleanup. Full release validation still needs
   the selected browser IDE, container tooling, and the remaining gates.
+### Ubuntu guest toolchain
+
+- Packer 1.14.2 and UTM 5.0.8 built and exported the pinned Ubuntu 24.04
+  Minimal amd64 guest with Docker Engine 29.9.3, containerd 2.4.2, Buildx
+  0.39.0, Node.js 24.22.3, Dev Container CLI 0.90.0 and Ubuntu Git 2.43.0.
+  The build verified archive digests, the running Docker daemon and tool
+  versions before sealing the VM.
+- The race-enabled UTM enrollment gate imported a disposable copy of that
+  export, authenticated the guest in 3m50s, and cleaned up the copy. The
+  full test took 244.10s. Packer recipe validation and release race tests
+  passed.
+- T046 remains open for the selected browser IDE and release artifact
+  validation. The UTM test ends at authenticated enrollment. It does not
+  prove a real project checkout, Dev Container launch, or browser IDE.

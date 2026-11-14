@@ -28,8 +28,13 @@ The final export is in the build directory's `final` folder. ShiftBox uses
 UTM scripting to remove the temporary second network and attach an empty
 removable recovery drive while preserving the persistent disk.
 
+The build installs Docker Engine 29.9.3, containerd 2.4.2, and Buildx
+0.39.0 from Docker's signed Noble package index. It verifies the Node.js
+24.22.3 and Dev Container CLI 0.90.0 archives by SHA-256, then checks the
+running Docker service and installed tools before sealing the guest.
+
 The build output is a candidate bundle. Release admission requires the
-browser IDE and container tooling, a manifest covering the final export,
+browser IDE, a manifest covering the final export,
 and verified boot, enrollment, and clone behavior through UTM.
 
 To verify that a prepared development export can enroll, run the opt-in
