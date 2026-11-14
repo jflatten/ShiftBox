@@ -64,7 +64,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T021 Implement the durable operation journal, leases, ordered steps/events, generation checks, and idempotent request lookup proven by T012 in `internal/operation/model.go`, `internal/operation/store.go`, and `internal/operation/journal.go`
 - [X] T022 Implement reusable reconciler scheduling that commits intent before external calls and commits observed evidence afterward in `internal/operation/reconciler.go` and `internal/operation/worker.go`
 - [ ] T023 Implement User, IdentityBinding, Session, and ResourceGrant stores and policy evaluation proven by T013 in `internal/auth/model.go`, `internal/auth/store.go`, `internal/auth/session.go`, and `internal/auth/policy.go`, preserving these verbatim constraints: User `primary_email` is a "Normalized email for display/local login; not a cross-provider merge key", `display_name` is optional, `role` is "`member` or `administrator`", `membership_state` is "`pending`, `active`, or `disabled`", and `credential_mode` is "`local` or `external`"; IdentityBinding `issuer` is an "Exact canonical issuer string", `subject` is an "Exact non-empty provider subject", `(issuer, subject, connector_id)` is unique, and "Email never creates a binding automatically"; Session is usable only when membership, mode, time bounds, and installation gate permit it; ResourceGrant `action` is an enumerated permission, only active grants participate, and administrator connection requires a distinct active grant plus audit event
-- [ ] T024 Implement managed Dex child-process configuration, health supervision, OIDC relying-party verification, and clean shutdown in `internal/identity/dex.go`, `internal/identity/oidc.go`, and `internal/identity/supervisor.go`
+- [X] T024 Implement managed Dex child-process configuration, health supervision, OIDC relying-party verification, and clean shutdown in `internal/identity/dex.go`, `internal/identity/oidc.go`, and `internal/identity/supervisor.go`
 - [ ] T025 Implement `/session` read/logout handlers, management session cookies, CSRF/Origin middleware, authorization middleware, version/idempotency parsing, stable problems, and redacted structured request logging proven by T013-T014 in `internal/web/session_routes.go`, `internal/web/middleware.go`, `internal/web/problem.go`, and `internal/web/logging.go`
 - [X] T026 Implement authorized operation SSE replay and connection closure proven by T015 in `internal/web/events.go` and `internal/auth/revocation.go`
 - [X] T027 [P] Implement installation ECDSA P-256 CA loading plus TLS 1.3 server/client certificate verification primitives without guest enrollment behavior in `internal/guest/ca.go` and `internal/guest/tls.go`
@@ -350,29 +350,41 @@ After T109: T110 backup creation and T112 recovery gating can proceed in paralle
 - A task is complete only when its named tests pass and its file paths match the approved structure.
 - Commit after each task or small coherent group; never hide unrelated scope inside a checklist item.
 
-## Execution checkpoint — paused for Codex restart
+## Execution checkpoint — ready for requested compaction and restart
 
-User requested a pause to restart Codex after changing the global context window
-and automatic compaction settings. Resume this same goal after the restart.
+The user requested removal of the global context-window and compaction overrides,
+context compaction, and notification of a safe point to pause/restart. Both global
+overrides were removed and the remaining TOML configuration was verified unchanged.
+The agent has no exposed compaction tool; the app composer supports `/compact`.
+This checkpoint does not itself change the goal status.
 
-- Completed: 18 tasks marked above. Implementation commits: `cfd09bf`, `c6d0800`,
-  and `adc8fd0`. No user-story implementation has begun.
-- Foundation remains incomplete. Continue T013–T016 and the remaining shared
-  implementation, including T018 constraint verification. UI skills and Mantine
-  MCP documentation were consulted, but no UI component implementation has begun.
-- Latest checks: operation journal/reconciler tests pass with the race detector;
-  formatting and vet pass. Earlier full Go unit/race checks and real TLS plus
-  SQLite/PostgreSQL contracts passed. UI TypeScript and test configuration checks
-  pass; application build/browser journeys are not yet implemented.
-- Local tools are in ignored `.cache/toolchains/go/bin` and
-  `.cache/toolchains/node-v26.13.0-darwin-arm64/bin`. Set `GOPATH` to
-  `$PWD/.cache/gopath` and `GOCACHE` to `$PWD/.cache/go-build` for Go commands.
-- User authorized installing local validation requirements. PostgreSQL runs in
-  container `shiftbox-mvp-postgres`, bound to `127.0.0.1:55432`, with verified TLS
-  and an owned `shiftbox_test` schema. Its test connection URI is in ignored
-  `.cache/test-postgres/uri`; read it into `SHIFTBOX_TEST_POSTGRES_URI` without
-  printing it. TLS fixture validity is seven days. UTM has not been installed.
-- npm reports 19 development-tool dependency audit findings (none in production
-  dependencies); review before release without blindly downgrading Jest.
-- Existing user changes to `spec.md` and untracked plan/research/data-model/
-  quickstart/contracts were left untouched. Architecture documents remain read-only.
+- Completed: 22 tasks marked above. No user-story implementation has begun.
+- Continue the remaining foundation tasks: T013 (including route/action coverage),
+  T014 (including OpenAPI drift and service allowlisting), T016, T018, T023, T025,
+  and T029. Authentication/store/policy and HTTP primitives are partly implemented;
+  session routes, complete authorization integration, and the UI remain unfinished.
+- Do not treat the initial foundation SQL as fully verified: T018 is still unchecked.
+  Audit-required administrator access must commit an audit event before use; the
+  current policy returns AuditRequired, but the consuming access flow is not built.
+- Latest targeted race checks pass for auth, proxy, HTTP/SSE, and identity packages.
+  Real SSE replay/revocation and actual Dex HTTPS discovery/start/stop passed.
+  Earlier SQLite/PostgreSQL migration/transaction parity and internal mTLS tests passed.
+- Recent commits before this checkpoint: `5b556a3` (session policy, HTTP boundaries,
+  revocable SSE), `adc8fd0` (operation journal), `c6d0800` (database/crypto/config),
+  and `cfd09bf` (setup). The identity work is saved with this checkpoint commit.
+- Local tools: `.cache/toolchains/go/bin` (Go 1.27.4),
+  `.cache/toolchains/node-v26.13.0-darwin-arm64/bin`, and `.cache/toolchains/dex`.
+  Dex 2.46.1 was built from commit `75eb19238e10fc4750e7efb05a4031b254b04029`
+  in `.cache/dex-source`; its Go module path prevents direct version download.
+- Set GOPATH to `$PWD/.cache/gopath` and GOCACHE to `$PWD/.cache/go-build`.
+  Set SHIFTBOX_TEST_DEX_BINARY to `$PWD/.cache/toolchains/dex` to enable the real
+  native Dex test. Local listener/process tests need execution permissions.
+- User authorized local prerequisites. PostgreSQL container `shiftbox-mvp-postgres`
+  uses `127.0.0.1:55432`, verified TLS, and owned `shiftbox_test` schema. Read the
+  ignored `.cache/test-postgres/uri` into SHIFTBOX_TEST_POSTGRES_URI without printing
+  it. Its TLS fixture lasts seven days. UTM is not installed yet.
+- UI dependencies/configuration and brand copies exist. No UI components or routes
+  have been implemented; UI skills and Mantine MCP references have been consulted.
+  npm reports 19 development-tool audit findings, none in production dependencies.
+- User edits to spec.md and untracked contracts/plan/data-model/research/quickstart
+  remain untouched. Architecture documents remain read-only. No subagents used.
