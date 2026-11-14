@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path';
 import { expect, test, type Locator, type Page, type WebSocket } from '@playwright/test';
 
 type Account = { email: string; password: string };
+type Terminal = { input: Locator; output: Locator };
 type Session = {
   user: { id: string; primaryEmail: string; role: string };
   csrfToken: string;
@@ -325,27 +326,36 @@ async function openIDE(page: Page, workspacePath: string, managementOrigin: stri
   await expect(page.locator('.monaco-workbench')).toBeVisible({ timeout: workbenchTimeout });
 }
 
-async function openTerminal(page: Page) {
+async function openTerminal(page: Page): Promise<Terminal> {
   const screenReader = page.getByText('Screen Reader Optimized', { exact: true });
   if (!(await screenReader.isVisible())) {
     await selectWorkbenchCommand(page, 'Toggle Screen Reader Accessibility Mode');
   }
   await selectWorkbenchCommand(page, 'Terminal: Create New Terminal');
-  const terminal = page.locator('.terminal-instance:visible').last();
-  await expect(terminal.locator('.xterm-helper-textarea')).toBeAttached({ timeout: workbenchTimeout });
-  await expect(terminal.locator('.xterm-accessibility-tree')).toBeAttached({ timeout: workbenchTimeout });
-  return terminal;
+  const input = page.locator('.xterm-helper-textarea').last();
+  const output = page.locator('.xterm-accessibility-tree').last();
+  const trust = page.getByRole('button', { name: 'Trust Folder & Continue', exact: true });
+  const prompt = /[$#](?:\s|$)/;
+  await expect.poll(async () => await trust.isVisible() || prompt.test((await output.allTextContents()).join(' ')), {
+    timeout: workbenchTimeout,
+  }).toBe(true);
+  // A terminal requires trusting the disposable checkout itself.
+  if (await trust.isVisible()) await trust.click();
+  await expect(input).toBeAttached({ timeout: workbenchTimeout });
+  await expect(output).toContainText(prompt, { timeout: workbenchTimeout });
+  return { input, output };
 }
 
 async function selectWorkbenchCommand(page: Page, name: string) {
   await page.keyboard.press('F1');
   const command = page.locator('.quick-input-widget input');
-  await command.fill(name);
-  await page.getByRole('option', { name, exact: false }).first().press('Enter');
+  await command.fill(`>${name}`);
+  await expect(page.getByRole('option', { name, exact: false }).first()).toBeVisible({ timeout: 15_000 });
+  await command.press('Enter');
   await expect(command).toBeHidden();
 }
 
-async function verifyGuestSecret(terminal: Locator, name: string, value: string | undefined) {
+async function verifyGuestSecret(terminal: Terminal, name: string, value: string | undefined) {
   if (value === undefined) {
     await terminalCheck(terminal, `shiftbox secrets get-secret ${name} >/dev/null 2>&1; [ "$?" -eq 3 ]`);
     return;
@@ -354,15 +364,14 @@ async function verifyGuestSecret(terminal: Locator, name: string, value: string 
   await terminalCheck(terminal, `value=$(shiftbox secrets get-secret ${name} 2>/dev/null) && [ "$(printf '%s' "$value" | sha256sum | cut -d ' ' -f 1)" = '${digest}' ]; status=$?; unset value; [ "$status" -eq 0 ]`);
 }
 
-async function terminalCheck(terminal: Locator, check: string) {
+async function terminalCheck({ input, output }: Terminal, check: string) {
   const marker = randomUUID().replaceAll('-', '').slice(0, 10);
-  const input = terminal.locator('.xterm-helper-textarea');
   await input.focus();
-  // Only the success marker reaches the terminal. Split it in the shell
+  // Only the status marker reaches the terminal. Split it in the shell
   // command so echoed input cannot satisfy the assertion.
-  await terminal.page().keyboard.insertText(`( ${check} ); printf 'SHIFTBOX_%s_RC_%s\\n' '${marker}' "$?"`);
-  await input.press('Enter');
-  const output = terminal.locator('.xterm-accessibility-tree');
+  const keyboard = input.page().keyboard;
+  await keyboard.type(`( ${check} ); printf 'SHIFTBOX_%s_RC_%s\\n' '${marker}' "$?"`);
+  await keyboard.press('Enter');
   await expect(output).toContainText(new RegExp(`SHIFTBOX_${marker}_RC_\\d+`), { timeout: workbenchTimeout });
   expect(new RegExp(`SHIFTBOX_${marker}_RC_0\\b`).test((await output.textContent()) ?? ''), 'terminal check exited successfully').toBe(true);
 }

@@ -116,3 +116,23 @@ manifest when verifying it before updating the checked-in release manifest.
 The Go test checks the authenticated enrollment and records for the workspace
 launch, stop, start, rebuild, expected broken configuration, repair, and retry.
 Chrome exercises file retention through the browser IDE.
+
+To check the retained developer home and named volume on the disposable
+workspace, run the separate Chrome test after the exact journal check. It adds
+a stop/start and rebuild to that workspace's history. Use the same fixture,
+set `SHIFTBOX_MVP_RESUME_WORKSPACE` to its workspace UUID, and use the fixture
+Dev Container that mounts `shiftbox-mvp-fixture` at `/var/lib/shiftbox-fixture`.
+
+```sh
+NODE_USE_SYSTEM_CA=1 SHIFTBOX_TEST_MVP_PERSISTENCE=1 \
+  npm --prefix ui run test:e2e -- mvp-workspace.spec.ts --project=chromium \
+  -g 'retains the developer home'
+```
+
+The test waits for the shell in the disposable checkout, writes one file in
+the developer's actual home and one in the named mount, then verifies both
+after each lifecycle change. It removes its two files after verification.
+
+On November 14, this test passed in 8.4 minutes on the same `mvp-rc1` UTM
+workspace. Chrome verified both files after stop/start and after rebuild.
+The start and rebuild journal receipts identified two distinct containers.

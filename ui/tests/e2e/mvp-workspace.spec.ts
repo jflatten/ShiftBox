@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
@@ -254,6 +255,75 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     await expect((await openFile(page, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
   });
 });
+
+// The live Dev Container must preserve the developer's actual home and the
+// named application volume when a workload is stopped or replaced.
+test('retains the developer home and named volume on UTM', async ({ page }) => {
+  test.skip(process.env.SHIFTBOX_TEST_MVP_PERSISTENCE !== '1', 'Enable only for the retained disposable MVP workspace');
+  test.setTimeout(16 * 60_000);
+  page.setDefaultTimeout(30_000);
+  if (!fixturePath || !isAbsolute(fixturePath) || !resumeWorkspaceID ||
+      !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(resumeWorkspaceID)) {
+    throw new Error('Supply the private installation fixture and retained workspace UUID');
+  }
+  const installation: InstallationFixture = JSON.parse(await readFile(fixturePath, 'utf8'));
+  const managementOrigin = new URL(installation.managementURL).origin;
+  const workspaceURL = new URL(`/workspaces/?id=${resumeWorkspaceID}`, managementOrigin).href;
+  const marker = randomUUID();
+  const name = `.shiftbox-retained-${marker}`;
+  const volume = `/var/lib/shiftbox-fixture/${name}`;
+  const verify = `test "$(cat "$HOME/${name}")" = '${marker}' && test "$(sudo -n cat '${volume}')" = '${marker}'`;
+  await page.goto(new URL('/auth/login', managementOrigin).href);
+  await passwordLogin(page, installation.administratorEmail, installation.password);
+  await page.goto(workspaceURL);
+  await openIDE(page, 'Open IDE', managementOrigin);
+  await persistenceTerminalCheck(page, `mountpoint -q /var/lib/shiftbox-fixture && ` +
+    `printf '%s' '${marker}' > "$HOME/${name}" && printf '%s' '${marker}' | sudo -n tee '${volume}' >/dev/null && ${verify}`);
+
+  await page.goto(workspaceURL);
+  await activate(page.getByRole('button', { name: 'Stop workspace' }));
+  await stepCompleted(page, 'Stop workspace');
+  await activate(page.getByRole('button', { name: 'Start workspace' }));
+  await stepCompleted(page, 'Finish remaining setup hooks');
+  await openIDE(page, 'Open IDE', managementOrigin);
+  await persistenceTerminalCheck(page, verify);
+
+  await page.goto(workspaceURL);
+  await activate(page.getByRole('button', { name: 'Rebuild container' }));
+  await stepCompleted(page, 'Finish remaining setup hooks');
+  await openIDE(page, 'Open IDE', managementOrigin);
+  await persistenceTerminalCheck(page, `${verify} && rm -- "$HOME/${name}" && sudo -n rm -- '${volume}'`);
+});
+
+async function persistenceTerminalCheck(page: Page, check: string) {
+  await dismissFixtureTrust(page);
+  const select = async (command: string) => {
+    await page.keyboard.press('F1');
+    const input = page.locator('.quick-input-widget input:visible');
+    await input.fill(`>${command}`);
+    await expect(page.getByRole('option', { name: command, exact: false }).first()).toBeVisible();
+    await input.press('Enter');
+    await expect(input).toBeHidden();
+  };
+  await select('Terminal: Create New Terminal');
+  // Only this disposable repository is trusted so its shell can run.
+  const trust = page.getByRole('button', { name: 'Trust Folder & Continue', exact: true });
+  const input = page.locator('.xterm-helper-textarea').last();
+  const output = page.locator('.xterm-accessibility-tree').last();
+  const prompt = /[$#]/;
+  await expect.poll(async () => {
+    if (await trust.isVisible()) return 'trust';
+    return (await output.allTextContents()).some(text => prompt.test(text)) ? 'shell' : 'starting';
+  }, { timeout: 45_000 }).toMatch(/^(trust|shell)$/);
+  if (await trust.isVisible()) await trust.click();
+  await expect(output).toContainText(prompt, { timeout: 45_000 });
+  const receipt = randomUUID().slice(0, 8);
+  await input.focus();
+  await page.keyboard.type(`( ${check} ); printf 'SHIFTBOX_%s_RC_%s\\n' '${receipt}' "$?"`);
+  await page.keyboard.press('Enter');
+  await expect(output).toContainText(new RegExp(`SHIFTBOX_${receipt}_RC_\\d+`), { timeout: workbenchTimeout });
+  await expect(output).toContainText(`SHIFTBOX_${receipt}_RC_0`);
+}
 
 async function activate(control: Locator, key = 'Enter') {
   await expect(control).toBeEnabled({ timeout: startupTimeout });

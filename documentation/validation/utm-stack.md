@@ -30,6 +30,12 @@ passed in 89.89 seconds against the same pinned export. The fresh clone
 made its authenticated poll after 65 seconds. Offboarding preserved its
 owned disk, and test cleanup confirmed removal of the new clone.
 
+The `mvp-rc1` rerun of `TestUTMGuestEnrollment` passed with `-race` in
+74.75 seconds. The frozen guest authenticated after 50 seconds. The
+administrator offboarding route stopped the exact clone and preserved its
+owned disk and disk reservation while releasing compute. The test then
+removed the disposable clone.
+
 ## Signed maintenance fixture
 
 `TestUTMGuestMaintenance` reuses the enrollment fixture and only needs one

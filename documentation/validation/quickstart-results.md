@@ -43,7 +43,7 @@ and zero after replacement.
 | Quickstart scope | Verified result |
 | --- | --- |
 | Section 3 | Protected SQLite setup, image validation and fresh administrator sign-in on `mvp-rc1`. |
-| Section 4 | Native Chrome lifecycle and retain-file journey through repair and retry, plus the exact Go journal. |
+| Section 4 | Native Chrome lifecycle and retained checkout through repair and retry, plus the exact Go journal. A subsequent Chrome run verified actual developer-home and named-volume data after stop/start and rebuild on the same workspace. |
 | Sections 8–9 | Authenticated native guest enrollment and stopped-state signed maintenance with rollback and successful replacement. |
 | Section 10 | Populated SQLite backup, protected restore, native provider and authority review, explicit activation and copied-grant revocation. |
 
