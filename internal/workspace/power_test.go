@@ -152,6 +152,22 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	checkState(start, "running", "waiting")
 	run(start, nil)
 	checkState(start, "running", "succeeded")
+
+	// Rebuild waits for new guest evidence and uses the existing VM and reservation.
+	rebuild := admit("rebuild")
+	run(rebuild, errGuestConfigurationPending)
+	checkState(rebuild, "running", "waiting")
+	exec("INSERT INTO guest_dispatches(operation_id,dispatch_version,status,container_id) VALUES($1,1,'running','replacement')", rebuild.ID)
+	run(rebuild, nil)
+	ideAvailable = false
+	run(rebuild, errIDEProbePending)
+	ideAvailable = true
+	run(rebuild, nil)
+	run(rebuild, errGuestConfigurationPending)
+	exec("UPDATE guest_dispatches SET status='succeeded' WHERE operation_id=$1", rebuild.ID)
+	run(rebuild, nil)
+	checkState(rebuild, "running", "succeeded")
+	checkReservation(t, db, id, "reserved", "reserved")
 	if machines.starts != 1 || machines.stops != 1 {
 		t.Fatalf("provider calls = %d starts and %d stops, want one per operation", machines.starts, machines.stops)
 	}

@@ -113,6 +113,40 @@ test('submits stop with CSRF and the workspace version', async () => {
   expect(screen.getAllByText('Running', { exact: true })).toHaveLength(2);
 });
 
+// Rebuild can be requested for a running workspace and displays the durable
+// configuration step while withholding other power actions.
+test('requests a rebuild and shows its progress', async () => {
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces/workspace-one') return json({
+      ...workspace, observedState: 'running', currentOperationId: null,
+    });
+    if (input === '/api/v1/workspaces/workspace-one/actions/rebuild' && init?.method === 'POST') return json({ id: 'rebuild-op' });
+    if (input === '/api/v1/operations/rebuild-op') return json({
+      id: 'rebuild-op', version: 1, status: 'running', currentStep: 'configure',
+      steps: [{ key: 'configure', index: 0, label: 'Rebuild the development container', status: 'active' }],
+    });
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  class OperationStream extends EventTarget { close() {} }
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'EventSource');
+  Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: OperationStream });
+  try {
+    const user = userEvent.setup();
+    render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+    await user.click(await screen.findByRole('button', { name: 'Rebuild container' }));
+    expect(await screen.findByText('In progress — Rebuild the development container')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Stop workspace' })).toBeDisabled();
+    expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces/workspace-one/actions/rebuild', expect.objectContaining({
+      method: 'POST', headers: expect.objectContaining({ 'If-Match': '"4"', 'X-CSRF-Token': 'fixture', 'Idempotency-Key': expect.any(String) }),
+    }));
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'EventSource', original);
+    else Reflect.deleteProperty(globalThis, 'EventSource');
+  }
+});
+
 // The workspace list opened from People keeps the disabled member's scope
 // across pages so the operator can return to their stop workflows.
 test('keeps the owner filter when paging from People', async () => {

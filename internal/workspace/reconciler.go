@@ -14,7 +14,7 @@ func NewWorker(journal *operation.Journal, launch *LaunchExecutor, power *PowerE
 	return &operation.Worker{
 		Journal: journal, Name: "workspace-controller", LeaseDuration: 4 * time.Minute,
 		Executor: workspaceExecutor{launch: launch, power: power},
-		Actions:  []string{"workspace.launch", "workspace.start", "workspace.stop", "user.disable", retentionDeleteAction},
+		Actions:  []string{"workspace.launch", "workspace.start", "workspace.stop", "workspace.rebuild", "user.disable", retentionDeleteAction},
 	}
 }
 
@@ -29,7 +29,7 @@ func (e workspaceExecutor) executor(op operation.Operation) operation.Executor {
 		if op.Type == "provision" && e.launch != nil {
 			return e.launch
 		}
-	case "workspace.start", "workspace.stop":
+	case "workspace.start", "workspace.stop", "workspace.rebuild":
 		if op.OriginatingAction == "workspace."+op.Type && e.power != nil {
 			return e.power
 		}

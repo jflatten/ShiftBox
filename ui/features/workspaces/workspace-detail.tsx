@@ -8,6 +8,8 @@ import { useOperation } from '../../lib/use-operation';
 import { workspaceState, type Workspace } from './workspace';
 import { RetentionWarning } from './retention';
 
+type WorkspaceAction = 'start' | 'stop' | 'rebuild';
+
 export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: string }) {
   const workspace = useQuery<Workspace>({
     queryKey: ['workspaces', 'detail', id],
@@ -21,16 +23,16 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
   const data = !workspace.isError ? workspace.data : undefined;
   const [operationId, setOperationId] = useState<string>();
   const [operationBusy, setOperationBusy] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [submitting, setSubmitting] = useState<WorkspaceAction>();
   const [error, setError] = useState<unknown>();
-  const request = useRef<{ action: 'start' | 'stop'; version: number; key: string }>(undefined);
+  const request = useRef<{ action: WorkspaceAction; version: number; key: string }>(undefined);
   const displayedOperation = data?.currentOperationId ?? (operationBusy ? operationId : data?.lastFailedOperationId ?? operationId);
   const action = data?.desiredState === 'running' && data.observedState === 'running' ? 'stop' :
     data?.desiredState === 'stopped' && data.observedState === 'stopped' ? 'start' : undefined;
 
-  const requestPower = async (action: 'start' | 'stop') => {
+  const requestAction = async (action: WorkspaceAction) => {
     if (!data || submitting) return;
-    setSubmitting(true);
+    setSubmitting(action);
     setError(undefined);
     try {
       if (request.current?.action !== action || request.current.version !== data.version) {
@@ -52,7 +54,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
     } catch (error) {
       setError(error);
     } finally {
-      setSubmitting(false);
+      setSubmitting(undefined);
     }
   };
   return (
@@ -88,14 +90,22 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
             </div>
           </Stack>
           <RetentionWarning workspace={data} />
-          <Text size="sm">Stop and start preserve project files, the developer home, and configured persistent mounts.</Text>
+          <Text size="sm">Stop and start preserve project files, the developer home, and named application volumes. Rebuilding also preserves this data and replaces the container’s writable layer.</Text>
           {error !== undefined ? <APIProblemView error={error} /> : null}
           {data.canOpenIde ? <OpenIDE id={id} csrfToken={csrfToken} /> : null}
           {action ? (
-            <Button style={{ alignSelf: 'flex-start' }} loading={submitting}
-              disabled={!!data.currentOperationId || operationBusy} onClick={() => void requestPower(action)}>
-              {action === 'start' ? 'Start workspace' : 'Stop workspace'}
-            </Button>
+            <Group>
+              <Button loading={submitting === action} disabled={!!data.currentOperationId || operationBusy || !!submitting}
+                onClick={() => void requestAction(action)}>
+                {action === 'start' ? 'Start workspace' : 'Stop workspace'}
+              </Button>
+              {action === 'stop' ? (
+                <Button variant="default" loading={submitting === 'rebuild'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
+                  onClick={() => void requestAction('rebuild')}>
+                  Rebuild container
+                </Button>
+              ) : null}
+            </Group>
           ) : null}
           {displayedOperation ? <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation} onFinished={setOperationBusy} /> : null}
         </Stack>

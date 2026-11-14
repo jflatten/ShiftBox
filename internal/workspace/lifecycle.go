@@ -19,7 +19,7 @@ var (
 	ErrOperationInProgress = errors.New("workspace operation in progress")
 )
 
-// PowerIntent identifies an authorized start or stop of a retained workspace.
+// PowerIntent identifies an authorized start, stop, or rebuild of a retained workspace.
 type PowerIntent struct {
 	WorkspaceID, ActorID, RequestKey, Action string
 	Version                                  int64
@@ -34,6 +34,8 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		desired, label = "running", "Start workspace"
 	case "stop":
 		desired, label = "stopped", "Stop workspace"
+	case "rebuild":
+		desired, label = "running", "Rebuild the development container"
 	default:
 		return operation.Operation{}, provider.ErrInvalidState
 	}
@@ -87,6 +89,9 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 	if current == "deleted" || observed == "deleted" || instance == "" {
 		return operation.Operation{}, provider.ErrInvalidState
 	}
+	if intent.Action == "rebuild" && (current != "running" || observed != "running") {
+		return operation.Operation{}, provider.ErrInvalidState
+	}
 	result, err = tx.ExecContext(ctx, `UPDATE workspaces SET desired_state=$2,updated_at=$3,version=version+1
 		WHERE id=$1 AND version=$4`, intent.WorkspaceID, desired, now.UTC().Format(time.RFC3339Nano), version)
 	if err := capacityWrite(result, err); err != nil {
@@ -100,19 +105,25 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 			return operation.Operation{}, err
 		}
 	}
-	steps := []operation.Step{{Key: intent.Action, Label: label}}
+	var steps []operation.Step
 	switch intent.Action {
 	case "stop":
-		steps = append([]operation.Step{{Key: "shutdown", Label: "Stop workspace workloads"}}, steps...)
+		steps = []operation.Step{{Key: "shutdown", Label: "Stop workspace workloads"}, {Key: "stop", Label: label}}
 	case "start":
-		steps = append(steps,
-			operation.Step{Key: "configure", Label: "Start the development container"},
-			operation.Step{Key: "verify_ide", Label: "Verify the browser IDE"},
-			operation.Step{Key: "finish_setup", Label: "Finish remaining setup hooks"},
-		)
+		steps = append([]operation.Step{{Key: "start", Label: label}}, developmentSteps("Start the development container")...)
+	case "rebuild":
+		steps = developmentSteps(label)
 	}
 	return journal.CreateInTx(ctx, tx, operation.Request{
 		Actor: intent.ActorID, Key: intent.RequestKey, Type: intent.Action, OriginatingAction: "workspace." + intent.Action,
 		WorkspaceID: &intent.WorkspaceID, Generation: generation, Steps: steps,
 	})
+}
+
+func developmentSteps(label string) []operation.Step {
+	return []operation.Step{
+		{Key: "configure", Label: label},
+		{Key: "verify_ide", Label: "Verify the browser IDE"},
+		{Key: "finish_setup", Label: "Finish remaining setup hooks"},
+	}
 }

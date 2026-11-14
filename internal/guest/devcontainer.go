@@ -51,11 +51,18 @@ type devContainerResult struct {
 }
 
 func (d devContainer) ensure(ctx context.Context) (containerConnection, error) {
+	return d.configure(ctx, rebuildSource{})
+}
+
+func (d devContainer) configure(ctx context.Context, previous rebuildSource) (containerConnection, error) {
 	// Let the reference CLI read JSONC, resolve Features and image metadata,
 	// and execute lifecycle commands. The guest VM is the isolation boundary.
 	options := []string{"--skip-non-blocking-commands", "--skip-post-attach", "--include-merged-configuration"}
-	if d.repository != nil {
+	if d.repository != nil || previous.id != "" {
 		options = append(options, "--skip-post-create")
+	}
+	if previous.id != "" {
+		options = append(options, "--remove-existing-container")
 	}
 	result, err := d.invoke(ctx, "up", options...)
 	if err != nil {
@@ -64,7 +71,11 @@ func (d devContainer) ensure(ctx context.Context) (containerConnection, error) {
 	if !dockerContainerID.MatchString(result.ID) || result.Merged == nil {
 		return containerConnection{}, errors.New("Dev Container CLI did not return connection evidence")
 	}
-	if d.retainHome {
+	if previous.id != "" {
+		if err := d.verifyReplacement(ctx, result, previous); err != nil {
+			return containerConnection{}, err
+		}
+	} else if d.retainHome {
 		result, err = d.ensureRetainedHome(ctx, result, options)
 		if err != nil {
 			return containerConnection{}, err
@@ -82,6 +93,8 @@ func (d devContainer) ensure(ctx context.Context) (containerConnection, error) {
 		if err := d.prepareProjectOwner(ctx, connection.ID, result.Merged.RemoteUser); err != nil {
 			return containerConnection{}, err
 		}
+	}
+	if d.repository != nil || previous.id != "" {
 		if _, err := d.invoke(ctx, "run-user-commands", "--container-id", connection.ID, "--skip-non-blocking-commands", "--skip-post-attach"); err != nil {
 			return containerConnection{}, err
 		}
@@ -149,11 +162,7 @@ func (d devContainer) command(ctx context.Context, stage string, options ...stri
 		}
 		args = append(args, "--config", filepath.Join(d.workspace, d.config))
 	}
-	run := d.run
-	if run == nil {
-		run = runDevContainerCLI
-	}
-	output, err := run(ctx, devContainerCLI, append(args, options...)...)
+	output, err := d.runner()(ctx, devContainerCLI, append(args, options...)...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -161,6 +170,13 @@ func (d devContainer) command(ctx context.Context, stage string, options ...stri
 		return nil, errors.New("Dev Container CLI " + stage + " failed")
 	}
 	return output, nil
+}
+
+func (d devContainer) runner() func(context.Context, string, ...string) ([]byte, error) {
+	if d.run != nil {
+		return d.run
+	}
+	return runDevContainerCLI
 }
 
 func validDevContainerPath(path string) bool {

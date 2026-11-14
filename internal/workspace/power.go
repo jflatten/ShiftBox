@@ -14,7 +14,7 @@ import (
 
 var errGuestShutdownPending = errors.New("waiting for guest workload shutdown")
 
-// PowerExecutor reconciles start and graceful stop for an existing provider VM.
+// PowerExecutor reconciles start, graceful stop, and container rebuild on a VM.
 type PowerExecutor struct {
 	store    *Store
 	provider provider.Provider
@@ -115,10 +115,9 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 
 func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, error) {
 	offboarding := op.OriginatingAction == "user.disable" && op.Type == "stop" && step.Key == "stop"
-	if (op.Type != "start" && op.Type != "stop") || (!offboarding && op.OriginatingAction != "workspace."+op.Type) ||
+	if (!offboarding && op.OriginatingAction != "workspace."+op.Type) ||
 		op.WorkspaceID == nil || op.StartedAt == nil || op.Status != "running" || step.Status != "active" ||
-		(step.Key != op.Type && !(op.Type == "stop" && step.Key == "shutdown") &&
-			!(op.Type == "start" && (step.Key == "configure" || step.Key == "verify_ide" || step.Key == "finish_setup"))) {
+		!validPowerStep(op.Type, step.Key) {
 		return provider.CreateRequest{}, provider.ErrInvalidState
 	}
 	req := provider.CreateRequest{OperationID: op.ID, Ref: provider.WorkspaceRef{WorkspaceID: *op.WorkspaceID, Generation: op.Generation}}
@@ -133,7 +132,8 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 		  AND (($6 AND owner.membership_state IN ('pending','disabled')) OR
 		       (NOT $6 AND actor.membership_state='active' AND (actor.id=owner.id OR actor.role='administrator')))
 		  AND (($4='stop' AND w.desired_state='stopped') OR
-		       ($4='start' AND w.desired_state='running' AND owner.membership_state='active'
+		       ($4 IN ('start','rebuild') AND w.desired_state='running' AND owner.membership_state='active'
+		        AND ($4='start' OR w.observed_state='running')
 		        AND EXISTS (SELECT 1 FROM reservations r WHERE r.workspace_id=w.id
 		                     AND r.cpu_memory_state='reserved' AND r.disk_state='reserved')))`,
 		req.Ref.WorkspaceID, op.Generation, op.Actor, op.Type, op.ID, offboarding, op.OriginatingAction).
@@ -149,6 +149,16 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 	}
 	req.NetworkMode = network.Mode
 	return req, nil
+}
+
+func validPowerStep(action, step string) bool {
+	if action == "stop" {
+		return step == "stop" || step == "shutdown"
+	}
+	if action == "start" && step == "start" {
+		return true
+	}
+	return (action == "start" || action == "rebuild") && (step == "configure" || step == "verify_ide" || step == "finish_setup")
 }
 
 func (e *PowerExecutor) shutdownEvidence(ctx context.Context, op operation.Operation) (string, error) {

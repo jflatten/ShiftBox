@@ -120,7 +120,10 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 		    OR ($3='shutdown' AND $4='deleted' AND o.type='delete' AND o.originating_action='workspace.retention_delete'
 		      AND w.deletion_commit_at IS NOT NULL)
 		    OR (($3='shutdown' AND $4='stopped' AND o.type='stop' AND o.originating_action='workspace.stop'
-		      OR $3='configure' AND o.type='start' AND o.originating_action='workspace.start')
+		      OR $3='configure' AND o.type='start' AND o.originating_action='workspace.start'
+		      OR $3='configure' AND o.type='rebuild' AND o.originating_action='workspace.rebuild'
+		        AND EXISTS (SELECT 1 FROM reservations r WHERE r.workspace_id=w.id
+		                    AND r.cpu_memory_state='reserved' AND r.disk_state='reserved'))
 		      AND EXISTS(SELECT 1 FROM users actor WHERE actor.id=o.requested_by AND actor.membership_state='active'
 		        AND (actor.id=w.owner_user_id OR actor.role='administrator'))))
 		  AND o.status IN ('running','waiting')
@@ -147,6 +150,9 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 		return nil, ErrGuestReportConflict
 	}
 	dispatch.Arguments.RetainedMounts = []string{}
+	if dispatch.Type == "rebuild" {
+		dispatch.Command = rebuildDevelopmentCommand
+	}
 	if step == "shutdown" {
 		dispatch.Arguments = pollArguments{RetainedMounts: []string{}}
 	}
@@ -184,7 +190,7 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 	if err != nil {
 		return err
 	}
-	if (shutdown && kind != "stop" && kind != "delete") || (!shutdown && kind != "provision" && kind != "start") {
+	if (shutdown && kind != "stop" && kind != "delete") || (!shutdown && kind != "provision" && kind != "start" && kind != "rebuild") {
 		return ErrGuestReportConflict
 	}
 	if status == report.Status && container == report.Evidence.ContainerID && problem == report.Problem {

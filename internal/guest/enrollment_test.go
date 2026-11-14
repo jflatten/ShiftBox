@@ -560,6 +560,44 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	if code := poll(runningReport); code != 409 {
 		t.Errorf("regressing terminal report = %d, want 409", code)
 	}
+	// Rebuild dispatches through the same authenticated, versioned exchange,
+	// but only with a matching running reservation and rebuild intent.
+	t.Run("guest container rebuild", func(t *testing.T) {
+		const rebuildID = "99999999-0000-4000-8000-000000000014"
+		for _, query := range []string{
+			`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,version,originating_action)
+			 VALUES($1,'work','rebuild',1,'owner','fixture-rebuild','waiting','configure','now',7,'workspace.rebuild')`,
+			`INSERT INTO operation_steps(operation_id,step_index,step_key,label,status) VALUES($1,0,'configure','Rebuild','active')`,
+		} {
+			if _, err := db.Exec(query, rebuildID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if code, body := pollResponse(hello); code != 200 || !strings.Contains(body, `"operation":null`) {
+			t.Fatalf("unreserved rebuild poll = %d %s, want no dispatch", code, body)
+		}
+		if _, err := db.Exec(`INSERT INTO reservations(workspace_id,cpu_count,memory_mib,disk_mib,cpu_memory_state,disk_state,reserved_at)
+			VALUES('work',2,1024,8192,'reserved','reserved','now')`); err != nil {
+			t.Fatal(err)
+		}
+		code, body := pollResponse(hello)
+		if code != 200 || json.Unmarshal([]byte(body), &dispatch) != nil || dispatch.Operation.ID != rebuildID ||
+			dispatch.Operation.Command != "rebuild-development-container" || dispatch.Operation.Version != 7 {
+			t.Fatalf("rebuild poll = %d %s, want version-7 rebuild dispatch", code, body)
+		}
+		const replacement = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		report := strings.ReplaceAll(makeReport("7", "1", "running", "devcontainer.wait_for", replacement), configureID, rebuildID)
+		if code := poll(report); code != 200 {
+			t.Fatalf("rebuild waitFor poll = %d, want 200", code)
+		}
+		if err := db.QueryRow("SELECT status,container_id FROM guest_dispatches WHERE operation_id=$1", rebuildID).Scan(&status, &storedContainer); err != nil ||
+			status != "running" || storedContainer != replacement {
+			t.Fatalf("rebuild evidence = %q/%q, %v, want running with replacement identity", status, storedContainer, err)
+		}
+		if _, err := db.Exec("UPDATE operations SET status='succeeded' WHERE id=$1", rebuildID); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("guest workload shutdown", func(t *testing.T) {
 		const stopID = "99999999-0000-4000-8000-000000000003"
 		if _, err := db.Exec("UPDATE workspaces SET desired_state='stopped' WHERE id='work'"); err != nil {

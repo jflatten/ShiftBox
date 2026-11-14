@@ -14,7 +14,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
-// WorkspacePowerHandler admits start and stop for the current workspace owner
+// WorkspacePowerHandler admits start, stop, and rebuild for the workspace owner
 // or administrator through the contextual workspace action route.
 func WorkspacePowerHandler(db *sql.DB, origin string, now func() time.Time, journal *operation.Journal) AuthorizedHandler {
 	return AuthorizedHandler{
@@ -26,7 +26,7 @@ func WorkspacePowerHandler(db *sql.DB, origin string, now func() time.Time, jour
 				return AuthorizationTarget{}, err
 			}
 			action := r.PathValue("action")
-			if action != "start" && action != "stop" {
+			if action != "start" && action != "stop" && action != "rebuild" {
 				return AuthorizationTarget{}, Problem{Status: 400, Code: "workspace.invalid_action", Title: "Choose a supported workspace action"}
 			}
 			return (WorkspaceAuthorization{Workspace: target.Resource}).Action(actor, action)

@@ -58,8 +58,15 @@ func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDisp
 	var effectErr error
 	switch next.Phase {
 	case localPending:
+		rebuild := dispatch.Command == rebuildDevelopmentCommand
 		if runtime.repository != nil {
-			_, err := runtime.repository.prepare(ctx, repositorySource{URL: dispatch.Repository, Ref: dispatch.Ref, Config: dispatch.Config})
+			source := repositorySource{URL: dispatch.Repository, Ref: dispatch.Ref, Config: dispatch.Config}
+			var err error
+			if rebuild {
+				_, err = runtime.repository.prepared(source)
+			} else {
+				_, err = runtime.repository.prepare(ctx, source)
+			}
 			if err != nil {
 				if ctx.Err() != nil {
 					return OperationReport{}, ctx.Err()
@@ -72,7 +79,11 @@ func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDisp
 		if err := j.saveOperation(next); err != nil {
 			return OperationReport{}, err
 		}
-		next.Connection, effectErr = runtime.ensure(ctx)
+		if rebuild {
+			next.Connection, effectErr = runtime.rebuild(ctx)
+		} else {
+			next.Connection, effectErr = runtime.ensure(ctx)
+		}
 		next.Phase = localWaitReached
 		if effectErr != nil {
 			next.Phase, next.Problem = localFailed, problemRequired

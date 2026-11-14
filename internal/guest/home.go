@@ -54,10 +54,7 @@ func validHomeTarget(target string) bool {
 }
 
 func (d devContainer) ensureRetainedHome(ctx context.Context, result devContainerResult, options []string) (devContainerResult, error) {
-	run := d.run
-	if run == nil {
-		run = runDevContainerCLI
-	}
+	run := d.runner()
 	target, err := d.retainedHome()
 	if err != nil {
 		return devContainerResult{}, err
@@ -89,37 +86,58 @@ func (d devContainer) ensureRetainedHome(ctx context.Context, result devContaine
 	if !mounted {
 		return devContainerResult{}, errors.New("Dev Container did not mount the retained home")
 	}
-	actual, uid, gid, err := developerHome(ctx, result, run)
-	if err != nil {
+	if err := d.verifyHomeOwner(ctx, result, target); err != nil {
 		return devContainerResult{}, err
-	}
-	if actual != target {
-		return devContainerResult{}, errors.New("Dev Container developer home changed")
-	}
-	expected, err := os.ReadFile(filepath.Join(d.retainedHomeRoot(), "owner"))
-	if err != nil || string(expected) != homeOwner(uid, gid) {
-		return devContainerResult{}, errors.New("Dev Container developer home ownership changed")
 	}
 	return result, nil
 }
 
+func (d devContainer) verifyHomeOwner(ctx context.Context, result devContainerResult, target string) error {
+	actual, uid, gid, err := developerHome(ctx, result, d.runner())
+	if err != nil {
+		return err
+	}
+	if actual != target {
+		return errors.New("Dev Container developer home changed")
+	}
+	expected, err := os.ReadFile(filepath.Join(d.retainedHomeRoot(), "owner"))
+	if err != nil || string(expected) != homeOwner(uid, gid) {
+		return errors.New("Dev Container developer home ownership changed")
+	}
+	return nil
+}
+
 func (d devContainer) hasRetainedHomeMount(ctx context.Context, id, target string, run func(context.Context, string, ...string) ([]byte, error)) (bool, error) {
-	out, err := run(ctx, "/usr/bin/docker", "container", "inspect", "--format", "{{json .Mounts}}", "--", id)
+	mounts, err := containerMounts(ctx, id, run)
 	if err != nil {
 		return false, err
 	}
-	var mounts []struct {
-		Type, Source, Destination string
-		RW                        bool
+	return retainedHomeMounted(mounts, d.retainedHomeData(), target)
+}
+
+type dockerMount struct {
+	Type, Source, Destination, Name string
+	RW                              bool
+}
+
+func containerMounts(ctx context.Context, id string, run func(context.Context, string, ...string) ([]byte, error)) ([]dockerMount, error) {
+	out, err := run(ctx, "/usr/bin/docker", "container", "inspect", "--format", "{{json .Mounts}}", "--", id)
+	if err != nil {
+		return nil, err
 	}
+	var mounts []dockerMount
 	if err := json.Unmarshal(out, &mounts); err != nil {
-		return false, errors.New("invalid Dev Container mount inventory")
+		return nil, errors.New("invalid Dev Container mount inventory")
 	}
+	return mounts, nil
+}
+
+func retainedHomeMounted(mounts []dockerMount, source, target string) (bool, error) {
 	for _, mount := range mounts {
-		if mount.Destination == target && mount.Type == "bind" && mount.Source == d.retainedHomeData() && mount.RW {
-			return true, nil
-		}
 		if mount.Destination == target {
+			if mount.Type == "bind" && mount.Source == source && mount.RW {
+				return true, nil
+			}
 			return false, errors.New("Dev Container already has a different mount at the developer home")
 		}
 	}

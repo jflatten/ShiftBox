@@ -89,6 +89,8 @@ func TestWorkspacePowerAPI(t *testing.T) {
 	}
 
 	request("start", "", startKey, "", 428, "request.precondition_required")
+	// Rebuilding a stopped workspace must not reserve capacity or start its VM.
+	request("rebuild", `"5"`, "workspace-rebuild-one", "", 409, "workspace.action_unavailable")
 	request("start", `"4"`, startKey, "", 412, "request.version_mismatch")
 	request("start", `"5"`, startKey, `{"ownerId":"someone"}`, 400, "request.invalid_body")
 	exec("UPDATE capacity_budgets SET cpu_limit=1")
@@ -120,6 +122,17 @@ func TestWorkspacePowerAPI(t *testing.T) {
 		t.Fatalf("unexpected accepted stop: %+v", stop)
 	}
 	checkState("stopped", "reserved", 7, 2)
+	// Rebuild keeps the same running VM and returns the original operation on replay.
+	exec("UPDATE operations SET status='succeeded' WHERE id=$1", stop.ID)
+	exec("UPDATE workspaces SET desired_state='running',observed_state='running' WHERE id=$1", workspaceID)
+	rebuild := request("rebuild", `"7"`, "workspace-rebuild-one", "", 202, "")
+	if rebuild.Type != "rebuild" || len(rebuild.Steps) != 3 || rebuild.Steps[0].Key != "configure" {
+		t.Fatalf("rebuild admission = %+v, want configure, verify IDE, and finish setup", rebuild)
+	}
+	if replay := request("rebuild", `"7"`, "workspace-rebuild-one", "", 202, ""); replay.ID != rebuild.ID {
+		t.Fatalf("rebuild replay returned %s, want %s", replay.ID, rebuild.ID)
+	}
+	request("stop", `"8"`, "workspace-stop-key-two", "", 409, "workspace.operation_in_progress")
 	exec("UPDATE users SET membership_state='disabled' WHERE id='member'")
 	request("start", `"5"`, startKey, "", 401, "auth.required")
 }

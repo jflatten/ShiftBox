@@ -2450,3 +2450,27 @@ This checkpoint does not itself change the goal status.
   with the pinned CLI preserved a home file through container replacement.
 - T052 remains open for managed rebuild and repair, retained application
   mounts, and the full UTM browser journey.
+
+### Guest container rebuild
+
+- T052 accepts the fixed rebuild command and verifies the checkout,
+  developer home, and declared named Docker volumes against the managed
+  container before replacement. The guest verifies the new container ID
+  and the same retained mounts before running required remote hooks or
+  reporting readiness. The durable journal prevents a replay or agent
+  restart from repeating an uncertain replacement.
+- The pinned Dev Container CLI preserved files in the checkout, home, and
+  a named application volume when replacing a stopped Docker container.
+  The old writable-layer file was absent from the replacement. Automated
+  guest tests cover ambiguous inventory, missing mounts, reused IDs, and
+  operation replay.
+- T055 admits rebuild on a running workspace with the existing VM and
+  reservation. It dispatches through authenticated guest polling and gates
+  IDE entry on the new configuration and proxy verification. The workspace
+  page displays the durable rebuild steps in its existing Stepper.
+- Go vet and the serial race suite passed. UI type checking, 70 tests, and
+  the production build passed. Chrome verified keyboard rebuild, live
+  progress, and IDE availability after completion using a local fixture.
+- T052 and T055 stay open for repair using the approved preloaded Ubuntu
+  container, separate repair home, and packaged code-server. The full
+  UTM browser journey remains under T039 and T061.
