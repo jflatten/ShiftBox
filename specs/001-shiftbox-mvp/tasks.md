@@ -1703,8 +1703,10 @@ This checkpoint does not itself change the goal status.
   requires an explicit retry. The platform launcher now selects the agent
   through its fixed supervisor entry point, checks the recorded binary digest
   before launch, and falls back when the candidate is missing or changed.
-  Production key provisioning, guest dispatch and authenticated confirmation,
-  and prior-state restoration remain open under T095.
+  The selected agent confirms its trial only after its authenticated poll
+  succeeds. A rejected poll leaves the trial unconfirmed for supervisor
+  rollback. Production key provisioning, guest dispatch, and prior-state
+  restoration remain open under T095.
 
 ### Migration preflight CLI
 

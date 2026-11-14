@@ -246,6 +246,7 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 			},
 		}}
 	var sampler cpuSampler
+	firstPoll := true
 	renewAfter := guestRenewAfter(identity.Certificate.Leaf)
 	for {
 		now := time.Now()
@@ -259,7 +260,19 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 		}
 		input := newGuestPollRequest(protocol, release, journal)
 		input.Activity = sampler.sample(now)
-		if err := pollAgent(ctx, client, identity.PollEndpoint, input, journal, runtime, tunnel); err != nil {
+		poll := func(ctx context.Context) error {
+			return pollAgent(ctx, client, identity.PollEndpoint, input, journal, runtime, tunnel)
+		}
+		if firstPoll {
+			executable, err := os.Executable()
+			if err != nil {
+				return errors.New("cannot identify the running guest agent")
+			}
+			if err := confirmRunningGuestTrial(ctx, stateDir, executable, poll); err != nil {
+				return err
+			}
+			firstPoll = false
+		} else if err := poll(ctx); err != nil {
 			return err
 		}
 		delay := 27*time.Second + rand.N(6*time.Second)

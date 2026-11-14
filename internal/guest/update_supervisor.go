@@ -1,6 +1,7 @@
 package guest
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -8,6 +9,24 @@ import (
 	"os"
 	"path/filepath"
 )
+
+func confirmRunningGuestTrial(ctx context.Context, stateDir, executable string, poll func(context.Context) error) error {
+	path := filepath.Join(stateDir, "update-trial.json")
+	trial, err := loadGuestUpdateTrial(path)
+	if err != nil {
+		return err
+	}
+	if trial.Phase != "testing" {
+		return poll(ctx)
+	}
+	if executable != filepath.Join(stateDir, fmt.Sprintf("update-%x", trial.Candidate)) {
+		return errGuestUpdateTrialConflict
+	}
+	if err := poll(ctx); err != nil {
+		return err
+	}
+	return confirmGuestUpdateTrial(path, guestUpdateBoot{Digest: trial.Candidate, Attempt: trial.Attempt})
+}
 
 // SelectGuestAgent is called once by the platform launcher before starting
 // the guest service. It records an attempted trial before handing back its

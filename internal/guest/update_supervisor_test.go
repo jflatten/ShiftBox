@@ -1,12 +1,51 @@
 package guest
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+// TestConfirmRunningGuestTrial requires the selected candidate to complete an
+// authenticated poll before it can replace the last confirmed agent.
+func TestConfirmRunningGuestTrial(t *testing.T) {
+	dir := t.TempDir()
+	digest := sha256.Sum256([]byte("fixture agent"))
+	path := filepath.Join(dir, "update-trial.json")
+	if err := requestGuestUpdateTrial(path, digest, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nextGuestUpdateBinary(path); err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(dir, fmt.Sprintf("update-%x", digest))
+	probe := func(err error) func(context.Context) error {
+		return func(context.Context) error { return err }
+	}
+	failed := errors.New("fixture rejected authentication")
+	if err := confirmRunningGuestTrial(t.Context(), dir, filepath.Join(dir, "other-agent"), func(context.Context) error {
+		t.Error("a different executable attempted the trial poll")
+		return nil
+	}); !errors.Is(err, errGuestUpdateTrialConflict) {
+		t.Errorf("trial from a different executable = %v, want conflict", err)
+	}
+	if err := confirmRunningGuestTrial(t.Context(), dir, candidate, probe(failed)); !errors.Is(err, failed) {
+		t.Errorf("trial after rejected poll = %v, want poll failure", err)
+	}
+	if trial, err := loadGuestUpdateTrial(path); err != nil || trial.Phase != "testing" {
+		t.Fatalf("trial after failed poll = %+v (%v), want testing", trial, err)
+	}
+	if err := confirmRunningGuestTrial(t.Context(), dir, candidate, probe(nil)); err != nil {
+		t.Fatal(err)
+	}
+	if trial, err := loadGuestUpdateTrial(path); err != nil || trial.Phase != "confirmed" || trial.Active != digest {
+		t.Errorf("trial after accepted poll = %+v (%v), want confirmed candidate", trial, err)
+	}
+}
 
 // TestSelectGuestAgent verifies that the launcher rechecks a staged candidate
 // and falls back immediately if the file changed or was replaced by a symlink.
