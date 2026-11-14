@@ -1428,3 +1428,14 @@ This checkpoint does not itself change the goal status.
   restart tests confirm the CA record is reused.
 - Production serve and management backup/restore still need to load or
   preserve this retained authority.
+
+### Controller active-database preflight
+
+- Added a startup opener for the explicitly configured database. It
+  requires an active installation and a matching committed configuration
+  generation, profile, origin and service settings.
+- Startup refuses a missing SQLite file before opening it. A failed
+  PostgreSQL connection never reads or mutates the bootstrap SQLite file.
+  Application, database and contract race tests passed.
+- The setup activation endpoint, authority switch, and controller command
+  composition still need wiring.
