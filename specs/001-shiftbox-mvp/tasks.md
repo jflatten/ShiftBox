@@ -1036,3 +1036,16 @@ This checkpoint does not itself change the goal status.
   and an occupied schema. The database and roles were removed afterward.
 - T031/T044 remain open for API credential collection, optional provisioning,
   migration and owner transfer, and the durable activation switch.
+
+### Bootstrap administrator credential transfer
+
+- Added read-only extraction of the single administrator credential from the
+  pinned Dex SQLite schema. The source lookup requires the expected email
+  and user ID and rejects a populated source. The transfer sends the bcrypt
+  hash directly to the destination Dex credential API.
+- Native setup coverage transfers the changed credential twice into a second
+  Dex instance, rejects a mismatched owner ID, verifies the changed password,
+  and checks that the temporary password fails against the destination.
+- CLI, identity and app race suites, formatting, and vet passed. This verifies
+  the transfer with independent Dex SQLite stores. Target PostgreSQL Dex
+  startup, application data transfer, and authority switching remain open.

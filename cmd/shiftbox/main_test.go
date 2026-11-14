@@ -20,6 +20,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jflatten/ShiftBox/internal/app"
+	"github.com/jflatten/ShiftBox/internal/identity"
 )
 
 // TestSetupRejectsUnknownSecretFlag keeps unrecognized arguments out of diagnostics.
@@ -235,6 +238,15 @@ func (w *stopOnSetupURL) probe(origin string) error {
 	if err := changePassword(current, origin, http.StatusNoContent); err != nil {
 		return err
 	}
+	var ownerID string
+	if err := db.QueryRow("SELECT user_id FROM bootstrap_administrator").Scan(&ownerID); err != nil {
+		return err
+	}
+	dexPath := filepath.Join(w.dir, "dex.db")
+	if err := verifyCredentialTransfer(w.dir, origin, dexPath, ownerID, current, replacement); err != nil {
+		return err
+	}
+
 	result, err := client.Get(origin + "/api/v1/session")
 	if err != nil {
 		return err
@@ -322,4 +334,41 @@ func submitDexForm(client *http.Client, response *http.Response, fields url.Valu
 		fields.Set("req", html.UnescapeString(string(req[1])))
 	}
 	return client.PostForm(action.String(), fields)
+}
+
+// verifyCredentialTransfer imports into an independent native Dex and verifies
+// the replacement there. The source continues serving the bootstrap session.
+func verifyCredentialTransfer(dir, origin, source, ownerID, temporary, replacement string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	target, err := os.MkdirTemp(dir, "transfer-test-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(target)
+	cert, err := app.EnsureBootstrapCertificate(filepath.Join(dir, "bootstrap-tls.pem"), time.Now())
+	if err != nil {
+		return err
+	}
+	admin, _, _, closeDex, err := startSetupDex(ctx, target, os.Getenv("SHIFTBOX_TEST_DEX_BINARY"), origin, cert)
+	if err != nil {
+		return err
+	}
+	defer closeDex()
+	const email = "owner@example.test"
+	if err := identity.TransferBootstrapCredential(ctx, source, email, "wrong-owner", admin); err == nil {
+		return fmt.Errorf("Dex transfer accepted a different owner ID")
+	}
+	for range 2 {
+		if err := identity.TransferBootstrapCredential(ctx, source, email, ownerID, admin); err != nil {
+			return err
+		}
+	}
+	for password, want := range map[string]bool{temporary: false, replacement: true} {
+		ok, err := admin.PasswordVerified(ctx, email, password)
+		if err != nil || ok != want {
+			return fmt.Errorf("Dex transfer did not preserve the changed administrator credential")
+		}
+	}
+	return nil
 }
