@@ -2160,3 +2160,14 @@ This checkpoint does not itself change the goal status.
   the CPU sampling window, and browser connection presence. Go vet and the
   relevant race tests passed. Monitor configuration, baseline deadlines,
   outage grace and automatic deletion remain open under T093.
+
+### Baseline retention deadlines
+
+- Launch records a deadline when an allowed retention interval is selected.
+  Policy edits derive the deadline from the latest recorded activity, or
+  creation time when the workspace has never reported activity. Clearing
+  retention clears the deadline. A concurrent activity write fences an edit
+  based on an older baseline.
+- Go vet and focused race tests passed, including launch deadlines and
+  migration parity on SQLite and PostgreSQL. Scheduling, reconciliation
+  grace and automatic deletion remain open under T093.

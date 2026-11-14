@@ -51,11 +51,7 @@ func RecordActivity(ctx context.Context, db interface {
 			return nil
 		}
 	}
-	var deadline *string
-	if retention.Valid && retention.Int64 > 0 && retention.Int64 <= int64((1<<63-1)/time.Second) {
-		value := received.UTC().Add(time.Duration(retention.Int64) * time.Second).Format(time.RFC3339Nano)
-		deadline = &value
-	}
+	deadline := RetentionDeadline(received, &retention.Int64)
 	_, err = db.ExecContext(ctx, `UPDATE workspaces SET last_activity_at=$1,retention_deadline=$2
 		WHERE id=$3 AND generation=$4 AND desired_state='running' AND observed_state IN ('starting','running')
 		AND deletion_commit_at IS NULL AND COALESCE(last_activity_at,'')=$5

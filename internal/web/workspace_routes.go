@@ -93,7 +93,8 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 	if op, found, err := workspace.FindLaunch(ctx, tx, journal, intent); found || err != nil {
 		return op, launchAdmissionProblem(err)
 	}
-	if input.RetentionSeconds != nil && (policy.RetentionMaximum == nil || *input.RetentionSeconds > *policy.RetentionMaximum) {
+	if input.RetentionSeconds != nil && (policy.RetentionMaximum == nil || *input.RetentionSeconds > *policy.RetentionMaximum ||
+		workspace.RetentionDeadline(now, input.RetentionSeconds) == nil) {
 		return operation.Operation{}, Problem{Status: 409, Code: "workspace.retention_unavailable", Title: "Choose an allowed retention period"}
 	}
 	var allocation workspace.Allocation

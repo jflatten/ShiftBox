@@ -58,15 +58,16 @@ func AdmitLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, la
 	}
 	const generation = 1
 	stamp := now.UTC().Format(time.RFC3339Nano)
+	deadline := RetentionDeadline(now, launch.RetentionSeconds)
 	result, err = tx.ExecContext(ctx, `INSERT INTO workspaces
 		(id,installation_id,owner_user_id,template_id,template_revision,platform_artifact_id,
 		repository_url,repository_ref,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,
-		secret_names_json,retention_seconds,launch_retention_seconds,desired_state,observed_state,generation,ownership_marker,created_at,updated_at,version)
-		SELECT $1,$2,$3,$4,$5,id,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,'running','unknown',1,$16,$17,$17,1
+		secret_names_json,retention_seconds,launch_retention_seconds,desired_state,observed_state,generation,ownership_marker,created_at,updated_at,version,retention_deadline)
+		SELECT $1,$2,$3,$4,$5,id,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,'running','unknown',1,$16,$17,$17,1,$18
 		FROM platform_artifacts WHERE id=$6 AND state='available'`,
 		launch.WorkspaceID, launch.InstallationID, launch.OwnerID, launch.TemplateID, launch.TemplateRevision, launch.ArtifactID,
 		launch.RepositoryURL, launch.RepositoryRef, launch.DevcontainerPath, launch.CPU, launch.MemoryMiB, launch.DiskMiB,
-		launch.NetworkPolicyJSON, string(secretNames), launch.RetentionSeconds, launch.OwnershipMarker, stamp)
+		launch.NetworkPolicyJSON, string(secretNames), launch.RetentionSeconds, launch.OwnershipMarker, stamp, deadline)
 	if err := capacityWrite(result, err); err != nil {
 		return operation.Operation{}, err
 	}
@@ -136,7 +137,7 @@ func (launch LaunchIntent) valid(now time.Time) bool {
 	return !now.IsZero() && launch.InstallationID != "" && launch.WorkspaceID != "" && launch.OwnerID != "" &&
 		launch.TemplateID != "" && launch.TemplateRevision > 0 && launch.ArtifactID != "" && launch.OwnershipMarker != "" &&
 		len(launch.RequestKey) >= 16 && len(launch.RequestKey) <= 128 && launch.Allocation.positive() &&
-		(launch.RetentionSeconds == nil || *launch.RetentionSeconds > 0) &&
+		(launch.RetentionSeconds == nil || RetentionDeadline(now, launch.RetentionSeconds) != nil) &&
 		(launch.RepositoryRef == nil || template.ValidRepositoryRef(*launch.RepositoryRef)) &&
 		template.ValidSource(launch.RepositoryURL, launch.DevcontainerPath) &&
 		json.Unmarshal([]byte(launch.NetworkPolicyJSON), &network) == nil && len(network) != 0

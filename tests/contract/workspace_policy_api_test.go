@@ -42,7 +42,7 @@ func TestWorkspacePolicyUpdate(t *testing.T) {
 		repository_url,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,desired_state,observed_state,
 		generation,ownership_marker,created_at,updated_at,version)
 		SELECT $1,id,'member',$2,1,'artifact','https://github.com/example/repo','.devcontainer/devcontainer.json',
-		2,1024,40,'{"mode":"shared"}','stopped','running',1,'owned','now','now',1 FROM installations`, id, templateID)
+		2,1024,40,'{"mode":"shared"}','stopped','running',1,'owned',$3,$3,1 FROM installations`, id, templateID, now.Add(-2*time.Hour).Format(time.RFC3339Nano))
 	exec(`INSERT INTO network_policies(id,name,mode,rules_json,required_exceptions_json,provider_capability_version)
 		VALUES($1,'Outbound access','all','[]','[]','5.0.8')`, policyID)
 	limit := int64(86400)
@@ -73,17 +73,26 @@ func TestWorkspacePolicyUpdate(t *testing.T) {
 	exec("UPDATE operations SET status='cancelled' WHERE id='policy-active-step'")
 	send(network, `"2"`, 412)
 	send(`{"retentionSeconds":86401}`, `"1"`, 409)
-	send(`{"retentionSeconds":3600,"networkPolicyId":"`+policyID+`"}`, `"1"`, 200)
-	var launch, current string
-	var duration int64
-	if err := db.QueryRowContext(ctx, `SELECT network_policy_snapshot_json,network_policy_override_json,retention_seconds
-		FROM workspaces WHERE id=$1`, id).Scan(&launch, &current, &duration); err != nil ||
-		launch != `{"mode":"shared"}` || !strings.Contains(current, policyID) || duration != 3600 {
-		t.Fatalf("stored workspace policy = %s, %s, %d (%v), want unchanged launch, selected policy, 3600 seconds", launch, current, duration, err)
+	send(`{"retentionSeconds":3600}`, `"1"`, 200)
+	var initialDeadline string
+	if err := db.QueryRowContext(ctx, "SELECT retention_deadline FROM workspaces WHERE id=$1", id).Scan(&initialDeadline); err != nil ||
+		initialDeadline != now.Add(-time.Hour).Format(time.RFC3339Nano) {
+		t.Fatalf("deadline without activity = %q (%v), want one hour after launch", initialDeadline, err)
 	}
-	send(`{"retentionSeconds":null}`, `"2"`, 200)
+	exec("UPDATE workspaces SET last_activity_at=$1 WHERE id=$2", now.Add(-10*time.Minute).Format(time.RFC3339Nano), id)
+	send(`{"retentionSeconds":3600,"networkPolicyId":"`+policyID+`"}`, `"2"`, 200)
+	var launch, current string
+	var deadline *string
+	var duration int64
+	if err := db.QueryRowContext(ctx, `SELECT network_policy_snapshot_json,network_policy_override_json,retention_seconds,retention_deadline
+		FROM workspaces WHERE id=$1`, id).Scan(&launch, &current, &duration, &deadline); err != nil ||
+		launch != `{"mode":"shared"}` || !strings.Contains(current, policyID) || duration != 3600 ||
+		deadline == nil || *deadline != now.Add(50*time.Minute).Format(time.RFC3339Nano) {
+		t.Fatalf("stored policy = %s, %s, %d, deadline %v (%v), want unchanged launch, selected policy and one hour from last activity", launch, current, duration, deadline, err)
+	}
+	send(`{"retentionSeconds":null}`, `"3"`, 200)
 	var cleared bool
-	if err := db.QueryRowContext(ctx, "SELECT retention_seconds IS NULL FROM workspaces WHERE id=$1", id).Scan(&cleared); err != nil || !cleared {
+	if err := db.QueryRowContext(ctx, "SELECT retention_seconds IS NULL AND retention_deadline IS NULL FROM workspaces WHERE id=$1", id).Scan(&cleared); err != nil || !cleared {
 		t.Fatalf("retention cleared = %t (%v), want true", cleared, err)
 	}
 }

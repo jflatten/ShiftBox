@@ -75,9 +75,12 @@ func TestLaunchAdmission(t *testing.T) {
 			}
 			checkReservation(t, db, launch.WorkspaceID, "reserved", "reserved")
 			var desired, observed, names string
-			err = db.QueryRow("SELECT desired_state,observed_state,secret_names_json FROM workspaces WHERE id=$1", launch.WorkspaceID).Scan(&desired, &observed, &names)
-			if err != nil || desired != "running" || observed != "unknown" || names != `["API_KEY"]` {
-				t.Errorf("launch snapshot = %s/%s %s, %v, want running/unknown and captured names", desired, observed, names, err)
+			var deadline sql.NullString
+			err = db.QueryRow("SELECT desired_state,observed_state,secret_names_json,retention_deadline FROM workspaces WHERE id=$1", launch.WorkspaceID).
+				Scan(&desired, &observed, &names, &deadline)
+			if err != nil || desired != "running" || observed != "unknown" || names != `["API_KEY"]` ||
+				deadline.String != now.Add(time.Hour).Format(time.RFC3339Nano) {
+				t.Errorf("launch snapshot = %s/%s %s, deadline %v, %v, want running/unknown, captured names and deadline one hour from launch", desired, observed, names, deadline, err)
 			}
 
 			launch.WorkspaceID = "launch-two"

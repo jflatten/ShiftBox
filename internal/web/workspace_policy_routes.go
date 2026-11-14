@@ -47,7 +47,7 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 		(json.Unmarshal(input.RetentionSeconds, &retention) != nil || (retention != nil && *retention < 1)) {
 		return nil, invalidAuthorizationFields()
 	}
-	if retention != nil && (policy.RetentionMaximum == nil || *retention > *policy.RetentionMaximum) {
+	if retention != nil && (policy.RetentionMaximum == nil || *retention > *policy.RetentionMaximum || workspace.RetentionDeadline(now, retention) == nil) {
 		return nil, Problem{Status: 409, Code: "workspace.retention_unavailable", Title: "Choose an allowed retention period"}
 	}
 	var network *string
@@ -84,12 +84,27 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 		(network != nil && (view.DesiredState != "stopped" || view.ObservedState != "stopped")) {
 		return nil, Problem{Status: 409, Code: "workspace.policy_unavailable", Title: "Wait for current work to finish and stop the workspace before changing its network policy"}
 	}
+	var baseline string
+	var deadline *string
+	if retention != nil {
+		// A policy edit does not count as workspace activity. Stopped and
+		// never-connected workspaces use their last known activity or launch.
+		if err := tx.QueryRowContext(ctx, "SELECT COALESCE(last_activity_at,created_at) FROM workspaces WHERE id=$1", id).Scan(&baseline); err != nil {
+			return nil, err
+		}
+		at, err := time.Parse(time.RFC3339Nano, baseline)
+		if err != nil {
+			return nil, err
+		}
+		deadline = workspace.RetentionDeadline(at, retention)
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE workspaces SET
 		retention_seconds=CASE WHEN $1 THEN CAST($2 AS BIGINT) ELSE retention_seconds END,
-		retention_deadline=CASE WHEN $1 THEN NULL ELSE retention_deadline END,
+		retention_deadline=CASE WHEN $1 THEN CAST($7 AS TEXT) ELSE retention_deadline END,
 		network_policy_override_json=COALESCE(CAST($3 AS TEXT),network_policy_override_json),updated_at=$4,version=version+1
-		WHERE id=$5 AND version=$6 AND EXISTS (SELECT 1 FROM installations WHERE singleton=1 AND state='active')`,
-		input.RetentionSeconds != nil, retention, network, now.UTC().Format(time.RFC3339Nano), id, version)
+		WHERE id=$5 AND version=$6 AND EXISTS (SELECT 1 FROM installations WHERE singleton=1 AND state='active')
+		AND ($8='' OR COALESCE(last_activity_at,created_at)=$8)`,
+		input.RetentionSeconds != nil, retention, network, now.UTC().Format(time.RFC3339Nano), id, version, deadline, baseline)
 	if err != nil {
 		return nil, err
 	}
