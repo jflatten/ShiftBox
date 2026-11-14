@@ -77,6 +77,8 @@ disposable SQLite database and run
 Use `SHIFTBOX_MVP_RESUME_ACTIVE=1` for the journal check when a resumed run
 has prior lifecycle attempts in its journal. A fresh run checks the exact
 sequence.
+Set `SHIFTBOX_TEST_MVP_RELEASE` to the absolute path of a new candidate's
+manifest when verifying it before updating the checked-in release manifest.
 The Go test checks the authenticated enrollment and records for the workspace
 launch, stop, start, rebuild, expected broken configuration, repair, and retry.
 Chrome exercises file retention through the browser IDE.
