@@ -909,3 +909,18 @@ This checkpoint does not itself change the goal status.
 - App/contract race suites and formatting/vet pass. The TLS listener/CLI, setup UI,
   sign-in/password change, explicit local reset and later setup endpoints remain
   unfinished. T030/T043 are still not complete.
+
+### Persistent loopback setup certificate
+
+- Added explicit-path creation/loading of a 24-hour ECDSA P-256 temporary setup
+  certificate covering only IPv4/IPv6 loopback. The operator must explicitly
+  trust it; callers must restrict use to unactivated local setup.
+- Certificate and key are published as one complete private file without
+  overwriting a competing/existing identity. File and directory sync preserve
+  the published trust identity across restart. Existing invalid, expired,
+  symlinked, or publicly readable material is rejected without regeneration.
+- Tests prove certificate stability, loopback coverage, private permissions,
+  expiry refusal without replacement, malformed-input refusal and explicit paths.
+  App/contract race suites, formatting and vet pass.
+- Listener/CLI composition and explicit local trust presentation remain pending;
+  this helper is not a production TLS fallback or a claim of runnable setup.
