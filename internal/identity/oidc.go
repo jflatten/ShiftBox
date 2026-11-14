@@ -30,6 +30,7 @@ type VerifiedIdentity struct {
 	Email         string
 	EmailVerified bool
 	Name          string
+	AuthorizedAt  time.Time
 }
 
 // OIDC verifies the product-managed Dex provider without bypassing TLS or JWT checks.
@@ -82,6 +83,7 @@ func (p *OIDC) Verify(ctx context.Context, rawToken, expectedNonce string, conne
 		EmailVerified   bool   `json:"email_verified"`
 		Name            string `json:"name"`
 		AuthorizedParty string `json:"azp"`
+		AuthTime        int64  `json:"auth_time"`
 		Federated       struct {
 			ConnectorID string `json:"connector_id"`
 			UserID      string `json:"user_id"`
@@ -96,7 +98,23 @@ func (p *OIDC) Verify(ctx context.Context, rawToken, expectedNonce string, conne
 	if (len(token.Audience) > 1 || claims.AuthorizedParty != "") && claims.AuthorizedParty != p.clientID {
 		return VerifiedIdentity{}, ErrInvalidIdentity
 	}
-	return VerifiedIdentity{Issuer: connector.Issuer, Subject: claims.Federated.UserID, ConnectorID: connector.ID, Email: claims.Email, EmailVerified: claims.EmailVerified, Name: claims.Name}, nil
+	verified := VerifiedIdentity{Issuer: connector.Issuer, Subject: claims.Federated.UserID, ConnectorID: connector.ID,
+		Email: claims.Email, EmailVerified: claims.EmailVerified, Name: claims.Name}
+	if claims.AuthTime > 0 {
+		verified.AuthorizedAt = time.Unix(claims.AuthTime, 0).UTC()
+	}
+	return verified, nil
+}
+
+// VerifyExternal requires Dex's signed authentication time from the current
+// authorization attempt. A freshly minted token alone carries no such proof.
+func (p *OIDC) VerifyExternal(ctx context.Context, rawToken, nonce string, connector ConnectorIdentity, startedAt time.Time) (VerifiedIdentity, error) {
+	verified, err := p.Verify(ctx, rawToken, nonce, connector)
+	if err != nil || startedAt.IsZero() || verified.AuthorizedAt.IsZero() ||
+		verified.AuthorizedAt.Before(startedAt.Truncate(time.Second)) || verified.AuthorizedAt.After(p.now()) {
+		return VerifiedIdentity{}, ErrInvalidIdentity
+	}
+	return verified, nil
 }
 
 func identityURL(value string) bool {
@@ -112,13 +130,31 @@ func (p *OIDC) LocalLogin(secret, redirect string) oauth2.Config {
 
 // ExchangeLocal exchanges a PKCE-bound code and verifies the signed local identity.
 func (p *OIDC) ExchangeLocal(ctx context.Context, cfg oauth2.Config, code, verifier, nonce, issuer string) (VerifiedIdentity, error) {
+	raw, err := p.exchange(ctx, cfg, code, verifier)
+	if err != nil {
+		return VerifiedIdentity{}, err
+	}
+	return p.Verify(ctx, raw, nonce, ConnectorIdentity{ID: "local", Issuer: issuer})
+}
+
+// ExchangeExternal accepts only a fresh authorization code for the selected
+// upstream connector. Refresh tokens do not enter this flow.
+func (p *OIDC) ExchangeExternal(ctx context.Context, cfg oauth2.Config, code, verifier, nonce string, connector ConnectorIdentity, startedAt time.Time) (VerifiedIdentity, error) {
+	raw, err := p.exchange(ctx, cfg, code, verifier)
+	if err != nil {
+		return VerifiedIdentity{}, err
+	}
+	return p.VerifyExternal(ctx, raw, nonce, connector, startedAt)
+}
+
+func (p *OIDC) exchange(ctx context.Context, cfg oauth2.Config, code, verifier string) (string, error) {
 	token, err := cfg.Exchange(oidc.ClientContext(ctx, p.client), code, oauth2.VerifierOption(verifier))
 	if err != nil {
-		return VerifiedIdentity{}, ErrInvalidIdentity
+		return "", ErrInvalidIdentity
 	}
 	raw, ok := token.Extra("id_token").(string)
 	if !ok {
-		return VerifiedIdentity{}, ErrInvalidIdentity
+		return "", ErrInvalidIdentity
 	}
-	return p.Verify(ctx, raw, nonce, ConnectorIdentity{ID: "local", Issuer: issuer})
+	return raw, nil
 }

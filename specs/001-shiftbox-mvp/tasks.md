@@ -2256,3 +2256,18 @@ This checkpoint does not itself change the goal status.
   external reauthorization, followed by other catalog operations for
   external identity, platform import, maintenance, migration, backup,
   and recovery. Live production startup and acceptance remain unverified.
+
+### External membership and reauthorization
+
+- T070 and T076 have the external identity admission and callback
+  implementation. The browser attempt binds the selected Dex connector,
+  nonce, PKCE verifier, expiry, and original ShiftBox session. The signed
+  Dex authentication time must fall within that attempt.
+- First successful external sign-in creates a separate pending membership
+  from the stable issuer, subject, and connector. Reauthorization checks
+  the same account, replaces its session, and revokes browser grants and
+  established connections for that session.
+- T062 covers unapproved and disabled membership, equal-email isolation,
+  stale broker authentication, expired and forged attempts, CSRF, and
+  renewal replay. T062, T070, and T076 stay open for connector configuration,
+  production wiring, and an actual upstream round trip with pinned Dex.

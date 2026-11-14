@@ -496,3 +496,25 @@ func adminCertificateFixture(t *testing.T) (tls.Certificate, []byte) {
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
+
+// TestOIDCProvesFreshExternalAuthorization rejects a preexisting broker
+// authentication time even when Dex signs a new nonce-bound ID token.
+func TestOIDCProvesFreshExternalAuthorization(t *testing.T) {
+	provider, key, issuer := oidcFixture(t)
+	connector := identity.ConnectorIdentity{ID: "company", Issuer: "https://company.example.test"}
+	start := time.Now().Add(-2 * time.Second).Truncate(time.Second)
+	if _, err := provider.VerifyExternal(t.Context(), signedIdentityToken(t, key, issuer, nil), "login-nonce", connector, start); !errors.Is(err, identity.ErrInvalidIdentity) {
+		t.Errorf("VerifyExternal(missing auth_time) = %v, want denial", err)
+	}
+	for _, stamp := range []time.Time{start.Add(-time.Second), time.Now().Add(time.Hour)} {
+		raw := signedIdentityToken(t, key, issuer, func(c map[string]any) { c["auth_time"] = stamp.Unix() })
+		if _, err := provider.VerifyExternal(t.Context(), raw, "login-nonce", connector, start); !errors.Is(err, identity.ErrInvalidIdentity) {
+			t.Errorf("VerifyExternal(auth_time %s) = %v, want denial", stamp, err)
+		}
+	}
+	raw := signedIdentityToken(t, key, issuer, func(c map[string]any) { c["auth_time"] = start.Unix() })
+	verified, err := provider.VerifyExternal(t.Context(), raw, "login-nonce", connector, start)
+	if err != nil || !verified.AuthorizedAt.Equal(start) {
+		t.Fatalf("VerifyExternal(fresh) = (%s, %v), want %s", verified.AuthorizedAt, err, start)
+	}
+}
