@@ -1689,8 +1689,9 @@ This checkpoint does not itself change the goal status.
   campaigns from Infrastructure and follows the server operation.
   Due-campaign preparation now creates one durable operation for each
   eligible workspace generation after existing lifecycle work settles. It
-  records the latest desired state, skips committed deletions, and reuses
-  the same operation after a restart.
+  records the latest desired state and reuses the same operation after a
+  restart. An already targeted workspace with deletion underway waits for
+  verified removal without creating an update operation.
   The campaign worker waits until the deadline and aggregates the target
   operation outcomes. A failed target blocks campaign completion. Controller
   startup will run the campaign worker when the target executor is wired.
@@ -2600,6 +2601,9 @@ This checkpoint does not itself change the goal status.
   The enrollment test confirms that a previous release can still poll but
   blocks advancement, an unsupported report leaves the last version intact,
   and a current-release poll clears that version blocker.
+- T095 and T097 also keep migration blocked when a current-version guest
+  still has unresolved maintenance. A completed update or verified removal
+  clears that maintenance blocker.
 - T097 stays open for signed update and rollback evidence, the migration
   command and its remaining preflight checks.
 

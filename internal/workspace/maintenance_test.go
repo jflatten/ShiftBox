@@ -11,7 +11,44 @@ import (
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
+	"github.com/jflatten/ShiftBox/internal/release"
 )
+
+// TestMaintenanceBlocksControllerAdvance verifies that a current-version poll
+// cannot clear the migration gate while the guest update is still unresolved.
+func TestMaintenanceBlocksControllerAdvance(t *testing.T) {
+	db, journal, now := maintenanceFixture(t, "retained")
+	ctx := t.Context()
+	maintenanceExec(t, db, `UPDATE workspaces SET desired_state='stopped',observed_state='stopped',guest_release='test',protocol_version='1'
+		WHERE id='retained'`)
+	deadline := now.Add(time.Hour)
+	campaign, err := scheduleMaintenanceFixture(t, db, journal, "reservation-release", deadline, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := release.NewStore(db)
+	check := func(want int) {
+		t.Helper()
+		got, err := store.GuestUpgradeBlockers(ctx, testInstallation, "test", "1")
+		if err != nil || len(got) != want || (want == 1 && got[0].WorkspaceID != "retained") {
+			t.Errorf("GuestUpgradeBlockers = %+v (%v), want %d blockers for retained workspace", got, err, want)
+		}
+	}
+	check(0)
+	if err := NewStore(db).PrepareMaintenanceTargets(ctx, journal, testInstallation, campaign.ID, deadline); err != nil {
+		t.Fatal(err)
+	}
+	check(1)
+	maintenanceExec(t, db, `UPDATE maintenance_targets SET state='completed' WHERE campaign_id=$1`, campaign.ID)
+	check(0)
+	maintenanceExec(t, db, `UPDATE maintenance_targets SET state='failed' WHERE campaign_id=$1`, campaign.ID)
+	maintenanceExec(t, db, `UPDATE maintenance_campaigns SET state='blocked' WHERE operation_id=$1`, campaign.ID)
+	check(1)
+	maintenanceExec(t, db, `UPDATE workspaces SET desired_state='deleted',deletion_commit_at=$1 WHERE id='retained'`, testStamp)
+	check(1)
+	maintenanceExec(t, db, `UPDATE workspaces SET observed_state='deleted' WHERE id='retained'`)
+	check(0)
+}
 
 // TestMaintenanceCampaignWorker confirms that a scheduled campaign waits for
 // its deadline and that a failed workspace update blocks campaign completion.
@@ -285,8 +322,8 @@ func TestPrepareMaintenanceTargets(t *testing.T) {
 	if state, _, op := target("retained"); state != "waiting_safe" || op.Valid {
 		t.Errorf("busy target at deadline = %s/%v, want waiting without an operation", state, op)
 	}
-	if state, _, op := target("deleting"); state != "completed" || op.Valid {
-		t.Errorf("committed deletion at deadline = %s/%v, want retired without an operation", state, op)
+	if state, _, op := target("deleting"); state != "waiting_safe" || op.Valid {
+		t.Errorf("committed deletion at deadline = %s/%v, want waiting for verified deletion without an update", state, op)
 	}
 	maintenanceExec(t, db, `UPDATE operations SET status='succeeded' WHERE id=$1`, busy.ID)
 	maintenanceExec(t, db, `UPDATE workspaces SET desired_state='stopped',observed_state='stopped' WHERE id='retained'`)
@@ -298,6 +335,11 @@ func TestPrepareMaintenanceTargets(t *testing.T) {
 	prepare(deadline.Add(2 * time.Second))
 	if _, _, replay := target("retained"); replay != op {
 		t.Errorf("replayed maintenance target = %v, want %v", replay, op)
+	}
+	maintenanceExec(t, db, `UPDATE workspaces SET observed_state='deleted' WHERE id='deleting'`)
+	prepare(deadline.Add(3 * time.Second))
+	if state, _, op := target("deleting"); state != "completed" || op.Valid {
+		t.Errorf("verified deletion = %s/%v, want retired without an update", state, op)
 	}
 	got, err := journal.Get(t.Context(), op.String)
 	if err != nil || got.WorkspaceID == nil || *got.WorkspaceID != workspaceID || got.Generation != 1 || got.Status != "pending" {

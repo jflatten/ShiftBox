@@ -5,8 +5,8 @@ import (
 	"errors"
 )
 
-// GuestUpgradeBlocker identifies a retained workspace whose last accepted
-// guest poll does not establish compatibility with the deployed release.
+// GuestUpgradeBlocker identifies a retained workspace with incompatible
+// guest evidence or unresolved maintenance.
 type GuestUpgradeBlocker struct {
 	WorkspaceID     string `json:"workspaceId"`
 	ObservedState   string `json:"observedState"`
@@ -14,16 +14,19 @@ type GuestUpgradeBlocker struct {
 	ProtocolVersion string `json:"protocolVersion"`
 }
 
-// GuestUpgradeBlockers reports which retained workspaces still need to reach
-// the currently deployed release before the controller can advance.
+// GuestUpgradeBlockers requires the current release and settled maintenance
+// before the controller can advance. Only verified deletion removes a target.
 func (s *Store) GuestUpgradeBlockers(ctx context.Context, installationID, deployedRelease, protocol string) ([]GuestUpgradeBlocker, error) {
 	if !hasMetadata(installationID, deployedRelease, protocol) {
 		return nil, errors.New("guest upgrade check requires installation, deployed release, and protocol")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,observed_state,COALESCE(guest_release,''),COALESCE(protocol_version,'')
-		FROM workspaces WHERE installation_id=$1 AND observed_state<>'deleted'
-		AND (COALESCE(guest_release,'')<>$2 OR COALESCE(protocol_version,'')<>$3)
-		ORDER BY id`, installationID, deployedRelease, protocol)
+	rows, err := s.db.QueryContext(ctx, `SELECT w.id,w.observed_state,COALESCE(w.guest_release,''),COALESCE(w.protocol_version,'')
+		FROM workspaces w WHERE w.installation_id=$1 AND w.observed_state<>'deleted'
+		AND (COALESCE(w.guest_release,'')<>$2 OR COALESCE(w.protocol_version,'')<>$3 OR EXISTS (
+			SELECT 1 FROM maintenance_targets t JOIN maintenance_campaigns c ON c.operation_id=t.campaign_id
+			WHERE c.installation_id=w.installation_id AND t.workspace_id=w.id AND t.generation=w.generation
+			AND c.state IN ('active','blocked') AND t.state<>'completed'))
+		ORDER BY w.id`, installationID, deployedRelease, protocol)
 	if err != nil {
 		return nil, err
 	}

@@ -119,7 +119,7 @@ func AssessMigration(releaseID string, evidence MigrationEvidence, now time.Time
 	}{
 		{evidence.VerifiedBackup, "migration.backup_required", "Complete and verify a management backup for the deployed release."},
 		{evidence.DatabaseOwned, "migration.database_unverified", "Verify the active database schema and service ownership."},
-		{len(evidence.Guests) == 0, "migration.guests_not_current", "Bring every retained workspace to the deployed guest release."},
+		{len(evidence.Guests) == 0, "migration.guests_not_current", "Bring every retained workspace to the deployed guest release and resolve any unfinished maintenance."},
 		{evidence.ProviderCompatible, "migration.provider_incompatible", "Verify the required UTM version and workspace lifecycle capabilities."},
 		{evidence.ToolsCompatible, "migration.tools_incompatible", "Verify pinned Dex and the backup tools required by the data profile."},
 		{evidence.StorageWritable, "migration.storage_unavailable", "Check protected persistent storage permissions and availability."},

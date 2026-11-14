@@ -227,7 +227,7 @@ func (s *Store) PrepareMaintenanceTargets(ctx context.Context, journal *operatio
 		_, err = tx.ExecContext(ctx, `UPDATE maintenance_targets SET state='completed',updated_at=$2
 			WHERE campaign_id=$1 AND operation_id IS NULL AND state IN ('pending','waiting_safe')
 			AND EXISTS (SELECT 1 FROM workspaces w WHERE w.id=maintenance_targets.workspace_id
-			AND (w.observed_state='deleted' OR w.deletion_commit_at IS NOT NULL))`, campaign, stamp)
+			AND w.observed_state='deleted')`, campaign, stamp)
 		if err != nil {
 			return err
 		}
