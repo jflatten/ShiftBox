@@ -42,6 +42,9 @@ type RetentionCandidate struct {
 	desired  string
 	observed string
 	version  int64
+	baseline string
+	seconds  int64
+	verified bool
 }
 
 const retentionProjection = `SELECT w.installation_id,w.id,w.generation,w.provider_instance_id,w.ownership_marker,
@@ -86,6 +89,7 @@ func (s *Store) RetentionCandidates(ctx context.Context, installation string, no
 		if err != nil {
 			return nil, err
 		}
+		current.verified = true
 		verified = append(verified, current)
 	}
 	return verified, nil
@@ -123,7 +127,7 @@ func recheckRetention(ctx context.Context, db interface {
 	}
 	if current.request != candidate.request || current.version != candidate.version ||
 		current.desired != candidate.desired || current.observed != candidate.observed ||
-		!current.Deadline.Equal(candidate.Deadline) || now.Before(current.Deadline) {
+		current.baseline != candidate.baseline || current.seconds != candidate.seconds || now.Before(current.Deadline) {
 		return RetentionCandidate{}, sql.ErrNoRows
 	}
 	return current, nil
@@ -131,19 +135,18 @@ func recheckRetention(ctx context.Context, db interface {
 
 func scanRetention(row interface{ Scan(...any) error }) (RetentionCandidate, error) {
 	var candidate RetentionCandidate
-	var baseline, network string
-	var duration int64
+	var network string
 	err := row.Scan(&candidate.Ref.InstallationID, &candidate.Ref.WorkspaceID, &candidate.Ref.Generation,
 		&candidate.Ref.InstanceID, &candidate.Ref.OwnershipMarker, &candidate.desired, &candidate.observed, &candidate.version,
-		&candidate.request.ArtifactID, &candidate.request.Release, &network, &duration, &baseline)
+		&candidate.request.ArtifactID, &candidate.request.Release, &network, &candidate.seconds, &candidate.baseline)
 	if err != nil {
 		return RetentionCandidate{}, err
 	}
-	at, err := time.Parse(time.RFC3339Nano, baseline)
+	at, err := time.Parse(time.RFC3339Nano, candidate.baseline)
 	if err != nil {
 		return RetentionCandidate{}, err
 	}
-	candidate.Deadline = at.Add(time.Duration(duration) * time.Second)
+	candidate.Deadline = at.Add(time.Duration(candidate.seconds) * time.Second)
 	var snapshot struct {
 		Mode string `json:"mode"`
 	}

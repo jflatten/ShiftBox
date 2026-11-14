@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 )
 
@@ -78,12 +80,42 @@ func TestRetentionCandidates(t *testing.T) {
 	if _, err := db.Exec("UPDATE workspaces SET retention_seconds=NULL WHERE id='due'"); err != nil {
 		t.Fatal(err)
 	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
+	journal := operation.NewJournal(db, func() time.Time { return now }, uuid.NewString)
+	if _, err := s.CommitRetentionDeletion(ctx, journal, list[0], now, policy); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("final policy recheck = %v, want no eligible workspace", err)
+	}
+	if _, err := db.Exec("UPDATE workspaces SET retention_seconds=3600 WHERE id='due'"); err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
-	if _, err := recheckRetention(ctx, tx, list[0], now, policy); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("final policy recheck = %v, want no eligible workspace", err)
+	if _, err := db.Exec(`CREATE TRIGGER deny_retention_audit BEFORE INSERT ON audit_events
+		BEGIN SELECT RAISE(ABORT,'fixture audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CommitRetentionDeletion(ctx, journal, list[0], now, policy); err == nil {
+		t.Fatal("failed audit accepted retention deletion")
+	}
+	var rolledBack bool
+	if err := db.QueryRow(`SELECT desired_state='stopped' AND deletion_commit_at IS NULL
+		AND NOT EXISTS(SELECT 1 FROM operations WHERE workspace_id='due') FROM workspaces WHERE id='due'`).Scan(&rolledBack); err != nil || !rolledBack {
+		t.Fatalf("failed audit rolled back deletion and operation = %t (%v), want true", rolledBack, err)
+	}
+	if _, err := db.Exec("DROP TRIGGER deny_retention_audit"); err != nil {
+		t.Fatal(err)
+	}
+	op, err := s.CommitRetentionDeletion(ctx, journal, list[0], now, policy)
+	if err != nil || op.WorkspaceID == nil || *op.WorkspaceID != "due" || op.Type != "delete" ||
+		op.OriginatingAction != "workspace.retention_delete" || op.Status != "pending" || len(op.Steps) != 3 {
+		t.Fatalf("retention commitment = %+v (%v), want pending retention deletion with three steps", op, err)
+	}
+	if _, err := s.CommitRetentionDeletion(ctx, journal, list[0], now, policy); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("second commitment = %v, want no eligible workspace", err)
+	}
+	var desired, observed, committed string
+	var audits int
+	if err := db.QueryRowContext(ctx, `SELECT desired_state,observed_state,deletion_commit_at,
+		(SELECT count(*) FROM audit_events WHERE resource_id='due' AND action='workspace.retention_delete')
+		FROM workspaces WHERE id='due'`).Scan(&desired, &observed, &committed, &audits); err != nil ||
+		desired != "deleted" || observed != "stopped" || committed != now.Format(time.RFC3339Nano) || audits != 1 {
+		t.Fatalf("commit state = %q/%q, time %q, %d audits (%v), want deleted/stopped, commit time and one audit", desired, observed, committed, audits, err)
 	}
 }

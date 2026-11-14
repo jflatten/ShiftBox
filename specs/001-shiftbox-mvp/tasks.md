@@ -2182,3 +2182,13 @@ This checkpoint does not itself change the goal status.
   activity and a policy edit between discovery and the final recheck.
   Go vet and the relevant race tests passed. Runtime reconciliation
   timestamps, scheduling and deletion commitment remain open under T093.
+
+### Durable retention deletion commitment
+
+- The retention admission transaction rechecks the verified candidate,
+  current activity baseline, policy, membership, state and grace. It
+  persists deletion intent, audit evidence and the shutdown, stop and
+  deletion steps together. It leaves observed provider state untouched.
+- Tests cover cancellation by a policy change, duplicate commitment and
+  rollback when the audit write fails. Go vet and the relevant race tests
+  passed. Scheduling and the provider executor remain open under T093.
