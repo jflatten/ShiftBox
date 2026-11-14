@@ -1646,6 +1646,20 @@ This checkpoint does not itself change the goal status.
   readiness, retained edits, and repair. Playwright discovery and a local
   Chrome editor smoke test with pinned code-server passed. The complete
   native journey remains T061.
+
+### Native repair candidate
+
+- The repair-enabled `development-repair` artifact built and exported on
+  UTM 5.0.8. Native catalog validation passed in 56.53 seconds. The
+  enrollment and offboarding test passed in 66.89 seconds and confirmed
+  the stopped VM kept its owned disk and released compute capacity.
+- T061's real Chrome journey completed protected setup and activation
+  with the candidate. T060 currently stops management startup at the
+  missing `importPlatformArtifact` handler. Full browser acceptance
+  and the release manifest remain open.
+- The disposable PostgreSQL schema was recreated from current
+  migrations after its stale development schema failed verification.
+  The PostgreSQL contract and release parity tests then passed.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
