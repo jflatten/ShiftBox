@@ -3049,6 +3049,11 @@ This checkpoint does not itself change the goal status.
   another grant or power request. The UTM adapter drive-inventory checks,
   recovery integration tests, and affected race suites passed. Live UTM
   acceptance remains pending under the release gates.
+- T120 interrupts the controller after verified recovery media attachment
+  and again after the provider boots the retained VM. Each restart opens a
+  fresh database connection and enrollment service. The test verifies that
+  the same grant is consumed, the seed is cleared, and no duplicate media
+  attachment or boot is needed.
 
 ### Offboarding connection closure
 

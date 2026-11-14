@@ -29,12 +29,13 @@ import (
 )
 
 // TestLongStopRecoveryBeforeBoot verifies that an authorized start delivers
-// fresh recovery media to the same retained VM before requesting power-on.
+// fresh recovery media to the retained VM, then restarts before and after
+// power-on without minting another grant or attaching another image.
 func TestLongStopRecoveryBeforeBoot(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("media generation requires macOS hdiutil")
 	}
-	f, enrollment, now := newLongStopFixture(t)
+	f, enrollment, authority, now := newLongStopFixture(t)
 	ctx := t.Context()
 	_, leaf := seedPreviousGuest(t, f, enrollment, now)
 	if _, err := enrollment.Authenticate(ctx, leaf, now); !errors.Is(err, guest.ErrGuestUnauthorized) {
@@ -55,23 +56,56 @@ func TestLongStopRecoveryBeforeBoot(t *testing.T) {
 		_, err = enrollment.Authenticate(ctx, leaf, now)
 		return err
 	}
-	store := workspace.NewStore(f.db)
 	clock := func() time.Time { return now }
-	launch := workspace.NewLaunchExecutor(store, machines, enrollment, t.TempDir(),
-		"https://controller.test/internal/v1/enroll", "https://controller.test:8443/internal/v1/guest/poll", clock, nil)
-	power := workspace.NewPowerExecutor(store, machines, clock, nil)
-	worker := workspace.NewWorker(journal, launch, power)
+	mediaRoot := t.TempDir()
+	newWorker := func() *operation.Worker {
+		store := workspace.NewStore(f.db)
+		launch := workspace.NewLaunchExecutor(store, machines, enrollment, mediaRoot,
+			"https://controller.test/internal/v1/enroll", "https://controller.test:8443/internal/v1/guest/poll", clock, nil)
+		return workspace.NewWorker(journal, launch, workspace.NewPowerExecutor(store, machines, clock, nil))
+	}
+	restart := func() {
+		t.Helper()
+		f.reopen(t)
+		journal = operation.NewJournal(f.db, clock, uuid.NewString)
+		enrollment = guest.NewEnrollment(f.db, authority)
+	}
+	worker := newWorker()
+	interrupted, cancel := context.WithCancel(ctx)
+	defer cancel()
+	machines.interruptBeforeStart = cancel
+	if err := worker.RunOnce(interrupted, op.ID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunOnce(interrupted after media attachment) = %v, want cancellation", err)
+	}
+	restart()
+	var grantID string
+	if err := f.db.QueryRowContext(ctx, `SELECT id FROM enrollment_grants
+		WHERE operation_id=$1 AND state='issued' AND media_attached_at IS NOT NULL`, op.ID).Scan(&grantID); err != nil ||
+		machines.starts != 0 || len(machines.deliveries) != 1 {
+		t.Fatalf("attachment after restart = %v, %d deliveries and %d starts, want a durable attachment and no start",
+			err, len(machines.deliveries), machines.starts)
+	}
+	worker = newWorker()
+	if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, operation.ErrConflict) {
+		t.Fatalf("RunOnce(before old lease expires) = %v, want conflict", err)
+	}
+	now = now.Add(worker.LeaseDuration + time.Second)
+	machines.now = now
 	machines.loseStartReply = true
 	if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, provider.ErrOutcomeUnknown) {
 		t.Fatalf("RunOnce(start with lost provider reply) = %v, want an uncertain outcome", err)
 	}
 	assertRecoveryDeliveryBeforeStart(t, f.ref, op.ID, machines)
-	reopened := workspace.NewWorker(journal, launch, workspace.NewPowerExecutor(store, machines, clock, nil))
-	if err := reopened.RunOnce(ctx, op.ID); err != nil {
+	restart()
+	if err := newWorker().RunOnce(ctx, op.ID); err != nil {
 		t.Fatalf("RunOnce(start after controller restart) = %v, want a verified start", err)
 	}
 	if len(machines.deliveries) != 1 || machines.starts != 1 {
 		t.Errorf("retry issued %d attachments and %d starts, want one of each", len(machines.deliveries), machines.starts)
+	}
+	var state string
+	if err := f.db.QueryRowContext(ctx, "SELECT state FROM enrollment_grants WHERE id=$1", grantID).Scan(&state); err != nil || state != "consumed" {
+		t.Errorf("original recovery grant = %s (%v), want consumed", state, err)
 	}
 	before := f.ref
 	after, err := machines.Inspect(ctx, before)
@@ -87,7 +121,7 @@ func TestLongStopRecoveryBeforeBoot(t *testing.T) {
 // TestLongStopRevokedRegistrationStaysStopped checks the real start workflow
 // before it can deliver media or power on a VM with revoked guest authority.
 func TestLongStopRevokedRegistrationStaysStopped(t *testing.T) {
-	f, enrollment, now := newLongStopFixture(t)
+	f, enrollment, _, now := newLongStopFixture(t)
 	seedPreviousGuest(t, f, enrollment, now)
 	capacityExec(t, f.db, "UPDATE guest_registrations SET state='revoked' WHERE workspace_id=$1", f.ref.WorkspaceID)
 	clock := func() time.Time { return now }
@@ -112,7 +146,7 @@ func TestLongStopRecoveryGrant(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("media generation requires macOS hdiutil")
 	}
-	f, enrollment, now := newLongStopFixture(t)
+	f, enrollment, _, now := newLongStopFixture(t)
 	ctx := t.Context()
 	previousGrant, oldLeaf := seedPreviousGuest(t, f, enrollment, now)
 	journal := operation.NewJournal(f.db, func() time.Time { return now }, uuid.NewString)
@@ -183,7 +217,7 @@ func TestLongStopRecoveryGrant(t *testing.T) {
 // TestLongStopRecoveryDeniesIneligibleTargets checks that stale provider
 // evidence and identities without current authority cannot receive a grant.
 func TestLongStopRecoveryDeniesIneligibleTargets(t *testing.T) {
-	f, enrollment, now := newLongStopFixture(t)
+	f, enrollment, _, now := newLongStopFixture(t)
 	journal := operation.NewJournal(f.db, func() time.Time { return now }, uuid.NewString)
 	op := admitLongStopStart(t, f, journal, now)
 	capacityExec(t, f.db, "UPDATE operations SET status='running' WHERE id=$1", op.ID)
@@ -245,7 +279,7 @@ func TestLongStopRecoveryDeniesIneligibleTargets(t *testing.T) {
 	}
 }
 
-func newLongStopFixture(t *testing.T) (*capacityFixture, *guest.Enrollment, time.Time) {
+func newLongStopFixture(t *testing.T) (*capacityFixture, *guest.Enrollment, *guest.Authority, time.Time) {
 	t.Helper()
 	f := newCapacityFixture(t, workspace.Allocation{CPU: 2, MemoryMiB: 1024, DiskMiB: 40})
 	now := time.Now().UTC().Truncate(time.Second)
@@ -273,7 +307,7 @@ func newLongStopFixture(t *testing.T) (*capacityFixture, *guest.Enrollment, time
 	if err != nil {
 		t.Fatalf("EnsureInstallationCA(fixture) = %v, want test authority", err)
 	}
-	return f, guest.NewEnrollment(f.db, authority), now
+	return f, guest.NewEnrollment(f.db, authority), authority, now
 }
 
 func seedPreviousGuest(t *testing.T, f *capacityFixture, enrollment *guest.Enrollment, now time.Time) (string, *x509.Certificate) {
@@ -369,6 +403,7 @@ type recoveryProvider struct {
 	deliveredBeforeStart bool
 	authenticate         func(context.Context, string) error
 	loseStartReply       bool
+	interruptBeforeStart context.CancelFunc
 	starts               int
 }
 
@@ -384,6 +419,11 @@ func (p *recoveryProvider) Inspect(ctx context.Context, ref provider.WorkspaceRe
 }
 
 func (p *recoveryProvider) Start(ctx context.Context, req provider.StartRequest) (provider.Inventory, error) {
+	if p.interruptBeforeStart != nil {
+		p.interruptBeforeStart()
+		p.interruptBeforeStart = nil
+		return provider.Inventory{}, context.Canceled
+	}
 	p.starts++
 	p.start = &req
 	p.deliveredBeforeStart = len(p.deliveries) == 1
