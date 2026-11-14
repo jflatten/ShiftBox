@@ -115,6 +115,12 @@ func TestSecretOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkValue("template-fixture")
+	// Archiving blocks new launches and preserves the existing workspace's
+	// project-secret grant until someone explicitly revokes it.
+	if _, err := db.ExecContext(ctx, "UPDATE project_templates SET state='archived',archived_at='now' WHERE id='template'"); err != nil {
+		t.Fatal(err)
+	}
+	checkValue("template-fixture")
 	if _, err := db.ExecContext(ctx, "UPDATE template_grants SET revoked_at='now'"); err != nil {
 		t.Fatal(err)
 	}

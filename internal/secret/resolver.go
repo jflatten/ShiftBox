@@ -18,8 +18,10 @@ func (s *Service) ResolveWorkspace(ctx context.Context, tx *sql.Tx, workspace st
 	}
 	var installation, owner, template string
 	var templateAllowed bool
+	// Archived templates prevent new launches. Existing workspaces keep
+	// their project-secret context until the underlying access is revoked.
 	err := tx.QueryRowContext(ctx, `SELECT w.installation_id,w.owner_user_id,w.template_id,EXISTS(
-		SELECT 1 FROM project_templates t WHERE t.id=w.template_id AND t.state='active'
+		SELECT 1 FROM project_templates t WHERE t.id=w.template_id
 		  AND (t.owner_user_id=w.owner_user_id OR u.role='administrator' OR EXISTS (
 		    SELECT 1 FROM template_grants g WHERE g.template_id=t.id AND g.user_id=u.id AND g.can_launch=1 AND g.revoked_at IS NULL
 		  ))
