@@ -9,13 +9,14 @@ import (
 
 // Config holds explicit installation inputs; only composition chooses its path.
 type Config struct {
-	InstallationDir             string `json:"installationDir"`
-	DataProfile                 string `json:"dataProfile"`
-	SQLitePath                  string `json:"sqlitePath"`
-	PostgresURI                 string `json:"postgresURI"`
-	ManagementOrigin            string `json:"managementOrigin"`
-	ExternalAuthIntervalSeconds int64  `json:"externalAuthIntervalSeconds"`
-	AuditRetentionDays          *int   `json:"auditRetentionDays,omitempty"`
+	InstallationDir              string `json:"installationDir"`
+	DataProfile                  string `json:"dataProfile"`
+	SQLitePath                   string `json:"sqlitePath"`
+	PostgresURI                  string `json:"postgresURI"`
+	ManagementOrigin             string `json:"managementOrigin"`
+	ExternalAuthIntervalSeconds  int64  `json:"externalAuthIntervalSeconds"`
+	AuditRetentionDays           *int   `json:"auditRetentionDays,omitempty"`
+	DismissedNoticeRetentionDays *int   `json:"dismissedNoticeRetentionDays,omitempty"`
 }
 
 // AuditHistoryDays returns the configured age limit or the 90-day default.
@@ -24,6 +25,14 @@ func (c Config) AuditHistoryDays() int {
 		return 90
 	}
 	return *c.AuditRetentionDays
+}
+
+// DismissedNoticeHistoryDays returns the configured age limit or the 30-day default.
+func (c Config) DismissedNoticeHistoryDays() int {
+	if c.DismissedNoticeRetentionDays == nil {
+		return 30
+	}
+	return *c.DismissedNoticeRetentionDays
 }
 
 // Load reads one explicit file without consulting process environment variables.

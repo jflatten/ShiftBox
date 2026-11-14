@@ -20,6 +20,9 @@ func (c Config) Validate() error {
 	if days := c.AuditHistoryDays(); days <= 0 || days > int(time.Duration(1<<63-1)/(24*time.Hour)) {
 		return errors.New("audit retention must be a positive supported number of days")
 	}
+	if days := c.DismissedNoticeHistoryDays(); days <= 0 || days > int(time.Duration(1<<63-1)/(24*time.Hour)) {
+		return errors.New("dismissed notice retention must be a positive supported number of days")
+	}
 	if err := validateManagementOrigin(c.ManagementOrigin); err != nil {
 		return err
 	}

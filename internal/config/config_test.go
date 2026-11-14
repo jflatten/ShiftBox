@@ -116,3 +116,34 @@ func TestAuditRetentionDays(t *testing.T) {
 		})
 	}
 }
+
+// TestDismissedNoticeRetentionDays checks the default, override and invalid age.
+func TestDismissedNoticeRetentionDays(t *testing.T) {
+	const base = `{"dataProfile":"sqlite","sqlitePath":"/tmp/shiftbox-fixture.db","installationDir":"/tmp/shiftbox-fixture","managementOrigin":"https://shiftbox.test"`
+	for _, tc := range []struct {
+		name, setting string
+		days          int
+	}{
+		{"default", "", 30},
+		{"override", `,"dismissedNoticeRetentionDays":60`, 60},
+		{"zero", `,"dismissedNoticeRetentionDays":0`, 0},
+		{"negative", `,"dismissedNoticeRetentionDays":-1`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(base+tc.setting+"}"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(path)
+			if tc.days == 0 {
+				if err == nil {
+					t.Fatal("Load accepted a nonpositive dismissed notice retention setting")
+				}
+				return
+			}
+			if err != nil || cfg.DismissedNoticeHistoryDays() != tc.days {
+				t.Errorf("dismissed notice history = %d days (%v), want %d", cfg.DismissedNoticeHistoryDays(), err, tc.days)
+			}
+		})
+	}
+}

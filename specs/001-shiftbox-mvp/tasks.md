@@ -2005,3 +2005,13 @@ This checkpoint does not itself change the goal status.
   the warning survives keyboard dismissal of a personal notice and clears
   after a refreshed status shows replacement. Other operational conditions
   and active-listener composition remain open under T096 and T101.
+
+### Dismissed-notice retention
+
+- `dismissedNoticeRetentionDays` defaults to 30. Pruning removes dismissal
+  receipts strictly older than the cutoff once their notices expire.
+  Unexpired notices retain their receipts so they stay dismissed for the
+  original user. Read-only history and recovery state are preserved.
+- Go vet and race-enabled configuration, application, and contract tests
+  passed. The pruning test used SQLite. Scheduling both history pruners
+  in the active controller remains open under T098.
