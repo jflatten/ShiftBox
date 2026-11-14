@@ -26,6 +26,26 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
+// Loading infrastructure results must preserve one form per permitted action.
+test('keeps certificate and maintenance forms distinct after status loads', async () => {
+  const duplicateKeys = jest.spyOn(console, 'error').mockImplementation(() => {});
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json({ ...session, permissions: [...session.permissions, 'maintenance.manage'] });
+    if (input === '/api/v1/admin/infrastructure') return json(status);
+    if (input === '/api/v1/admin/maintenance') return json([]);
+    throw new Error('unexpected request');
+  });
+  try {
+    render(<Providers><Infrastructure /></Providers>);
+    expect(await screen.findByRole('heading', { name: 'Provider' })).toBeVisible();
+    expect(screen.getAllByRole('button', { name: 'Replace certificate' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Schedule maintenance' })).toHaveLength(1);
+    expect(duplicateKeys.mock.calls.flat().join(' ')).not.toContain('same key');
+  } finally {
+    duplicateKeys.mockRestore();
+  }
+});
+
 // A stale budget write reloads the current version without resending the
 // mutation. Active certificate and storage warnings remain visible during the edit.
 test('shows infrastructure warnings and refreshes after a concurrent capacity edit', async () => {

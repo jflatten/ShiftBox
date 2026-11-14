@@ -37,7 +37,7 @@ export function Infrastructure() {
         <Button variant="default" style={{ alignSelf: 'flex-start' }} onClick={() => void status.refetch()}>Retry</Button>
       ) : null}
       {allowed && current.permissions.includes('infrastructure.manage') ? (
-        <BrowserCertificate key={current.user.id} csrfToken={current.csrfToken} refresh={status.refetch} />
+        <BrowserCertificate key={`certificate:${current.user.id}`} csrfToken={current.csrfToken} refresh={status.refetch} />
       ) : null}
       {data && current ? (
         <>
@@ -55,7 +55,7 @@ export function Infrastructure() {
         </>
       ) : null}
       {allowed && current.permissions.includes('maintenance.manage') ? (
-        <Maintenance key={current.user.id} csrfToken={current.csrfToken} />
+        <Maintenance key={`maintenance:${current.user.id}`} csrfToken={current.csrfToken} />
       ) : null}
       {allowed && current.organizationSecretScopeId && current.permissions.includes('secret.manage_organization') ? (
         <Secrets key={current.user.id + current.organizationSecretScopeId} scope="organization" scopeID={current.organizationSecretScopeId}
