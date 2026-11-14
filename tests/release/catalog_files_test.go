@@ -84,6 +84,40 @@ func TestManagedCatalogRetainsUncertainValidation(t *testing.T) {
 	}
 }
 
+// TestManagedCatalogBootsDisposableCopy verifies that a boot check can write
+// to its VM disk without touching the catalog or leaving a scratch bundle.
+func TestManagedCatalogBootsDisposableCopy(t *testing.T) {
+	ctx := t.Context()
+	store := release.NewStore(openCatalogDatabase(t, "sqlite"))
+	storage := t.TempDir()
+	catalog := release.NewCatalog(store, storage)
+	source, manifest := artifactFixture(t)
+	id := testsupport.ID(201)
+	entry, err := catalog.Import(ctx, id, testsupport.ID(1), time.Now(), source, bytes.NewReader(manifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkedBundle string
+	err = catalog.ValidateImport(ctx, id, func(_ context.Context, artifact release.Artifact) error {
+		checkedBundle = artifact.Bundle
+		return os.WriteFile(filepath.Join(artifact.Bundle, "Data", "platform.qcow2"), []byte("booted copy"), 0600)
+	})
+	if err != nil {
+		t.Fatalf("validate disposable boot = %v, want successful validation", err)
+	}
+	if _, err := os.Stat(checkedBundle); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("boot validation bundle after check = %v, want removed copy", err)
+	}
+	immutableDisk := filepath.Join(storage, entry.Artifact.ManifestSHA256, diskPath)
+	disk, err := os.ReadFile(immutableDisk)
+	if err != nil || string(disk) != "reference disk" {
+		t.Errorf("catalog disk after boot = %q, %v, want original bytes", disk, err)
+	}
+	if _, err := catalog.Stage(ctx, id, t.TempDir(), "workspace.utm"); err != nil {
+		t.Errorf("stage after boot = %v, want validated catalog image", err)
+	}
+}
+
 // TestManagedCatalogReconcilesPublication checks that matching durable input
 // can recover a prior publish and that corrupted content cannot be staged.
 func TestManagedCatalogReconcilesPublication(t *testing.T) {

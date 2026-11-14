@@ -1846,3 +1846,11 @@ This checkpoint does not itself change the goal status.
   keyboard navigation and a successful budget update using fixture
   responses. Certificate replacement and broader infrastructure controls
   remain open under T099 and T101.
+
+### Disposable platform boot validation
+
+- Catalog validation stages a checksum-verified copy for the boot checker.
+  Writes during the check affect only the disposable copy. The catalog is
+  checked again before publication and a failed check leaves it unavailable.
+- The release race suite passed, including a boot-check fixture that modifies
+  the staged disk. The import route and live VM boot verification remain open.

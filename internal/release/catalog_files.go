@@ -110,7 +110,7 @@ func (c *Catalog) Import(ctx context.Context, id, actor string, now time.Time, s
 
 // ValidateImport publishes availability after a successful provider and guest
 // boot check. An interrupted check leaves the release awaiting validation.
-// The check must use a disposable copy of the supplied managed bundle.
+// The check receives a disposable copy of the verified bundle.
 func (c *Catalog) ValidateImport(ctx context.Context, id string, check func(context.Context, Artifact) error) error {
 	if check == nil {
 		return ErrInvalidArtifact
@@ -127,7 +127,16 @@ func (c *Catalog) ValidateImport(ctx context.Context, id string, check func(cont
 	default:
 		return ErrCatalogConflict
 	}
-	artifact, err := c.verifyManaged(ctx, entry)
+	raw, err := c.managedManifest(entry)
+	if err != nil {
+		return err
+	}
+	stage, err := os.MkdirTemp(c.root, ".boot-check-")
+	if err != nil {
+		return fmt.Errorf("create boot validation staging directory: %w", err)
+	}
+	defer os.RemoveAll(stage)
+	artifact, err := StageArtifact(ctx, filepath.Join(c.root, entry.Artifact.ManifestSHA256), bytes.NewReader(raw), stage, entry.Artifact.Bundle)
 	if err != nil {
 		return err
 	}
