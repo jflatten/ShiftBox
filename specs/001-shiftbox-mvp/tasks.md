@@ -428,3 +428,15 @@ This checkpoint does not itself change the goal status.
 - Auth race tests, formatting, and vet pass. T023 remains unchecked: the consuming
   administrator connection flow must still commit audit evidence before access;
   this store does not itself grant access or close registered connections.
+
+### Workflow Stepper foundation
+
+- Consulted Mantine MCP Stepper documentation and added the reusable client
+  component with server-derived active progress, disabled pending steps, completed
+  step inspection, visible failure alerts, skipped labels, and polite live status.
+  Inspection does not change authoritative progress or hide current-step details.
+- Three component tests were written before implementation and pass with the
+  installed Mantine provider. TypeScript validation passes.
+- T016/T029 remain unchecked: SSE gap/refetch tests and wiring, branded shell,
+  query provider, and actual Next/browser runtime verification remain unfinished.
+  No runnable page has been added yet; component tests are not browser evidence.
