@@ -95,6 +95,9 @@ func (j *Journal) claim(ctx context.Context, id, worker string, duration time.Du
 		return claim, ErrConflict
 	}
 	err := database.Transaction(ctx, j.db, func(tx *sql.Tx) error {
+		if err := lockOperation(ctx, tx, id); err != nil {
+			return err
+		}
 		op, err := readOperation(ctx, tx, id)
 		if err != nil {
 			return err
@@ -120,6 +123,9 @@ func (j *Journal) claim(ctx context.Context, id, worker string, duration time.Du
 
 func (j *Journal) change(ctx context.Context, claim Claim, evidence string, change func(*Operation) error) error {
 	return database.Transaction(ctx, j.db, func(tx *sql.Tx) error {
+		if err := lockOperation(ctx, tx, claim.OperationID); err != nil {
+			return err
+		}
 		op, err := readOperation(ctx, tx, claim.OperationID)
 		if err != nil {
 			return err
@@ -133,6 +139,37 @@ func (j *Journal) change(ctx context.Context, claim Claim, evidence string, chan
 		}
 		return saveOperation(ctx, tx, &op, evidence, now)
 	})
+}
+
+func lockOperation(ctx context.Context, tx *sql.Tx, id string) error {
+	_, err := tx.ExecContext(ctx, "UPDATE operations SET version=version WHERE id=$1", id)
+	return err
+}
+
+// CancelInTx fences a superseded workflow and publishes its terminal snapshot
+// in the caller's transaction. Completed workflows are left untouched.
+func (j *Journal) CancelInTx(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
+	if err := lockOperation(ctx, tx, id); err != nil {
+		return err
+	}
+	op, err := readOperation(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	switch op.Status {
+	case "pending", "running", "waiting":
+		op.Status, op.CurrentStep = "cancelled", nil
+		op.leaseOwner, op.leaseExpiresAt = "", time.Time{}
+		op.FinishedAt = &now
+		for i := range op.Steps {
+			if op.Steps[i].Status == "pending" || op.Steps[i].Status == "active" {
+				op.Steps[i].Status = "skipped"
+			}
+		}
+		return saveOperation(ctx, tx, &op, "Superseded by membership offboarding.", now)
+	default:
+		return nil
+	}
 }
 
 // Renew extends only a currently valid claim; expired workers cannot regain authority.

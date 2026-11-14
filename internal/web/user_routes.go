@@ -11,7 +11,9 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/audit"
 	"github.com/jflatten/ShiftBox/internal/auth"
+	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/proxy"
+	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 type membershipChange struct {
@@ -19,8 +21,8 @@ type membershipChange struct {
 	State *string `json:"membershipState"`
 }
 
-// UpdateMembershipHandler approves pending accounts and changes active roles.
-func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, registry *proxy.Registry) AuthorizedHandler {
+// UpdateMembershipHandler applies versioned membership and role changes.
+func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, registry *proxy.Registry, journal *operation.Journal) AuthorizedHandler {
 	store := auth.NewStore(db)
 	return AuthorizedHandler{
 		DB: db, Origin: origin, Now: now,
@@ -47,11 +49,9 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, re
 			return target, err
 		},
 		Apply: func(ctx context.Context, tx *sql.Tx, r *http.Request, actor auth.Principal, target AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
-			if target.Action == "user.disable" {
-				return nil, Problem{Status: 409, Code: "user.change_unavailable", Title: "This membership change is unavailable"}
-			}
 			change := target.membershipChange
-			if change.Role == nil {
+			disabling := target.Action == "user.disable"
+			if !disabling && change.Role == nil {
 				return nil, Problem{Status: 400, Code: "user.role_required", Title: "Choose a role before approving membership"}
 			}
 			version, err := RequireVersion(r)
@@ -71,7 +71,13 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, re
 				return nil, stale
 			}
 			nextState, reason := user.MembershipState, "role_changed"
-			if target.Action == "user.approve" {
+			role := user.Role
+			if change.Role != nil {
+				role = *change.Role
+			}
+			if disabling {
+				nextState, reason = *change.State, "membership_disabled"
+			} else if target.Action == "user.approve" {
 				if user.MembershipState != "pending" {
 					return nil, Problem{Status: 409, Code: "user.approval_unavailable", Title: "Only pending memberships can be approved"}
 				}
@@ -81,11 +87,11 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, re
 			} else if user.Role == *change.Role {
 				return membershipResponse(user), nil
 			}
-			demotion := user.Role == "administrator" && *change.Role == "member" && user.MembershipState == "active"
-			if demotion {
-				if registry == nil {
-					return nil, errors.New("connection registry is unavailable")
-				}
+			demotion := user.Role == "administrator" && role == "member" && user.MembershipState == "active"
+			if (disabling || demotion) && registry == nil {
+				return nil, errors.New("connection registry is unavailable")
+			}
+			if user.Role == "administrator" && user.MembershipState == "active" && (disabling || demotion) {
 				var another bool
 				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id<>$1 AND role='administrator'
 					AND membership_state='active' AND must_change_password=0)`, id).Scan(&another); err != nil {
@@ -97,7 +103,7 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, re
 			}
 			stamp := now()
 			result, err := tx.ExecContext(ctx, `UPDATE users SET role=$1,membership_state=$2,version=version+1,updated_at=$3
-				WHERE id=$4 AND version=$5`, *change.Role, nextState, stamp.UTC().Format(time.RFC3339Nano), id, version)
+				WHERE id=$4 AND version=$5`, role, nextState, stamp.UTC().Format(time.RFC3339Nano), id, version)
 			if err != nil {
 				return nil, err
 			}
@@ -114,15 +120,38 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, re
 			}); err != nil {
 				return nil, err
 			}
-			user.Role, user.MembershipState, user.Version = *change.Role, nextState, version+1
+			user.Role, user.MembershipState, user.Version = role, nextState, version+1
+			var owned map[string]bool
+			if disabling {
+				if journal == nil {
+					return nil, errors.New("workspace stop journal is unavailable")
+				}
+				if err := store.RevokeUserSessions(ctx, tx, id, stamp, reason); err != nil {
+					return nil, err
+				}
+				// Retire outstanding enrollment offers before closing live
+				// connections. Historical consumed grants are kept for audit.
+				if _, err := tx.ExecContext(ctx, `UPDATE enrollment_grants SET state='invalidated'
+					WHERE state='issued' AND workspace_id IN (SELECT id FROM workspaces WHERE owner_user_id=$1)`, id); err != nil {
+					return nil, err
+				}
+				ids, err := workspace.QueueOffboardingStops(ctx, tx, journal, id, actor.User.ID, user.Version, stamp)
+				if err != nil {
+					return nil, err
+				}
+				owned = make(map[string]bool, len(ids))
+				for _, workspaceID := range ids {
+					owned[workspaceID] = true
+				}
+			}
 			response := membershipResponse(user)
-			if !demotion {
+			if !demotion && !disabling {
 				return response, nil
 			}
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				if err := registry.CloseMatching(func(scope proxy.Scope) bool { return scope.UserID == id }); err != nil {
+				if err := registry.CloseMatching(func(scope proxy.Scope) bool { return scope.UserID == id || owned[scope.WorkspaceID] }); err != nil {
 					WriteProblem(w, RequestID(r.Context()), Problem{Status: 503, Code: "user.connection_closure_pending",
-						Title: "Role changed but some connections could not be closed"})
+						Title: "Membership changed but some connections could not be closed"})
 					return
 				}
 				response.ServeHTTP(w, r)

@@ -37,6 +37,9 @@ func (e *PowerExecutor) Observe(ctx context.Context, op operation.Operation, ste
 	if err != nil {
 		return "", false, err
 	}
+	if req.Ref.InstanceID == "" && op.OriginatingAction == "user.disable" {
+		req.Ref.InstanceID = got.InstanceID
+	}
 	if err := verifyWorkspaceVM(req, got); err != nil {
 		return "", false, err
 	}
@@ -90,6 +93,18 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 	if op.Type == "start" {
 		got, err = e.provider.Start(ctx, provider.StartRequest{Ref: req.Ref, OperationID: op.ID, NetworkMode: req.NetworkMode})
 	} else {
+		if req.Ref.InstanceID == "" {
+			// A launch may have imported the VM before recording its instance.
+			// Bind the stop to the fully matched provider identity.
+			inventory, err := e.provider.Inspect(ctx, req.Ref)
+			if err != nil {
+				return "", err
+			}
+			req.Ref.InstanceID = inventory.InstanceID
+			if err := verifyWorkspaceVM(req, inventory); err != nil {
+				return "", err
+			}
+		}
 		got, err = e.provider.Stop(ctx, provider.StopRequest{Ref: req.Ref, OperationID: op.ID})
 	}
 	if err != nil {
@@ -108,12 +123,12 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 	}
 	req := provider.CreateRequest{OperationID: op.ID, Ref: provider.WorkspaceRef{WorkspaceID: *op.WorkspaceID, Generation: op.Generation}}
 	var policy string
-	err := e.store.db.QueryRowContext(ctx, `SELECT w.installation_id,w.ownership_marker,w.provider_instance_id,
+	err := e.store.db.QueryRowContext(ctx, `SELECT w.installation_id,w.ownership_marker,COALESCE(w.provider_instance_id,''),
 		w.platform_artifact_id,a.release_id,w.network_policy_snapshot_json
 		FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id
 		JOIN installations i ON i.id=w.installation_id JOIN users owner ON owner.id=w.owner_user_id
 		JOIN users actor ON actor.id=$3 JOIN operations o ON o.id=$5 AND o.workspace_id=w.id AND o.generation=w.generation
-		WHERE w.id=$1 AND w.generation=$2 AND w.provider_instance_id IS NOT NULL AND w.observed_state<>'deleted'
+		WHERE w.id=$1 AND w.generation=$2 AND ($6 OR w.provider_instance_id IS NOT NULL) AND w.observed_state<>'deleted'
 		  AND i.state='active' AND o.status='running' AND o.originating_action=$7
 		  AND (($6 AND owner.membership_state IN ('pending','disabled')) OR
 		       (NOT $6 AND actor.membership_state='active' AND (actor.id=owner.id OR actor.role='administrator')))
@@ -129,7 +144,7 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 	var network struct {
 		Mode string `json:"mode"`
 	}
-	if json.Unmarshal([]byte(policy), &network) != nil || network.Mode == "" || req.Ref.InstanceID == "" {
+	if json.Unmarshal([]byte(policy), &network) != nil || network.Mode == "" || (req.Ref.InstanceID == "" && !offboarding) {
 		return provider.CreateRequest{}, provider.ErrInvalidState
 	}
 	req.NetworkMode = network.Mode
@@ -172,14 +187,14 @@ func (e *PowerExecutor) record(ctx context.Context, op operation.Operation, req 
 	err := database.Transaction(ctx, e.store.db, func(tx *sql.Tx) error {
 		// Reconcile only the matching operation and VM. Repeated observations
 		// leave the version alone once this power state is already recorded.
-		result, err := tx.ExecContext(ctx, `UPDATE workspaces SET observed_state=$1,
+		result, err := tx.ExecContext(ctx, `UPDATE workspaces SET observed_state=$1,provider_instance_id=COALESCE(provider_instance_id,$7),
 			updated_at=CASE WHEN observed_state<>$1 THEN $2 ELSE updated_at END,
 			version=CASE WHEN observed_state<>$1 THEN version+1 ELSE version END
 			WHERE id=$3 AND installation_id=$4 AND generation=$5 AND ownership_marker=$6
-			  AND provider_instance_id=$7 AND desired_state=$1 AND observed_state<>'deleted'
+			  AND (provider_instance_id=$7 OR ($9 AND provider_instance_id IS NULL)) AND desired_state=$1 AND observed_state<>'deleted'
 			  AND EXISTS (SELECT 1 FROM operations o WHERE o.id=$8 AND o.workspace_id=$3 AND o.generation=$5 AND o.status='running')`,
 			string(want), got.ObservedAt.UTC().Format(time.RFC3339Nano), ref.WorkspaceID, ref.InstallationID, ref.Generation,
-			ref.OwnershipMarker, ref.InstanceID, op.ID)
+			ref.OwnershipMarker, ref.InstanceID, op.ID, op.OriginatingAction == "user.disable")
 		if err := capacityWrite(result, err); err != nil {
 			return err
 		}

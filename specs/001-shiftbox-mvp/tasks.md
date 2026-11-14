@@ -1912,3 +1912,14 @@ This checkpoint does not itself change the goal status.
   poll. Race tests verify recovery from a lost stop response and retention
   of the disk reservation. Membership admission must still atomically queue
   these operations and close the affected connections.
+
+### Membership offboarding admission
+
+- Changing membership to disabled or pending revokes sessions, invalidates
+  outstanding enrollment grants, and queues provider stop operations in
+  the membership transaction. Tracked user and owned-workspace connections
+  close before a successful response. Conflicting workflows are cancelled.
+- Contract and race tests cover commit-before-close and reconciliation of a
+  stop when the VM was imported before its instance was recorded. The UI,
+  native provider offboarding, and reconciliation when no VM is found remain
+  open. Unverified workspace outcomes retain their reservations.

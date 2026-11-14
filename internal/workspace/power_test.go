@@ -159,7 +159,7 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	// Offboarding revokes guest access before requesting a provider stop.
 	// The worker must proceed using the committed stop intent without a poll.
 	exec("UPDATE users SET membership_state='disabled' WHERE id='reservation-owner'")
-	exec("UPDATE workspaces SET desired_state='stopped' WHERE id=$1", id)
+	exec("UPDATE workspaces SET desired_state='stopped',provider_instance_id=NULL WHERE id=$1", id)
 	workspaceID := id
 	offboard, err := journal.Create(ctx, operation.Request{
 		Actor: "reservation-owner", Key: uuid.NewString(), OriginatingAction: "user.disable",

@@ -13,9 +13,92 @@ import (
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
+
+// TestDisableMembershipCommitsStops verifies that access and durable stop
+// requests are committed before tracked browser and guest connections close.
+func TestDisableMembershipCommitsStops(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "offboard.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	const origin = "https://management.test"
+	now := time.Now().UTC()
+	actorToken := strings.Repeat("A", 43)
+	seedWorkspaceLaunch(t, db, uuid.NewString(), actorToken, now)
+	target, workspaceID := uuid.NewString(), uuid.NewString()
+	session, _, err := auth.NewSession(uuid.NewString(), target, "normal", now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec("UPDATE users SET role='administrator' WHERE id='member'")
+	exec(`INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
+		VALUES($1,'target@example.test','member','active','local','owner','now','now',1)`, target)
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error { return auth.NewStore(db).SaveSession(ctx, tx, session) }); err != nil {
+		t.Fatal(err)
+	}
+	exec(`INSERT INTO workspaces(id,installation_id,owner_user_id,template_id,template_revision,platform_artifact_id,
+		repository_url,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,desired_state,observed_state,
+		generation,ownership_marker,provider_instance_id,created_at,updated_at,version)
+		SELECT $1,id,$2,'template',1,'artifact','https://github.com/example/repo','devcontainer.json',1,512,40,'{"mode":"shared"}',
+		'running','running',1,'owned','machine','now','now',1 FROM installations`, workspaceID, target)
+	journal := operation.NewJournal(db, func() time.Time { return now }, uuid.NewString)
+	pending, err := journal.Create(ctx, operation.Request{Actor: target, Key: uuid.NewString(), Type: "start", OriginatingAction: "workspace.start",
+		WorkspaceID: &workspaceID, Generation: 1, Steps: []operation.Step{{Key: "start", Label: "Start workspace"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := &proxy.Registry{}
+	closed := 0
+	for _, scope := range []proxy.Scope{{UserID: target, SessionID: session.ID}, {UserID: "owner", WorkspaceID: workspaceID}} {
+		_, err := registry.Register(scope, func() error { return nil }, func() error {
+			var desired, observed string
+			var stops, revoked int
+			err := db.QueryRowContext(ctx, `SELECT desired_state,observed_state,
+				(SELECT count(*) FROM operations WHERE workspace_id=$1 AND originating_action='user.disable' AND status='pending'),
+				(SELECT count(*) FROM sessions WHERE id=$2 AND revoked_at IS NOT NULL) FROM workspaces WHERE id=$1`,
+				workspaceID, session.ID).Scan(&desired, &observed, &stops, &revoked)
+			if err != nil || desired != "stopped" || observed != "running" || stops != 1 || revoked != 1 {
+				t.Errorf("closure sees desired=%s observed=%s stops=%d revoked=%d (%v), want stopped/running/1/1", desired, observed, stops, revoked, err)
+			}
+			closed++
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := web.UpdateMembershipHandler(db, origin, func() time.Time { return now }, registry, journal)
+	req := httptest.NewRequest(http.MethodPatch, origin+"/api/v1/admin/users/"+target, strings.NewReader(`{"membershipState":"disabled"}`))
+	req.SetPathValue("userId", target)
+	req.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: actorToken})
+	req.Header.Set("Origin", origin)
+	req.Header.Set("If-Match", `"1"`)
+	req.Header.Set("X-CSRF-Token", auth.CSRFToken(actorToken))
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != 200 || closed != 2 {
+		t.Fatalf("disable = %d %s, closed %d, want 200 and two closures", res.Code, res.Body, closed)
+	}
+	prior, err := journal.Get(ctx, pending.ID)
+	if err != nil || prior.Status != "cancelled" {
+		t.Errorf("superseded start = %s (%v), want cancelled", prior.Status, err)
+	}
+}
 
 // TestApprovePendingMember requires an explicit role and a fresh membership
 // version, and records the approval without exposing identity credentials.
@@ -38,7 +121,7 @@ func TestApprovePendingMember(t *testing.T) {
 		VALUES($1,'pending@example.test','member','pending','external','owner','now','now',1)`, id); err != nil {
 		t.Fatal(err)
 	}
-	handler := web.UpdateMembershipHandler(db, origin, func() time.Time { return now }, &proxy.Registry{})
+	handler := web.UpdateMembershipHandler(db, origin, func() time.Time { return now }, &proxy.Registry{}, nil)
 	send := func(body, version, csrf string, want int) *httptest.ResponseRecorder {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodPatch, origin+"/api/v1/admin/users/"+id, strings.NewReader(body))
@@ -110,7 +193,7 @@ func TestDemoteAdministrator(t *testing.T) {
 	}
 	t.Cleanup(unregister)
 	const origin = "https://management.test"
-	handler := web.UpdateMembershipHandler(db, origin, func() time.Time { return now }, registry)
+	handler := web.UpdateMembershipHandler(db, origin, func() time.Time { return now }, registry, nil)
 	demote := func(want int) {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodPatch, origin+"/api/v1/admin/users/"+id, strings.NewReader(`{"role":"member"}`))
