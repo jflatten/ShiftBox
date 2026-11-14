@@ -12,6 +12,8 @@ import (
 	"io"
 	"io/fs"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/app"
+	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
@@ -33,7 +36,8 @@ import (
 )
 
 // TestUTMGuestEnrollment imports an actual Packer export, attaches one-use
-// media, verifies an authenticated guest poll, and deletes the disposable VM.
+// media, verifies an authenticated guest poll, then checks the offboarding
+// stop and retained disk before deleting the disposable VM.
 func TestUTMGuestEnrollment(t *testing.T) {
 	if os.Getenv("SHIFTBOX_TEST_UTM_MUTATIONS") != "5.0.8" {
 		t.Skip("set SHIFTBOX_TEST_UTM_MUTATIONS=5.0.8 to enable the disposable VM journey")
@@ -44,7 +48,7 @@ func TestUTMGuestEnrollment(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
-	const owner = "fixture-owner"
+	owner := uuid.NewString()
 	const guestRelease = "development"
 	dir := t.TempDir()
 	db, id, err := database.OpenBootstrap(ctx, filepath.Join(dir, "fixture.db"), database.BootstrapSeed{
@@ -139,13 +143,102 @@ func TestUTMGuestEnrollment(t *testing.T) {
 		}
 		if current.Steps[1].Status == "succeeded" {
 			t.Logf("authenticated guest enrolled in %s", time.Since(started).Round(time.Second))
-			return
+			break
 		}
 		select {
 		case <-ctx.Done():
 			t.Fatalf("no authenticated guest poll for %s, steps %+v", workspaceID, current.Steps)
 		case <-ticker.C:
 		}
+	}
+	before, err := machines.Inspect(ctx, ref)
+	if err != nil || before.Power != provider.Running {
+		t.Fatalf("provider before offboarding = %s (%v), want running", before.Power, err)
+	}
+	stopID := disableEnrollmentFixtureOwner(t, db, journal, tunnels.Registry, owner, workspaceID)
+	for {
+		stop, err := journal.Get(ctx, stopID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch stop.Status {
+		case "succeeded":
+			after, err := machines.Inspect(ctx, before.Ref)
+			if err != nil || after.Power != provider.Stopped {
+				t.Fatalf("provider after offboarding = %s (%v), want stopped", after.Power, err)
+			}
+			verifyOffboardingDisk(t, before, after)
+			var compute, disk string
+			if err := db.QueryRowContext(ctx, "SELECT cpu_memory_state,disk_state FROM reservations WHERE workspace_id=$1",
+				workspaceID).Scan(&compute, &disk); err != nil || compute != "released" || disk != "reserved" {
+				t.Fatalf("offboarding reservation = %s/%s (%v), want released/reserved", compute, disk, err)
+			}
+			t.Log("provider confirmed offboarding stop with the same owned disk")
+			return
+		case "failed", "cancelled":
+			t.Fatalf("offboarding stop = %s, steps %+v", stop.Status, stop.Steps)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("provider did not confirm offboarding stop: %+v", stop.Steps)
+		case <-ticker.C:
+		}
+	}
+}
+
+func disableEnrollmentFixtureOwner(t *testing.T, db *sql.DB, journal *operation.Journal, registry *proxy.Registry, owner, workspaceID string) string {
+	t.Helper()
+	ctx := t.Context()
+	const administrator = "fixture-offboarding-admin"
+	const origin = "https://management.test"
+	execUTMFixture(t, ctx, db, `INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
+		VALUES($1,'operator@example.test','administrator','active','local','setup','now','now',1)`, administrator)
+	store := auth.NewStore(db)
+	session, token, err := auth.NewSession(uuid.NewString(), administrator, "normal", time.Now(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error { return store.SaveSession(ctx, tx, session) }); err != nil {
+		t.Fatal(err)
+	}
+	handler := web.UpdateMembershipHandler(db, origin, time.Now, registry, journal)
+	request := httptest.NewRequest(http.MethodPatch, origin+"/api/v1/admin/users/"+owner, strings.NewReader(`{"membershipState":"disabled"}`))
+	request.SetPathValue("userId", owner)
+	request.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+	request.Header.Set("Origin", origin)
+	request.Header.Set("If-Match", `"1"`)
+	request.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var result struct {
+		StopOperations []workspace.OffboardingStop
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); response.Code != http.StatusOK || err != nil ||
+		len(result.StopOperations) != 1 || result.StopOperations[0].WorkspaceID != workspaceID || result.StopOperations[0].OperationID == "" {
+		t.Fatalf("offboarding response = %d, %+v (%v), want one stop for %s", response.Code, result, err, workspaceID)
+	}
+	return result.StopOperations[0].OperationID
+}
+
+func verifyOffboardingDisk(t *testing.T, before, after provider.Inventory) {
+	t.Helper()
+	disks := make(map[string]provider.OwnedResource)
+	for _, resource := range before.Resources {
+		if resource.Type == "disk" && !resource.Shared && !resource.Immutable {
+			disks[resource.ID] = resource
+		}
+	}
+	if len(disks) == 0 {
+		t.Fatal("provider did not identify an owned disk before offboarding")
+	}
+	for _, resource := range after.Resources {
+		if previous, ok := disks[resource.ID]; ok && resource.OwnershipMarker == previous.OwnershipMarker &&
+			resource.Generation == previous.Generation && resource.Type == "disk" && !resource.Shared && !resource.Immutable {
+			delete(disks, resource.ID)
+		}
+	}
+	if len(disks) != 0 {
+		t.Errorf("offboarding lost owned disk identity: %v", disks)
 	}
 }
 

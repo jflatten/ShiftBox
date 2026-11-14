@@ -1941,3 +1941,13 @@ This checkpoint does not itself change the goal status.
 - Unconfirmed provider stops persist recovery guidance in the Stepper.
   Missing or mismatched VM inventory does not release reservations.
   All 40 UI tests, production build, and Go race tests passed.
+
+### Native UTM offboarding verification
+
+- The UTM 5.0.8 release harness now disables the disposable workspace owner
+  through the membership handler after authenticating the Ubuntu guest. The
+  normal worker ran the queued stop and UTM confirmed the same VM and owned
+  disk remained. Compute capacity was released and the disk stayed reserved.
+- The race-enabled native run passed in 248 seconds and removed the test VM.
+  The full Go race suite passed afterward. Browser IDE, file-level retention,
+  and simultaneous live-connection coverage remain separate release checks.
