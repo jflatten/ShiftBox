@@ -3,7 +3,6 @@
 package release_test
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -70,14 +69,15 @@ func TestUTMGuestEnrollment(t *testing.T) {
 		VALUES($1,'fixture@example.test','administrator','active','local','setup','now','now',1)`, owner)
 	catalogStore := release.NewStore(db)
 	catalog := release.NewCatalog(catalogStore, filepath.Join(dir, "catalog"))
-	artifactID, workspaceID, marker := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	artifact, err := catalog.Import(ctx, artifactID, owner, time.Now(), filepath.Dir(bundle), bytes.NewReader(manifest))
+	workspaceID, marker := uuid.NewString(), uuid.NewString()
+	artifact, err := catalog.ImportLocal(ctx, owner, time.Now(), filepath.Dir(bundle))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if artifact.Artifact.Bundle != filepath.Base(bundle) {
 		t.Fatalf("manifest describes %s, expected %s", artifact.Artifact.Bundle, filepath.Base(bundle))
 	}
+	artifactID := artifact.ID
 	// Make the candidate available only in this isolated database so the
 	// production launch path can boot it for validation.
 	if err := catalogStore.CompleteImport(ctx, artifactID, artifact.Artifact.ManifestSHA256, true); err != nil {

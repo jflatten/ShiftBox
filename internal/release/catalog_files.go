@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const catalogManifestName = "manifest.json"
@@ -25,6 +27,41 @@ type Catalog struct {
 // NewCatalog uses the supplied absolute directory for immutable release files.
 func NewCatalog(store *Store, root string) *Catalog {
 	return &Catalog{store: store, root: root}
+}
+
+// ImportLocal stages a release from an operator-supplied local folder. The
+// folder must contain the manifest alongside the bundle it describes.
+func (c *Catalog) ImportLocal(ctx context.Context, actor string, now time.Time, source string) (CatalogEntry, error) {
+	if !filepath.IsAbs(source) {
+		return CatalogEntry{}, fmt.Errorf("%w: import folder must be absolute", ErrInvalidArtifact)
+	}
+	root, err := os.OpenRoot(source)
+	if err != nil {
+		return CatalogEntry{}, fmt.Errorf("%w: cannot open import folder", ErrInvalidArtifact)
+	}
+	defer root.Close()
+	info, err := root.Lstat(catalogManifestName)
+	if err != nil || !info.Mode().IsRegular() {
+		return CatalogEntry{}, fmt.Errorf("%w: import folder must contain a regular manifest.json", ErrInvalidArtifact)
+	}
+	file, err := root.Open(catalogManifestName)
+	if err != nil {
+		return CatalogEntry{}, fmt.Errorf("%w: cannot open import manifest", ErrInvalidArtifact)
+	}
+	defer file.Close()
+	raw, manifest, err := readArtifactManifest(file)
+	if err != nil {
+		return CatalogEntry{}, err
+	}
+	// Use the release identity to make concurrent first imports converge.
+	id := uuid.NewSHA1(uuid.NameSpaceOID, []byte("shiftbox:platform-artifact:"+manifest.ReleaseID)).String()
+	stored, err := c.store.getByRelease(ctx, manifest.ReleaseID)
+	if err == nil {
+		id = stored.ID
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return CatalogEntry{}, err
+	}
+	return c.Import(ctx, id, actor, now, source, bytes.NewReader(raw))
 }
 
 // Import stages verified content and records a release awaiting boot validation.
@@ -49,7 +86,7 @@ func (c *Catalog) Import(ctx context.Context, id, actor string, now time.Time, s
 		if entry.Artifact.ManifestSHA256 != digest || entry.ImportedBy != actor || entry.State == "rejected" {
 			return CatalogEntry{}, ErrCatalogConflict
 		}
-		// A completed publication can be reused even if the upload is gone.
+		// Reuse the managed copy when the original bundle is gone.
 		directory := filepath.Join(c.root, digest)
 		if _, err := os.Lstat(directory); err == nil {
 			if _, err := c.verifyManaged(ctx, entry); err != nil {

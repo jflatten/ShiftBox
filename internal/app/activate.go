@@ -23,6 +23,7 @@ type setupSnapshot struct {
 	settings, activatedBy, activatedAt                                 string
 	certID, chain, keyID, notBefore, notAfter, fingerprint, ciphertext string
 	budget                                                             *setupCapacityBudget
+	artifact                                                           *setupArtifact
 }
 
 type setupCapacityBudget struct {
@@ -75,6 +76,7 @@ func StagePostgresSetup(ctx context.Context, source, target *sql.DB, installatio
 			// Capacity may be edited during setup without replacing the
 			// staged certificate or owner. Copy newer revisions below.
 			expected.budget = existing.budget
+			expected.artifact = existing.artifact
 			if err != nil || !reflect.DeepEqual(existing, expected) {
 				return ErrSetupConflict
 			}
@@ -91,7 +93,10 @@ func StagePostgresSetup(ctx context.Context, source, target *sql.DB, installatio
 		if err := retainPostgresDexStorage(ctx, tx, staged.id, credentials, cipher); err != nil {
 			return err
 		}
-		return staged.stageCapacity(ctx, tx)
+		if err := staged.stageCapacity(ctx, tx); err != nil {
+			return err
+		}
+		return staged.stageArtifact(ctx, tx)
 	})
 	if err != nil {
 		return auth.User{}, err
@@ -124,6 +129,10 @@ func readSetupSnapshot(ctx context.Context, tx *sql.Tx, id, ownerID string) (set
 	err = tx.QueryRowContext(ctx, `SELECT c.id,c.chain_pem,c.private_key_ciphertext_id,c.not_before,c.not_after,c.fingerprint_sha256,p.value_json
 		FROM browser_certificates c JOIN protected_values p ON p.id=c.private_key_ciphertext_id WHERE c.state='active'`).Scan(
 		&s.certID, &s.chain, &s.keyID, &s.notBefore, &s.notAfter, &s.fingerprint, &s.ciphertext)
+	if err != nil {
+		return s, err
+	}
+	s.artifact, err = readSetupArtifact(ctx, tx)
 	if err != nil {
 		return s, err
 	}

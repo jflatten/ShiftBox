@@ -48,8 +48,14 @@ func (s SetupHTTP) activatePostgres(ctx context.Context, target *sql.DB, actor, 
 		return operation.Operation{}, ErrSetupConflict
 	}
 	var budgetVersion int64
+	var targetArtifact *setupArtifact
 	if profileKey != "" {
 		if err := target.QueryRowContext(ctx, "SELECT version FROM capacity_budgets WHERE installation_id=$1", s.InstallationID).Scan(&budgetVersion); err != nil {
+			return operation.Operation{}, ErrSetupConflict
+		}
+		var err error
+		targetArtifact, err = readSetupArtifact(ctx, target)
+		if err != nil || targetArtifact == nil {
 			return operation.Operation{}, ErrSetupConflict
 		}
 	}
@@ -66,6 +72,10 @@ func (s SetupHTTP) activatePostgres(ctx context.Context, target *sql.DB, actor, 
 			var currentBudget int64
 			if err := tx.QueryRowContext(ctx, "SELECT version FROM capacity_budgets WHERE installation_id=$1", s.InstallationID).Scan(&currentBudget); err != nil ||
 				currentBudget != budgetVersion {
+				return ErrSetupConflict
+			}
+			currentArtifact, err := readSetupArtifact(ctx, tx)
+			if err != nil || currentArtifact == nil || *currentArtifact != *targetArtifact {
 				return ErrSetupConflict
 			}
 			principal, err := s.bootstrapPrincipal(ctx, tx, token)

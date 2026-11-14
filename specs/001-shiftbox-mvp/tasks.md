@@ -2381,3 +2381,18 @@ This checkpoint does not itself change the goal status.
   and a current-release poll clears that version blocker.
 - T097 stays open for signed update and rollback evidence, the migration
   command and its remaining preflight checks.
+
+### Local platform import and PostgreSQL cutover
+
+- T046 reads `manifest.json` alongside the UTM bundle in a local folder.
+  Reopening the catalog reuses the same release record. A changed manifest
+  conflicts with that record, and workspace staging requires validation.
+- The native UTM 5.0.8 enrollment test imported the built code-server image
+  through the local folder path, authenticated in 4m05s, and passed in
+  276.95s including offboarding, disk retention and disposable VM cleanup.
+- PostgreSQL setup now transfers the exact validated default artifact record
+  across profile activation. The digest-addressed files stay in place. A
+  test against separately owned PostgreSQL schemas with verified TLS
+  reproduced the missing record and passed after the fix.
+- T046 and T058 remain open for connecting the setup screen to local import
+  and the production boot-and-enrollment validator.

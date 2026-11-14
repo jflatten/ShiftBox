@@ -116,6 +116,10 @@ func (s *Store) Get(ctx context.Context, id string) (CatalogEntry, error) {
 	return scanCatalogEntry(s.db.QueryRowContext(ctx, `SELECT `+catalogColumns+` FROM platform_artifacts WHERE id=$1`, id))
 }
 
+func (s *Store) getByRelease(ctx context.Context, releaseID string) (CatalogEntry, error) {
+	return scanCatalogEntry(s.db.QueryRowContext(ctx, `SELECT `+catalogColumns+` FROM platform_artifacts WHERE release_id=$1`, releaseID))
+}
+
 // Default reads the selected available release for new workspaces.
 func (s *Store) Default(ctx context.Context) (CatalogEntry, error) {
 	return scanCatalogEntry(s.db.QueryRowContext(ctx, `SELECT `+catalogColumns+` FROM platform_artifacts WHERE is_default=1`))

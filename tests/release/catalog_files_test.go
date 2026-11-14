@@ -13,6 +13,47 @@ import (
 	"github.com/jflatten/ShiftBox/internal/testsupport"
 )
 
+// TestCatalogImportsLocalFolder verifies that setup can retry the same local
+// export after a restart while a changed manifest cannot replace the release.
+func TestCatalogImportsLocalFolder(t *testing.T) {
+	ctx := t.Context()
+	store := release.NewStore(openCatalogDatabase(t, "sqlite"))
+	storage := t.TempDir()
+	source, manifest := artifactFixture(t)
+	manifestPath := filepath.Join(source, "manifest.json")
+	if err := os.WriteFile(manifestPath, manifest, 0600); err != nil {
+		t.Fatal(err)
+	}
+	actor, now := testsupport.ID(1), time.Now()
+	first, err := release.NewCatalog(store, storage).ImportLocal(ctx, actor, now, source)
+	if err != nil || first.ID == "" || first.State != "validating" || first.IsDefault {
+		t.Fatalf("ImportLocal = %+v, %v, want a release awaiting validation", first, err)
+	}
+	catalog := release.NewCatalog(store, storage)
+	retried, err := catalog.ImportLocal(ctx, actor, now.Add(time.Minute), source)
+	if err != nil || retried.ID != first.ID || retried.Artifact.ManifestSHA256 != first.Artifact.ManifestSHA256 || !retried.ImportedAt.Equal(first.ImportedAt) {
+		t.Fatalf("ImportLocal retry = %+v, %v, want original release %s", retried, err, first.ID)
+	}
+	if err := os.WriteFile(manifestPath, append(manifest, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.ImportLocal(ctx, actor, now, source); !errors.Is(err, release.ErrCatalogConflict) {
+		t.Errorf("ImportLocal with changed manifest = %v, want conflict", err)
+	}
+	if _, err := catalog.Stage(ctx, first.ID, t.TempDir(), "workspace.utm"); !errors.Is(err, release.ErrCatalogConflict) {
+		t.Errorf("Stage after local import = %v, want validation required", err)
+	}
+	if err := os.Remove(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(storage, first.Artifact.ManifestSHA256, "manifest.json"), manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.ImportLocal(ctx, actor, now, source); !errors.Is(err, release.ErrInvalidArtifact) {
+		t.Errorf("ImportLocal with a linked manifest = %v, want invalid artifact", err)
+	}
+}
+
 // TestManagedCatalogRestoresPublishedArtifact checks that a restarted catalog
 // can stage a validated release after the original import source disappears.
 func TestManagedCatalogRestoresPublishedArtifact(t *testing.T) {

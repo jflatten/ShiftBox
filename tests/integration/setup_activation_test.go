@@ -318,9 +318,11 @@ func TestStagePostgresSetup(t *testing.T) {
 	if err := src.QueryRowContext(ctx, "SELECT state FROM installations").Scan(&state); err != nil || state != "configuring" {
 		t.Fatalf("readiness failure changed source state to %s, error %v", state, err)
 	}
-	if _, err := dst.ExecContext(ctx, `INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,
+	// Setup validated the default against the bootstrap catalog. Cutover must
+	// retain its exact metadata in the target without booting a second copy.
+	if _, err := src.ExecContext(ctx, `INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,
 		owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state,is_default)
-		VALUES('fixture','fixture','amd64','test','development','1','[]','{}','{}','{}',repeat('a',64),'fixture.utm','owner','now','available',1)`); err != nil {
+		VALUES('fixture','fixture','amd64','test','development','1','[]','{}','{}','{}',$1,'fixture.utm','owner','now','available',1)`, strings.Repeat("a", 64)); err != nil {
 		t.Fatal(err)
 	}
 	request(http.MethodPut, "admin/capacity", "", `{"cpuCount":4,"memoryMiB":4096,"diskMiB":10240}`, 204)
@@ -346,6 +348,11 @@ func TestStagePostgresSetup(t *testing.T) {
 	}
 	if err := dst.QueryRowContext(ctx, "SELECT state FROM installations").Scan(&state); err != nil || state != "active" {
 		t.Fatalf("target state = %s, %v, want active", state, err)
+	}
+	var artifactID, digest string
+	if err := dst.QueryRowContext(ctx, `SELECT id,manifest_sha256 FROM platform_artifacts WHERE state='available' AND is_default=1`).Scan(&artifactID, &digest); err != nil ||
+		artifactID != "fixture" || digest != strings.Repeat("a", 64) {
+		t.Fatalf("target default artifact = %q/%q, %v, want the validated bootstrap artifact", artifactID, digest, err)
 	}
 	var cpu, memory, disk int
 	if err := dst.QueryRowContext(ctx, "SELECT cpu_limit,memory_mib_limit,disk_mib_limit FROM capacity_budgets").Scan(&cpu, &memory, &disk); err != nil ||
