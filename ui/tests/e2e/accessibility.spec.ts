@@ -219,7 +219,8 @@ for (const [action, button, label] of [
   ['rebuild', 'Rebuild container', 'Rebuild workspace'], ['repair', 'Start repair', 'Open repair environment'],
   ['retry', 'Exit repair and retry setup', 'Resume workspace setup'],
 ]) {
-  // Each workspace action can reach its server-driven progress by keyboard.
+  // Each submitted workspace action moves keyboard focus to its progress
+  // when the action button becomes unavailable.
   test(`workspace ${action} progress`, async ({ page }) => {
     const labels: [string, string, string] = ['Check workspace', label, 'Verify result'];
     let started = false;
@@ -237,6 +238,7 @@ for (const [action, button, label] of [
     }, operation(labels));
     await page.goto(`/workspaces/?id=${workspaceID}`);
     await activate(page, page.getByRole('button', { name: button, exact: true }));
+    await expect(page.getByRole('heading', { name: 'Workspace operation' })).toBeFocused();
     await checkWorkflow(page, labels);
   });
 }

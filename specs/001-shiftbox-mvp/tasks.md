@@ -240,7 +240,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 
 - [X] T117 [P] First add a failing OpenAPI-to-TypeScript drift test, then generate UI contract types without generated Go handlers and make the drift test pass in `tests/contract/openapi_types_test.go`, `ui/lib/api-types.ts`, and `scripts/check-openapi.sh`
 - [X] T118 [P] Add bounded redaction and secret-leak tests across logs, URLs, API responses, browser storage, process arguments, audit metadata, and archives in `tests/integration/secret_leak_test.go` and `ui/tests/e2e/browser-storage.spec.ts`
-- [ ] T119 [P] Add automated accessibility checks plus manual keyboard/focus evidence for every Mantine Stepper workflow in `ui/tests/e2e/accessibility.spec.ts` and `documentation/validation/accessibility.md`
+- [X] T119 [P] Add automated accessibility checks plus manual keyboard/focus evidence for every Mantine Stepper workflow in `ui/tests/e2e/accessibility.spec.ts` and `documentation/validation/accessibility.md`
 - [ ] T120 Add end-to-end controller restart injection at every persisted setup, lifecycle, maintenance, backup, restore, and recovery step in `tests/acceptance/restart_matrix_test.go`
 - [X] T121 Add SQLite/PostgreSQL parity, race, real HTTP/mTLS, Dex/OIDC, hostile-origin, and corrupted-backup integration gates in `tests/integration/release_gate_test.go`
 - [X] T122 Run the already-defined exact UTM/Packer/import/boot/recovery/drive-preservation harness under the `utm_release` build tag and record controlled-host evidence in `tests/release/utm_stack_test.go` and `documentation/validation/utm-stack.md`

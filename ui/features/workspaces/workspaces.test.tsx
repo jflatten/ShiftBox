@@ -192,7 +192,8 @@ test('lists workspaces and goes to the next page', async () => {
 });
 
 // An admitted stop uses the displayed server version and waits for its
-// durable operation before changing the displayed observed state.
+// durable operation before changing the displayed observed state. Focus
+// moves to its progress after the submitted action becomes disabled.
 test('submits stop with CSRF and the workspace version', async () => {
   const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
     if (input === '/api/v1/session') return json(session);
@@ -211,6 +212,7 @@ test('submits stop with CSRF and the workspace version', async () => {
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
   await user.click(await screen.findByRole('button', { name: 'Stop workspace' }));
   expect(await screen.findByText('Failed — Stop workspace workloads')).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Workspace operation' })).toHaveFocus();
   expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces/workspace-one/actions/stop', expect.objectContaining({
     method: 'POST', headers: expect.objectContaining({ 'If-Match': '"4"', 'X-CSRF-Token': 'fixture', 'Idempotency-Key': expect.any(String) }),
   }));

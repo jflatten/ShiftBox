@@ -29,13 +29,27 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
   const [error, setError] = useState<unknown>();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const request = useRef<{ action: WorkspaceAction; version: number; key: string }>(undefined);
+  const progressHeading = useRef<HTMLHeadingElement>(null);
+  const progressFocus = useRef<{ id: string; trigger: Element | null }>(undefined);
   const displayedOperation = data?.currentOperationId ?? (operationBusy ? operationId : data?.lastFailedOperationId ?? operationId);
   const action = data?.desiredState === 'running' && data.observedState === 'running' ? 'stop' :
     data?.desiredState === 'stopped' && data.observedState === 'stopped' ? 'start' : undefined;
   const busy = !!data?.currentOperationId || operationBusy || !!submitting;
 
+  useEffect(() => {
+    const handoff = progressFocus.current;
+    if (!handoff || handoff.id !== displayedOperation || !progressHeading.current) return;
+    progressFocus.current = undefined;
+    // The submitted action becomes disabled. Keep the next Tab in its
+    // workflow unless the user already moved to another control.
+    if (document.activeElement === document.body || document.activeElement === handoff.trigger) {
+      progressHeading.current.focus();
+    }
+  }, [displayedOperation]);
+
   const requestAction = async (action: WorkspaceAction) => {
     if (!data || submitting) return;
+    const trigger = document.activeElement;
     setSubmitting(action);
     setError(undefined);
     try {
@@ -55,6 +69,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
         throw await readProblem(response);
       }
       const accepted: { id: string } = await response.json();
+      if (action !== 'delete') progressFocus.current = { id: accepted.id, trigger };
       setOperationBusy(true);
       setOperationId(accepted.id);
       if (action === 'delete') setConfirmDelete(false);
@@ -146,7 +161,10 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
           ) : null}
           <DeleteWorkspaceDialog name={data.name || id} opened={confirmDelete} busy={busy} submitting={submitting === 'delete'} error={error}
             cancel={() => setConfirmDelete(false)} confirm={() => void requestAction('delete')} />
-          {displayedOperation ? <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation} onFinished={setOperationBusy} /> : null}
+          {displayedOperation ? <Stack gap="xs">
+            <Title order={2} size="h4" tabIndex={-1} ref={progressHeading}>Workspace operation</Title>
+            <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation} onFinished={setOperationBusy} />
+          </Stack> : null}
           {admin ? <WorkspaceConnectionGrants workspaceId={id} csrfToken={csrfToken} /> : null}
         </Stack>
       ) : null}
