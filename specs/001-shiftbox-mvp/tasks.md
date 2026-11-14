@@ -1077,3 +1077,14 @@ This checkpoint does not itself change the goal status.
   credentials and sessions. Formatting and vet passed.
 - Durable authority switching, credential collection, and the activation
   route remain open.
+
+### Provider contract and in-memory adapter
+
+- Added the controller-facing provider interface, inventory and request types,
+  semantic errors, and a synchronized in-memory implementation.
+- The reusable contract tests exercise lost replies, inspection before retry,
+  clone isolation, stale generations, partial deletion, shared-resource
+  preservation, host unavailability, and stopped-only recovery and networking.
+- Provider and contract race tests, formatting, and vet passed. Native UTM
+  integration is still pending, as are contract cases for concurrent mutations
+  and host permission/version mismatch.
