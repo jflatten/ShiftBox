@@ -2,9 +2,13 @@ package app
 
 import (
 	"context"
+	"net"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/backup"
+	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/release"
 )
 
@@ -24,7 +28,7 @@ func (s *ControllerState) MigrationEvidence(ctx context.Context, evidence releas
 	if err != nil {
 		return release.MigrationEvidence{}, err
 	}
-	evidence.DatabaseOwned = true
+	evidence.DatabaseOwned = s.migrationDatabaseOwned(ctx)
 	evidence.KeyAccessible = s.cipher != nil
 	browser, err := s.browserCertificateAt(now)
 	evidence.BrowserValid = err == nil && browser.Leaf != nil
@@ -32,4 +36,23 @@ func (s *ControllerState) MigrationEvidence(ctx context.Context, evidence releas
 		evidence.GuestCAUntil = s.GuestCA.Certificate.NotAfter
 	}
 	return evidence, nil
+}
+
+func (s *ControllerState) migrationDatabaseOwned(ctx context.Context) bool {
+	if s.Installation.Settings.DataProfile == "sqlite" {
+		return true // The active SQLite schema was checked when opening the installation.
+	}
+	dex := s.DexPostgres
+	if s.Installation.Settings.DataProfile != "postgres" || dex == nil {
+		return false
+	}
+	roots, err := postgresTrustRoots(dex.CAFile)
+	if err != nil {
+		return false
+	}
+	uri := url.URL{Scheme: "postgres", Host: net.JoinHostPort(dex.Host, strconv.Itoa(int(dex.Port))),
+		Path: "/" + dex.Database, User: url.UserPassword(dex.User, dex.Password), RawQuery: "sslmode=verify-full"}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return database.CheckPostgresMigrationRoles(ctx, s.DB, uri.String(), roots) == nil
 }

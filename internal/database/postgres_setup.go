@@ -126,21 +126,44 @@ func OpenPostgresSetupApplication(ctx context.Context, target PostgresSetupTarge
 }
 
 func checkSetupRole(ctx context.Context, conn *pgx.Conn, user, schema, sibling string) error {
+	return scanPostgresRole(conn.QueryRow(ctx, postgresRoleCheck, user, schema, sibling))
+}
+
+// CheckPostgresMigrationRoles checks that the active service roles still own
+// separate schemas. A fresh Dex connection uses the server's search path.
+func CheckPostgresMigrationRoles(ctx context.Context, app *sql.DB, dexURI string, roots *x509.CertPool) error {
+	if err := scanPostgresRole(app.QueryRowContext(ctx, postgresRoleCheck, "", applicationSchema, dexSchema)); err != nil {
+		return err
+	}
+	cfg, err := setupPostgresConfig(dexURI, roots)
+	if err != nil {
+		return err
+	}
+	dex, err := pgx.ConnectConfig(ctx, cfg)
+	if err != nil {
+		return errors.New("cannot verify the scoped PostgreSQL Dex login")
+	}
+	defer dex.Close(context.Background())
+	return checkSetupRole(ctx, dex, cfg.User, dexSchema, applicationSchema)
+}
+
+const postgresRoleCheck = `SELECT
+	($1 = '' OR current_user = $1)
+	AND current_schemas(false) = ARRAY[$2]::name[]
+	AND NOT (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls)
+	AND NOT has_database_privilege(current_database(), 'CREATE')
+	AND EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname=$2 AND n.nspowner=r.oid)
+	AND EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname=$3 AND
+		n.nspowner<>r.oid AND NOT has_schema_privilege(n.oid, 'USAGE,CREATE'))
+	AND NOT EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid)
+	AND NOT EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname<>$2
+		AND has_schema_privilege(n.oid, 'CREATE'))
+	FROM pg_roles r WHERE r.rolname=current_user`
+
+func scanPostgresRole(row interface{ Scan(...any) error }) error {
 	var isolated bool
-	err := conn.QueryRow(ctx, `SELECT
-		current_user = $1
-		AND current_schemas(false) = ARRAY[$2]::name[]
-		AND NOT (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls)
-		AND NOT has_database_privilege(current_database(), 'CREATE')
-		AND EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname=$2 AND n.nspowner=r.oid)
-		AND EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname=$3 AND
-			n.nspowner<>r.oid AND NOT has_schema_privilege(n.oid, 'USAGE,CREATE'))
-		AND NOT EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid)
-		AND NOT EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname<>$2
-			AND has_schema_privilege(n.oid, 'CREATE'))
-		FROM pg_roles r WHERE r.rolname=current_user`, user, schema, sibling).Scan(&isolated)
-	if err != nil || !isolated {
-		return errors.New("PostgreSQL setup role must own only its isolated schema and use it as its search path")
+	if err := row.Scan(&isolated); err != nil || !isolated {
+		return errors.New("PostgreSQL service role must own only its isolated schema and use it as its search path")
 	}
 	return nil
 }

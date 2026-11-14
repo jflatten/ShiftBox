@@ -1697,9 +1697,12 @@ This checkpoint does not itself change the goal status.
   active database and trust checks, current retained guest evidence,
   UTM capability checks, and the pinned Dex binary digest. PostgreSQL
   dump and restore tools must match the application server major.
-- Unit tests cover manifest rejection and blocked preflight output.
-  Identity-store privileges and
-  irreversible migration acceptance remain open.
+- Unit tests cover manifest rejection and blocked preflight output. Preflight
+  verifies that the application and Dex PostgreSQL roles still own their
+  separate schemas and use the expected search paths. A disposable PostgreSQL
+  test passed with scoped roles and verified refusal when the Dex login was
+  missing or unusable, or the application search path had changed.
+  Irreversible migration acceptance remains open.
 
 ### Migration preflight management route
 

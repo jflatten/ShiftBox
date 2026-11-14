@@ -59,16 +59,9 @@ func (s SetupHTTP) postgresActivationResponse(actor, key, token string, selected
 }
 
 func openSelectedPostgres(ctx context.Context, credentials PostgresSetupCredentials, migrate bool) (*sql.DB, error) {
-	roots, err := x509.SystemCertPool()
+	roots, err := postgresTrustRoots(credentials.CAFile)
 	if err != nil {
-		return nil, errors.New("cannot load PostgreSQL system trust")
-	}
-	if credentials.CAFile != "" {
-		roots = x509.NewCertPool()
-		pem, err := os.ReadFile(credentials.CAFile)
-		if err != nil || !roots.AppendCertsFromPEM(pem) {
-			return nil, errors.New("cannot load the PostgreSQL certificate authority")
-		}
+		return nil, err
 	}
 	target, err := database.OpenPostgresSetupApplication(ctx, database.PostgresSetupTarget{
 		ApplicationURI: credentials.ApplicationURI, DexURI: credentials.DexURI, Roots: roots,
@@ -83,6 +76,22 @@ func openSelectedPostgres(ctx context.Context, credentials PostgresSetupCredenti
 		}
 	}
 	return target, nil
+}
+
+func postgresTrustRoots(caFile string) (*x509.CertPool, error) {
+	if caFile == "" || caFile == "system" {
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, errors.New("cannot load PostgreSQL system trust")
+		}
+		return roots, nil
+	}
+	roots := x509.NewCertPool()
+	pem, err := os.ReadFile(caFile)
+	if err != nil || !roots.AppendCertsFromPEM(pem) {
+		return nil, errors.New("cannot load the PostgreSQL certificate authority")
+	}
+	return roots, nil
 }
 
 // ResumeRetiredPostgresSetup probes only a retired bootstrap installation and
