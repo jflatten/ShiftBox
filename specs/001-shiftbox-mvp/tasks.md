@@ -1951,3 +1951,11 @@ This checkpoint does not itself change the goal status.
 - The race-enabled native run passed in 248 seconds and removed the test VM.
   The full Go race suite passed afterward. Browser IDE, file-level retention,
   and simultaneous live-connection coverage remain separate release checks.
+
+### Administrator audit history API
+
+- The management audit route returns redacted events with exact action and
+  resource filters. It returns at most 50 events at a time and uses the
+  response Link header to carry the append-order cursor.
+- Audit, web, app and contract race tests passed. The browser audit view and
+  configurable retention remain open under T071 and T077.
