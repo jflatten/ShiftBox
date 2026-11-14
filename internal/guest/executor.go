@@ -36,6 +36,9 @@ func (j *localJournal) report() OperationReport {
 	if op.Phase == localSucceeded || op.Phase == localFailed {
 		report.Status = string(op.Phase)
 	}
+	if op.Command == "shutdown-for-stop" {
+		report.Step = "workload.shutdown"
+	}
 	return report
 }
 

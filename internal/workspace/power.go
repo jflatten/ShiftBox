@@ -12,6 +12,8 @@ import (
 	"github.com/jflatten/ShiftBox/internal/provider"
 )
 
+var errGuestShutdownPending = errors.New("waiting for guest workload shutdown")
+
 // PowerExecutor reconciles start and graceful stop for an existing provider VM.
 type PowerExecutor struct {
 	store    *Store
@@ -40,6 +42,13 @@ func (e *PowerExecutor) Observe(ctx context.Context, op operation.Operation, ste
 	if got.Power != provider.Running && got.Power != provider.Stopped {
 		return "", false, provider.ErrOutcomeUnknown
 	}
+	if step.Key == "shutdown" {
+		if got.Power == provider.Stopped {
+			return "Provider confirmed the VM was already stopped.", true, nil
+		}
+		evidence, err := e.shutdownEvidence(ctx, op)
+		return evidence, err == nil, err
+	}
 	if (got.Power == provider.Running) != (op.Type == "start") {
 		return "", false, nil
 	}
@@ -52,6 +61,9 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 	req, err := e.request(ctx, op, step)
 	if err != nil {
 		return "", err
+	}
+	if step.Key == "shutdown" {
+		return e.shutdownEvidence(ctx, op)
 	}
 	var got provider.Inventory
 	if op.Type == "start" {
@@ -67,7 +79,8 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 
 func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, error) {
 	if (op.Type != "start" && op.Type != "stop") || op.OriginatingAction != "workspace."+op.Type ||
-		op.WorkspaceID == nil || op.StartedAt == nil || op.Status != "running" || step.Key != op.Type || step.Status != "active" {
+		op.WorkspaceID == nil || op.StartedAt == nil || op.Status != "running" || step.Status != "active" ||
+		(step.Key != op.Type && !(op.Type == "stop" && step.Key == "shutdown")) {
 		return provider.CreateRequest{}, provider.ErrInvalidState
 	}
 	req := provider.CreateRequest{OperationID: op.ID, Ref: provider.WorkspaceRef{WorkspaceID: *op.WorkspaceID, Generation: op.Generation}}
@@ -97,6 +110,26 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 	}
 	req.NetworkMode = network.Mode
 	return req, nil
+}
+
+func (e *PowerExecutor) shutdownEvidence(ctx context.Context, op operation.Operation) (string, error) {
+	var status, problem string
+	err := e.store.db.QueryRowContext(ctx, "SELECT status,problem FROM guest_dispatches WHERE operation_id=$1", op.ID).
+		Scan(&status, &problem)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	switch status {
+	case "succeeded":
+		return "The guest confirmed its development workload stopped.", nil
+	case "failed":
+		if problem == "guest.shutdown_timed_out" {
+			return "", &operation.StepFailure{Detail: "The development workload did not stop within the guest deadline."}
+		}
+		return "", &operation.StepFailure{Detail: "The guest could not verify that the development workload stopped."}
+	default:
+		return "", errGuestShutdownPending
+	}
 }
 
 func (e *PowerExecutor) record(ctx context.Context, op operation.Operation, req provider.CreateRequest, got provider.Inventory) (string, error) {

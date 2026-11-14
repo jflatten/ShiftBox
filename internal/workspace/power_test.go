@@ -105,6 +105,13 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	}
 
 	stop := admit("stop")
+	run(stop, errGuestShutdownPending)
+	if machines.stops != 0 {
+		t.Fatal("provider stop ran before the guest shutdown step finished")
+	}
+	exec("INSERT INTO guest_dispatches(operation_id,dispatch_version,status) VALUES($1,1,'succeeded')", stop.ID)
+	run(stop, nil)
+	checkState(stop, "running", "waiting")
 	machines.LoseReply("stop")
 	run(stop, provider.ErrOutcomeUnknown)
 	checkState(stop, "running", "waiting")

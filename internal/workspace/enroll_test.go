@@ -99,13 +99,13 @@ func TestLaunchWorkerWaitsForGuestContact(t *testing.T) {
 		t.Fatalf("configure without guest report = %v, want pending", err)
 	}
 	const container = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	if _, err := db.Exec(`INSERT INTO guest_configurations(operation_id,dispatch_version,status,container_id) VALUES($1,1,'running',$2)`, op.ID, container); err != nil {
+	if _, err := db.Exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,container_id) VALUES($1,1,'running',$2)`, op.ID, container); err != nil {
 		t.Fatal(err)
 	}
 	if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, errGuestConfigurationPending) {
 		t.Fatalf("configure at waitFor = %v, want pending remaining hooks", err)
 	}
-	if _, err := db.Exec(`UPDATE guest_configurations SET status='succeeded' WHERE operation_id=$1`, op.ID); err != nil {
+	if _, err := db.Exec(`UPDATE guest_dispatches SET status='succeeded' WHERE operation_id=$1`, op.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := worker.RunOnce(ctx, op.ID); err != nil {
@@ -133,7 +133,7 @@ func TestLaunchWorkerRecordsGuestFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO guest_configurations(operation_id,dispatch_version,status,problem)
+	if _, err := db.Exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,problem)
 		VALUES($1,1,'failed','guest.required_setup_failed')`, op.ID); err != nil {
 		t.Fatal(err)
 	}

@@ -49,10 +49,10 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 		if err != nil {
 			return err
 		}
-		if err := acceptConfigurationReport(ctx, tx, contact, report); err != nil {
+		if err := acceptGuestReport(ctx, tx, contact, report); err != nil {
 			return err
 		}
-		dispatch, err = nextConfiguration(ctx, tx, contact)
+		dispatch, err = nextGuestOperation(ctx, tx, contact)
 		return err
 	})
 	if err != nil {
@@ -61,21 +61,30 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 	return contact, dispatch, nil
 }
 
-func nextConfiguration(ctx context.Context, tx *sql.Tx, contact Contact) (*PollOperation, error) {
-	if contact.DesiredState != "running" {
+func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*PollOperation, error) {
+	dispatch := PollOperation{}
+	var step string
+	switch contact.DesiredState {
+	case "running":
+		dispatch.Command, step = "ensure-development-container", "configure"
+	case "stopped":
+		dispatch.Command, step = "shutdown-for-stop", "shutdown"
+	default:
 		return nil, nil
 	}
-	dispatch := PollOperation{Command: "ensure-development-container"}
-	// The provider worker records configure as active after enrollment. It may
-	// release and reacquire its lease while the guest works.
+	// The worker records the active step before the poll can dispatch it.
 	rows, err := tx.QueryContext(ctx, `SELECT o.id,o.type,o.version,w.repository_url,COALESCE(w.repository_ref,''),w.devcontainer_path
 		FROM operations o JOIN workspaces w ON w.id=o.workspace_id
-		JOIN operation_steps s ON s.operation_id=o.id AND s.step_key='configure'
-		LEFT JOIN guest_configurations g ON g.operation_id=o.id
+		JOIN operation_steps s ON s.operation_id=o.id AND s.step_key=$3
+		LEFT JOIN guest_dispatches g ON g.operation_id=o.id
 		WHERE w.id=$1 AND w.generation=$2 AND o.generation=$2 AND w.observed_state='running'
-		  AND o.type='provision' AND o.originating_action='workspace.launch' AND o.requested_by=w.owner_user_id
-		  AND o.current_step='configure' AND s.status='active' AND o.status IN ('running','waiting')
-		  AND (g.status IS NULL OR g.status IN ('pending','running')) LIMIT 2`, contact.WorkspaceID, contact.Generation)
+		  AND w.desired_state=$4
+		  AND (($3='configure' AND o.type='provision' AND o.originating_action='workspace.launch' AND o.requested_by=w.owner_user_id)
+		    OR ($3='shutdown' AND o.type='stop' AND o.originating_action='workspace.stop'
+		      AND EXISTS(SELECT 1 FROM users actor WHERE actor.id=o.requested_by AND actor.membership_state='active'
+		        AND (actor.id=w.owner_user_id OR actor.role='administrator'))))
+		  AND o.current_step=$3 AND s.status='active' AND o.status IN ('running','waiting')
+		  AND (g.status IS NULL OR g.status IN ('pending','running')) LIMIT 2`, contact.WorkspaceID, contact.Generation, step, contact.DesiredState)
 	if err != nil {
 		return nil, err
 	}
@@ -91,21 +100,24 @@ func nextConfiguration(ctx context.Context, tx *sql.Tx, contact Contact) (*PollO
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil || count == 0 {
 		return nil, err
 	}
-	if count != 1 || !template.ValidSource(dispatch.Arguments.RepositoryURL, dispatch.Arguments.Devcontainer) {
+	if count != 1 || step == "configure" && !template.ValidSource(dispatch.Arguments.RepositoryURL, dispatch.Arguments.Devcontainer) {
 		return nil, ErrGuestReportConflict
 	}
 	dispatch.Arguments.RetainedMounts = []string{}
+	if step == "shutdown" {
+		dispatch.Arguments = pollArguments{RetainedMounts: []string{}}
+	}
 	// Freeze the dispatched version across worker journal and lease updates.
-	if _, err := tx.ExecContext(ctx, `INSERT INTO guest_configurations(operation_id,dispatch_version,status)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO guest_dispatches(operation_id,dispatch_version,status)
 		VALUES($1,$2,'pending') ON CONFLICT(operation_id) DO NOTHING`, dispatch.ID, dispatch.Version); err != nil {
 		return nil, err
 	}
-	err = tx.QueryRowContext(ctx, `SELECT dispatch_version FROM guest_configurations WHERE operation_id=$1`, dispatch.ID).
+	err = tx.QueryRowContext(ctx, `SELECT dispatch_version FROM guest_dispatches WHERE operation_id=$1`, dispatch.ID).
 		Scan(&dispatch.Version)
 	return &dispatch, err
 }
 
-func acceptConfigurationReport(ctx context.Context, tx *sql.Tx, contact Contact, input PollReport) error {
+func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input PollReport) error {
 	report := input.Operation
 	if report == nil {
 		if input.LastOperationID != "" || input.Version != 0 {
@@ -113,35 +125,49 @@ func acceptConfigurationReport(ctx context.Context, tx *sql.Tx, contact Contact,
 		}
 		return nil
 	}
-	if report.ID == "" || report.ID != input.LastOperationID || input.Version < 1 ||
-		report.Generation != contact.Generation || !validConfigurationReport(*report) {
+	shutdown := report.Step == "workload.shutdown"
+	if len(report.ID) != 36 || report.Attempt != 1 || report.ID != input.LastOperationID || input.Version < 1 ||
+		report.Generation != contact.Generation || shutdown && !validShutdownReport(*report) || !shutdown && !validConfigurationReport(*report) {
 		return ErrGuestReportConflict
 	}
-	var status, container, problem, workflow, step string
-	err := tx.QueryRowContext(ctx, `SELECT g.status,g.container_id,g.problem,o.status,COALESCE(o.current_step,'')
-		FROM guest_configurations g JOIN operations o ON o.id=g.operation_id
+	var status, container, problem, workflow, step, kind string
+	err := tx.QueryRowContext(ctx, `SELECT g.status,g.container_id,g.problem,o.status,COALESCE(o.current_step,''),o.type
+		FROM guest_dispatches g JOIN operations o ON o.id=g.operation_id
 		WHERE o.id=$1 AND o.workspace_id=$2 AND o.generation=$3 AND g.dispatch_version=$4`,
-		report.ID, contact.WorkspaceID, contact.Generation, input.Version).Scan(&status, &container, &problem, &workflow, &step)
+		report.ID, contact.WorkspaceID, contact.Generation, input.Version).Scan(&status, &container, &problem, &workflow, &step, &kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrGuestReportConflict
 	}
 	if err != nil {
 		return err
 	}
+	if (shutdown && kind != "stop") || (!shutdown && kind != "provision") {
+		return ErrGuestReportConflict
+	}
 	if status == report.Status && container == report.Evidence.ContainerID && problem == report.Problem {
 		return nil
 	}
+	expectedStep, expectedDesired := "configure", "running"
+	if shutdown {
+		expectedStep, expectedDesired = "shutdown", "stopped"
+	}
 	if status == "failed" || status == "succeeded" || workflow != "running" && workflow != "waiting" ||
-		step != "configure" || contact.DesiredState != "running" ||
+		step != expectedStep || contact.DesiredState != expectedDesired ||
 		status == "running" && container != report.Evidence.ContainerID {
 		return ErrGuestReportConflict
 	}
 	if report.Status != "running" && report.Evidence.WaitForReached && status != "running" {
 		return ErrGuestReportConflict
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE guest_configurations SET status=$1,container_id=$2,problem=$3 WHERE operation_id=$4`,
+	_, err = tx.ExecContext(ctx, `UPDATE guest_dispatches SET status=$1,container_id=$2,problem=$3 WHERE operation_id=$4`,
 		report.Status, report.Evidence.ContainerID, report.Problem, report.ID)
 	return err
+}
+
+func validShutdownReport(report OperationReport) bool {
+	return report.Evidence == (localEvidence{}) &&
+		(report.Status == "succeeded" && report.Problem == "" ||
+			report.Status == "failed" && (report.Problem == problemShutdownFailed || report.Problem == problemShutdownTimeout))
 }
 
 func validConfigurationReport(report OperationReport) bool {

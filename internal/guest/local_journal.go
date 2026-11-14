@@ -23,9 +23,17 @@ type guestDispatch struct {
 
 func (d guestDispatch) valid() bool {
 	id, err := uuid.Parse(d.ID)
-	return err == nil && id != uuid.Nil && id.String() == d.ID &&
-		d.Generation > 0 && d.Version > 0 && d.Command == "ensure-development-container" &&
-		(d.Config == "" || validDevContainerPath(d.Config))
+	if err != nil || id == uuid.Nil || id.String() != d.ID || d.Generation < 1 || d.Version < 1 {
+		return false
+	}
+	switch d.Command {
+	case "ensure-development-container":
+		return d.Config == "" || validDevContainerPath(d.Config)
+	case "shutdown-for-stop":
+		return d.Config == "" && d.Repository == "" && d.Ref == ""
+	default:
+		return false
+	}
 }
 
 type localPhase string
@@ -150,6 +158,19 @@ func (s localJournalState) valid() bool {
 	}
 	hasConnection := dockerContainerID.MatchString(op.Connection.ID) && validWaitFor(op.Connection.WaitFor)
 	noConnection := op.Connection == (containerConnection{})
+	if op.Command == "shutdown-for-stop" {
+		if !noConnection {
+			return false
+		}
+		switch op.Phase {
+		case localPending, localRequired, localSucceeded:
+			return op.Problem == ""
+		case localFailed:
+			return op.Problem == problemShutdownTimeout || op.Problem == problemShutdownFailed
+		default:
+			return false
+		}
+	}
 	switch op.Phase {
 	case localPending, localRequired:
 		return noConnection && op.Problem == ""

@@ -354,7 +354,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		VALUES($1,'other-workspace','provision',1,'owner','other-configuration','waiting','configure','now',7)`, otherID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO guest_configurations(operation_id,dispatch_version,status) VALUES($1,7,'pending')`, otherID); err != nil {
+	if _, err := db.Exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status) VALUES($1,7,'pending')`, otherID); err != nil {
 		t.Fatal(err)
 	}
 	runningReport := makeReport("7", "1", "running", "devcontainer.wait_for", containerID)
@@ -367,7 +367,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		}
 	}
 	var status, storedContainer string
-	if err := db.QueryRow(`SELECT status,container_id FROM guest_configurations WHERE operation_id=$1`, configureID).Scan(&status, &storedContainer); err != nil ||
+	if err := db.QueryRow(`SELECT status,container_id FROM guest_dispatches WHERE operation_id=$1`, configureID).Scan(&status, &storedContainer); err != nil ||
 		status != "running" || storedContainer != containerID {
 		t.Fatalf("persisted waitFor report = (%q, %q, %v), want running with container evidence", status, storedContainer, err)
 	}
@@ -380,6 +380,35 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	if code := poll(runningReport); code != 409 {
 		t.Errorf("regressing terminal report = %d, want 409", code)
 	}
+	t.Run("guest workload shutdown", func(t *testing.T) {
+		const stopID = "99999999-0000-4000-8000-000000000003"
+		if _, err := db.Exec("UPDATE workspaces SET desired_state='stopped' WHERE id='work'"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,version,originating_action)
+			VALUES($1,'work','stop',1,'owner','fixture-shutdown','waiting','shutdown','now',9,'workspace.stop')`, stopID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO operation_steps(operation_id,step_index,step_key,label,status)
+			VALUES($1,0,'shutdown','Shutdown','active')`, stopID); err != nil {
+			t.Fatal(err)
+		}
+		code, body := pollResponse(done)
+		if code != 200 || !bytes.Contains([]byte(body), []byte(`"command":"shutdown-for-stop"`)) {
+			t.Fatalf("poll after accepted stop = %d %s, want shutdown dispatch", code, body)
+		}
+		const report = `{"protocolVersion":"1","guestRelease":"test","lastOperationId":"` + stopID + `","lastOperationVersion":9,
+			"operationReport":{"operationId":"` + stopID + `","workspaceGeneration":1,
+			"status":"succeeded","step":"workload.shutdown","attempt":1,"evidence":{"waitForReached":false}}}`
+		for range 2 {
+			if code, body := pollResponse(report); code != 200 || !bytes.Contains([]byte(body), []byte(`"operation":null`)) {
+				t.Fatalf("workload shutdown report or replay = %d %s, want accepted and no dispatch", code, body)
+			}
+		}
+		if err := db.QueryRow("SELECT status FROM guest_dispatches WHERE operation_id=$1", stopID).Scan(&status); err != nil || status != "succeeded" {
+			t.Fatalf("shutdown status = %q, %v, want persisted success", status, err)
+		}
+	})
 	var authenticated string
 	if err := db.QueryRow("SELECT last_authenticated_at FROM guest_registrations WHERE workspace_id='work'").Scan(&authenticated); err != nil ||
 		authenticated != now.Format("2006-01-02T15:04:05.000000000Z") {

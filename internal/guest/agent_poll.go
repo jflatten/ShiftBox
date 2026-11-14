@@ -135,6 +135,16 @@ func applyGuestPoll(ctx context.Context, journal *localJournal, runtime devConta
 	if err := decodeAgentJSON(bytes.NewReader(raw), &dispatch); err != nil {
 		return errors.New("invalid guest operation dispatch")
 	}
+	if dispatch.Command == "shutdown-for-stop" {
+		if desiredState != "stopped" || dispatch.Type != "stop" || dispatch.Arguments.RepositoryURL != "" ||
+			dispatch.Arguments.RepositoryRef != "" || dispatch.Arguments.Devcontainer != "" || len(dispatch.Arguments.RetainedMounts) != 0 {
+			return errors.New("invalid workload shutdown dispatch")
+		}
+		_, err := journal.shutdown(ctx, guestDispatch{
+			ID: dispatch.ID, Version: dispatch.Version, Generation: generation, Command: dispatch.Command,
+		}, runtime)
+		return err
+	}
 	if dispatch.Command != "ensure-development-container" || len(dispatch.Arguments.RetainedMounts) != 0 {
 		return errAgentOperationPending
 	}

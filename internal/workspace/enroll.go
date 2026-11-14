@@ -104,7 +104,7 @@ func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step
 
 func (e *LaunchExecutor) configuration(ctx context.Context, op operation.Operation) (string, error) {
 	var status, problem string
-	err := e.provision.store.db.QueryRowContext(ctx, `SELECT status,problem FROM guest_configurations WHERE operation_id=$1`, op.ID).
+	err := e.provision.store.db.QueryRowContext(ctx, `SELECT status,problem FROM guest_dispatches WHERE operation_id=$1`, op.ID).
 		Scan(&status, &problem)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", errGuestConfigurationPending

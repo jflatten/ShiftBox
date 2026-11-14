@@ -14,6 +14,103 @@ import (
 	"testing"
 )
 
+// TestGuestShutdownReplay checks that a lost acknowledgement does not send
+// another stop signal or remove the retained development container.
+func TestGuestShutdownReplay(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operation.json")
+	const dispatch = `{"id":"0555292b-088e-4f5b-8ac6-8be6045ae630","version":7,"type":"stop",
+		"command":"shutdown-for-stop","arguments":{}}`
+	id := strings.Repeat("8", 64)
+	var calls [][]string
+	runtime := devContainer{run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string{executable}, args...))
+		if len(calls) == 1 {
+			return []byte(id + "\n"), nil
+		}
+		return nil, nil
+	}}
+	for range 2 {
+		journal, err := loadLocalJournal(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := applyGuestPoll(t.Context(), journal, runtime, 4, "stopped", json.RawMessage(dispatch)); err != nil {
+			t.Fatal(err)
+		}
+		report := journal.report()
+		if report.Status != "succeeded" || report.Step != "workload.shutdown" ||
+			report.Evidence.WaitForReached || report.Problem != "" {
+			t.Errorf("shutdown report = %+v, want durable workload stop evidence", report)
+		}
+	}
+	want := [][]string{
+		{"/usr/bin/docker", "container", "ls", "--quiet", "--no-trunc", "--filter", "label=shiftbox.container=development"},
+		{"/usr/bin/docker", "container", "stop", "--signal", "SIGTERM", "--timeout", "-1", "--", id},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("shutdown and replay invoked %q, want %q", calls, want)
+	}
+}
+
+// TestGuestShutdownReconcilesInterruptedStop confirms a restarted agent
+// inspects container state before trying a stop that lost its response.
+func TestGuestShutdownReconcilesInterruptedStop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operation.json")
+	dispatch := ensureDispatch()
+	dispatch.Command = "shutdown-for-stop"
+	journal, err := loadLocalJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.accept(dispatch); err != nil {
+		t.Fatal(err)
+	}
+	interrupted := *journal.state.Operation
+	interrupted.Phase = localRequired
+	if err := journal.saveOperation(interrupted); err != nil {
+		t.Fatal(err)
+	}
+	journal, err = loadLocalJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	runtime := devContainer{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls++
+		if args[1] != "ls" {
+			t.Fatal("shutdown repeated a stop after observing no running development container")
+		}
+		return nil, nil
+	}}
+	report, err := journal.shutdown(t.Context(), dispatch, runtime)
+	if err != nil || report.Status != "succeeded" || calls != 1 {
+		t.Errorf("shutdown(interrupted effect) = (%+v, %v), calls %d, want success after one inspection", report, err, calls)
+	}
+}
+
+// TestGuestShutdownRejectsAmbiguousInventory refuses to signal a workload
+// when Docker does not identify exactly one running primary container.
+func TestGuestShutdownRejectsAmbiguousInventory(t *testing.T) {
+	journal, err := loadLocalJournal(filepath.Join(t.TempDir(), "operation.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatch := ensureDispatch()
+	dispatch.Command = "shutdown-for-stop"
+	calls := 0
+	runtime := devContainer{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls++
+		if args[1] != "ls" {
+			t.Fatal("shutdown sent a signal despite ambiguous Docker inventory")
+		}
+		return []byte(strings.Repeat("1", 64) + "\n" + strings.Repeat("2", 64) + "\n"), nil
+	}}
+	report, err := journal.shutdown(t.Context(), dispatch, runtime)
+	if err != nil || report.Status != "failed" || report.Problem != "guest.shutdown_failed" || calls != 1 {
+		t.Errorf("shutdown(ambiguous inventory) = (%+v, %v), calls %d, want one inspection and a recorded failure", report, err, calls)
+	}
+}
+
 // TestGuestPollSendsCommittedLifecycleEvidence tests the real HTTP exchange
 // after reopening the durable journal written during an earlier poll.
 func TestGuestPollSendsCommittedLifecycleEvidence(t *testing.T) {
