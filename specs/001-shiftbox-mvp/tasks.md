@@ -102,7 +102,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 
 ### Setup and provider implementation
 
-- [ ] T043 [US1] Implement resumable protected setup state, first-administrator creation, one-time password output, password-change gate, and exact activation transitions proven by T030 in `internal/app/setup.go` and `cmd/shiftbox/setup.go`
+- [X] T043 [US1] Implement resumable protected setup state, first-administrator creation, one-time password output, password-change gate, and exact activation transitions proven by T030 in `internal/app/setup.go` and `cmd/shiftbox/setup.go`
 - [ ] T044 [US1] Implement SQLite bootstrap and PostgreSQL profile preflight/activation with separate ShiftBox/Dex ownership and no fallback after activation proven by T031 in `internal/database/profile.go` and `internal/app/activate.go`
 - [X] T045 [US1] Implement browser certificate chain/key/hostname validation and atomic configuration activation in `internal/config/certificate.go`
 - [X] T046 [US1] Build the pinned Packer Ubuntu 24.04 Minimal amd64 artifact with supervised guest agent and VS Code Browser, then implement immutable artifact import, manifest/digest/provenance validation, default selection, resource profiles, capacity budget, and provider capability admission proven by T033 in `platform/packer/shiftbox.pkr.hcl`, `platform/guest/`, `internal/release/catalog.go`, and `internal/workspace/capacity.go`
@@ -2769,6 +2769,10 @@ This checkpoint does not itself change the goal status.
   step resumption, validation, activation, retirement of setup sessions, fresh
   sign-in, safe command output, and startup refusal before activation or when
   the active database is missing.
+- T043 uses the protected setup listener and durable setup journal exercised
+  by T030. Native Chrome previously completed the same SQLite activation and
+  signed in afresh against the active controller. The exact-stack workspace
+  browser run still needs to continue from GitHub consent under T061.
 - T031 passed against SQLite and a fresh local PostgreSQL fixture over TLS.
   It covers setup restart, swapped schema owners, the exact bootstrap data
   allowed through activation, and refusal to reopen the retired SQLite
