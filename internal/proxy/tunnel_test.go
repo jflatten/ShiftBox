@@ -33,10 +33,16 @@ func TestTunnelFramesPreserveHTTPBytes(t *testing.T) {
 // TestTunnelServicesRejectRemoteTargets verifies that service declarations
 // cannot introduce network destinations or unsupported protocols.
 func TestTunnelServicesRejectRemoteTargets(t *testing.T) {
-	for _, target := range []string{"192.0.2.4:8080", "localhost:8080", "127.0.0.1:0", "[::]:8080"} {
+	for _, target := range []string{"192.0.2.4:8080", "localhost:8080", "127.0.0.1:0", "[::]:8080", "/var/run/docker.sock"} {
 		if _, err := ValidateTunnelServices([]TunnelService{{Key: "ide", Target: target, Protocols: []string{"http"}}}); err == nil {
 			t.Errorf("ValidateTunnelServices(%q) = nil, want rejection", target)
 		}
+	}
+	if _, err := ValidateTunnelServices([]TunnelService{{Key: "ide", Target: IDESocket, Protocols: []string{"http", "websocket"}}}); err != nil {
+		t.Errorf("ValidateTunnelServices(IDE socket) = %v, want success", err)
+	}
+	if _, err := ValidateTunnelServices([]TunnelService{{Key: "preview", Target: IDESocket, Protocols: []string{"http"}}}); err == nil {
+		t.Error("ValidateTunnelServices(preview pointing to IDE socket) = nil, want rejection")
 	}
 	if !ValidStreamHeader(StreamHeader{ServiceKey: "ide", RequestID: "fixture", Protocol: "websocket"}) ||
 		ValidStreamHeader(StreamHeader{ServiceKey: "ide", RequestID: "fixture", Protocol: "tcp"}) {

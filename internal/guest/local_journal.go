@@ -48,6 +48,7 @@ const (
 	problemInterrupted            = "guest.lifecycle_interrupted"
 	problemRepository             = "guest.repository_preparation_failed"
 	problemRequired               = "guest.required_setup_failed"
+	problemIDE                    = "guest.ide_start_failed"
 	problemRemaining              = "guest.later_setup_failed"
 )
 
@@ -178,7 +179,7 @@ func (s localJournalState) valid() bool {
 		return hasConnection && op.Problem == ""
 	case localFailed:
 		switch op.Problem {
-		case problemRequired, problemRepository:
+		case problemRequired, problemRepository, problemIDE:
 			return noConnection
 		case problemRemaining:
 			return hasConnection

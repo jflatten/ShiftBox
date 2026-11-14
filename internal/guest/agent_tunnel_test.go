@@ -20,8 +20,8 @@ func TestAgentTunnelReconnectAndStop(t *testing.T) {
 	supervisor := agentTunnel{
 		retry: time.Millisecond,
 		serve: func(ctx context.Context, address string, _ *tls.Config, _ string, generation int64, services []proxy.TunnelService) error {
-			if len(services) != 1 || services[0].Key != "ide" || services[0].Target != "127.0.0.1:3000" {
-				t.Error("supervisor did not advertise the browser IDE loopback service")
+			if len(services) != 1 || services[0].Key != "ide" || services[0].Target != "/run/shiftbox-ide/code-server.sock" {
+				t.Error("supervisor did not advertise the private browser IDE socket")
 			}
 			started <- tunnelOffer{address: address, generation: generation}
 			select {

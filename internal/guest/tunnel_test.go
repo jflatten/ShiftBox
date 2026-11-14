@@ -38,6 +38,11 @@ func TestGuestTunnelHTTP(t *testing.T) {
 			case "redirect.ide.test":
 				http.Redirect(w, r, "https://workspace.ide.test/", http.StatusFound)
 				return
+			case "project.ide.test":
+				if r.URL.Query().Get("folder") != "/workspaces/project" {
+					http.Redirect(w, r, "./?folder=/workspaces/project", http.StatusFound)
+					return
+				}
 			case "oversized.ide.test":
 				_, _ = w.Write([]byte(`<meta id="vscode-workbench-web-configuration" data-settings="{}">` +
 					strings.Repeat(" ", 512<<10)))
@@ -131,6 +136,9 @@ func TestGuestTunnelHTTP(t *testing.T) {
 	}
 	if err := tunnels.ProbeIDE(ctx, "workspace", 4, "workspace.ide.test"); err != nil {
 		t.Errorf("ProbeIDE(authenticated IDE service) = %v, want success", err)
+	}
+	if err := tunnels.ProbeIDE(ctx, "workspace", 4, "project.ide.test"); err != nil {
+		t.Errorf("ProbeIDE(project folder redirect) = %v, want success", err)
 	}
 	if err := tunnels.ProbeIDE(ctx, "workspace", 5, "workspace.ide.test"); err == nil {
 		t.Error("ProbeIDE(stale generation) = nil, want denial")

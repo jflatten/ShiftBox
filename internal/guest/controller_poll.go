@@ -235,7 +235,7 @@ func validConfigurationReport(report OperationReport) bool {
 			return report.Step == "devcontainer.lifecycle" && (report.Problem == problemRemaining || report.Problem == problemInterrupted)
 		}
 		return report.Step == "devcontainer.wait_for" &&
-			(report.Problem == problemRequired || report.Problem == problemInterrupted || report.Problem == problemRepository)
+			(report.Problem == problemRequired || report.Problem == problemInterrupted || report.Problem == problemRepository || report.Problem == problemIDE)
 	default:
 		return false
 	}

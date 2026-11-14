@@ -137,6 +137,8 @@ func configurationEvidence(ctx context.Context, db *sql.DB, op operation.Operati
 			return "", &operation.StepFailure{Detail: "The guest could not prepare the repository with the owner's Git authorization."}
 		case "guest.required_setup_failed":
 			return "", &operation.StepFailure{Detail: "Required Dev Container setup failed before the connection gate."}
+		case "guest.ide_start_failed":
+			return "", &operation.StepFailure{Detail: "The browser IDE could not start in the Dev Container."}
 		case "guest.later_setup_failed":
 			return "", &operation.StepFailure{Detail: "A Dev Container hook failed after the connection gate."}
 		case "guest.lifecycle_interrupted":

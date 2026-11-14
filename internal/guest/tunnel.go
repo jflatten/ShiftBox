@@ -103,7 +103,12 @@ func serveTunnelStream(ctx context.Context, stream *yamux.Stream, generation int
 	}
 	_ = stream.SetReadDeadline(time.Time{})
 	dialer := net.Dialer{Timeout: 5 * time.Second}
-	local, err := dialer.DialContext(ctx, "tcp", targets[header.ServiceKey])
+	target := targets[header.ServiceKey]
+	network := "tcp"
+	if header.ServiceKey == "ide" && target == proxy.IDESocket {
+		network = "unix"
+	}
+	local, err := dialer.DialContext(ctx, network, target)
 	if err != nil {
 		return
 	}
@@ -114,7 +119,9 @@ func serveTunnelStream(ctx context.Context, stream *yamux.Stream, generation int
 	go func() {
 		defer close(done)
 		_, _ = io.Copy(local, stream)
-		_ = local.(*net.TCPConn).CloseWrite()
+		if conn, ok := local.(interface{ CloseWrite() error }); ok {
+			_ = conn.CloseWrite()
+		}
 	}()
 	_, _ = io.Copy(stream, local)
 	_ = stream.SetReadDeadline(time.Now())

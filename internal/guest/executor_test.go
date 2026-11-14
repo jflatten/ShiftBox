@@ -423,10 +423,17 @@ func TestDevContainerLifecycle(t *testing.T) {
 		workspace:   workspace,
 		config:      ".devcontainer/go/devcontainer.json",
 		credentials: true,
+		ide:         true,
 		run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
 			calls = append(calls, append([]string{executable}, args...))
+			if executable == "/usr/bin/docker" {
+				return nil, nil
+			}
 			if args[0] == "up" {
 				return []byte(`{"outcome":"success","containerId":"` + id + `","mergedConfiguration":{"waitFor":"postStartCommand"}}`), nil
+			}
+			if args[0] == "exec" {
+				return nil, nil
 			}
 			return []byte(`{"outcome":"success"}`), nil
 		},
@@ -443,16 +450,48 @@ func TestDevContainerLifecycle(t *testing.T) {
 	wantCalls := [][]string{
 		{"/usr/local/bin/devcontainer", "up", "--workspace-folder", workspace, "--docker-path", "/usr/bin/docker",
 			"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", "shiftbox.container=development",
+			"--mount", "type=bind,source=/run/shiftbox-ide,target=/run/shiftbox-ide",
 			"--mount", "type=bind,source=/run/shiftbox-credentials,target=/run/shiftbox-credentials",
 			"--mount", "type=bind,source=/run/shiftbox-credentials/shiftbox,target=/usr/local/bin/shiftbox",
 			"--config", workspace + "/.devcontainer/go/devcontainer.json", "--skip-non-blocking-commands",
 			"--skip-post-attach", "--include-merged-configuration"},
+		{"/usr/bin/docker", "cp", "/usr/local/lib/shiftbox/code-server/.", id + ":/opt/shiftbox-code-server"},
+		{"/usr/local/bin/devcontainer", "exec", "--workspace-folder", workspace, "--docker-path", "/usr/bin/docker",
+			"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", "shiftbox.container=development",
+			"--config", workspace + "/.devcontainer/go/devcontainer.json", "--container-id", id,
+			"/bin/sh", "-c", startCodeServer},
 		{"/usr/local/bin/devcontainer", "run-user-commands", "--workspace-folder", workspace, "--docker-path", "/usr/bin/docker",
 			"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", "shiftbox.container=development",
 			"--config", workspace + "/.devcontainer/go/devcontainer.json", "--container-id", id, "--skip-post-attach"},
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Errorf("ensure() followed by finishSetup() invoked %q, want %q", calls, wantCalls)
+	}
+}
+
+// TestDevContainerIDEStartFailure keeps failed launches out of the proxy gate
+// and leaves the underlying command output out of the operation evidence.
+func TestDevContainerIDEStartFailure(t *testing.T) {
+	id := strings.Repeat("a", 64)
+	runtime := devContainer{workspace: t.TempDir(), ide: true, run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
+		if executable == "/usr/bin/docker" {
+			return nil, nil
+		}
+		if args[0] == "exec" {
+			return nil, errors.New("fixture command contains project data")
+		}
+		return []byte(`{"outcome":"success","containerId":"` + id + `","mergedConfiguration":{}}`), nil
+	}}
+	if connection, err := runtime.ensure(t.Context()); connection != (containerConnection{}) || err == nil || strings.Contains(err.Error(), "project data") {
+		t.Fatalf("ensure after IDE failure = %+v, %v, want no connection and bounded error", connection, err)
+	}
+	journal, err := loadLocalJournal(filepath.Join(t.TempDir(), "operation.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := journal.ensureDevelopment(t.Context(), ensureDispatch(), runtime)
+	if err != nil || report.Status != "failed" || report.Problem != "guest.ide_start_failed" || report.Evidence.WaitForReached || !validConfigurationReport(report) {
+		t.Fatalf("operation after IDE failure = %+v, %v, want a valid IDE startup failure", report, err)
 	}
 }
 

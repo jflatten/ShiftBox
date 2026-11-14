@@ -6,6 +6,8 @@ set -eu
 seed_device=/dev/disk/by-label/SHIFTBOX
 seed_directory=/run/shiftbox-enrollment
 chmod 0700 "$seed_directory"
+# Let the container's remote user create its private Unix socket.
+chmod 1777 /run/shiftbox-ide
 if [ -b "$seed_device" ]; then
     # Linux otherwise lowercases names on plain ISO9660 media.
     mount -t iso9660 -o ro,nosuid,nodev,noexec,map=off "$seed_device" "$seed_directory"

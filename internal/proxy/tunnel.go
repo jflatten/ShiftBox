@@ -23,9 +23,12 @@ const (
 	maxTunnelFrame         = 16 << 10
 )
 
+// IDESocket is the only Unix socket the guest tunnel may serve.
+const IDESocket = "/run/shiftbox-ide/code-server.sock"
+
 var tunnelServiceKey = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-// TunnelService declares a service bound to a loopback address in the guest.
+// TunnelService declares a service bound to a local endpoint in the guest.
 type TunnelService struct {
 	Key       string   `json:"key"`
 	Target    string   `json:"target"`
@@ -214,7 +217,8 @@ func (t *activeTunnel) authorize(ctx context.Context) error {
 	return nil
 }
 
-// ValidateTunnelServices admits only named HTTP and WebSocket loopback targets.
+// ValidateTunnelServices admits named HTTP and WebSocket loopback targets and
+// the dedicated IDE socket.
 func ValidateTunnelServices(input []TunnelService) ([]Service, error) {
 	if len(input) == 0 || len(input) > 64 {
 		return nil, errors.New("invalid guest tunnel service count")
@@ -222,7 +226,9 @@ func ValidateTunnelServices(input []TunnelService) ([]Service, error) {
 	services := make([]Service, 0, len(input))
 	for _, service := range input {
 		target, err := netip.ParseAddrPort(service.Target)
-		if err != nil || !target.Addr().IsLoopback() || target.Port() == 0 ||
+		local := err == nil && target.Addr().IsLoopback() && target.Port() != 0
+		ideSocket := service.Key == "ide" && service.Target == IDESocket
+		if (!local && !ideSocket) ||
 			len(service.Key) > 63 || !tunnelServiceKey.MatchString(service.Key) || len(service.Protocols) > 2 {
 			return nil, errors.New("invalid guest tunnel service")
 		}

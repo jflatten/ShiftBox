@@ -8,6 +8,8 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -30,6 +32,22 @@ func (t *Tunnels) ProbeIDE(ctx context.Context, workspace string, generation int
 	response, err := transport.RoundTrip(req)
 	if err != nil {
 		return fmt.Errorf("request IDE workbench: %w", err)
+	}
+	if response.StatusCode == http.StatusFound {
+		location := response.Header.Get("Location")
+		response.Body.Close()
+		target, err := url.Parse(location)
+		if err != nil || target.Host != "" || target.Scheme != "" || target.Fragment != "" ||
+			(target.Path != "/" && target.Path != "./" && target.Path != "") ||
+			!strings.HasPrefix(target.Query().Get("folder"), "/") {
+			return errors.New("guest IDE returned an unexpected redirect")
+		}
+		req = req.Clone(ctx)
+		req.URL.RawQuery = url.Values{"folder": {target.Query().Get("folder")}}.Encode()
+		response, err = transport.RoundTrip(req)
+		if err != nil {
+			return fmt.Errorf("request IDE project workbench: %w", err)
+		}
 	}
 	defer response.Body.Close()
 	kind, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))

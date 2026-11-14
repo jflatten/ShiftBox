@@ -2410,3 +2410,17 @@ This checkpoint does not itself change the goal status.
   progress, retry and activation acknowledgement with local fixtures.
 - T052 remains open for starting code-server in the project Dev Container.
   The complete launch journey and release evidence remain T039 and T061.
+
+### Browser IDE inside the Dev Container
+
+- T052 starts packaged code-server after the declared `waitFor` gate, using
+  the configured remote user and workspace directory. The guest tunnel uses
+  the dedicated Unix socket. ShiftBox owns browser authorization, and the
+  workbench's own preview proxy is disabled.
+- The workbench probe checks the editor document after at most one relative
+  project-folder redirect on the same authenticated tunnel. Tests cover
+  unrelated destinations, startup failure, and the separate proxy gate.
+- Code-server 4.145.2 and Dev Container CLI 0.90.0 returned the actual VS Code
+  workbench from a disposable amd64 Ubuntu Dev Container as `vscode`. The
+  Go race suite passed serially. T052 still needs the full UTM workspace
+  journey, project and home retention on rebuild, and repair entry and exit.

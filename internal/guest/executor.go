@@ -1,6 +1,9 @@
 package guest
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 type localEvidence struct {
 	ContainerID    string `json:"containerId,omitempty"`
@@ -73,6 +76,9 @@ func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDisp
 		next.Phase = localWaitReached
 		if effectErr != nil {
 			next.Phase, next.Problem = localFailed, problemRequired
+			if errors.Is(effectErr, errBrowserIDE) {
+				next.Problem = problemIDE
+			}
 		}
 	case localWaitReached:
 		next.Phase = localRemaining

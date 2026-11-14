@@ -18,6 +18,7 @@ const (
 	devContainerOutputMax = 1 << 20
 	developmentLabel      = "shiftbox.container=development"
 	credentialDirectory   = "/run/shiftbox-credentials"
+	ideDirectory          = "/run/shiftbox-ide"
 )
 
 var dockerContainerID = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -27,6 +28,7 @@ type devContainer struct {
 	config      string
 	repository  *repositoryPreparation
 	credentials bool
+	ide         bool
 	run         func(context.Context, string, ...string) ([]byte, error)
 }
 
@@ -63,7 +65,13 @@ func (d devContainer) ensure(ctx context.Context) (containerConnection, error) {
 	if !validWaitFor(waitFor) {
 		return containerConnection{}, errors.New("invalid Dev Container waitFor stage")
 	}
-	return containerConnection{ID: result.ID, WaitFor: waitFor}, nil
+	connection := containerConnection{ID: result.ID, WaitFor: waitFor}
+	if d.ide {
+		if err := d.startIDE(ctx, connection.ID); err != nil {
+			return containerConnection{}, err
+		}
+	}
+	return connection, nil
 }
 
 func (d devContainer) finishSetup(ctx context.Context, connection containerConnection) error {
@@ -77,13 +85,28 @@ func (d devContainer) finishSetup(ctx context.Context, connection containerConne
 }
 
 func (d devContainer) invoke(ctx context.Context, stage string, options ...string) (devContainerResult, error) {
+	output, err := d.command(ctx, stage, options...)
+	if err != nil {
+		return devContainerResult{}, err
+	}
+	var result devContainerResult
+	if len(output) > devContainerOutputMax || json.Unmarshal(output, &result) != nil || result.Outcome != "success" {
+		return devContainerResult{}, errors.New("Dev Container CLI " + stage + " did not report success")
+	}
+	return result, nil
+}
+
+func (d devContainer) command(ctx context.Context, stage string, options ...string) ([]byte, error) {
 	if !filepath.IsAbs(d.workspace) {
-		return devContainerResult{}, errors.New("invalid Dev Container workspace path")
+		return nil, errors.New("invalid Dev Container workspace path")
 	}
 	// Use the same label for creation and continuation so the CLI does not
 	// append a second copy of project hooks to the saved container metadata.
 	args := []string{stage, "--workspace-folder", d.workspace, "--docker-path", "/usr/bin/docker",
 		"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", developmentLabel}
+	if stage == "up" && d.ide {
+		args = append(args, "--mount", "type=bind,source="+ideDirectory+",target="+ideDirectory)
+	}
 	if stage == "up" && d.credentials {
 		// Mount the directory so an agent restart can replace its listener.
 		// The command file is a runtime copy, separate from the agent binary.
@@ -93,7 +116,7 @@ func (d devContainer) invoke(ctx context.Context, stage string, options ...strin
 	}
 	if d.config != "" {
 		if !validDevContainerPath(d.config) {
-			return devContainerResult{}, errors.New("invalid Dev Container configuration path")
+			return nil, errors.New("invalid Dev Container configuration path")
 		}
 		args = append(args, "--config", filepath.Join(d.workspace, d.config))
 	}
@@ -104,15 +127,11 @@ func (d devContainer) invoke(ctx context.Context, stage string, options ...strin
 	output, err := run(ctx, devContainerCLI, append(args, options...)...)
 	if err != nil {
 		if ctx.Err() != nil {
-			return devContainerResult{}, ctx.Err()
+			return nil, ctx.Err()
 		}
-		return devContainerResult{}, errors.New("Dev Container CLI " + stage + " failed")
+		return nil, errors.New("Dev Container CLI " + stage + " failed")
 	}
-	var result devContainerResult
-	if len(output) > devContainerOutputMax || json.Unmarshal(output, &result) != nil || result.Outcome != "success" {
-		return devContainerResult{}, errors.New("Dev Container CLI " + stage + " did not report success")
-	}
-	return result, nil
+	return output, nil
 }
 
 func validDevContainerPath(path string) bool {
