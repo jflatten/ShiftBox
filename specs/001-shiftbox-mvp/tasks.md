@@ -216,7 +216,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T105 [P] [US4] Write failing restore validation tests for wrong password, truncation, digest mismatch, incompatible release/schema, mismatched key, wrong host, non-empty/unowned target, and zero mutation before validation in `internal/backup/restore_test.go`
 - [X] T106 [P] [US4] Write failing recovery tests for invalidated sessions/origin/enrollment grants/OAuth state, provider inventory matches/conflicts, gated workspace entry/destructive actions, identity/authorization review, and explicit activation in `internal/backup/recovery_test.go`
 - [X] T107 [P] [US4] Write failing backup/restore API and CLI contract tests for password handling, stable JSON/exit codes, operation steps, validation IDs, separate activation, and no protected data in diagnostics in `tests/contract/backup_restore_test.go`
-- [ ] T108 [P] [US4] Write failing UI and Playwright tests for backup scope copy, cleared password state, ordered Stepper, validation findings, recovery gating, invalidated authority, provider conflicts, and keyboard focus in `ui/features/recovery/recovery.test.tsx` and `ui/tests/e2e/backup-recovery.spec.ts`
+- [X] T108 [P] [US4] Write failing UI and Playwright tests for backup scope copy, cleared password state, ordered Stepper, validation findings, recovery gating, invalidated authority, provider conflicts, and keyboard focus in `ui/features/recovery/recovery.test.tsx` and `ui/tests/e2e/backup-recovery.spec.ts`
 
 ### Models and implementation
 
@@ -226,7 +226,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T112 [US4] Implement recovery-mode gate, stale-authority invalidation, identity review, provider reconciliation, workspace conflict decisions, authorization/retention review, and explicit normal-service activation proven by T106 in `internal/backup/recovery.go` and `internal/auth/recovery_gate.go`
 - [X] T113 [US4] Implement backup, restore-validation, and recovery-activation OpenAPI handlers with durable Operation steps in `internal/web/backup_routes.go` and `internal/web/recovery_routes.go`
 - [X] T114 [US4] Implement `shiftbox backup`, `shiftbox restore validate`, and `shiftbox restore activate` with TTY/stdin password handling, human/JSON output, and stable exits proven by T107 in `cmd/shiftbox/backup.go` and `cmd/shiftbox/restore.go`
-- [ ] T115 [US4] Implement Mantine Backup & Recovery forms, scope warnings, cleared password fields, operation Stepper, validation findings, and gated recovery review in `ui/features/recovery/backup.tsx`, `ui/features/recovery/restore.tsx`, `ui/features/recovery/review.tsx`, and `ui/app/recovery/page.tsx`
+- [X] T115 [US4] Implement Mantine Backup & Recovery forms, scope warnings, cleared password fields, operation Stepper, validation findings, and gated recovery review in `ui/features/recovery/backup.tsx`, `ui/features/recovery/restore.tsx`, `ui/features/recovery/review.tsx`, and `ui/app/recovery/page.tsx`
 - [ ] T116 [US4] Add and run the Go recovery acceptance test together with the T108 Playwright journey, then record separate recovery evidence without workspace-disk claims in `tests/acceptance/backup_recovery_test.go` and `documentation/validation/backup-recovery.md`
 
 **Checkpoint**: User Story 4 safely restores owned management state while stale authority and destructive actions remain blocked until reviewed.
@@ -1788,7 +1788,14 @@ This checkpoint does not itself change the goal status.
   listener issues local administrator review sessions and serves review
   and activation routes without guest listeners or retention workers.
   Review activation closes that listener and reruns startup checks.
-  Live recovery acceptance remains open.
+  T106 recovery tests verify that ready review still blocks stale workspace
+  credentials and overdue deletion, provider mismatches block review, and
+  explicit activation revokes the recovery session.
+- T108 and T115 passed the recovery UI unit tests, static build, and both
+  Chrome journeys with API fixtures. A native SQLite controller also
+  completed browser backup and validation, protected CLI restore, and
+  browser review and activation with a disposable empty workspace inventory.
+  T116 still needs the populated workspace acceptance run.
 - T113 registers restore validation on the active router and keeps
   review and activation on the recovery listener. Validation uses
   the current installation identity and retained key, records the

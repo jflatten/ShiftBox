@@ -36,6 +36,18 @@ test('links authorized administrators to People', () => {
   expect(screen.getByRole('link', { name: 'People' })).toHaveAttribute('href', '/users/');
 });
 
+// Restored installations expose the review link while hiding normal controls.
+test('links normal administrators and recovery reviewers to Backup & Recovery', () => {
+  const session = { role: 'administrator' as const, mode: 'normal', installationState: 'active', permissions: ['backup.create'] };
+  const shell = ({ mode, installationState, permissions }: typeof session) =>
+    <MantineProvider><ShiftBoxShell session={{ ...session, mode, installationState, permissions }} alerts={[]}><h1>Overview</h1></ShiftBoxShell></MantineProvider>;
+  const { rerender } = render(shell(session));
+  expect(screen.getByRole('link', { name: 'Backup & Recovery' })).toHaveAttribute('href', '/recovery/');
+  rerender(shell({ ...session, mode: 'recovery_review', installationState: 'recovery', permissions: ['recovery.review'] }));
+  expect(screen.getByRole('link', { name: 'Backup & Recovery' })).toBeVisible();
+  expect(screen.queryByRole('link', { name: 'Workspaces' })).not.toBeInTheDocument();
+});
+
 // An overdue organizational session still offers renewal, while protected
 // navigation and the page body wait for successful upstream authorization.
 test('gates overdue organizational sessions', () => {

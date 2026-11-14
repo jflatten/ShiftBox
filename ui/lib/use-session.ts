@@ -6,6 +6,7 @@ interface SessionView extends Omit<ShellSession, 'role'> {
   user: { id: string; role: ShellSession['role']; mustChangePassword?: boolean };
   csrfToken: string;
   organizationSecretScopeId?: string;
+  recoveryReviewId?: string;
 }
 
 /** Read the current management session without retaining stale authority after a failed refresh. */

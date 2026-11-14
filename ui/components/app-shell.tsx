@@ -36,6 +36,9 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
   const normal = !signedOut && session?.mode === 'normal' && session.installationState === 'active' && !renewalRequired;
   const account = (normal && (permitted('git.manage') || permitted('secret.manage_user'))) ||
     (!signedOut && !renewalRequired && session?.installationState === 'active' && permitted('session.change_password'));
+  const recovery = !signedOut && session?.mode === 'recovery_review' &&
+    session.installationState === 'recovery' && permitted('recovery.review');
+  const backup = normal && (permitted('backup.create') || permitted('restore.validate'));
   return (
     <AppShell header={{ height: 72 }} navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="lg">
       <AppShell.Header>
@@ -52,6 +55,7 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
         {!signedOut && !renewalRequired && session?.role === 'administrator' && permitted('infrastructure.view') ? <NavLink href="/infrastructure/" label="Infrastructure" /> : null}
         {normal && session?.role === 'administrator' && permitted('user.list') ? <NavLink href="/users/" label="People" /> : null}
         {normal && session?.role === 'administrator' && permitted('audit.list') ? <NavLink href="/audit/" label="Audit" /> : null}
+        {backup || recovery ? <NavLink href="/recovery/" label="Backup & Recovery" /> : null}
       </AppShell.Navbar>
       <AppShell.Main>
         <Stack gap="lg">
