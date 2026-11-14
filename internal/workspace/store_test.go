@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -27,29 +28,8 @@ func TestCapacityConfiguration(t *testing.T) {
 func checkCapacityConfiguration(t *testing.T, profile string) {
 	t.Helper()
 	ctx := context.Background()
-	cfg := database.Config{Profile: profile, SQLitePath: filepath.Join(t.TempDir(), "workspace.db")}
-	if profile == "postgres" {
-		cfg.PostgresURI = os.Getenv("SHIFTBOX_TEST_CAPACITY_POSTGRES_URI")
-		if cfg.PostgresURI == "" {
-			t.Skip("requires a disposable PostgreSQL database")
-		}
-		cfg.Schema = "shiftbox_test"
-	}
-	db, err := database.Open(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
-	if err := database.Migrate(ctx, db, profile); err != nil {
-		t.Fatal(err)
-	}
-	id := "00000000-0000-4000-8000-000000000023"
-	const stamp = "2026-11-14T00:00:00Z"
-	if _, err := db.ExecContext(ctx, `INSERT INTO installations
-		(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version)
-		VALUES($1,'active','ShiftBox',$3,'https://management.test','{workspace}.ide.test','{service}--{workspace}.preview.test','test','test',$2,$2,1)`, id, stamp, profile); err != nil {
-		t.Fatal(err)
-	}
+	db := openWorkspaceDatabase(t, profile)
+	id := testInstallation
 	store := NewStore(db)
 	caps := provider.Capabilities{
 		Minimum: provider.Resources{CPU: 1, MemoryBytes: 512 << 20, DiskBytes: 10 << 20},
@@ -74,13 +54,21 @@ func checkCapacityConfiguration(t *testing.T, profile string) {
 		t.Errorf("oversized profile = %v, want unsupported", err)
 	}
 	budget := Allocation{CPU: 8, MemoryMiB: 8192, DiskMiB: 300}
-	now, err := time.Parse(time.RFC3339, stamp)
+	now, err := time.Parse(time.RFC3339, testStamp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SetCapacityBudget(ctx, id, budget, 0, "admin", now); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if _, err := db.Exec("DELETE FROM capacity_budgets WHERE installation_id=$1", id); err != nil {
+			t.Errorf("remove capacity fixture: %v", err)
+		}
+		if _, err := db.Exec("DELETE FROM resource_profiles WHERE id=$1", intended.ID); err != nil {
+			t.Errorf("remove resource profile fixture: %v", err)
+		}
+	})
 	budget.CPU--
 	if err := store.SetCapacityBudget(ctx, id, budget, 1, "admin", now); err != nil {
 		t.Fatal(err)
@@ -93,4 +81,36 @@ func checkCapacityConfiguration(t *testing.T, profile string) {
 	if err != nil || version != 2 || persisted.CPU != 7 {
 		t.Errorf("stored budget = %+v, version %d, %v, want 7 CPU and version 2", persisted, version, err)
 	}
+}
+
+const (
+	testInstallation = "00000000-0000-4000-8000-000000000023"
+	testStamp        = "2026-11-14T00:00:00Z"
+)
+
+func openWorkspaceDatabase(t *testing.T, profile string) *sql.DB {
+	t.Helper()
+	ctx := context.Background()
+	cfg := database.Config{Profile: profile, SQLitePath: filepath.Join(t.TempDir(), "workspace.db")}
+	if profile == "postgres" {
+		cfg.PostgresURI = os.Getenv("SHIFTBOX_TEST_CAPACITY_POSTGRES_URI")
+		if cfg.PostgresURI == "" {
+			t.Skip("requires a disposable PostgreSQL database")
+		}
+		cfg.Schema = "shiftbox_test"
+	}
+	db, err := database.Open(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := database.Migrate(ctx, db, profile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO installations
+		(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version)
+		VALUES($1,'active','ShiftBox',$3,'https://management.test','{workspace}.ide.test','{service}--{workspace}.preview.test','test','test',$2,$2,1) ON CONFLICT(id) DO NOTHING`, testInstallation, testStamp, profile); err != nil {
+		t.Fatal(err)
+	}
+	return db
 }

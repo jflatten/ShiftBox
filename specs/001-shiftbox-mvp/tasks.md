@@ -1203,3 +1203,15 @@ This checkpoint does not itself change the goal status.
 - Capacity, catalog, and migration race tests passed on SQLite and disposable
   TLS PostgreSQL. Durable reservations and lifecycle integration remain
   pending.
+
+### Workspace launch state and capacity reservations
+
+- Added workspace snapshots and reservation tables in both profiles. The
+  schema freezes launch inputs and makes deletion a terminal desired state.
+- Start admission can reserve capacity in the same transaction as its
+  operation. It serializes budget checks across workspaces and reuses retained
+  disk on restart. Provider observations are fenced by instance, ownership,
+  generation, and reservation time before releasing resources.
+- SQLite and TLS PostgreSQL race tests cover competing starts, transaction
+  rollback, retained disk, stale observations, and partial deletion.
+  The workspace launch API and provider reconciliation still need wiring.
