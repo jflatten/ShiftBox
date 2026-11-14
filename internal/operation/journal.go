@@ -225,7 +225,7 @@ func (j *Journal) StartStepInTx(ctx context.Context, tx *sql.Tx, claim Claim, in
 			return ErrConflict
 		}
 		for _, step := range op.Steps[:index] {
-			if step.Status != "succeeded" && step.Status != "skipped" {
+			if step.Status != "succeeded" && step.Status != "skipped" && step.Status != "failed" {
 				return ErrConflict
 			}
 		}
@@ -264,6 +264,13 @@ func (j *Journal) CompleteStepInTx(ctx context.Context, tx *sql.Tx, claim Claim,
 			op.Status = "succeeded"
 			op.FinishedAt = &now
 			op.CurrentStep = nil
+			for _, step := range op.Steps {
+				if step.Status == "failed" {
+					op.Status = "failed"
+					op.CurrentStep = &step.Key
+					break
+				}
+			}
 		}
 		return nil
 	})

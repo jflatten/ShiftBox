@@ -1728,7 +1728,9 @@ This checkpoint does not itself change the goal status.
   protocol at verification. The maintenance power executor can reserve
   capacity and boot the exact retained VM while its desired state stays
   stopped, then release compute after a provider-confirmed graceful stop.
-  Recovery for expired guest identities, restoration after a failed update,
+  Failed staging or activation now preserves the failed step, skips
+  remaining update steps, and still performs the graceful stop before
+  settling the target as failed. Recovery for expired guest identities,
   production worker wiring, and native signed-update validation remain open
   under T095.
 

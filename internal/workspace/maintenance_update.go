@@ -56,7 +56,7 @@ func (e maintenanceUpdateExecutor) Observe(ctx context.Context, op operation.Ope
 	case "maintenance_stage":
 		switch staged {
 		case "failed":
-			return "", false, &operation.StepFailure{Detail: "The guest could not stage the signed update. Check the release files and the guest's publisher key."}
+			return "", false, maintenanceUpdateFailure(op, "The guest could not stage the signed update. Check the release files and the guest's publisher key.")
 		case "succeeded":
 			update, err := e.load(ctx, product)
 			if err != nil {
@@ -64,14 +64,14 @@ func (e maintenanceUpdateExecutor) Observe(ctx context.Context, op operation.Ope
 			}
 			if update.Metadata.Release != product || update.Metadata.Protocol != e.protocol ||
 				digest != hex.EncodeToString(update.Metadata.Digest[:]) {
-				return "", false, &operation.StepFailure{Detail: "The guest staged a different binary from the pinned release."}
+				return "", false, maintenanceUpdateFailure(op, "The guest staged a different binary from the pinned release.")
 			}
 			return "The authenticated guest staged the pinned binary.", true, nil
 		}
 	case "maintenance_activate":
 		switch activation {
 		case "failed":
-			return "", false, &operation.StepFailure{Detail: "The guest rolled back the update. Review the release before retrying."}
+			return "", false, maintenanceUpdateFailure(op, "The guest rolled back the update. Review the release before retrying.")
 		case "succeeded":
 			return "The guest confirmed the supervisor trial.", true, nil
 		}
@@ -81,6 +81,17 @@ func (e maintenanceUpdateExecutor) Observe(ctx context.Context, op operation.Ope
 		}
 	}
 	return "", false, nil
+}
+
+func maintenanceUpdateFailure(op operation.Operation, detail string) *operation.StepFailure {
+	failure := &operation.StepFailure{Detail: detail}
+	for _, step := range op.Steps {
+		if step.Key == "maintenance_restore" && step.Status == "pending" {
+			failure.CleanupStep = step.Key
+			break
+		}
+	}
+	return failure
 }
 
 func (e maintenanceUpdateExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {

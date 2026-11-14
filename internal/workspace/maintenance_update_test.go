@@ -71,14 +71,33 @@ func TestMaintenancePowerRetainsDesiredState(t *testing.T) {
 		}
 	}
 	assertPower("running")
-	// The receipt executor has its own tests. Advance directly to the
-	// persisted power restoration step here.
-	maintenanceExec(t, db, `UPDATE operation_steps SET status='succeeded' WHERE operation_id=$1 AND step_key<>'maintenance_restore'`, id)
+	if err := worker.RunOnce(ctx, id); !errors.As(err, &waiting) {
+		t.Fatalf("staging without a receipt = %v, want waiting", err)
+	}
+	maintenanceExec(t, db, `INSERT INTO guest_dispatches(operation_id,dispatch_version,status,problem)
+		VALUES($1,1,'failed','guest.update_stage_failed')`, id)
+	if err := worker.RunOnce(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	assertPower("running")
+	checkReservation(t, db, "retained", "reserved", "reserved")
+	op, err := journal.Get(ctx, id)
+	if err != nil || op.Status != "waiting" || op.Steps[1].Status != "failed" ||
+		op.Steps[2].Status != "skipped" || op.Steps[3].Status != "skipped" {
+		t.Fatalf("failed staging before restoration = %+v (%v), want durable failure with remaining update steps skipped", op, err)
+	}
+	// A newly constructed worker must finish the remaining power step.
+	worker = store.MaintenanceUpdateWorker(journal, testInstallation, "1", nil)
+	worker.Executor = executor
 	if err := worker.RunOnce(ctx, id); err != nil {
 		t.Fatal(err)
 	}
 	assertPower("stopped")
 	checkReservation(t, db, "retained", "released", "reserved")
+	op, err = journal.Get(ctx, id)
+	if err != nil || op.Status != "failed" || op.Steps[1].Detail == "" || op.Steps[4].Status != "succeeded" {
+		t.Errorf("result after restoring power = %+v (%v), want original failure and successful restoration", op, err)
+	}
 }
 
 // TestMaintenanceUpdateWorker advances on durable matching receipts alone

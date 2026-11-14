@@ -19,6 +19,8 @@ type Executor interface {
 // StepFailure is a terminal effect outcome with a public, bounded description.
 type StepFailure struct {
 	Detail string
+	// CleanupStep names a later step that must run before the failure settles.
+	CleanupStep string
 }
 
 func (f *StepFailure) Error() string { return f.Detail }
@@ -85,7 +87,9 @@ func (w *Worker) RunOnce(ctx context.Context, id string) error {
 	}
 	if err != nil {
 		if failure, ok := errors.AsType[*StepFailure](err); ok {
-			return w.Journal.failStep(ctx, claim, index, failure.Detail)
+			return database.Transaction(ctx, w.Journal.db, func(tx *sql.Tx) error {
+				return w.Journal.failStepInTx(ctx, tx, claim, index, *failure)
+			})
 		}
 		detail := "Waiting for a verified observation before retrying."
 		if waiting, ok := errors.AsType[*StepWaiting](err); ok && waiting.Detail != "" && len(waiting.Detail) <= 4096 {
@@ -103,14 +107,13 @@ func (w *Worker) RunOnce(ctx context.Context, id string) error {
 	return nil
 }
 
-func (j *Journal) failStep(ctx context.Context, claim Claim, index int, detail string) error {
-	return database.Transaction(ctx, j.db, func(tx *sql.Tx) error {
-		return j.FailStepInTx(ctx, tx, claim, index, detail)
-	})
-}
-
 // FailStepInTx records a terminal failure with related domain state.
 func (j *Journal) FailStepInTx(ctx context.Context, tx *sql.Tx, claim Claim, index int, detail string) error {
+	return j.failStepInTx(ctx, tx, claim, index, StepFailure{Detail: detail})
+}
+
+func (j *Journal) failStepInTx(ctx context.Context, tx *sql.Tx, claim Claim, index int, failure StepFailure) error {
+	detail := failure.Detail
 	if detail == "" || len(detail) > 4096 {
 		return errors.New("failure requires bounded non-secret evidence")
 	}
@@ -120,9 +123,22 @@ func (j *Journal) FailStepInTx(ctx context.Context, tx *sql.Tx, claim Claim, ind
 		}
 		op.Steps[index].Status = "failed"
 		op.Steps[index].Detail = detail
-		op.Status = "failed"
 		op.leaseOwner = ""
 		op.leaseExpiresAt = time.Time{}
+		if failure.CleanupStep != "" {
+			for i := index + 1; i < len(op.Steps); i++ {
+				if op.Steps[i].Status != "pending" {
+					return ErrConflict
+				}
+				if op.Steps[i].Key == failure.CleanupStep {
+					op.Status = "waiting"
+					return nil
+				}
+				op.Steps[i].Status = "skipped"
+			}
+			return ErrConflict
+		}
+		op.Status = "failed"
 		now := j.now().UTC()
 		op.FinishedAt = &now
 		return nil
