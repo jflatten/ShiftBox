@@ -1,20 +1,23 @@
 'use client';
 
-import { useRef, useState } from 'react';
-import { Button, Group, Stack, Text, TextInput, Title } from '@mantine/core';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Button, Group, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
 import { useOperation } from '../../lib/use-operation';
+import type { components } from '../../lib/api-types';
 
 const endpoint = '/api/v1/admin/maintenance';
-type Campaign = { id: string; releaseId: string; deadline: string; state: string; operationId: string };
+const campaignQuery = ['maintenance-campaigns'];
+type Campaign = components['schemas']['MaintenanceCampaign'];
 
 export function Maintenance({ csrfToken }: { csrfToken: string }) {
   const campaigns = useQuery<Campaign[]>({
-    queryKey: ['maintenance-campaigns'],
+    queryKey: campaignQuery,
+    refetchInterval: query => query.state.data?.some(campaign => campaign.state === 'scheduled' || campaign.state === 'active') ? 5000 : false,
     gcTime: 0,
     queryFn: async ({ signal }) => {
       const response = await fetch(endpoint, { signal, cache: 'no-store' });
@@ -83,13 +86,25 @@ export function Maintenance({ csrfToken }: { csrfToken: string }) {
           </Group>
         ))}
       </Stack> : null}
+      {campaigns.data?.[0]?.state === 'blocked' && !campaigns.isError ? (
+        <Alert title="Maintenance needs attention" color="orange">
+          Review the failed operation, then schedule a replacement campaign or retire the affected workspace.
+        </Alert>
+      ) : null}
       {selected ? <CampaignProgress key={selected} id={selected} /> : null}
     </Stack>
   );
 }
 
 function CampaignProgress({ id }: { id: string }) {
+  const client = useQueryClient();
   const progress = useOperation(id);
+  const status = progress.data?.status;
+  useEffect(() => {
+    if (status === 'succeeded' || status === 'failed' || status === 'cancelled') {
+      void client.invalidateQueries({ queryKey: campaignQuery, exact: true });
+    }
+  }, [client, status]);
   if (progress.accessDenied) return <Text role="alert">Maintenance progress is no longer available to this session.</Text>;
   if (progress.isError) return <Group>
     <Text role="alert">Maintenance progress is unavailable.</Text>

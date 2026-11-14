@@ -1755,6 +1755,9 @@ This checkpoint does not itself change the goal status.
   workspace generation or the provider verifies removal.
   A replacement operation can retry the same signed digest after rollback.
   Redelivery of a failed operation only reports the recorded rollback.
+  T101 refreshes the campaign list while work is scheduled or active and
+  when a viewed workflow settles. The latest blocked campaign explains
+  the administrator's replacement and retirement options.
   T120 reopens the controller database after staging and activation receipt
   writes with an outstanding worker lease. Both confirmed activation and
   rollback settle the same persisted target and campaign after restart.

@@ -17,16 +17,21 @@ test('schedules a campaign and presents its controller operation', async () => {
   const deadline = '2099-01-01T12:30';
   const campaign = { id: 'fixture', releaseId: 'release-two', deadline: new Date(deadline).toISOString(), state: 'scheduled', operationId: 'fixture' };
   let scheduled = false;
+  let operationRead = false;
   const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
     if (input === '/api/v1/admin/maintenance' && init?.method === 'POST') {
       scheduled = true;
       return { ok: true, json: async () => ({ id: campaign.id }) } as Response;
     }
-    if (input === '/api/v1/admin/maintenance') return { ok: true, json: async () => scheduled ? [campaign] : [] } as Response;
-    if (input === '/api/v1/operations/fixture') return { ok: true, json: async () => ({
-      id: campaign.id, status: 'succeeded', version: 2,
-      steps: [{ key: 'update_guests', index: 0, label: 'Update retained workspaces', status: 'succeeded' }],
-    }) } as Response;
+    if (input === '/api/v1/admin/maintenance') return { ok: true, json: async () =>
+      scheduled ? [{ ...campaign, state: operationRead ? 'completed' : 'scheduled' }] : [] } as Response;
+    if (input === '/api/v1/operations/fixture') return { ok: true, json: async () => {
+      operationRead = true;
+      return {
+        id: campaign.id, status: 'succeeded', version: 2,
+        steps: [{ key: 'update_guests', index: 0, label: 'Update retained workspaces', status: 'succeeded' }],
+      };
+    } } as Response;
     throw new Error('unexpected request');
   });
   globalThis.fetch = fetch;
@@ -44,6 +49,7 @@ test('schedules a campaign and presents its controller operation', async () => {
     headers: expect.objectContaining({ 'X-CSRF-Token': 'fixture', 'Idempotency-Key': expect.any(String) }),
   }));
   expect(await screen.findByRole('button', { name: 'Update retained workspaces: Completed' })).toBeVisible();
+  expect(await screen.findByText(/release-two · completed/i)).toBeVisible();
 });
 
 // Keyboard users can reopen a blocked campaign and inspect reached steps
@@ -70,6 +76,7 @@ test('keeps a blocked maintenance workflow inspectable by keyboard', async () =>
   const user = userEvent.setup();
   render(<Providers><Maintenance csrfToken="fixture" /></Providers>);
   const view = await screen.findByRole('button', { name: 'View progress' });
+  expect(screen.getByText(/schedule a replacement campaign/i)).toBeVisible();
   await user.tab();
   expect(screen.getByRole('textbox', { name: /target release/i })).toHaveFocus();
   await user.tab();
