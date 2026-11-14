@@ -53,7 +53,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T013 [P] Write failing session, authorization-matrix, Dex, and OIDC tests for opaque token digests, membership/session gates, every route-to-action mapping in `contracts/authorization-matrix.md`, owner/non-owner/admin exact-grant decisions, CSRF, exact Origin, stable upstream identity, supervisor failure, and revoke-before-close ordering in `internal/auth/session_test.go`, `internal/auth/policy_test.go`, and `internal/identity/dex_test.go`
 - [ ] T014 [P] Write failing HTTP/proxy boundary tests for RFC 3339 timestamps, UUIDs, stable problems, request IDs, conditional versions, idempotency keys, body limits, unknown-field rejection, management-header stripping, service allowlisting, and OpenAPI route/action drift in `internal/web/problem_test.go`, `internal/web/middleware_test.go`, `internal/proxy/sanitize_test.go`, and `tests/contract/openapi_routes_test.go`
 - [X] T015 [P] Write failing SSE tests for ordered event IDs, Last-Event-ID replay, sequence-gap recovery, authorization recheck, and immediate closure on revocation in `internal/web/events_test.go`
-- [ ] T016 [P] Write failing UI component tests for server-derived Mantine Stepper state, disabled future steps, retained failure history, accessible labels, live status semantics, and refetch on SSE gaps in `ui/components/workflow-stepper.test.tsx`
+- [X] T016 [P] Write failing UI component tests for server-derived Mantine Stepper state, disabled future steps, retained failure history, accessible labels, live status semantics, and refetch on SSE gaps in `ui/components/workflow-stepper.test.tsx`
 
 ### Shared implementation
 
@@ -69,7 +69,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T026 Implement authorized operation SSE replay and connection closure proven by T015 in `internal/web/events.go` and `internal/auth/revocation.go`
 - [X] T027 [P] Implement installation ECDSA P-256 CA loading plus TLS 1.3 server/client certificate verification primitives without guest enrollment behavior in `internal/guest/ca.go` and `internal/guest/tls.go`
 - [X] T028 Implement management/IDE/preview connection registries and a reverse-proxy sanitizer that strips ShiftBox cookies, CSRF tokens, origin grants, and hop-by-hop headers in `internal/proxy/registry.go` and `internal/proxy/sanitize.go`
-- [ ] T029 Implement the static Mantine AppShell, ShiftBox theme/branding, role-aware navigation, persistent Alert region, TanStack Query client with no persistence, API problem view, and reusable WorkflowStepper proven by T016 in `ui/app/layout.tsx`, `ui/app/providers.tsx`, `ui/components/app-shell.tsx`, `ui/components/workflow-stepper.tsx`, and `ui/lib/query-client.ts`
+- [X] T029 Implement the static Mantine AppShell, ShiftBox theme/branding, role-aware navigation, persistent Alert region, TanStack Query client with no persistence, API problem view, and reusable WorkflowStepper proven by T016 in `ui/app/layout.tsx`, `ui/app/providers.tsx`, `ui/components/app-shell.tsx`, `ui/components/workflow-stepper.tsx`, and `ui/lib/query-client.ts`
 
 **Checkpoint**: Database profiles, protected values, authentication primitives, durable operations, HTTP boundaries, SSE, connection revocation, and the visible workflow shell are testable shared foundations.
 
@@ -513,3 +513,19 @@ This checkpoint does not itself change the goal status.
   newly created schemas; the existing development database was not upgraded or
   represented as upgraded. Installation/configuration activation constraints and
   remaining foundation authorization work are still pending.
+
+### Shared UI foundation completed
+
+- T016 is complete: component tests now exercise the real operation query hook and
+  visible Mantine Stepper together through a missing event, verifying authoritative
+  refresh, retained failure history, disabled future steps, and live status labels.
+  Earlier tests were written failing before the Stepper and event/query code.
+- T029 is complete at its shared-foundation scope: static layout/providers, branded
+  AppShell, session-aware navigation, persistent alerts, API problem view, in-memory
+  query client, and reusable workflow component are implemented and tested.
+- All 19 UI tests pass; TypeScript and the production static export pass. Prior
+  runtime MCP/browser/accessibility evidence covers the shell/error view. This is
+  not completion of sign-in, destination pages, actual workspace workflows, or
+  end-to-end Go/SSE browser validation; those remain in later user-story tasks.
+- 24 tasks are now complete. Remaining foundation tasks: T013, T014, T018, T023,
+  and T025. The development server (91329) was stopped before the final build.
