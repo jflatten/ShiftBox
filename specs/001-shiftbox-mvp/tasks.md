@@ -640,3 +640,20 @@ This checkpoint does not itself change the goal status.
   listener activation, and runtime authority switching remain consuming flow
   requirements. T018 remains incomplete; these records alone do not activate
   an installation or claim a runnable product.
+
+### Transactional management authorization handler
+
+- Added a guarded handler that reads current session authority (database-backed
+  by default), checks exact Origin/CSRF for mutations, resolves controller-owned
+  resource context, evaluates policy, records any required access audit, and
+  persists intent inside one transaction. Responses run only after commit.
+- Fixed-action routes reject resolver/action disagreement. Missing/failed audit
+  storage denies administrator connections; failed later intent rolls back the
+  audit together with the intent. Resolution callbacks never grant authority by
+  themselves. External effects are forbidden inside the transaction callbacks.
+- Tests cover disabled membership, hostile origin, route mismatch, intent
+  rollback, response-after-commit, and required audit failure/rollback/success.
+  Web/auth race suites, formatting, and vet pass (HTTP tests require loopback).
+- Route registration, concrete contextual resolvers, durable audit schema/store,
+  and real entry-grant/proxy flows remain unfinished. T013/T023/T025 are not
+  marked complete by this handler boundary alone.

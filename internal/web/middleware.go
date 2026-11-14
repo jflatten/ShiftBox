@@ -119,12 +119,22 @@ func MutationGuard(origin string, session func(*http.Request) (auth.Session, err
 			WriteProblem(w, RequestID(r.Context()), Problem{Status: 401, Code: "auth.required", Title: "Sign in to continue"})
 			return
 		}
-		origins := r.Header.Values("Origin")
-		tokens := r.Header.Values("X-CSRF-Token")
-		if len(origins) != 1 || origins[0] != origin || len(tokens) != 1 || !auth.ValidCSRF(current, tokens[0]) {
-			WriteProblem(w, RequestID(r.Context()), Problem{Status: 403, Code: "auth.invalid_origin_or_csrf", Title: "This request is not authorized", Detail: "Return to ShiftBox and try again."})
+		if err := checkMutation(r, origin, current); err != nil {
+			WriteProblem(w, RequestID(r.Context()), err)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func checkMutation(r *http.Request, origin string, session auth.Session) error {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+		return nil
+	}
+	origins := r.Header.Values("Origin")
+	tokens := r.Header.Values("X-CSRF-Token")
+	if len(origins) != 1 || origins[0] != origin || len(tokens) != 1 || !auth.ValidCSRF(session, tokens[0]) {
+		return Problem{Status: 403, Code: "auth.invalid_origin_or_csrf", Title: "This request is not authorized", Detail: "Return to ShiftBox and try again."}
+	}
+	return nil
 }
