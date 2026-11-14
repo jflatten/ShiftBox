@@ -241,7 +241,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T117 [P] First add a failing OpenAPI-to-TypeScript drift test, then generate UI contract types without generated Go handlers and make the drift test pass in `tests/contract/openapi_types_test.go`, `ui/lib/api-types.ts`, and `scripts/check-openapi.sh`
 - [X] T118 [P] Add bounded redaction and secret-leak tests across logs, URLs, API responses, browser storage, process arguments, audit metadata, and archives in `tests/integration/secret_leak_test.go` and `ui/tests/e2e/browser-storage.spec.ts`
 - [X] T119 [P] Add automated accessibility checks plus manual keyboard/focus evidence for every Mantine Stepper workflow in `ui/tests/e2e/accessibility.spec.ts` and `documentation/validation/accessibility.md`
-- [ ] T120 Add end-to-end controller restart injection at every persisted setup, lifecycle, maintenance, backup, restore, and recovery step in `tests/acceptance/restart_matrix_test.go`
+- [X] T120 Add end-to-end controller restart injection at every persisted setup, lifecycle, maintenance, backup, restore, and recovery step in `tests/acceptance/restart_matrix_test.go`
 - [X] T121 Add SQLite/PostgreSQL parity, race, real HTTP/mTLS, Dex/OIDC, hostile-origin, and corrupted-backup integration gates in `tests/integration/release_gate_test.go`
 - [X] T122 Run the already-defined exact UTM/Packer/import/boot/recovery/drive-preservation harness under the `utm_release` build tag and record controlled-host evidence in `tests/release/utm_stack_test.go` and `documentation/validation/utm-stack.md`
 - [X] T123 Add Debian and Ubuntu glibc/amd64 fixtures that separately exercise prebuilt-image and Dockerfile/build-definition Dev Containers, declared features, lifecycle-hook success/failure, declared connection-ready stages, and retained-data checks in `tests/release/fixtures/debian/` and `tests/release/fixtures/ubuntu/`
@@ -2808,6 +2808,10 @@ This checkpoint does not itself change the goal status.
   steps, and all three successful rebuild steps. Lost stop and start replies
   reconcile without duplicate calls, and reservations follow the verified
   power state. The expanded lifecycle and deletion tests passed with `-race`.
+  The matrix also reconciles an offboarding stop after a lost provider
+  reply and a controller restart, preserving the disk reservation. The full
+  restart matrix, setup and platform restart tests, long-stop recovery,
+  and live PostgreSQL setup restart passed with `-race`.
 - T061 verified retained marker contents after native stop/start and rebuild,
   then passed the focused Chrome repair and retry journey on the same VM.
   The Go workspace journal check passed with the race detector in resumed

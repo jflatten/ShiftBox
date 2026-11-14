@@ -239,6 +239,9 @@ func TestSetupCertificateUpload(t *testing.T) {
 		VALUES('fixture','fixture','amd64','test','development','1','[]','{}','{}','{}','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','fixture.utm',$1,$2,'available',1)`, owner, now.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
+	// Restart between published platform evidence and capacity admission.
+	restart()
+	checkStatus("provider", true, 0)
 	request("/capacity", "", budget, 204)
 	restart()
 	checkStatus("activation", true, 1)

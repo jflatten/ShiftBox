@@ -716,8 +716,8 @@ func TestRestartWorkspaceLaunch(t *testing.T) {
 	}
 }
 
-// TestRestartWorkspaceLifecycle interrupts stop, start, rebuild and repair at
-// each active step before reconciling the provider or consuming guest evidence.
+// TestRestartWorkspaceLifecycle interrupts stop, start, rebuild, repair and
+// offboarding before reconciling provider effects or consuming guest evidence.
 func TestRestartWorkspaceLifecycle(t *testing.T) {
 	ctx := t.Context()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -903,6 +903,43 @@ func TestRestartWorkspaceLifecycle(t *testing.T) {
 	check(repair, "succeeded")
 	finishDevelopment(admit("retry"), 0)
 	checkPower(provider.Running, "reserved")
+
+	// Offboarding stops the VM through the provider after revoking guest access.
+	administrator := uuid.NewString()
+	exec(`INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
+		VALUES($1,'offboarding-admin@example.test','administrator','active','local','setup',$2,$2,1)`, administrator, now.Format(time.RFC3339Nano))
+	var offboarding operation.Operation
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, "UPDATE users SET membership_state='disabled',version=version+1 WHERE id=$1", owner); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE guest_registrations SET state='revoked' WHERE workspace_id=$1 AND generation=$2",
+			ref.WorkspaceID, ref.Generation); err != nil {
+			return err
+		}
+		_, stops, err := workspace.QueueOffboardingStops(ctx, tx, journal, owner, administrator, 2, now)
+		if err != nil {
+			return err
+		}
+		if len(stops) != 1 || stops[0].WorkspaceID != ref.WorkspaceID {
+			return errors.New("offboarding did not queue the retained workspace stop")
+		}
+		offboarding, err = journal.GetInTx(ctx, tx, stops[0].OperationID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	step(offboarding, 0, func() {
+		machines.LoseReply("stop")
+		if _, err := machines.Stop(ctx, provider.StopRequest{Ref: ref, OperationID: offboarding.ID}); !errors.Is(err, provider.ErrOutcomeUnknown) {
+			t.Fatalf("offboarding stop with lost reply = %v, want uncertain outcome", err)
+		}
+	})
+	check(offboarding, "succeeded")
+	checkPower(provider.Stopped, "released")
+	if machines.stops != 2 || machines.forcedStop {
+		t.Errorf("stop calls = %d, forced = %t, want one graceful stop for each action", machines.stops, machines.forcedStop)
+	}
 }
 
 type restartLaunchProvider struct {

@@ -47,5 +47,18 @@ and zero after replacement.
 | Sections 8–9 | Authenticated native guest enrollment and stopped-state signed maintenance with rollback and successful replacement. |
 | Section 10 | Populated SQLite backup, protected restore, native provider and authority review, explicit activation and copied-grant revocation. |
 
+The engineering rerun after `17374f4` passed the serial Go suite and race
+suite, the tagged integration and release packages under their default
+fixture settings, a fresh `npm ci`, all 89 UI unit tests, and the production
+export. `npm ci` reported three low and 16 moderate advisories. The browser
+rerun passed 26 fixture checks each in Chrome, Firefox, and WebKit. The
+separate Chrome browser-storage case also passed. Live sharing and preview
+cases require their dedicated fixture.
+
+The restart-focused race suite also passed, including the populated
+PostgreSQL setup interruption after source retirement. The first PostgreSQL
+test invocation supplied the CA twice, in the setup URI and in the separate
+trust input. The corrected fixture uses the separate trust input.
+
 T125 remains open for the outstanding scenarios in sections 3–10. The
 [release tracker](mvp-v1-v14.md) records the remaining live checks.
