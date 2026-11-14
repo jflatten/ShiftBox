@@ -364,7 +364,38 @@ func TestWorkspaceDeleteAndUpdateAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock := func() time.Time { return now }
-	handler := web.WorkspacePowerHandler(db, origin, clock, operation.NewJournal(db, clock, uuid.NewString))
+	registry := &proxy.Registry{}
+	closed := false
+	pollClosed, streamClosed := false, false
+	if _, err := registry.Register(proxy.Scope{WorkspaceID: workspaceID, Service: "ide"}, func() error { return nil }, func() error {
+		closed = true
+		var revoked bool
+		if err := db.QueryRowContext(ctx, "SELECT revoked_at IS NOT NULL FROM origin_grants WHERE id='delete-fixture'").Scan(&revoked); err != nil || !revoked {
+			t.Errorf("workspace closure saw origin revoked=%t (%v), want committed revocation", revoked, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []struct {
+		scope  proxy.Scope
+		closed *bool
+	}{
+		{proxy.Scope{WorkspaceID: workspaceID, GuestPoll: true}, &pollClosed},
+		{proxy.Scope{WorkspaceID: workspaceID, SessionID: "launch-session"}, &streamClosed},
+	} {
+		if _, err := registry.Register(entry.scope, func() error { return nil }, func() error {
+			*entry.closed = true
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO origin_grants(id,token_digest,user_id,session_id,workspace_id,generation,service_key,origin,permission_basis,expires_at)
+		VALUES('delete-fixture','fixture-digest','member','launch-session',$1,1,'ide','https://ide.test','workspace.connect_owner',$2)`, workspaceID, now.Add(time.Minute).Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	handler := web.WorkspacePowerHandler(db, origin, clock, operation.NewJournal(db, clock, uuid.NewString), registry)
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/workspaces/{workspaceId}/actions/{action}", &handler)
 	request := func(action, body string) *httptest.ResponseRecorder {
@@ -399,6 +430,9 @@ func TestWorkspaceDeleteAndUpdateAPI(t *testing.T) {
 		accepted := request("delete", `{"confirmDataLoss":true}`)
 		if accepted.Code != http.StatusAccepted {
 			t.Fatalf("confirmed deletion returned %d %s, want %d", accepted.Code, accepted.Body, http.StatusAccepted)
+		}
+		if !closed || pollClosed || streamClosed {
+			t.Errorf("deletion closed IDE/poll/management %t/%t/%t, want true/false/false", closed, pollClosed, streamClosed)
 		}
 		var op operation.Operation
 		if err := json.Unmarshal(accepted.Body.Bytes(), &op); err != nil || op.ID == "" || op.Type != "delete" {

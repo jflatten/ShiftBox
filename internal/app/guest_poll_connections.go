@@ -61,7 +61,7 @@ func registerGuestPollConnection(ctx context.Context, registry *proxy.Registry, 
 	if err != nil {
 		return err
 	}
-	entry.unregister, err = registry.Register(proxy.Scope{UserID: contact.OwnerID, WorkspaceID: contact.WorkspaceID}, func() error {
+	entry.unregister, err = registry.Register(proxy.Scope{UserID: contact.OwnerID, WorkspaceID: contact.WorkspaceID, GuestPoll: true}, func() error {
 		current, err := authenticate()
 		if err != nil {
 			return err

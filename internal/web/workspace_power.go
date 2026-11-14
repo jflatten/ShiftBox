@@ -11,12 +11,13 @@ import (
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 // WorkspacePowerHandler admits lifecycle actions for the workspace owner
 // or administrator through the contextual workspace action route.
-func WorkspacePowerHandler(db *sql.DB, origin string, now func() time.Time, journal *operation.Journal) AuthorizedHandler {
+func WorkspacePowerHandler(db *sql.DB, origin string, now func() time.Time, journal *operation.Journal, registry *proxy.Registry) AuthorizedHandler {
 	return AuthorizedHandler{
 		DB: db, Origin: origin, Now: now,
 		Route: ManagementRoute{Method: http.MethodPost, Path: "/workspaces/{workspaceId}/actions/{action}", OperationID: "requestWorkspaceAction", Resolver: "workspace_action"},
@@ -37,7 +38,7 @@ func WorkspacePowerHandler(db *sql.DB, origin string, now func() time.Time, jour
 			return (WorkspaceAuthorization{Workspace: target.Resource}).Action(actor, action)
 		},
 		Apply: func(ctx context.Context, tx *sql.Tx, r *http.Request, actor auth.Principal, target AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
-			if journal == nil {
+			if journal == nil || registry == nil {
 				return nil, errors.New("workspace power actions are incompletely wired")
 			}
 			version, err := RequireVersion(r)
@@ -67,7 +68,14 @@ func WorkspacePowerHandler(db *sql.DB, origin string, now func() time.Time, jour
 			if err != nil {
 				return nil, powerAdmissionProblem(err)
 			}
-			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if action == "delete" {
+					if err := registry.CloseWorkspaceAccess(target.Resource.ID, true); err != nil {
+						WriteProblem(w, RequestID(r.Context()), Problem{Status: 503, Code: "workspace.connection_closure_pending",
+							Title: "Deletion is queued. Retry to finish closing workspace connections.", Retryable: true})
+						return
+					}
+				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusAccepted)
 				_ = json.NewEncoder(w).Encode(op)

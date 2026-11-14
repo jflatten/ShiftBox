@@ -44,7 +44,7 @@ func (e workspaceExecutor) executor(op operation.Operation) operation.Executor {
 		}
 	case "workspace.delete", retentionDeleteAction:
 		if op.Type == "delete" && e.power != nil {
-			return deletionExecutor{store: e.power.store, machines: e.power.provider, now: e.power.now}
+			return deletionExecutor{store: e.power.store, machines: e.power.provider, now: e.power.now, closeAccess: e.power.closeDeletionAccess}
 		}
 	}
 	return nil

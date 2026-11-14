@@ -13,6 +13,7 @@ type Scope struct {
 	GrantID     string
 	Service     string
 	IDE         bool
+	GuestPoll   bool
 }
 
 type connection struct {
@@ -106,4 +107,13 @@ func (r *Registry) CloseMatching(match func(Scope) bool) error {
 		r.mu.Unlock()
 	}
 	return errors.Join(failures...)
+}
+
+// CloseWorkspaceAccess ends browser forwarding and guest tunnels for a
+// deleting workspace. Polling can remain open for the graceful shutdown step.
+func (r *Registry) CloseWorkspaceAccess(id string, keepGuestPoll bool) error {
+	return r.CloseMatching(func(scope Scope) bool {
+		return scope.WorkspaceID == id && (scope.Service != "" || scope.SessionID == "") &&
+			(!keepGuestPoll || !scope.GuestPoll)
+	})
 }

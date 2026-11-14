@@ -277,7 +277,7 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 	}
 	// The retry intent closes repair access immediately, including a grant
 	// issued before exit. Normal access waits for the new verification.
-	power := web.WorkspacePowerHandler(db, origin, func() time.Time { return bootTime.Add(time.Second) }, journal)
+	power := web.WorkspacePowerHandler(db, origin, func() time.Time { return bootTime.Add(time.Second) }, journal, &proxy.Registry{})
 	r := httptest.NewRequest(http.MethodPost, origin+"/api/v1/workspaces/"+workspace+"/actions/retry", nil)
 	r.SetPathValue("workspaceId", workspace)
 	r.SetPathValue("action", "retry")

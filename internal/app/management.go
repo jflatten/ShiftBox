@@ -67,7 +67,7 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 		web.UpdateMembershipHandler(db, origin, now, registry, journal),
 		web.TemplateUpdateHandler(db, origin, now), grantTemplate, revokeTemplate,
 		web.WorkspaceLaunchHandler(db, origin, now, journal, launchPolicy),
-		web.WorkspacePowerHandler(db, origin, now, journal),
+		web.WorkspacePowerHandler(db, origin, now, journal, registry),
 		web.WorkspacePolicyHandler(db, origin, now, launchPolicy, registry),
 		*web.WorkspaceEntryGrantHandler(db, origin, now, hosts),
 	} {

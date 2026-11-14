@@ -50,6 +50,7 @@ func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfi
 	}
 	store := workspace.NewStore(state.DB)
 	power := workspace.NewPowerExecutor(store, machines, now, probe)
+	power.SetDeletionAccessCloser(listeners.Tunnels.Registry.CloseWorkspaceAccess)
 	power.SetRepairProbe(func(ctx context.Context, id string, generation int64) error {
 		host, err := hosts.ServiceAuthority(id, "repair")
 		if err != nil {

@@ -138,6 +138,9 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		steps = []operation.Step{{Key: "shutdown", Label: "Stop workspace workloads"}, {Key: "stop", Label: label}}
 	case "delete":
 		steps = deletionSteps()
+		if err := revokeDeletionGrants(ctx, tx, intent.WorkspaceID, now.UTC().Format(time.RFC3339Nano)); err != nil {
+			return operation.Operation{}, err
+		}
 		if _, err := audit.Append(ctx, tx, audit.Event{OccurredAt: now, ActorType: "user", ActorID: intent.ActorID,
 			Action: action, ResourceType: "workspace", ResourceID: intent.WorkspaceID, Outcome: "allowed", ReasonCode: "confirmed_data_loss"}); err != nil {
 			return operation.Operation{}, err

@@ -13,6 +13,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -51,7 +52,7 @@ func TestWorkspacePowerAPI(t *testing.T) {
 
 	clock := func() time.Time { return now }
 	journal := operation.NewJournal(db, clock, uuid.NewString)
-	power := web.WorkspacePowerHandler(db, origin, clock, journal)
+	power := web.WorkspacePowerHandler(db, origin, clock, journal, &proxy.Registry{})
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/workspaces/{workspaceId}/actions/{action}", &power)
 	request := func(action, version, key, body string, status int, code string) operation.Operation {

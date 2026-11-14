@@ -51,6 +51,9 @@ func (s *Store) CommitRetentionDeletion(ctx context.Context, journal *operation.
 		if count != 1 {
 			return sql.ErrNoRows
 		}
+		if err := revokeDeletionGrants(ctx, tx, ref.WorkspaceID, stamp); err != nil {
+			return err
+		}
 		committed, err = journal.CreateInTx(ctx, tx, operation.Request{
 			Actor: "controller", Key: "retention-delete:" + ref.WorkspaceID + ":" + strconv.FormatInt(ref.Generation, 10),
 			Type: "delete", OriginatingAction: retentionDeleteAction, WorkspaceID: &ref.WorkspaceID, Generation: ref.Generation,
@@ -74,6 +77,16 @@ func (s *Store) CommitRetentionDeletion(ctx context.Context, journal *operation.
 	return committed, nil
 }
 
+// revokeDeletionGrants retires outstanding access in the deletion-intent
+// transaction. An already enrolled guest may still acknowledge shutdown.
+func revokeDeletionGrants(ctx context.Context, tx *sql.Tx, id, stamp string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE origin_grants SET revoked_at=$2 WHERE workspace_id=$1 AND revoked_at IS NULL`, id, stamp); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE enrollment_grants SET state='invalidated' WHERE workspace_id=$1 AND state='issued'`, id)
+	return err
+}
+
 func deletionSteps() []operation.Step {
 	return []operation.Step{
 		{Key: "shutdown", Label: "Request graceful shutdown"},
@@ -83,15 +96,21 @@ func deletionSteps() []operation.Step {
 }
 
 type deletionExecutor struct {
-	store    *Store
-	machines provider.Provider
-	now      func() time.Time
+	store       *Store
+	machines    provider.Provider
+	now         func() time.Time
+	closeAccess func(string, bool) error
 }
 
 func (e deletionExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
 	req, shutdownAt, err := e.request(ctx, op, step)
 	if err != nil {
 		return "", false, err
+	}
+	if e.closeAccess != nil {
+		if err := e.closeAccess(req.Ref.WorkspaceID, step.Key == "shutdown"); err != nil {
+			return "", false, &operation.StepWaiting{Detail: "Waiting for workspace connections to close before continuing deletion.", Cause: err}
+		}
 	}
 	got, err := e.machines.Inspect(ctx, req.Ref)
 	if step.Key == "delete" && errors.Is(err, provider.ErrNotFound) {
@@ -223,6 +242,14 @@ func (e deletionExecutor) record(ctx context.Context, op operation.Operation, re
 			string(want), now.Format(time.RFC3339Nano), ref.WorkspaceID, ref.Generation, op.ID, op.CurrentStep)
 		if err := capacityWrite(result, err); err != nil {
 			return err
+		}
+		if want == provider.Deleted {
+			if _, err := tx.ExecContext(ctx, `UPDATE guest_registrations SET state='deleted',
+				revoked_at=COALESCE(revoked_at,$3),revocation_reason=COALESCE(revocation_reason,'workspace_deleted')
+				WHERE workspace_id=$1 AND generation=$2 AND state<>'deleted'`,
+				ref.WorkspaceID, ref.Generation, now.Format(time.RFC3339Nano)); err != nil {
+				return err
+			}
 		}
 		return ReleaseReservation(ctx, tx, got, now)
 	})

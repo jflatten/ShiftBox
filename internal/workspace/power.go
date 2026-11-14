@@ -16,12 +16,13 @@ var errGuestShutdownPending = errors.New("waiting for guest workload shutdown")
 
 // PowerExecutor reconciles start, graceful stop, and container rebuild on a VM.
 type PowerExecutor struct {
-	store       *Store
-	provider    provider.Provider
-	now         func() time.Time
-	probeIDE    IDEProbe
-	probeRepair IDEProbe
-	recovery    *LaunchExecutor
+	store               *Store
+	provider            provider.Provider
+	now                 func() time.Time
+	probeIDE            IDEProbe
+	probeRepair         IDEProbe
+	recovery            *LaunchExecutor
+	closeDeletionAccess func(string, bool) error
 }
 
 // NewPowerExecutor binds retained workspace power operations to the current provider.
@@ -31,6 +32,11 @@ func NewPowerExecutor(store *Store, machines provider.Provider, now func() time.
 
 // SetRepairProbe binds the authenticated repair service readiness check.
 func (e *PowerExecutor) SetRepairProbe(probe IDEProbe) { e.probeRepair = probe }
+
+// SetDeletionAccessCloser binds the registry used during deletion reconciliation.
+func (e *PowerExecutor) SetDeletionAccessCloser(closeAccess func(string, bool) error) {
+	e.closeDeletionAccess = closeAccess
+}
 
 // Observe inspects the exact VM before any new provider action is attempted.
 func (e *PowerExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {

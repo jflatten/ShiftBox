@@ -187,7 +187,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T089 [US3] Add network/activity/maintenance/notice migrations in `migrations/sqlite/00005_operations.sql` and `migrations/postgres/00005_operations.sql`, preserving these verbatim constraints: NetworkPolicy `name` is a "Unique display name", mode is "`all`, `no_network`, or `allowlist`", and required exceptions include controller/proxy, DNS, Git, and approved auxiliary destinations; any selected active ActivityPolicy signal resets the deadline and an idle report does not; MaintenanceCampaign state is "`scheduled`, `active`, `blocked`, `completed`, `cancelled`" and MaintenanceTarget state is "`pending`, `waiting_safe`, `updating`, `verified`, `restoring_state`, `failed`, `completed`"; persistent operational notices remain visible while their condition is active regardless of dismissal history
 - [X] T090 [US3] Complete admission/reconciliation behavior for explicit limiting-resource errors, no queue/eviction/resize, retained reservations, orphan/conflict visibility, and restart-safe inspection proven by T079 in `internal/workspace/capacity.go`, `internal/workspace/reconciler.go`, and `internal/provider/reconcile.go`
 - [X] T091 [US3] Implement provider-capability-derived network policies, stopped-only application, explicit required exceptions, post-change verification, and remain-stopped failure behavior proven by T080 in `internal/workspace/network.go` and `internal/provider/utm/network.go`
-- [ ] T092 [US3] Implement transactional user/permission/session/origin/guest revocation publication and closure of all established connection types proven by T081 in `internal/auth/revocation.go`, `internal/proxy/registry.go`, and `internal/guest/tunnel.go`
+- [X] T092 [US3] Implement transactional user/permission/session/origin/guest revocation publication and closure of all established connection types proven by T081 in `internal/auth/revocation.go`, `internal/proxy/registry.go`, and `internal/guest/tunnel.go`
 - [X] T093 [US3] Implement activity observations, retention deadlines, host-outage grace, precommit authority/activity/state recheck, graceful then provider-enforced deletion, and verified reservation release proven by T082 in `internal/workspace/activity.go`, `internal/workspace/retention.go`, and `internal/workspace/delete.go`
 - [X] T094 [US3] Implement long-stop eligibility verification and provider-mediated enrollment recovery without disk/identity reset proven by T084 in `internal/workspace/recovery.go` and `internal/provider/utm/enrollment.go`
 - [ ] T095 [US3] Implement maintenance campaign scheduling, warnings, per-target durable operations, safe-boundary activation, signed update staging, verification/rollback evidence, prior-state restoration, and blocked completion proven by T083 in `internal/workspace/maintenance.go` and `internal/guest/update.go`
@@ -2930,10 +2930,15 @@ This checkpoint does not itself change the goal status.
 - T081 added local TLS integration coverage for management SSE, IDE,
   preview, WebSocket, poll, and the guest tunnel, plus the durable stop.
   T092 now closes registered poll transports and waits for browser
-  forwarding to finish before offboarding returns success. The remaining
-  revocation paths still need end-to-end verification.
+  forwarding to finish before offboarding returns success.
 - T092 adds administrator-only listing and revocation of existing workspace
   connection grants. Revocation commits both the permission and its derived
   browser grants with one audit event, then closes connections matching the
   exact grant. Closure failure supports retry after commit. Go contract tests
   and the administrator workspace UI tests passed.
+- Explicit and retention-driven deletion retire browser grants and outstanding
+  enrollment offers in the deletion transaction. Browser forwarding and
+  guest tunnels close before cleanup. The guest poll closes after the graceful
+  shutdown step, and verified provider deletion retires the registration
+  alongside reservation release. Race-enabled contract, worker, and TLS
+  integration suites passed.

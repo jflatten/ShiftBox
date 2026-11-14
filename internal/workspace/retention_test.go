@@ -12,6 +12,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/provider/fake"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 )
 
 // TestRetentionCandidates verifies that an outage does not reset inactivity,
@@ -156,7 +157,7 @@ func verifyDeletionWorker(t *testing.T, retention bool) {
 		}
 	}
 	t.Cleanup(func() {
-		for _, query := range []string{"DELETE FROM reservations WHERE workspace_id=$1", "DELETE FROM workspaces WHERE id=$1"} {
+		for _, query := range []string{"DELETE FROM enrollment_grants WHERE workspace_id=$1", "DELETE FROM guest_registrations WHERE workspace_id=$1", "DELETE FROM reservations WHERE workspace_id=$1", "DELETE FROM workspaces WHERE id=$1"} {
 			if _, err := db.Exec(query, id); err != nil {
 				t.Error(err)
 			}
@@ -178,6 +179,12 @@ func verifyDeletionWorker(t *testing.T, retention bool) {
 		t.Fatalf("retention candidates = %d (%v), want one", len(list), err)
 	}
 	journal := operation.NewJournal(db, clock, uuid.NewString)
+	exec("INSERT INTO guest_registrations(workspace_id,generation,state) VALUES($1,1,'active')", id)
+	exec(`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,created_at,version)
+		VALUES('previous-start',$1,'start',1,'reservation-owner','previous-start','succeeded',$2,1)`, id, now.Format(time.RFC3339Nano))
+	exec(`INSERT INTO enrollment_grants(id,workspace_id,generation,operation_id,provider_instance_id,expires_at,state)
+		VALUES('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',$1,1,'previous-start',$2,$3,'issued')`,
+		id, machine.InstanceID, now.Add(time.Minute).Format(time.RFC3339Nano))
 	var op operation.Operation
 	if retention {
 		op, err = store.CommitRetentionDeletion(ctx, journal, list[0], now, policy)
@@ -193,7 +200,34 @@ func verifyDeletionWorker(t *testing.T, retention bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker := NewWorker(journal, nil, NewPowerExecutor(store, machines, clock, nil))
+	guestState := func(want string) {
+		t.Helper()
+		var state string
+		if err := db.QueryRowContext(ctx, "SELECT state FROM guest_registrations WHERE workspace_id=$1 AND generation=1", id).Scan(&state); err != nil || state != want {
+			t.Fatalf("guest registration = %q (%v), want %q", state, err, want)
+		}
+	}
+	guestState("active")
+	var grantState string
+	if err := db.QueryRowContext(ctx, "SELECT state FROM enrollment_grants WHERE workspace_id=$1", id).Scan(&grantState); err != nil || grantState != "invalidated" {
+		t.Fatalf("outstanding enrollment on deletion commit = %q (%v), want invalidated", grantState, err)
+	}
+	registry := &proxy.Registry{}
+	pollClosed, tunnelClosed := false, false
+	for _, entry := range []struct {
+		poll   bool
+		closed *bool
+	}{{true, &pollClosed}, {false, &tunnelClosed}} {
+		if _, err := registry.Register(proxy.Scope{WorkspaceID: id, GuestPoll: entry.poll}, func() error { return nil }, func() error {
+			*entry.closed = true
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	power := NewPowerExecutor(store, machines, clock, nil)
+	power.SetDeletionAccessCloser(registry.CloseWorkspaceAccess)
+	worker := NewWorker(journal, nil, power)
 	run := func(want error) {
 		t.Helper()
 		if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, want) {
@@ -201,6 +235,9 @@ func verifyDeletionWorker(t *testing.T, retention bool) {
 		}
 	}
 	run(errGuestShutdownPending)
+	if !tunnelClosed || pollClosed {
+		t.Fatalf("during shutdown tunnel closed=%t poll closed=%t, want true/false", tunnelClosed, pollClosed)
+	}
 	now = now.Add(59 * time.Second)
 	run(errGuestShutdownPending)
 	if machines.forced != 0 {
@@ -209,6 +246,9 @@ func verifyDeletionWorker(t *testing.T, retention bool) {
 	now = now.Add(time.Second)
 	run(nil)
 	run(nil)
+	if !pollClosed {
+		t.Fatal("provider stop completed before the guest poll connection closed")
+	}
 	wantForced := 0
 	if retention {
 		wantForced = 1
@@ -219,12 +259,14 @@ func verifyDeletionWorker(t *testing.T, retention bool) {
 	checkReservation(t, db, id, "released", "reserved")
 	machines.FailDelete()
 	run(provider.ErrPartial)
+	guestState("active")
 	checkReservation(t, db, id, "released", "reserved")
 	machines.LoseReply("delete")
 	run(provider.ErrOutcomeUnknown)
 	checkReservation(t, db, id, "released", "reserved")
 	run(nil)
 	checkReservation(t, db, id, "released", "released")
+	guestState("deleted")
 	finished, err := journal.Get(ctx, op.ID)
 	if err != nil || finished.Status != "succeeded" {
 		t.Fatalf("deletion status = %q (%v), want succeeded", finished.Status, err)
