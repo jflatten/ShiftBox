@@ -1684,6 +1684,17 @@ This checkpoint does not itself change the goal status.
 - T060 native startup passed both maintenance routes and stopped at
   `runMigrationPreflight`. Campaign execution, signed guest updates,
   deadline warnings, and prior-state restoration remain open.
+
+### Migration preflight CLI
+
+- T097 and T102 add a preflight-only CLI that reads a bounded pinned
+  release manifest and reports stable blockers. It uses the existing
+  active database and trust checks, current retained guest evidence,
+  UTM capability checks, and the pinned Dex binary digest. PostgreSQL
+  dump and restore tools must match the application server major.
+- Unit tests cover manifest rejection and blocked preflight output.
+  The installed backup verifier, identity-store privileges, management
+  endpoint and irreversible migration acceptance remain open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.

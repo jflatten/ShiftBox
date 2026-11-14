@@ -15,6 +15,9 @@ func main() {
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if failure, ok := errors.AsType[cliExit](err); ok {
+			os.Exit(failure.code)
+		}
 		os.Exit(1)
 	}
 }
@@ -28,7 +31,9 @@ func run(ctx context.Context, args []string, out, status io.Writer) error {
 			return runServe(ctx, args[1:])
 		case "recover-admin":
 			return runRecoverAdmin(ctx, args[1:], out)
+		case "migrate":
+			return runMigrate(ctx, args[1:], out, status)
 		}
 	}
-	return errors.New("usage: shiftbox setup | shiftbox serve | shiftbox recover-admin")
+	return errors.New("usage: shiftbox setup | shiftbox serve | shiftbox recover-admin | shiftbox migrate preflight")
 }

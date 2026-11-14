@@ -8,10 +8,10 @@ import (
 // GuestUpgradeBlocker identifies a retained workspace whose last accepted
 // guest poll does not establish compatibility with the deployed release.
 type GuestUpgradeBlocker struct {
-	WorkspaceID     string
-	ObservedState   string
-	GuestRelease    string
-	ProtocolVersion string
+	WorkspaceID     string `json:"workspaceId"`
+	ObservedState   string `json:"observedState"`
+	GuestRelease    string `json:"guestRelease"`
+	ProtocolVersion string `json:"protocolVersion"`
 }
 
 // GuestUpgradeBlockers reports which retained workspaces still need to reach
