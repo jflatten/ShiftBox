@@ -6,7 +6,8 @@ set -eu
 seed_device=/dev/disk/by-label/SHIFTBOX
 seed_directory=/run/shiftbox-enrollment
 if [ -b "$seed_device" ]; then
-    mount -t iso9660 -o ro,nosuid,nodev,noexec "$seed_device" "$seed_directory"
+    # Linux otherwise lowercases names on plain ISO9660 media.
+    mount -t iso9660 -o ro,nosuid,nodev,noexec,map=off "$seed_device" "$seed_directory"
 fi
 
 exec /usr/local/bin/shiftbox-agent serve

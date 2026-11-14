@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/provider"
@@ -131,6 +133,12 @@ func managedBundlePrefix(ref provider.WorkspaceRef) string {
 	return fmt.Sprintf("ShiftBox-%x-", digest[:16])
 }
 
+func workspaceMAC(ref provider.WorkspaceRef) string {
+	digest := sha256.Sum256([]byte(managedBundleName(ref)))
+	digest[0] = (digest[0] & 0xfc) | 0x02
+	return net.HardwareAddr(digest[:6]).String()
+}
+
 func verifyImportedVM(vm provider.Inventory, req provider.CreateRequest, destination string) error {
 	info, err := os.Lstat(destination)
 	if err != nil || !info.IsDir() || vm.InstanceID == "" || vm.Power != provider.Stopped ||
@@ -158,6 +166,8 @@ on run argv
     set ownerNotes to item 4 of argv
     set cores to (item 5 of argv) as integer
     set memoryMiB to (item 6 of argv) as integer
+    set managedName to item 7 of argv
+    set managedMAC to item 8 of argv
     tell application "/Applications/UTM.app"
         if UTM version is not item 1 of argv then return "version"
         if (current application's NSFileManager's defaultManager()'s fileExistsAtPath:targetPath) as boolean then return "state"
@@ -169,7 +179,9 @@ on run argv
         if (count of interfaces) is not 1 then return "state"
         if mode of item 1 of interfaces is not shared then return "state"
         if (notes of cfg) starts with "shiftbox:" then return "ownership"
-        update configuration vm with {notes:ownerNotes, cpu cores:cores, memory:memoryMiB}
+        set networkIndex to index of item 1 of interfaces
+        set managedInterfaces to {{index:networkIndex, address:managedMAC}}
+        update configuration vm with {name:managedName, notes:ownerNotes, cpu cores:cores, memory:memoryMiB, network interfaces:managedInterfaces}
     end tell
     return "issued"
 end run
@@ -189,6 +201,6 @@ func importBundle(ctx context.Context, version string, req provider.CreateReques
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/usr/bin/osascript", "-e", importBundleScript, "--", version,
 		source, destination, ownershipPrefix+string(notes), strconv.Itoa(req.Resources.CPU),
-		strconv.FormatInt(req.Resources.MemoryBytes>>20, 10))
+		strconv.FormatInt(req.Resources.MemoryBytes>>20, 10), strings.TrimSuffix(filepath.Base(destination), ".utm"), workspaceMAC(ref))
 	return effectResult(cmd.Output())
 }

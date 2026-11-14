@@ -1611,3 +1611,21 @@ This checkpoint does not itself change the goal status.
 - The release candidate still needs browser IDE and container tooling,
   artifact manifest generation, and boot and enrollment validation of the
   final prepared export before catalog admission.
+
+### Live Ubuntu enrollment verification
+
+- Added an opt-in UTM release test that imports the prepared Ubuntu
+  export, uses the normal launch worker and recovery media, and waits
+  for the guest's authenticated poll. Its catalog and IDE metadata are
+  temporary fixtures and cannot establish production artifact readiness.
+- The live import exposed a rename to the embedded build name. The
+  provider now explicitly sets the managed VM name and a workspace
+  MAC address through UTM while preserving the network and drive layout.
+- The first Ubuntu clone booted and started the agent, but its journal
+  showed the agent could not open the enrollment file. The launcher now
+  mounts ISO9660 media without Linux's lowercase filename mapping.
+- Rebuilt with Packer and verified the corrected Ubuntu export on UTM
+  5.0.8. The real guest consumed the grant and authenticated in 2m05s
+  after provisioning. The race-enabled release test passed in 134s,
+  including verified clone cleanup. Full release validation still needs
+  the selected browser IDE, container tooling, and the remaining gates.

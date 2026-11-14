@@ -31,3 +31,15 @@ removable recovery drive while preserving the persistent disk.
 The build output is a candidate bundle. Release admission requires the
 browser IDE and container tooling, a manifest covering the final export,
 and verified boot, enrollment, and clone behavior through UTM.
+
+To verify that a prepared development export can enroll, run the opt-in
+`utm_release` test with UTM 5.0.8 running. Set the guest host to a local IP
+address reachable from the VM and point storage at UTM's Documents directory.
+
+```sh
+SHIFTBOX_TEST_UTM_MUTATIONS=5.0.8 \
+SHIFTBOX_TEST_UTM_STORAGE="$HOME/Library/Containers/com.utmapp.UTM/Data/Documents" \
+SHIFTBOX_TEST_UTM_BUNDLE="/absolute/path/to/final/shiftbox.utm" \
+SHIFTBOX_TEST_UTM_GUEST_HOST="your-guest-reachable-ip" \
+go test -tags utm_release -v ./tests/release -run '^TestUTMGuestEnrollment$'
+```

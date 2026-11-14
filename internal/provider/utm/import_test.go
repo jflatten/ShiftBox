@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,24 @@ import (
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/release"
 )
+
+// TestWorkspaceMAC separates cloned NIC identities while keeping retries stable.
+func TestWorkspaceMAC(t *testing.T) {
+	ref := ownedDeleteRequest().Ref
+	first := workspaceMAC(ref)
+	parsed, err := net.ParseMAC(first)
+	if err != nil || len(parsed) != 6 || parsed[0]&3 != 2 {
+		t.Fatalf("workspace MAC = %q, %v, want a local unicast address", first, err)
+	}
+	ref.InstanceID = ""
+	if retry := workspaceMAC(ref); retry != first {
+		t.Fatalf("workspace MAC on retry = %q, want %q", retry, first)
+	}
+	ref.WorkspaceID = "another-workspace"
+	if other := workspaceMAC(ref); other == first {
+		t.Fatalf("two workspace refs produced the same MAC %q", other)
+	}
+}
 
 // TestImportRefusesUntrackedBundle prevents a duplicate import if an earlier
 // attempt wrote the destination but did not establish its ownership in UTM.
@@ -99,6 +118,8 @@ func checkLiveImport(t *testing.T, controller *PowerController, root string, fix
 	}()
 
 	sourceRoot := t.TempDir()
+	// The packaged image has a build name that differs from the staged
+	// filename. UTM must save the clone under the managed name explicitly.
 	source := filepath.Join(sourceRoot, "reference.utm")
 	if _, err := fixture("export", fixtureID, source); err != nil {
 		t.Fatalf("export import source: %v", err)
