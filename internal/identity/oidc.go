@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
 )
 
 // ErrInvalidIdentity is safe to surface without exposing tokens or provider diagnostics.
@@ -34,6 +35,7 @@ type VerifiedIdentity struct {
 // OIDC verifies the product-managed Dex provider without bypassing TLS or JWT checks.
 type OIDC struct {
 	verifier *oidc.IDTokenVerifier
+	endpoint oauth2.Endpoint
 	client   *http.Client
 	clientID string
 	now      func() time.Time
@@ -59,7 +61,7 @@ func NewOIDC(ctx context.Context, issuer, clientID string, client *http.Client, 
 		return nil, ErrInvalidIdentity
 	}
 	verifier := provider.VerifierContext(oidc.ClientContext(ctx, client), &oidc.Config{ClientID: clientID, Now: now})
-	return &OIDC{verifier: verifier, client: client, clientID: clientID, now: now}, nil
+	return &OIDC{verifier: verifier, endpoint: endpoints, client: client, clientID: clientID, now: now}, nil
 }
 
 // Verify requires a nonce-bound authorization flow and Dex's signed federated:id
@@ -100,4 +102,23 @@ func (p *OIDC) Verify(ctx context.Context, rawToken, expectedNonce string, conne
 func identityURL(value string) bool {
 	u, err := url.Parse(value)
 	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.RawQuery == "" && u.Fragment == ""
+}
+
+// LocalLogin configures the browser authorization-code flow for the private Dex connector.
+func (p *OIDC) LocalLogin(secret, redirect string) oauth2.Config {
+	return oauth2.Config{ClientID: p.clientID, ClientSecret: secret, RedirectURL: redirect,
+		Endpoint: p.endpoint, Scopes: []string{oidc.ScopeOpenID, "federated:id"}}
+}
+
+// ExchangeLocal exchanges a PKCE-bound code and verifies the signed local identity.
+func (p *OIDC) ExchangeLocal(ctx context.Context, cfg oauth2.Config, code, verifier, nonce, issuer string) (VerifiedIdentity, error) {
+	token, err := cfg.Exchange(oidc.ClientContext(ctx, p.client), code, oauth2.VerifierOption(verifier))
+	if err != nil {
+		return VerifiedIdentity{}, ErrInvalidIdentity
+	}
+	raw, ok := token.Extra("id_token").(string)
+	if !ok {
+		return VerifiedIdentity{}, ErrInvalidIdentity
+	}
+	return p.Verify(ctx, raw, nonce, ConnectorIdentity{ID: "local", Issuer: issuer})
 }

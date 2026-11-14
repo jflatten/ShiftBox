@@ -7,9 +7,14 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"html"
+	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +42,7 @@ func TestSetupCommandResumes(t *testing.T) {
 	for attempt := 0; attempt < 2; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		var out bytes.Buffer
-		status := &stopOnSetupURL{cancel: cancel, dir: dir}
+		status := &stopOnSetupURL{cancel: cancel, dir: dir, password: &out}
 		err := run(ctx, args, &out, status)
 		cancel()
 		if err != nil {
@@ -66,6 +71,7 @@ type stopOnSetupURL struct {
 	dir      string
 	reached  bool
 	probeErr error
+	password *bytes.Buffer
 }
 
 func (w *stopOnSetupURL) Write(p []byte) (int, error) {
@@ -106,5 +112,72 @@ func (w *stopOnSetupURL) probe(origin string) error {
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("setup status = %d, want 200", response.StatusCode)
 	}
+	if w.password.Len() == 0 {
+		return nil
+	}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return err
+	}
+	client.Jar = jar
+	unbound, err := client.Get(origin + "/auth/callback?code=unexpected&state=unbound")
+	if err != nil {
+		return err
+	}
+	unbound.Body.Close()
+	if unbound.StatusCode != http.StatusUnauthorized {
+		return fmt.Errorf("unbound callback status = %d, want 401", unbound.StatusCode)
+	}
+	browser, err := client.Get(origin + "/auth/login")
+	if err != nil {
+		return err
+	}
+	browser, err = submitDexForm(client, browser, url.Values{
+		"login": {"owner@example.test"}, "password": {strings.TrimSpace(w.password.String())},
+	})
+	if err != nil {
+		return err
+	}
+	if strings.HasSuffix(browser.Request.URL.Path, "/approval") {
+		browser, err = submitDexForm(client, browser, url.Values{"approval": {"approve"}})
+		if err != nil {
+			return err
+		}
+	}
+	defer browser.Body.Close()
+	body, err := io.ReadAll(browser.Body)
+	if err != nil {
+		return err
+	}
+	if browser.StatusCode != 200 || browser.Request.URL.Path != "/api/v1/session" ||
+		!bytes.Contains(body, []byte(`"mode":"bootstrap_restricted"`)) ||
+		!bytes.Contains(body, []byte(`"mustChangePassword":true`)) ||
+		bytes.Contains(body, []byte("setup.mutate")) {
+		return fmt.Errorf("Dex login did not produce a password-gated bootstrap session (status %d)", browser.StatusCode)
+	}
 	return nil
+}
+
+// submitDexForm drives the pinned Dex HTML login and approval forms.
+func submitDexForm(client *http.Client, response *http.Response, fields url.Values) (*http.Response, error) {
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+	action := response.Request.URL
+	form := regexp.MustCompile(`(?i)<form\b[^>]*action="([^"]+)"`).FindSubmatch(body)
+	if len(form) == 2 {
+		action, err = action.Parse(html.UnescapeString(string(form[1])))
+		if err != nil {
+			return nil, err
+		}
+	} else if fields.Get("approval") == "" {
+		return nil, fmt.Errorf("Dex form was unavailable at %s (status %d)", action.Path, response.StatusCode)
+	}
+	req := regexp.MustCompile(`name="req" value="([^"]+)"`).FindSubmatch(body)
+	if len(req) == 2 {
+		fields.Set("req", html.UnescapeString(string(req[1])))
+	}
+	return client.PostForm(action.String(), fields)
 }

@@ -23,6 +23,7 @@ type SetupHTTP struct {
 	Origin         string
 	Cipher         *cryptostore.Store
 	Admin          PasswordAdministrator
+	Login          *SetupLogin
 	Journal        *operation.Journal
 	Now            func() time.Time
 	NewID          func() string
@@ -37,6 +38,11 @@ func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/setup/status", setup.status)
 	mux.HandleFunc("POST /api/v1/setup/administrator", setup.administrator)
+	if setup.Login != nil {
+		mux.HandleFunc("GET /auth/login", setup.startLogin)
+		mux.HandleFunc("GET /auth/callback", setup.finishLogin)
+		mux.Handle("/api/v1/session", setup.sessionHandler())
+	}
 	guarded, err := ProtectBootstrap(setup.Origin, mux)
 	if err != nil {
 		return nil, err

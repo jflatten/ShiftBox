@@ -78,13 +78,13 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 		if err != nil {
 			return nil, err
 		}
-		admin, done, cleanup, err := startSetupDex(ctx, *dir, *dex, cert)
+		admin, login, done, cleanup, err := startSetupDex(ctx, *dir, *dex, origin, cert)
 		if err != nil {
 			db.Close()
 			return nil, err
 		}
 		dexDone, closeDex = done, cleanup
-		setup = app.SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Admin: admin,
+		setup = app.SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Admin: admin, Login: login,
 			Journal: operation.NewJournal(db, time.Now, uuid.NewString), Now: time.Now, NewID: uuid.NewString}
 		handler, err := app.NewSetupHandler(setup)
 		if err != nil {
@@ -103,7 +103,7 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(ctx) }()
-	if _, err := fmt.Fprintf(status, "Local setup: %s\nVerify the setup certificate SHA-256 fingerprint: %x\n", server.Origin, sha256.Sum256(cert.Certificate[0])); err != nil {
+	if _, err := fmt.Fprintf(status, "Local setup: %s\nVerify the setup certificate SHA-256 fingerprint: %x\nSign in: %s/auth/login\n", server.Origin, sha256.Sum256(cert.Certificate[0]), server.Origin); err != nil {
 		stop()
 		<-served
 		return errors.New("cannot write local setup status")

@@ -966,3 +966,19 @@ This checkpoint does not itself change the goal status.
   CLI, app, database and contract race tests pass, along with formatting and vet.
 - Browser sign-in and forced change, setup UI, activation, certificate/key flags,
   JSON output, and `shiftbox serve` still require implementation.
+
+### Local Dex sign-in during bootstrap
+
+- Added browser authorization-code sign-in with PKCE, nonce and state binding,
+  verified Dex TLS, and the signed local connector subject. The setup callback
+  accepts only the ready, active initial administrator in the local installation.
+- The callback issues the existing host-only bootstrap session. Session read and
+  logout are available on the guarded setup listener. The permission matrix
+  denies setup mutations while the account has a required password change.
+- The native command test follows the Dex sign-in and approval forms using the
+  one-time password, verifies the restricted session, and checks that an unbound
+  callback is denied. The affected race suites, formatting and vet passed on
+  verification. The existing Dex probe-cancellation test timed out on the first
+  package run, then passed three isolated runs and a full identity rerun.
+- Completing the password change, serving the setup UI and activating an
+  installation remain open.
