@@ -584,3 +584,14 @@ This checkpoint does not itself change the goal status.
 - Contract/config/auth/web race suites pass with the PostgreSQL fixture enabled;
   formatting and vet pass. These are initial-schema changes, not a migration of
   the existing development database. T018 remains incomplete for its other gates.
+
+### Browser-certificate validation primitive
+
+- Added test-first certificate/key and X.509 server-auth validation against an
+  explicit trust pool and every supplied concrete service hostname. Rejects key
+  mismatch, malformed input, unknown issuer, expired/future validity, client-only
+  usage, missing hostname coverage, and wildcard depth mismatch with a safe error.
+- Configuration race tests, formatting, and vet pass. The validator does not
+  install/persist keys or select trust policy. Configured-pattern validation,
+  private-CA/browser trust integration, protected storage, and atomic activation
+  remain consuming T018/T045 work; neither task is marked complete.
