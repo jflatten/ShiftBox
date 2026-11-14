@@ -1404,3 +1404,15 @@ This checkpoint does not itself change the goal status.
 - The TLS test has separate enrollment and polling listeners and verifies
   that a restarted agent polls with its saved identity after removing the
   seed. Native media tests verify both endpoint values are present.
+
+### Internal controller listeners
+
+- Added paired internal HTTPS listeners with separate enrollment and mTLS
+  polling routes. Their bound addresses and guest-reachable host produce
+  the URLs for recovery media.
+- Internal server certificates use fresh keys and exact DNS/IP names under
+  the retained CA. New handshakes replace the leaf after four hours, and
+  issuance observes the eight-hour lifetime and issuer expiry.
+- Local TLS tests cover both listeners, certificate rotation and shutdown.
+  Installation CA provisioning and `shiftbox serve` startup composition
+  still need wiring.
