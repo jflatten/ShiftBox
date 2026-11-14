@@ -64,17 +64,25 @@ func (e workspaceExecutor) Apply(ctx context.Context, op operation.Operation, st
 }
 
 func workspaceEffectError(op operation.Operation, err error) error {
-	if err == nil || op.OriginatingAction != "user.disable" {
+	var alreadyWaiting *operation.StepWaiting
+	if err == nil || errors.As(err, &alreadyWaiting) {
 		return err
 	}
-	detail := "The provider has not confirmed the workspace stopped. Check that UTM is running and the VM is reachable."
+	var detail string
 	switch {
 	case errors.Is(err, provider.ErrNotFound):
 		detail = "UTM could not find the workspace VM. Check the provider inventory. ShiftBox is retaining its reservations."
 	case errors.Is(err, provider.ErrOwnershipMismatch):
-		detail = "The VM no longer matches the workspace's ownership record. Check the provider inventory before attempting a stop."
+		detail = "The VM no longer matches the workspace's ownership record. Check the provider inventory. ShiftBox is retaining its reservations."
+	case errors.Is(err, provider.ErrPartial):
+		detail = "The provider still reports workspace resources after cleanup. Check the VM, disk, and removable media in UTM. ShiftBox is retaining its reservations."
 	case errors.Is(err, provider.ErrPermission):
-		detail = "ShiftBox could not stop the workspace through UTM. Check the controller's UTM automation permissions."
+		detail = "ShiftBox could not confirm the requested action through UTM. Check the controller's UTM automation permissions."
+	default:
+		if op.OriginatingAction != "user.disable" {
+			return err
+		}
+		detail = "The provider has not confirmed the workspace stopped. Check that UTM is running and the VM is reachable."
 	}
 	return &operation.StepWaiting{Detail: detail, Cause: err}
 }

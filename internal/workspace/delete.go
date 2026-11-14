@@ -236,5 +236,10 @@ func (e deletionExecutor) record(ctx context.Context, op operation.Operation, re
 }
 
 func retentionWaiting(err error) error {
+	classified := workspaceEffectError(operation.Operation{}, err)
+	var waiting *operation.StepWaiting
+	if errors.As(classified, &waiting) {
+		return waiting
+	}
 	return &operation.StepWaiting{Cause: err, Detail: "Waiting for the provider to verify workspace cleanup. Unconfirmed resources remain reserved."}
 }
