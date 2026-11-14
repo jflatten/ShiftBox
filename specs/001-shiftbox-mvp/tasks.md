@@ -2049,3 +2049,15 @@ This checkpoint does not itself change the goal status.
 - All 47 UI tests and the production build passed. Chrome verified keyboard
   validation, retry, file clearing and warning refresh against fixture
   responses. Production startup remains open under T060.
+
+### Active local password changes
+
+- Wired the active password-change route to Dex. The controller checks
+  the current password and rechecks session authority, then revokes existing
+  sessions and closes their connections before replacing the credential.
+  A successful change clears the first-login requirement and requires a
+  fresh sign-in. The audit event records only account identifiers.
+- Go vet and race-enabled command, application, authorization, web and
+  contract tests passed. The pinned Dex test verified changing a password
+  from a restricted session and signing in with the replacement. The active
+  browser form and administrator-created accounts remain open under T070.

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
+	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/secret"
@@ -30,7 +31,7 @@ func TestManagementServices(t *testing.T) {
 		PreviewHostPattern: "{service}--{workspace}.preview.test",
 	}
 	state := &ControllerState{DB: db, Installation: ActiveInstallation{Settings: settings}, Secrets: secret.NewService(cipher)}
-	services, err := NewManagementServices(state, operation.NewJournal(db, time.Now, uuid.NewString), &proxy.Registry{}, web.WorkspaceLaunchPolicy{}, nil, time.Now)
+	services, err := NewManagementServices(state, operation.NewJournal(db, time.Now, uuid.NewString), &proxy.Registry{}, web.WorkspaceLaunchPolicy{}, nil, identity.PasswordAdmin{}, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +43,7 @@ func TestManagementServices(t *testing.T) {
 		"createWorkspaceEntryGrant", "getOperation", "streamOperationEvents", "listTemplates", "createTemplate",
 		"createTemplateRevision", "updateTemplate", "grantTemplateLaunch", "revokeTemplateLaunch",
 		"updateCapacityBudget", "createResourceProfile", "getInfrastructureStatus", "replaceBrowserCertificate",
-		"listSecretMetadata", "setSecret", "deleteSecretOverride", "listUsers"} {
+		"listSecretMetadata", "setSecret", "deleteSecretOverride", "listUsers", "changeOwnPassword"} {
 		handler, ok := services.Handlers[id]
 		if !ok || handler.Route != catalog[id] || handler.DB != db || handler.Origin != "https://management.test" {
 			t.Errorf("handler for %s = route %+v, want reviewed catalog route %+v", id, handler.Route, catalog[id])

@@ -24,7 +24,7 @@ type ManagementServices struct {
 // services to shared controller state. The active router checks its catalog
 // separately from the protected setup listener.
 func NewManagementServices(state *ControllerState, journal *operation.Journal,
-	registry *proxy.Registry, launchPolicy web.WorkspaceLaunchPolicy, github *identity.GitHub, now func() time.Time,
+	registry *proxy.Registry, launchPolicy web.WorkspaceLaunchPolicy, github *identity.GitHub, passwords identity.PasswordAdmin, now func() time.Time,
 ) (ManagementServices, error) {
 	if state == nil || state.DB == nil || journal == nil || registry == nil || now == nil {
 		return ManagementServices{}, errors.New("management services are incompletely configured")
@@ -49,6 +49,7 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 		listWorkspaces, getWorkspace, getOperation, streamEvents, listTemplates, createTemplate, reviseTemplate, budget, resourceProfile,
 		web.InfrastructureStatusHandler(db, origin, now, launchPolicy.Capabilities),
 		state.browserCertificateHandler(journal, now),
+		activePasswordHandler(db, origin, registry, passwords, now),
 		web.ListUsersHandler(db, origin, now),
 		web.ListAuditEventsHandler(db, origin, now),
 		publishNotice, listNotices, noticeReceipt,

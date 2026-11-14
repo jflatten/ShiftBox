@@ -52,15 +52,12 @@ func (s SetupHTTP) passwordHandler(sessions *web.SessionHandler, passwords setup
 }
 
 func (s SetupHTTP) changePassword(w http.ResponseWriter, r *http.Request, principal auth.Principal, passwords setupPasswords) {
-	var input struct {
-		Current string `json:"currentPassword"`
-		New     string `json:"newPassword"`
-	}
+	var input passwordChange
 	if err := web.DecodeJSON(w, r, &input, 4096); err != nil {
 		setupProblem(w, r, err)
 		return
 	}
-	if input.Current == "" || len(input.Current) > 72 || len(input.New) > 72 || utf8.RuneCountInString(input.New) < 12 || input.New == input.Current {
+	if !input.valid() {
 		setupProblem(w, r, web.Problem{Status: 400, Code: "setup.invalid_password", Title: "Choose a different password with at least 12 characters and at most 72 UTF-8 bytes"})
 		return
 	}
@@ -130,4 +127,14 @@ func (s SetupHTTP) changePassword(w http.ResponseWriter, r *http.Request, princi
 	}
 	web.ClearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type passwordChange struct {
+	Current string `json:"currentPassword"`
+	New     string `json:"newPassword"`
+}
+
+func (p passwordChange) valid() bool {
+	return p.Current != "" && len(p.Current) <= 72 && len(p.New) <= 72 &&
+		utf8.RuneCountInString(p.New) >= 12 && p.New != p.Current
 }

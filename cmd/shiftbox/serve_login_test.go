@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/app"
+	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/identity"
@@ -109,7 +110,7 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 	}
 	var stopDex func()
 	server, err := app.ListenBootstrap("127.0.0.1:0", cert, func(origin string) (http.Handler, error) {
-		_, login, dexWeb, _, cleanup, err := startControllerDex(ctx, dir, binary, origin, postgres)
+		admin, login, dexWeb, _, cleanup, err := startControllerDex(ctx, dir, binary, origin, postgres)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +123,7 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 			IDEHostPattern: "{workspace}.ide.test", PreviewHostPattern: "{service}--{workspace}.preview.test"}
 		state := &app.ControllerState{DB: db, Installation: app.ActiveInstallation{Settings: settings}}
 		services, err := app.NewManagementServices(state, operation.NewJournal(db, time.Now, uuid.NewString),
-			&proxy.Registry{}, web.WorkspaceLaunchPolicy{}, nil, time.Now)
+			&proxy.Registry{}, web.WorkspaceLaunchPolicy{}, nil, admin, time.Now)
 		if err != nil {
 			return nil, err
 		}
@@ -130,6 +131,8 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		api.Handle("GET /api/v1/session", services.Session)
 		list := services.Handlers["listWorkspaces"]
 		api.Handle("GET /api/v1/workspaces", &list)
+		change := services.Handlers["changeOwnPassword"]
+		api.Handle("PUT /api/v1/session/password", &change)
 		assets, err := web.NewStaticHandler(fstest.MapFS{"index.html": {Data: []byte("<h1>ShiftBox</h1>")}})
 		if err != nil {
 			return nil, err
@@ -178,7 +181,7 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 			t.Fatalf("browser request to %s returned %d, want 404", path, response.StatusCode)
 		}
 	}
-	signIn := func(wantStatus int, wantMode string) {
+	signIn := func(credential string, wantStatus int, wantMode string) *http.Client {
 		t.Helper()
 		jar, err := cookiejar.New(nil)
 		if err != nil {
@@ -200,7 +203,7 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		if response.Request.URL.Host != probe.URL.Host || !strings.HasPrefix(response.Request.URL.Path, "/dex/") {
 			t.Fatalf("Dex form served from %s%s, want management origin /dex/", response.Request.URL.Host, response.Request.URL.Path)
 		}
-		response, err = submitDexForm(client, response, url.Values{"login": {email}, "password": {password}})
+		response, err = submitDexForm(client, response, url.Values{"login": {email}, "password": {credential}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -237,20 +240,48 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 				t.Fatalf("signed-in workspace list status = %d, want 200", workspaces.StatusCode)
 			}
 		}
+		return client
 	}
-	signIn(200, "normal")
+	signIn(password, 200, "normal")
 	exec("UPDATE users SET must_change_password=1 WHERE id=$1", uuidOwner)
-	signIn(200, "password_change")
+	restricted := signIn(password, 200, "password_change")
+	const replacement = "disposable-replacement-fixture"
+	managementURL, err := url.Parse(server.Origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var token string
+	for _, cookie := range restricted.Jar.Cookies(managementURL) {
+		if cookie.Name == "__Host-shiftbox_session" {
+			token = cookie.Value
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, server.Origin+"/api/v1/session/password",
+		strings.NewReader(`{"currentPassword":"`+password+`","newPassword":"`+replacement+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", server.Origin)
+	req.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+	res, err := restricted.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 204 {
+		t.Fatalf("active password change returned %d, want 204", res.StatusCode)
+	}
+	signIn(replacement, 200, "normal")
 	exec("UPDATE users SET membership_state='disabled' WHERE id=$1", uuidOwner)
-	signIn(401, "")
+	signIn(replacement, 401, "")
 	exec("UPDATE users SET membership_state='active',credential_mode='external' WHERE id=$1", uuidOwner)
-	signIn(401, "")
+	signIn(replacement, 401, "")
 	exec("UPDATE users SET credential_mode='local' WHERE id=$1", uuidOwner)
 	exec("UPDATE installations SET state='configuring'")
-	signIn(401, "")
+	signIn(replacement, 401, "")
 	var total int
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions").Scan(&total); err != nil || total != 2 {
-		t.Fatalf("session count = %d, %v, want only two sessions", total, err)
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions").Scan(&total); err != nil || total != 3 {
+		t.Fatalf("session count = %d, %v, want only three sessions", total, err)
 	}
 	if postgres != nil {
 		if _, err := os.Lstat(filepath.Join(dir, "dex.db")); !os.IsNotExist(err) {
