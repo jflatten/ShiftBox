@@ -20,7 +20,7 @@ func NewManagementRouter(session *SessionHandler, handlers map[string]Authorized
 // Bootstrap APIs are served separately by the protected local setup listener.
 func NewActiveManagementRouter(session *SessionHandler, handlers map[string]AuthorizedHandler, githubCallback http.Handler) (http.Handler, error) {
 	routes := slices.DeleteFunc(ManagementRoutes(), func(route ManagementRoute) bool {
-		return strings.HasPrefix(route.Path, "/setup/")
+		return strings.HasPrefix(route.Path, "/setup/") || strings.HasPrefix(route.Path, "/recovery/")
 	})
 	return newManagementRouter(routes, session, handlers, githubCallback)
 }

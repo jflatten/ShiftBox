@@ -256,6 +256,9 @@ func (j *Journal) CompleteStepInTx(ctx context.Context, tx *sql.Tx, claim Claim,
 			return ErrConflict
 		}
 		op.Steps[index].Status = "succeeded"
+		if op.OriginatingAction == "restore.validate" {
+			op.Steps[index].Detail = evidence
+		}
 		if index == len(op.Steps)-1 {
 			now := j.now().UTC()
 			op.Status = "succeeded"

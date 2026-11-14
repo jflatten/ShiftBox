@@ -148,6 +148,13 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	backupRoute := web.BackupRoute(state.DB, backups, origin, active.InstallationID, time.Now,
 		func(job web.BackupJob) { backupJobs <- job })
 	services.Handlers[backupRoute.Route.OperationID] = backupRoute
+	if err := web.InterruptRestoreValidations(ctx, state.DB, journal); err != nil {
+		return err
+	}
+	restoreJobs := make(chan web.RestoreValidationJob, 1)
+	restoreRoute := web.RestoreValidationRoute(state.DB, journal, origin, active.InstallationID, time.Now,
+		func(job web.RestoreValidationJob) { restoreJobs <- job })
+	services.Handlers[restoreRoute.Route.OperationID] = restoreRoute
 	api, err := web.NewActiveManagementRouter(services.Session, services.Handlers, services.GitHubCallback)
 	if err != nil {
 		return err
@@ -185,7 +192,11 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		return preflightWorker.Run(ctx, time.Second)
 	}, func(ctx context.Context) error {
 		return web.RunBackupJobs(ctx, backupJobs, backups, captureBackup)
-	}, localBackup.Serve)
+	}, localBackup.Serve, func(ctx context.Context) error {
+		return web.RunRestoreValidations(ctx, state.DB, journal, restoreJobs, func(ctx context.Context, job web.RestoreValidationJob) (string, error) {
+			return validateWebRestore(ctx, cfg, metadata, job)
+		})
+	})
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return nil
 	}

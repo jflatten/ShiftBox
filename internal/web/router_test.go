@@ -48,7 +48,7 @@ func TestActiveManagementRouterKeepsSetupLocal(t *testing.T) {
 		t.Fatal("active router accepted protected setup handlers")
 	}
 	for _, route := range web.ManagementRoutes() {
-		if strings.HasPrefix(route.Path, "/setup/") {
+		if strings.HasPrefix(route.Path, "/setup/") || strings.HasPrefix(route.Path, "/recovery/") {
 			delete(handlers, route.OperationID)
 		}
 	}
@@ -63,6 +63,7 @@ func TestActiveManagementRouterKeepsSetupLocal(t *testing.T) {
 		{"GET", "/setup/status", http.StatusNotFound},
 		{"POST", "/setup/activate", http.StatusNotFound},
 		{"PUT", "/setup/certificate", http.StatusNotFound},
+		{"GET", "/recovery/fixture", http.StatusNotFound},
 		{"PUT", "/session/password", http.StatusUnauthorized},
 		{"POST", "/workspaces", http.StatusUnauthorized},
 	} {

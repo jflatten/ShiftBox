@@ -216,16 +216,7 @@ type postgresReplacement struct {
 }
 
 func restoreTarget(cfg config.Config, destination, postgresPath string) (restoreReplacement, error) {
-	checkLocal := func() error {
-		parent, err := os.Lstat(filepath.Dir(destination))
-		if err != nil || !parent.IsDir() || parent.Mode().Perm()&0077 != 0 {
-			return backup.ErrRestoreTarget
-		}
-		if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
-			return backup.ErrRestoreTarget
-		}
-		return nil
-	}
+	checkLocal := func() error { return checkRestoreDirectory(destination) }
 	if cfg.DataProfile == "sqlite" && postgresPath == "" {
 		return restoreReplacement{digest: restoreDigest("sqlite", destination), check: func(context.Context) error { return checkLocal() }}, nil
 	}
@@ -236,7 +227,11 @@ func restoreTarget(cfg config.Config, destination, postgresPath string) (restore
 	if err != nil {
 		return restoreReplacement{}, err
 	}
-	application, err := url.Parse(cfg.PostgresURI)
+	return postgresRestoreReplacement(destination, cfg.PostgresURI, profile, checkLocal)
+}
+
+func postgresRestoreReplacement(destination, applicationURI string, profile *app.PostgresProfileSetup, checkLocal func() error) (restoreReplacement, error) {
+	application, err := url.Parse(applicationURI)
 	if err != nil {
 		return restoreReplacement{}, backup.ErrRestoreTarget
 	}
@@ -246,13 +241,25 @@ func restoreTarget(cfg config.Config, destination, postgresPath string) (restore
 	}
 	// Credentials may be rotated. Bind host, database and role identity.
 	digest := restoreDigest("postgres", destination, application.Redacted(), dex.Redacted(), profile.CAFile)
-	target := database.PostgresSetupTarget{ApplicationURI: cfg.PostgresURI, DexURI: profile.DexURI, Roots: profile.Roots}
+	target := database.PostgresSetupTarget{ApplicationURI: applicationURI, DexURI: profile.DexURI, Roots: profile.Roots}
 	return restoreReplacement{digest: digest, postgres: &postgresReplacement{database: target, caPath: profile.CAFile}, check: func(ctx context.Context) error {
 		if err := checkLocal(); err != nil {
 			return err
 		}
 		return backup.ValidatePostgresReplacement(ctx, target)
 	}}, nil
+}
+
+func checkRestoreDirectory(destination string) error {
+	parent, err := os.Lstat(filepath.Dir(destination))
+	if err != nil || !parent.IsDir() || parent.Mode().Perm()&0077 != 0 {
+		return backup.ErrRestoreTarget
+	}
+	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
+		return backup.ErrRestoreTarget
+	}
+	return nil
+
 }
 
 func restoreDigest(values ...string) string {
