@@ -1836,3 +1836,13 @@ This checkpoint does not itself change the goal status.
   The 30-day warning is computed from the active certificate's stored dates.
 - Web, application, and contract race tests passed. Infrastructure UI,
   broader health conditions, and full controller startup remain open.
+
+### Infrastructure page
+
+- Added the administrator's Infrastructure page with provider details,
+  active certificate warnings, and a versioned capacity budget form. A
+  conflicting edit reloads the current budget for review without retrying.
+- All 33 UI tests and the production build passed. Chrome verified
+  keyboard navigation and a successful budget update using fixture
+  responses. Certificate replacement and broader infrastructure controls
+  remain open under T099 and T101.

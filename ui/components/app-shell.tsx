@@ -14,7 +14,7 @@ export interface ShellSession {
 /** Shared navigation is a convenience; every destination still enforces server authorization. */
 export function ShiftBoxShell({ session, alerts, error, children }: {
   session?: ShellSession;
-  alerts: { id: string; title: string; detail?: string }[];
+  alerts: { id: string; title: string; detail?: string; color?: string }[];
   error?: unknown;
   children: ReactNode;
 }) {
@@ -41,7 +41,7 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
         <Stack gap="lg">
           <Stack gap="sm" role="region" aria-label="Persistent conditions">
             {error !== undefined ? <APIProblemView error={error} /> : null}
-            {alerts.map(alert => <Alert key={alert.id} title={alert.title} color="red">{alert.detail}</Alert>)}
+            {alerts.map(alert => <Alert key={alert.id} title={alert.title} color={alert.color ?? 'red'}>{alert.detail}</Alert>)}
           </Stack>
           {children}
         </Stack>
