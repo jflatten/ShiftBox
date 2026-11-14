@@ -1,10 +1,13 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import { Alert, AppShell, Burger, Group, Image, NavLink, Stack, useComputedColorScheme } from '@mantine/core';
+import { Alert, AppShell, Burger, Button, Group, Image, NavLink, Stack, useComputedColorScheme } from '@mantine/core';
+import { useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from './api-problem';
 import { ExternalReauthorization } from '../features/session/external-reauthorization';
 import { useAuthorizationExpired } from '../lib/use-authorization-expired';
+import { readProblem } from '../lib/api-problem';
+import { SignInChoices } from '../features/session/sign-in';
 
 export interface ShellSession {
   role: 'member' | 'administrator';
@@ -23,15 +26,16 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
   children: ReactNode;
 }) {
   const [opened, setOpened] = useState(false);
+  const [signedOut, setSignedOut] = useState(false);
   const scheme = useComputedColorScheme('light');
   const permitted = (action: string) => session?.permissions.includes(action);
   const canRenew = permitted('session.external_reauthorize') && !!session?.csrfToken;
   const deadline = Date.parse(session?.externalAuthorizationDueAt ?? '');
   const expired = useAuthorizationExpired(deadline);
   const renewalRequired = canRenew && (expired || !Number.isFinite(deadline));
-  const normal = session?.mode === 'normal' && session.installationState === 'active' && !renewalRequired;
-  const account = (normal && permitted('git.manage')) ||
-    (!renewalRequired && session?.installationState === 'active' && permitted('session.change_password'));
+  const normal = !signedOut && session?.mode === 'normal' && session.installationState === 'active' && !renewalRequired;
+  const account = (normal && (permitted('git.manage') || permitted('secret.manage_user'))) ||
+    (!signedOut && !renewalRequired && session?.installationState === 'active' && permitted('session.change_password'));
   return (
     <AppShell header={{ height: 72 }} navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="lg">
       <AppShell.Header>
@@ -45,7 +49,7 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
         {normal ? <NavLink href="/templates/" label="Templates" /> : null}
         {normal && permitted('notice.list') ? <NavLink href="/notices/" label="Notices" /> : null}
         {account ? <NavLink href="/account/" label="Account" /> : null}
-        {!renewalRequired && session?.role === 'administrator' && permitted('infrastructure.view') ? <NavLink href="/infrastructure/" label="Infrastructure" /> : null}
+        {!signedOut && !renewalRequired && session?.role === 'administrator' && permitted('infrastructure.view') ? <NavLink href="/infrastructure/" label="Infrastructure" /> : null}
         {normal && session?.role === 'administrator' && permitted('user.list') ? <NavLink href="/users/" label="People" /> : null}
         {normal && session?.role === 'administrator' && permitted('audit.list') ? <NavLink href="/audit/" label="Audit" /> : null}
       </AppShell.Navbar>
@@ -54,14 +58,49 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
           <Stack gap="sm" role="region" aria-label="Persistent conditions">
             {error !== undefined ? <APIProblemView error={error} /> : null}
             {alerts.map(alert => <Alert key={alert.id} title={alert.title} color={alert.color ?? 'red'}>{alert.detail}</Alert>)}
-            {canRenew && session?.csrfToken ? (
+            {!signedOut && canRenew && session?.csrfToken ? (
               <ExternalReauthorization key={session.csrfToken} csrfToken={session.csrfToken}
                 dueAt={session.externalAuthorizationDueAt} expired={!!renewalRequired} />
             ) : null}
           </Stack>
-          {!renewalRequired ? children : null}
+          {!signedOut && !renewalRequired ? children : null}
+          {signedOut ? <SignInChoices /> : null}
+          {!signedOut && permitted('session.logout') && session?.csrfToken ? (
+            <SignOut csrfToken={session.csrfToken} onSignedOut={() => setSignedOut(true)} />
+          ) : null}
         </Stack>
       </AppShell.Main>
     </AppShell>
   );
+}
+
+function SignOut({ csrfToken, onSignedOut }: { csrfToken: string; onSignedOut: () => void }) {
+  const client = useQueryClient();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<unknown>();
+
+  async function signOut() {
+    if (pending) return;
+    setPending(true);
+    setError(undefined);
+    try {
+      const response = await fetch('/api/v1/session', {
+        method: 'DELETE', headers: { 'X-CSRF-Token': csrfToken }, cache: 'no-store',
+      });
+      if (!response.ok && response.status !== 401) throw await readProblem(response);
+      onSignedOut();
+      await client.cancelQueries();
+      client.removeQueries({ predicate: query => query.queryKey[0] !== 'session' });
+      client.setQueryData(['session'], null);
+    } catch (error) {
+      setError(error);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return <Stack align="flex-start">
+    {error !== undefined ? <APIProblemView error={error} /> : null}
+    <Button variant="default" loading={pending} onClick={() => void signOut()}>Sign out</Button>
+  </Stack>;
 }

@@ -19,6 +19,28 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// TestSessionOrganizationScope returns the active organization scope to
+// administrators and keeps it out of member session navigation metadata.
+func TestSessionOrganizationScope(t *testing.T) {
+	handler, principal, token := sessionHandlerFixture(t)
+	const installation = "00000000-0000-4000-8000-000000000001"
+	principal.InstallationID = installation
+	for _, role := range []string{"member", "administrator"} {
+		principal.User.Role = role
+		req := httptest.NewRequest(http.MethodGet, handler.Origin+"/api/v1/session", nil)
+		req.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		body := response.Body.String()
+		scope := strings.Contains(body, `"organizationSecretScopeId":"`+installation+`"`)
+		permission := strings.Contains(body, `"secret.manage_organization"`)
+		want := role == "administrator"
+		if response.Code != 200 || scope != want || permission != want {
+			t.Errorf("organization secret scope on %s session = %t, permission = %t (status %d), want both %t", role, scope, permission, response.Code, want)
+		}
+	}
+}
+
 // TestLogoutPersistsRevocationBeforeConnectionClose proves the endpoint invalidates stored authority before closing live access.
 func TestLogoutPersistsRevocationBeforeConnectionClose(t *testing.T) {
 	handler, principal, token := sessionHandlerFixture(t)

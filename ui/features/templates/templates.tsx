@@ -10,6 +10,7 @@ import { useTemplates, type TemplateRevision } from './use-templates';
 import { TemplateArchive } from './archive';
 import { TemplateSharing } from './sharing';
 import { TemplateRevisionForm } from './revision';
+import { Secrets } from '../secrets/secrets';
 
 export function Templates() {
   const session = useSession();
@@ -32,12 +33,19 @@ function TemplateList({ userID, admin, csrfToken, canCreate }: {
   const [cursors, setCursors] = useState<string[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [dialog, setDialog] = useState<
-    { action: 'share' | 'archive' | 'revise'; template: TemplateRevision } | { action: 'create' }
+    { action: 'share' | 'archive' | 'revise' | 'secrets'; template: TemplateRevision } | { action: 'create' }
   >();
   const cursor = cursors.at(-1);
   const archived = admin && showArchived;
   const page = useTemplates(cursor, true, archived, userID, admin);
   const { items, nextCursor } = page.isError ? {} : page.data ?? {};
+  if (dialog?.action === 'secrets') {
+    return <Stack>
+      <Button variant="default" style={{ alignSelf: 'flex-start' }} onClick={() => setDialog(undefined)}>Back to templates</Button>
+      <Text fw={600}>{dialog.template.name}</Text>
+      <Secrets scope="template" scopeID={dialog.template.id} userID={userID} csrfToken={csrfToken} />
+    </Stack>;
+  }
   return (
     <Stack>
       {admin || canCreate ? <Group>
@@ -75,6 +83,7 @@ function TemplateList({ userID, admin, csrfToken, canCreate }: {
                   <Button size="compact-sm" variant="subtle" onClick={() => setDialog({ action: 'archive', template })}>
                     {isArchived ? 'Restore template' : 'Archive template'}
                   </Button>
+                  {!isArchived ? <Button size="compact-sm" variant="subtle" onClick={() => setDialog({ action: 'secrets', template })}>Project secrets</Button> : null}
                 </Group> : null}</Table.Td>
               </Table.Tr>;
             })}

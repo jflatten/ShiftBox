@@ -142,7 +142,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T064 [P] [US2] Write failing secret service/API tests for metadata-only listing, exactly three scopes, User → Project Template → Organization precedence, explicit empty override, fallback preview on delete, ciphertext context binding, and management/audit omission in `internal/secret/service_test.go` and `tests/contract/secrets_api_test.go`
 - [ ] T065 [P] [US2] Write failing management and guest secret/Git contract tests for metadata-only secret listing, mTLS-derived owner/template context, denied guest-supplied scope, exit codes 0/3/4/5, no persistent cache, authorization initiation/state-bound callback/revocation, current owner token, coordinated refresh, and reconnect-required failure in `tests/contract/credentials_test.go` and `tests/contract/git_authorization_api_test.go`
 - [X] T066 [P] [US2] Write failing GitHub authorization tests for repository coverage, stable provider identity, fenced concurrent renewal, app/refresh credential exclusion, revocation, and permanent renewal failure in `internal/identity/github_test.go`
-- [ ] T067 [P] [US2] Write failing UI tests for people states, template grant exposure warning, secret metadata-only views, empty override, fallback deletion warning, archival filters, and no secret value rendering in `ui/features/admin/people.test.tsx`, `ui/features/templates/sharing.test.tsx`, and `ui/features/secrets/secrets.test.tsx`
+- [X] T067 [P] [US2] Write failing UI tests for people states, template grant exposure warning, secret metadata-only views, empty override, fallback deletion warning, archival filters, and no secret value rendering in `ui/features/admin/people.test.tsx`, `ui/features/templates/sharing.test.tsx`, and `ui/features/secrets/secrets.test.tsx`
 - [ ] T068 [P] [US2] Write failing Playwright sharing journey covering two users, owner privacy, project-secret warning, precedence, administrator connection owner context, Git authority, revoke, and archive in `ui/tests/e2e/template-sharing.spec.ts`
 
 ### Models and implementation
@@ -155,7 +155,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T074 [US2] Implement owner-bound GitHub.com App authorization initiation, state-bound callback, repository coverage, encrypted token storage, single-flight fenced refresh, revoke, and reconnect-required state proven by T065-T066 in `internal/identity/github.go`, `internal/identity/github_oauth.go`, and `internal/identity/github_store.go`
 - [ ] T075 [US2] Implement guest secret resolution and Git token endpoints plus `shiftbox secrets get-secret` and internal credential-helper exit behavior proven by T065 in `internal/web/credential_routes.go`, `internal/guest/credentials.go`, and `cmd/shiftbox-agent/credentials.go`
 - [X] T076 [US2] Implement self password/external reauthorization, users/membership/external connector, template update/new revision/grant/revoke/archive, secret metadata/set/delete, Git authorization/callback/revoke, and audit read handlers from the OpenAPI and authorization-matrix contracts in `internal/web/session_routes.go`, `internal/web/user_routes.go`, `internal/web/template_grant_routes.go`, `internal/web/secret_routes.go`, `internal/web/git_routes.go`, and `internal/web/audit_routes.go`
-- [ ] T077 [US2] Implement Mantine password change, external reauthorization, People, template revision/sharing/archive, secret metadata/edit/delete, Git connection, and audit screens with the required warnings in `ui/features/session/password.tsx`, `ui/features/session/external-reauthorization.tsx`, `ui/features/admin/people.tsx`, `ui/features/templates/sharing.tsx`, `ui/features/secrets/secrets.tsx`, `ui/features/git/connection.tsx`, and `ui/app/audit/page.tsx`
+- [X] T077 [US2] Implement Mantine password change, external reauthorization, People, template revision/sharing/archive, secret metadata/edit/delete, Git connection, and audit screens with the required warnings in `ui/features/session/password.tsx`, `ui/features/session/external-reauthorization.tsx`, `ui/features/admin/people.tsx`, `ui/features/templates/sharing.tsx`, `ui/features/secrets/secrets.tsx`, `ui/features/git/connection.tsx`, and `ui/app/audit/page.tsx`
 - [ ] T078 [US2] Add and run the Go sharing acceptance test together with the T068 Playwright journey, then record separate evidence for privacy, revocation, secret non-disclosure, and owner-bound Git behavior in `tests/acceptance/template_sharing_test.go` and `documentation/validation/template-sharing.md`
 - [X] T127 [US2] Implement and verify signed-in administrator password resets for active local accounts, with dedicated authorization, session and browser grant revocation, forced password change, redacted audit, and one-time delivery from People.
 
@@ -2312,3 +2312,20 @@ This checkpoint does not itself change the goal status.
   build passed. Chrome verified keyboard sharing through the warning and
   confirmation with local API fixtures. T067 and T077 remain open for the
   secret controls and tests.
+
+### Secret management and restricted sign-out
+
+- T067 and T077 are complete. Account, Templates, and Infrastructure
+  expose the Personal, Project template, and Organization secret scopes
+  using current user, template, and session authority. Only metadata is
+  retained in the query cache. Writes start with a blank field, explicit
+  empty is a separate choice, and deletion requires fallback confirmation.
+- A personal fallback varies by workspace and current project access.
+  The confirmation names those project-dependent results and any known
+  Organization fallback. Project and Organization confirmations describe
+  the resulting precedence for their scopes.
+- Password-change and other authorized sessions can sign out through the
+  shared shell. A successful sign-out clears cached management results.
+- All 68 UI tests, Go vet, the embedded build, and race-enabled identity
+  and API tests passed. Chrome verified keyboard-only empty override and
+  fallback deletion with local fixtures.

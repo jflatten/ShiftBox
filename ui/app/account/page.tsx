@@ -4,6 +4,7 @@ import { Text, Title } from '@mantine/core';
 import { ShiftBoxShell } from '../../components/app-shell';
 import { ActivePasswordForm } from '../../features/session/password';
 import { GitConnection } from '../../features/git/connection';
+import { Secrets } from '../../features/secrets/secrets';
 import { SignInChoices } from '../../features/session/sign-in';
 import { useSession } from '../../lib/use-session';
 
@@ -12,6 +13,7 @@ export default function Account() {
   const current = session.session;
   const canChange = current?.installationState === 'active' && current.permissions.includes('session.change_password');
   const canManageGit = current?.mode === 'normal' && current.installationState === 'active' && current.permissions.includes('git.manage');
+  const canManageSecrets = current?.mode === 'normal' && current.installationState === 'active' && current.permissions.includes('secret.manage_user');
   return (
     <ShiftBoxShell session={current} alerts={[]} error={session.error ?? undefined}>
       <Title order={1}>Account</Title>
@@ -19,6 +21,8 @@ export default function Account() {
       {session.data === null ? <SignInChoices /> : null}
       {canChange ? <ActivePasswordForm key={current.user.id} csrfToken={current.csrfToken} /> : null}
       {canManageGit ? <GitConnection key={current.user.id} userID={current.user.id} csrfToken={current.csrfToken} /> : null}
+      {canManageSecrets ? <Secrets key={current.user.id} scope="user" scopeID={current.user.id}
+        userID={current.user.id} csrfToken={current.csrfToken} /> : null}
     </ShiftBoxShell>
   );
 }

@@ -1,6 +1,9 @@
 import { MantineProvider } from '@mantine/core';
 import { act, render, screen } from '@testing-library/react';
 import { ShiftBoxShell } from './app-shell';
+import userEvent from '@testing-library/user-event';
+import { Providers } from '../app/providers';
+
 
 // A member must not be offered administration navigation by the shared shell.
 test('shows member navigation and the approved brand', () => {
@@ -62,4 +65,25 @@ test('gates a mounted page when organizational authorization expires', () => {
     expect(screen.getByText('Organizational authorization expired')).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Private workspaces' })).not.toBeInTheDocument();
   } finally { jest.useRealTimers(); }
+});
+
+// A password-change session can still sign out and retire its restricted
+// cookie without completing the password form.
+test('signs out a restricted session with its CSRF token', async () => {
+  const original = globalThis.fetch;
+  const fetch = jest.fn().mockResolvedValue({ ok: true, status: 204 });
+  globalThis.fetch = fetch;
+  try {
+    const user = userEvent.setup();
+    render(<Providers><ShiftBoxShell session={{
+      role: 'member', mode: 'password_change', installationState: 'active',
+      permissions: ['session.change_password', 'session.logout'], csrfToken: 'fixture',
+    }} alerts={[]}><h1>Change password</h1></ShiftBoxShell></Providers>);
+    await user.click(screen.getByRole('button', { name: 'Sign out' }));
+    expect(fetch).toHaveBeenCalledWith('/api/v1/session', expect.objectContaining({
+      method: 'DELETE', headers: { 'X-CSRF-Token': 'fixture' },
+    }));
+    expect(await screen.findByRole('link', { name: 'Sign in' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Change password' })).not.toBeInTheDocument();
+  } finally { globalThis.fetch = original; }
 });

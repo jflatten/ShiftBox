@@ -95,6 +95,11 @@ func (h *SessionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		value := principal.Session.ExternalAuthorizedAt.Add(principal.ExternalAuthInterval).UTC()
 		due = &value
 	}
+	var organizationSecretScopeID string
+	organization := auth.Resource{Type: "organization", ID: principal.InstallationID}
+	if organization.ID != "" && auth.Authorize(principal, "secret.manage_organization", organization, nil, now).Allowed {
+		organizationSecretScopeID = organization.ID
+	}
 	view := struct {
 		User                       auth.User  `json:"user"`
 		Mode                       string     `json:"mode"`
@@ -102,7 +107,8 @@ func (h *SessionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Permissions                []string   `json:"permissions"`
 		InstallationState          string     `json:"installationState"`
 		ExternalAuthorizationDueAt *time.Time `json:"externalAuthorizationDueAt"`
-	}{principal.User, principal.Session.Mode, auth.CSRFToken(token), sessionPermissions(principal, now), principal.InstallationState, due}
+		OrganizationSecretScopeID  string     `json:"organizationSecretScopeId,omitempty"`
+	}{principal.User, principal.Session.Mode, auth.CSRFToken(token), sessionPermissions(principal, now), principal.InstallationState, due, organizationSecretScopeID}
 	encoded, err := json.Marshal(view)
 	if err != nil {
 		WriteProblem(w, RequestID(r.Context()), err)
@@ -128,6 +134,10 @@ func sessionPermissions(principal auth.Principal, now time.Time) []string {
 		if auth.Authorize(principal, action, auth.Resource{Type: "user", ID: principal.User.ID}, nil, now).Allowed {
 			permissions = append(permissions, action)
 		}
+	}
+	if principal.InstallationID != "" && auth.Authorize(principal, "secret.manage_organization",
+		auth.Resource{Type: "organization", ID: principal.InstallationID}, nil, now).Allowed {
+		permissions = append(permissions, "secret.manage_organization")
 	}
 	return permissions
 }

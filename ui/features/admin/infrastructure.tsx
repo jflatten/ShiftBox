@@ -10,6 +10,7 @@ import { useInfrastructure, type Capacity, type InfrastructureStatus } from '../
 import { SignInChoices } from '../session/sign-in';
 import { useSession } from '../../lib/use-session';
 import { BrowserCertificate } from './browser-certificate';
+import { Secrets } from '../secrets/secrets';
 
 const capacityFields = [
   { name: 'cpuCount', label: 'CPU limit' },
@@ -51,6 +52,10 @@ export function Infrastructure() {
               : <Text>{data.capacity.cpuCount} vCPU · {data.capacity.memoryMiB} MiB memory · {data.capacity.diskMiB} MiB disk</Text>}
           </Stack>
         </>
+      ) : null}
+      {allowed && current.organizationSecretScopeId && current.permissions.includes('secret.manage_organization') ? (
+        <Secrets key={current.user.id + current.organizationSecretScopeId} scope="organization" scopeID={current.organizationSecretScopeId}
+          userID={current.user.id} csrfToken={current.csrfToken} />
       ) : null}
     </ShiftBoxShell>
   );

@@ -58,6 +58,7 @@ type Principal struct {
 	User                 User
 	Session              Session
 	InstallationState    string
+	InstallationID       string
 	ExternalAuthInterval time.Duration
 	LocalBootstrap       bool
 	RecoveryReady        bool

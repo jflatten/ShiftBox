@@ -150,12 +150,12 @@ func (s *Store) principal(ctx context.Context, tx *sql.Tx, digest, sessionID str
 	err := tx.QueryRowContext(ctx, `SELECT
  u.id,u.primary_email,u.display_name,u.role,u.membership_state,u.credential_mode,u.must_change_password,u.external_authorized_at,u.version,
  s.id,s.token_digest,s.user_id,s.mode,s.csrf_digest,s.authenticated_at,s.external_authorized_at,s.expires_at,s.revoked_at,s.revocation_reason,
- i.state,i.external_auth_interval_seconds
+ i.state,i.id,i.external_auth_interval_seconds
  FROM sessions s JOIN users u ON u.id=s.user_id JOIN installations i ON i.singleton=1
  WHERE ($1<>'' AND s.token_digest=$1) OR ($2<>'' AND s.id=$2)`, digest, sessionID).Scan(
 		&principal.User.ID, &principal.User.PrimaryEmail, &principal.User.DisplayName, &principal.User.Role, &principal.User.MembershipState, &principal.User.CredentialMode, &principal.User.MustChangePassword, &userExternal, &principal.User.Version,
 		&principal.Session.ID, &principal.Session.TokenDigest, &principal.Session.UserID, &principal.Session.Mode, &principal.Session.CSRFDigest, &authenticated, &sessionExternal, &expires, &revoked, &reason,
-		&principal.InstallationState, &interval,
+		&principal.InstallationState, &principal.InstallationID, &interval,
 	)
 	if err != nil {
 		return Principal{}, err
