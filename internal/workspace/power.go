@@ -49,6 +49,13 @@ func (e *PowerExecutor) Observe(ctx context.Context, op operation.Operation, ste
 		evidence, err := e.shutdownEvidence(ctx, op)
 		return evidence, err == nil, err
 	}
+	if step.Key == "configure" {
+		if got.Power != provider.Running {
+			return "", false, provider.ErrOutcomeUnknown
+		}
+		evidence, err := configurationEvidence(ctx, e.store.db, op.ID)
+		return evidence, err == nil, err
+	}
 	if (got.Power == provider.Running) != (op.Type == "start") {
 		return "", false, nil
 	}
@@ -65,6 +72,9 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 	if step.Key == "shutdown" {
 		return e.shutdownEvidence(ctx, op)
 	}
+	if step.Key == "configure" {
+		return configurationEvidence(ctx, e.store.db, op.ID)
+	}
 	var got provider.Inventory
 	if op.Type == "start" {
 		got, err = e.provider.Start(ctx, provider.StartRequest{Ref: req.Ref, OperationID: op.ID, NetworkMode: req.NetworkMode})
@@ -80,7 +90,8 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, error) {
 	if (op.Type != "start" && op.Type != "stop") || op.OriginatingAction != "workspace."+op.Type ||
 		op.WorkspaceID == nil || op.StartedAt == nil || op.Status != "running" || step.Status != "active" ||
-		(step.Key != op.Type && !(op.Type == "stop" && step.Key == "shutdown")) {
+		(step.Key != op.Type && !(op.Type == "stop" && step.Key == "shutdown") &&
+			!(op.Type == "start" && step.Key == "configure")) {
 		return provider.CreateRequest{}, provider.ErrInvalidState
 	}
 	req := provider.CreateRequest{OperationID: op.ID, Ref: provider.WorkspaceRef{WorkspaceID: *op.WorkspaceID, Generation: op.Generation}}

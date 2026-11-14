@@ -80,7 +80,8 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 		WHERE w.id=$1 AND w.generation=$2 AND o.generation=$2 AND w.observed_state='running'
 		  AND w.desired_state=$4
 		  AND (($3='configure' AND o.type='provision' AND o.originating_action='workspace.launch' AND o.requested_by=w.owner_user_id)
-		    OR ($3='shutdown' AND o.type='stop' AND o.originating_action='workspace.stop'
+		    OR (($3='shutdown' AND o.type='stop' AND o.originating_action='workspace.stop'
+		      OR $3='configure' AND o.type='start' AND o.originating_action='workspace.start')
 		      AND EXISTS(SELECT 1 FROM users actor WHERE actor.id=o.requested_by AND actor.membership_state='active'
 		        AND (actor.id=w.owner_user_id OR actor.role='administrator'))))
 		  AND o.current_step=$3 AND s.status='active' AND o.status IN ('running','waiting')
@@ -141,7 +142,7 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 	if err != nil {
 		return err
 	}
-	if (shutdown && kind != "stop") || (!shutdown && kind != "provision") {
+	if (shutdown && kind != "stop") || (!shutdown && kind != "provision" && kind != "start") {
 		return ErrGuestReportConflict
 	}
 	if status == report.Status && container == report.Evidence.ContainerID && problem == report.Problem {

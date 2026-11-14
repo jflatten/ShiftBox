@@ -128,6 +128,11 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	checkReservation(t, db, id, "reserved", "reserved")
 	exec("UPDATE guest_registrations SET last_authenticated_at=$1 WHERE workspace_id=$2", time.Now().UTC().Format(time.RFC3339Nano), id)
 	run(start, nil)
+	checkState(start, "running", "waiting")
+	run(start, errGuestConfigurationPending)
+	checkState(start, "running", "waiting")
+	exec("INSERT INTO guest_dispatches(operation_id,dispatch_version,status) VALUES($1,1,'succeeded')", start.ID)
+	run(start, nil)
 	checkState(start, "running", "succeeded")
 	if machines.starts != 1 || machines.stops != 1 {
 		t.Fatalf("provider calls = %d starts and %d stops, want one per operation", machines.starts, machines.stops)

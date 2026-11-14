@@ -38,7 +38,7 @@ func NewLaunchExecutor(store *Store, machines provider.Provider, enrollment Enro
 
 func (e *LaunchExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
 	if step.Key == "configure" {
-		evidence, err := e.configuration(ctx, op)
+		evidence, err := configurationEvidence(ctx, e.provision.store.db, op.ID)
 		return evidence, err == nil, err
 	}
 	if step.Key != "enroll" {
@@ -61,7 +61,7 @@ func (e *LaunchExecutor) Observe(ctx context.Context, op operation.Operation, st
 
 func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
 	if step.Key == "configure" {
-		return e.configuration(ctx, op)
+		return configurationEvidence(ctx, e.provision.store.db, op.ID)
 	}
 	if step.Key != "enroll" {
 		return e.provision.Apply(ctx, op, step)
@@ -102,9 +102,9 @@ func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step
 	return e.confirmContact(ctx, req)
 }
 
-func (e *LaunchExecutor) configuration(ctx context.Context, op operation.Operation) (string, error) {
+func configurationEvidence(ctx context.Context, db *sql.DB, operationID string) (string, error) {
 	var status, problem string
-	err := e.provision.store.db.QueryRowContext(ctx, `SELECT status,problem FROM guest_dispatches WHERE operation_id=$1`, op.ID).
+	err := db.QueryRowContext(ctx, `SELECT status,problem FROM guest_dispatches WHERE operation_id=$1`, operationID).
 		Scan(&status, &problem)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", errGuestConfigurationPending

@@ -409,6 +409,35 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 			t.Fatalf("shutdown status = %q, %v, want persisted success", status, err)
 		}
 	})
+	t.Run("guest configuration after restart", func(t *testing.T) {
+		const startID = "99999999-0000-4000-8000-000000000004"
+		if _, err := db.Exec("UPDATE workspaces SET desired_state='running' WHERE id='work'"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,version,originating_action)
+			VALUES($1,'work','start',1,'owner','fixture-restart','waiting','configure','now',11,'workspace.start')`, startID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO operation_steps(operation_id,step_index,step_key,label,status)
+			VALUES($1,0,'configure','Configure','active')`, startID); err != nil {
+			t.Fatal(err)
+		}
+		code, body := pollResponse(hello)
+		if code != 200 || !bytes.Contains([]byte(body), []byte(`"id":"`+startID+`"`)) ||
+			!bytes.Contains([]byte(body), []byte(`"command":"ensure-development-container"`)) {
+			t.Fatalf("restart poll = %d %s, want the start operation's configuration dispatch", code, body)
+		}
+		startReport := func(report string) string {
+			replaced := bytes.ReplaceAll([]byte(report), []byte(configureID), []byte(startID))
+			return string(bytes.ReplaceAll(replaced, []byte(`"lastOperationVersion":7`), []byte(`"lastOperationVersion":11`)))
+		}
+		if code := poll(startReport(runningReport)); code != 200 {
+			t.Fatalf("restart waitFor report = %d, want 200", code)
+		}
+		if code := poll(startReport(done)); code != 200 {
+			t.Fatalf("restart setup completion = %d, want 200", code)
+		}
+	})
 	var authenticated string
 	if err := db.QueryRow("SELECT last_authenticated_at FROM guest_registrations WHERE workspace_id='work'").Scan(&authenticated); err != nil ||
 		authenticated != now.Format("2006-01-02T15:04:05.000000000Z") {
