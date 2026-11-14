@@ -1,0 +1,99 @@
+'use client';
+
+import { useRef, useState } from 'react';
+import { Button, Group, Stack, Text, TextInput, Title } from '@mantine/core';
+import { useForm } from '@mantine/form';
+import { useQuery } from '@tanstack/react-query';
+import { APIProblemView } from '../../components/api-problem';
+import { WorkflowStepper } from '../../components/workflow-stepper';
+import { readProblem } from '../../lib/api-problem';
+import { useOperation } from '../../lib/use-operation';
+
+const endpoint = '/api/v1/admin/maintenance';
+type Campaign = { id: string; releaseId: string; deadline: string; state: string; operationId: string };
+
+export function Maintenance({ csrfToken }: { csrfToken: string }) {
+  const campaigns = useQuery<Campaign[]>({
+    queryKey: ['maintenance-campaigns'],
+    gcTime: 0,
+    queryFn: async ({ signal }) => {
+      const response = await fetch(endpoint, { signal, cache: 'no-store' });
+      if (!response.ok) throw await readProblem(response);
+      return response.json();
+    },
+  });
+  const form = useForm({
+    mode: 'uncontrolled',
+    initialValues: { releaseId: '', deadline: '' },
+    validate: {
+      releaseId: value => value.trim() && value.trim().length <= 128 ? null : 'Enter a target release ID.',
+      deadline: value => Date.parse(value) > Date.now() ? null : 'Choose a future deadline.',
+    },
+  });
+  const [selected, setSelected] = useState<string>();
+  const [error, setError] = useState<unknown>();
+  const request = useRef<{ body: string; key: string }>(undefined);
+
+  async function schedule(values: typeof form.values) {
+    setError(undefined);
+    const body = JSON.stringify({ releaseId: values.releaseId.trim(), deadline: new Date(values.deadline).toISOString() });
+    if (request.current?.body !== body) request.current = { body, key: crypto.randomUUID() };
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST', cache: 'no-store', body,
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'Idempotency-Key': request.current.key },
+      });
+      if (!response.ok) throw await readProblem(response);
+      const accepted: { id: string } = await response.json();
+      request.current = undefined;
+      setSelected(accepted.id);
+      form.reset();
+      await campaigns.refetch();
+    } catch (error) {
+      setError(error);
+    }
+  }
+
+  return (
+    <Stack component="section" gap="sm">
+      <Title order={2}>Maintenance</Title>
+      <Text size="sm">Schedule guest updates for retained workspaces. The deadline uses your browser’s local time.</Text>
+      <form noValidate onSubmit={form.onSubmit(schedule, errors => form.getInputNode(Object.keys(errors)[0])?.focus())}>
+        <Stack maw={420}>
+          <TextInput label="Target release ID" required disabled={form.submitting}
+            key={form.key('releaseId')} {...form.getInputProps('releaseId')} />
+          <TextInput label="Deadline" type="datetime-local" required disabled={form.submitting}
+            key={form.key('deadline')} {...form.getInputProps('deadline')} />
+          {error !== undefined ? <APIProblemView error={error} /> : null}
+          <Button type="submit" loading={form.submitting} style={{ alignSelf: 'flex-start' }}>Schedule maintenance</Button>
+        </Stack>
+      </form>
+      {campaigns.isError ? <Group align="flex-start">
+        <APIProblemView error={campaigns.error} />
+        <Button variant="default" onClick={() => void campaigns.refetch()}>Retry campaigns</Button>
+      </Group> : null}
+      {campaigns.isPending ? <Text role="status">Loading campaigns…</Text> : null}
+      {!campaigns.isError && campaigns.data?.length ? <Stack component="ul" gap="xs" p={0} m={0} style={{ listStyle: 'none' }}>
+        {campaigns.data.map(campaign => (
+          <Group component="li" key={campaign.id} justify="space-between">
+            <Text size="sm">{campaign.releaseId} · {campaign.state} · <time dateTime={campaign.deadline}>
+              {new Date(campaign.deadline).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+            </time></Text>
+            <Button variant="default" onClick={() => setSelected(campaign.operationId)}>View progress</Button>
+          </Group>
+        ))}
+      </Stack> : null}
+      {selected ? <CampaignProgress key={selected} id={selected} /> : null}
+    </Stack>
+  );
+}
+
+function CampaignProgress({ id }: { id: string }) {
+  const progress = useOperation(id);
+  if (progress.accessDenied) return <Text role="alert">Maintenance progress is no longer available to this session.</Text>;
+  if (progress.isError) return <Group>
+    <Text role="alert">Maintenance progress is unavailable.</Text>
+    <Button variant="default" onClick={() => void progress.refetch()}>Retry progress</Button>
+  </Group>;
+  return progress.data ? <WorkflowStepper operation={progress.data} /> : <Text role="status">Loading maintenance progress…</Text>;
+}

@@ -1683,8 +1683,12 @@ This checkpoint does not itself change the goal status.
   in one transaction. The contract test covers administrator and CSRF
   checks, deadlines, unknown releases, and replay after the deadline.
 - T060 native startup passed both maintenance routes and stopped at
-  `runMigrationPreflight`. Campaign execution, signed guest updates,
-  deadline warnings, and prior-state restoration remain open.
+  `runMigrationPreflight`. T095 now presents the target release and
+  deadline on the retained workspace and excludes deletions already
+  committed when the campaign is scheduled. T101 lists and schedules
+  campaigns from Infrastructure and follows the server operation.
+  Campaign execution, signed updates, and prior-state restoration remain
+  open under T095.
 
 ### Migration preflight CLI
 

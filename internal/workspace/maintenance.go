@@ -118,7 +118,8 @@ func ScheduleMaintenance(ctx context.Context, tx *sql.Tx, journal *operation.Jou
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO maintenance_targets(campaign_id,workspace_id,generation,prior_desired_state,prior_observed_state,state,updated_at)
 		SELECT $1,id,generation,desired_state,observed_state,'pending',$3 FROM workspaces
-		WHERE installation_id=$2 AND observed_state<>'deleted'`, op.ID, installation, created)
+		WHERE installation_id=$2 AND desired_state<>'deleted' AND observed_state<>'deleted' AND deletion_commit_at IS NULL`,
+		op.ID, installation, created)
 	return op, err
 }
 
