@@ -82,7 +82,7 @@ func (d devContainer) invoke(ctx context.Context, stage string, options ...strin
 	args := []string{stage, "--workspace-folder", d.workspace, "--docker-path", "/usr/bin/docker",
 		"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", developmentLabel}
 	if d.config != "" {
-		if d.config == "." || !fs.ValidPath(d.config) || strings.Contains(d.config, "\\") {
+		if !validDevContainerPath(d.config) {
 			return devContainerResult{}, errors.New("invalid Dev Container configuration path")
 		}
 		args = append(args, "--config", filepath.Join(d.workspace, d.config))
@@ -103,6 +103,10 @@ func (d devContainer) invoke(ctx context.Context, stage string, options ...strin
 		return devContainerResult{}, errors.New("Dev Container CLI " + stage + " did not report success")
 	}
 	return result, nil
+}
+
+func validDevContainerPath(path string) bool {
+	return path != "." && fs.ValidPath(path) && !strings.ContainsAny(path, "\\\x00")
 }
 
 func validWaitFor(stage string) bool {

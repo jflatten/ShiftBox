@@ -22,7 +22,7 @@ var errAgentOperationPending = errors.New("guest operation execution unavailable
 func (identity AgentIdentity) Poll(ctx context.Context, endpoint, serverName, protocol, release string) error {
 	client := identity.pollClient(serverName)
 	defer client.CloseIdleConnections()
-	return pollAgent(ctx, client, endpoint, protocol, release)
+	return pollAgent(ctx, client, endpoint, newGuestPollRequest(protocol, release, nil), nil, devContainer{})
 }
 
 func (identity AgentIdentity) pollClient(serverName string) *http.Client {
@@ -36,14 +36,29 @@ func (identity AgentIdentity) pollClient(serverName string) *http.Client {
 	}
 }
 
-func pollAgent(ctx context.Context, client *http.Client, endpoint, protocol, release string) error {
-	if !validPollEndpoint(endpoint) || protocol == "" || release == "" {
+type guestPollRequest struct {
+	ProtocolVersion      string       `json:"protocolVersion"`
+	GuestRelease         string       `json:"guestRelease"`
+	LastOperationID      string       `json:"lastOperationId,omitempty"`
+	LastOperationVersion int64        `json:"lastOperationVersion,omitempty"`
+	Report               *localReport `json:"operationReport,omitempty"`
+}
+
+func newGuestPollRequest(protocol, release string, journal *localJournal) guestPollRequest {
+	input := guestPollRequest{ProtocolVersion: protocol, GuestRelease: release}
+	if journal != nil && journal.state.Operation != nil {
+		report := journal.report()
+		input.LastOperationID = report.ID
+		input.LastOperationVersion = journal.state.Operation.Version
+		input.Report = &report
+	}
+	return input
+}
+
+func pollAgent(ctx context.Context, client *http.Client, endpoint string, input guestPollRequest, journal *localJournal, runtime devContainer) error {
+	if !validPollEndpoint(endpoint) || input.ProtocolVersion == "" || input.GuestRelease == "" {
 		return errors.New("invalid guest poll configuration")
 	}
-	var input = struct {
-		ProtocolVersion string `json:"protocolVersion"`
-		GuestRelease    string `json:"guestRelease"`
-	}{protocol, release}
 	body, err := json.Marshal(input)
 	if err != nil {
 		return err
@@ -79,14 +94,53 @@ func pollAgent(ctx context.Context, client *http.Client, endpoint, protocol, rel
 		} `json:"certificate"`
 		NextPollSeconds int `json:"nextPollAfterSeconds"`
 	}
-	if err := decodeAgentJSON(response.Body, &result); err != nil || result.ProtocolVersion != protocol ||
+	if err := decodeAgentJSON(response.Body, &result); err != nil || result.ProtocolVersion != input.ProtocolVersion ||
 		result.Generation < 1 || result.ServerTime.IsZero() || result.Certificate.RenewAfter.IsZero() {
 		return errors.New("invalid guest poll response")
 	}
-	if len(result.Operation) > 0 && string(result.Operation) != "null" {
+	return applyGuestPoll(ctx, journal, runtime, result.Generation, result.DesiredState, result.Operation)
+}
+
+func applyGuestPoll(ctx context.Context, journal *localJournal, runtime devContainer, generation int64, desiredState string, raw json.RawMessage) error {
+	hasOperation := len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+	if journal == nil {
+		if hasOperation {
+			return errAgentOperationPending
+		}
+		return nil
+	}
+	if err := journal.advanceGeneration(generation); err != nil {
+		return err
+	}
+	if !hasOperation {
+		return nil
+	}
+	var dispatch struct {
+		ID        string `json:"id"`
+		Version   int64  `json:"version"`
+		Type      string `json:"type"`
+		Command   string `json:"command"`
+		Arguments struct {
+			RepositoryURL  string            `json:"repositoryUrl"`
+			RepositoryRef  string            `json:"repositoryRef"`
+			Devcontainer   string            `json:"devcontainerPath"`
+			RetainedMounts []json.RawMessage `json:"retainedMounts"`
+		} `json:"arguments"`
+	}
+	if err := decodeAgentJSON(bytes.NewReader(raw), &dispatch); err != nil {
+		return errors.New("invalid guest operation dispatch")
+	}
+	if dispatch.Command != "ensure-development-container" || len(dispatch.Arguments.RetainedMounts) != 0 {
 		return errAgentOperationPending
 	}
-	return nil
+	if desiredState != "running" || !validDevContainerPath(dispatch.Arguments.Devcontainer) {
+		return errors.New("invalid development container dispatch")
+	}
+	runtime.config = dispatch.Arguments.Devcontainer
+	_, err := journal.ensureDevelopment(ctx, guestDispatch{
+		ID: dispatch.ID, Version: dispatch.Version, Generation: generation, Command: dispatch.Command, Config: runtime.config,
+	}, runtime)
+	return err
 }
 
 func validPollEndpoint(endpoint string) bool {
@@ -115,8 +169,13 @@ func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release strin
 	}
 	client := identity.pollClient("")
 	defer client.CloseIdleConnections()
+	journal, err := loadLocalJournal(filepath.Join(stateDir, "operation.json"))
+	if err != nil {
+		return err
+	}
+	runtime := devContainer{workspace: filepath.Join(stateDir, "project")}
 	for {
-		if err := pollAgent(ctx, client, identity.PollEndpoint, protocol, release); err != nil {
+		if err := pollAgent(ctx, client, identity.PollEndpoint, newGuestPollRequest(protocol, release, journal), journal, runtime); err != nil {
 			return err
 		}
 		delay := 27*time.Second + rand.N(6*time.Second)
