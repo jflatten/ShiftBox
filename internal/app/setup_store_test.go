@@ -15,6 +15,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/migrations"
+	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
 
@@ -99,6 +100,55 @@ func checkAdministratorIntent(t *testing.T, profile string) {
 	}
 	if role != "administrator" || email != "owner@example.test" || !change {
 		t.Fatal("initial user lacks normalized identity or forced password change")
+	}
+	// Delivery cannot precede confirmed credential creation or consume the copy
+	// when decryption fails, and a committed claim can never be repeated.
+	if password, err := app.ClaimTemporaryPassword(ctx, db, installation, cipher, time.Now()); err == nil || password != "" {
+		t.Fatal("password delivered before Dex readiness")
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		return app.MarkAdministratorReady(ctx, tx, installation, first.UserID, []byte("stale hash"))
+	}); !errors.Is(err, app.ErrSetupConflict) {
+		t.Fatalf("stale readiness = %v, want conflict", err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		return app.MarkAdministratorReady(ctx, tx, installation, first.UserID, first.PasswordHash)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wrongCipher, _ := cryptostore.New([]byte(strings.Repeat("x", 32)))
+	if password, err := app.ClaimTemporaryPassword(ctx, db, installation, wrongCipher, time.Now()); err == nil || password != "" {
+		t.Fatal("wrong key consumed delivery")
+	}
+	// A failed ciphertext delete must roll back the delivery marker and return
+	// no plaintext. A temporary foreign-key hold injects this in both dialects.
+	if _, err := db.Exec(`CREATE TEMPORARY TABLE delivery_hold(value_id TEXT REFERENCES protected_values(id))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO delivery_hold(value_id) VALUES($1)`, first.UserID); err != nil {
+		t.Fatal(err)
+	}
+	if leaked, err := app.ClaimTemporaryPassword(ctx, db, installation, cipher, time.Now()); err == nil || leaked != "" {
+		t.Fatal("failed delivery transaction returned plaintext")
+	}
+	if _, err := db.Exec(`DELETE FROM delivery_hold`); err != nil {
+		t.Fatal(err)
+	}
+	password, err := app.ClaimTemporaryPassword(ctx, db, installation, cipher, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bcrypt.CompareHashAndPassword(first.PasswordHash, []byte(password)); err != nil {
+		t.Fatal("delivered password does not match durable credential")
+	}
+	if repeated, err := app.ClaimTemporaryPassword(ctx, db, installation, cipher, time.Now()); err == nil || repeated != "" {
+		t.Fatal("temporary password was delivered twice")
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM protected_values`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("delivered password ciphertext was retained")
 	}
 	input.Email = "different@example.test"
 	if err := database.Transaction(ctx, db, prepare); !errors.Is(err, app.ErrSetupConflict) {

@@ -846,3 +846,19 @@ This checkpoint does not itself change the goal status.
   contract race suites and formatting/vet pass. One-time delivery, Dex readiness
   reconciliation, explicit local reset, forced-change UI/session transitions,
   and CLI composition remain pending. T030/T043 remain incomplete.
+
+### One-time temporary-password claim
+
+- Added Dex-readiness recording fenced by the exact durable user/hash intent, so
+  a stale reconciliation result cannot ready a reset credential.
+- Added a protected-local-only delivery service that commits the delivery marker
+  and deletes the encrypted temporary copy before returning plaintext. It checks
+  setup state, administrator membership, forced-change status, and readiness;
+  ordinary retries after delivery return no password.
+- Both-profile tests cover pre-readiness refusal, stale readiness, wrong-key
+  failure, successful hash-matching delivery, repeat refusal, and ciphertext
+  removal. A foreign-key hold injects a delete failure and proves the whole claim
+  rolls back without returning plaintext, then succeeds after the failure clears.
+- App/contract race suites pass with PostgreSQL enabled; formatting/vet pass.
+  Explicit local reset, credential reconciliation orchestration, session/password
+  changes and protected HTTP/CLI delivery remain unfinished. T030/T043 stay open.
