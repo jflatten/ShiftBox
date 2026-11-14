@@ -657,3 +657,17 @@ This checkpoint does not itself change the goal status.
 - Route registration, concrete contextual resolvers, durable audit schema/store,
   and real entry-grant/proxy flows remain unfinished. T013/T023/T025 are not
   marked complete by this handler boundary alone.
+
+### Reviewed management route registration
+
+- Added management-router construction for all 52 catalog operations at their
+  `/api/v1` paths. Missing, unknown, or incompletely wired implementations fail
+  construction; handler-supplied route/action declarations cannot replace the
+  reviewed catalog. Session/logout retain their existing dedicated handler.
+- Tests dispatch every catalog operation through the actual HTTP mux and prove
+  unauthenticated requests stop before contextual resolution or intent callbacks.
+  Registration supplies controller request IDs and copies handler configuration.
+- Web/contract race suites, formatting, and vet pass. This is registration proof,
+  not implementation of the missing endpoint callbacks: contextual resource/action
+  resolvers and concrete flows still prevent a complete runnable controller.
+  T013/T025 remain unchecked until those consuming requirements are satisfied.
