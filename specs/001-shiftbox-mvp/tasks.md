@@ -1088,3 +1088,16 @@ This checkpoint does not itself change the goal status.
 - Provider and contract race tests, formatting, and vet passed. Native UTM
   integration is still pending, as are contract cases for concurrent mutations
   and host permission/version mismatch.
+
+### Read-only UTM inventory
+
+- Added a bounded JXA inventory query through the installed UTM scripting
+  dictionary. It requires an exact configured version and separates missing
+  resources, ambiguous ownership, permission errors, and unavailable hosts.
+- Normalization checks the installation/workspace ownership marker and
+  generation, preserves drive identity, and reports unknown power states
+  without inferring a stop or deletion.
+- Race tests passed, including an opt-in read-only inspection of UTM 5.0.8
+  for a synthetic workspace. That check does not validate tagged VM drive
+  extraction, mutation, artifact boot, or full owned-resource deletion.
+  T033 and T048 remain open.
