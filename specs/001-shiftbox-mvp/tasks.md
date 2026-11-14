@@ -1371,3 +1371,15 @@ This checkpoint does not itself change the goal status.
 - Worker tests cover a lost start reply and contact arriving after worker
   restart. The Ubuntu agent, live boot and remaining guest workflow steps
   are still pending.
+
+### Guest-side enrollment client
+
+- The guest client uses the recovery seed's CA and controller HTTPS name,
+  generates an ECDSA key locally, and stores a pending key bound to the
+  grant digest across interrupted exchanges. It validates and atomically
+  persists the issued identity without retaining the grant.
+- The local TLS test drops the connection after issuance, proves the retry
+  uses the same key, and reloads the certificate from disk without media.
+  Guest, API, and contract race tests passed.
+- Agent CLI and supervision, boot media discovery, polling and local
+  operation execution still need wiring.
