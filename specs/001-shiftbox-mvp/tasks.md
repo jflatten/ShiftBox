@@ -401,3 +401,18 @@ This checkpoint does not itself change the goal status.
 - T025 remains unchecked: session read/logout handlers and complete authorization
   integration still need implementation. Cookie helpers alone do not establish
   working sign-in, logout, or browser isolation validation.
+
+### Session endpoint implementation
+
+- Added the session GET/DELETE handler with current-principal lookup, token binding,
+  policy gates, no-store responses, CSRF delivery, external-authorization deadline,
+  and policy-derived navigation permissions. Resource-specific permissions are not
+  advertised as blanket authority. Logout requires exact Origin and bound CSRF,
+  waits for revocation/closure, and then clears the host-only cookie.
+- Tests cover disabled membership, unknown-cookie versus storage-failure responses,
+  restricted password-change permissions, hostile sibling Origin, wrong CSRF, and
+  failed revocation. A real SQLite fixture verifies persisted invalidation before
+  registered connection closure and rejection of the cookie after logout.
+- The handler's lookup and revoke functions are explicit composition dependencies;
+  production router/state wiring and general route/action authorization remain
+  unfinished. T025 and its broader test tasks remain unchecked.

@@ -1,13 +1,111 @@
 package web
 
 import (
+	"context"
+	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
+
+	"github.com/jflatten/ShiftBox/internal/auth"
 )
 
 const _sessionCookieName = "__Host-shiftbox_session"
+
+// SessionHandler serves the management session read/logout endpoint.
+// Lookup must load current membership, session and installation gates together.
+// Revoke must commit invalidation and finish live connection closure before returning.
+type SessionHandler struct {
+	Origin string
+	Now    func() time.Time
+	Lookup func(context.Context, string) (auth.Principal, error)
+	Revoke func(context.Context, string) error
+}
+
+// ServeHTTP evaluates fresh session authority before returning state or logging out.
+func (h *SessionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet && r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "GET, DELETE")
+		WriteProblem(w, RequestID(r.Context()), Problem{Status: 405, Code: "request.method_not_allowed", Title: "Method not allowed"})
+		return
+	}
+	token, err := SessionToken(r)
+	if err != nil {
+		WriteProblem(w, RequestID(r.Context()), err)
+		return
+	}
+	principal, err := h.Lookup(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = Problem{Status: 401, Code: "auth.required", Title: "Sign in to continue"}
+		}
+		WriteProblem(w, RequestID(r.Context()), err)
+		return
+	}
+	now := h.Now()
+	action := "session.view"
+	if r.Method == http.MethodDelete {
+		action = "session.logout"
+	}
+	if principal.Session.TokenDigest != auth.TokenDigest(token) || !auth.Authorize(principal, action, auth.Resource{}, nil, now).Allowed {
+		WriteProblem(w, RequestID(r.Context()), Problem{Status: 401, Code: "auth.required", Title: "Sign in to continue"})
+		return
+	}
+	if r.Method == http.MethodDelete {
+		MutationGuard(h.Origin, func(*http.Request) (auth.Session, error) { return principal.Session, nil }, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := h.Revoke(r.Context(), principal.Session.ID); err != nil {
+				WriteProblem(w, RequestID(r.Context()), err)
+				return
+			}
+			ClearSessionCookie(w)
+			w.WriteHeader(http.StatusNoContent)
+		})).ServeHTTP(w, r)
+		return
+	}
+	var due *time.Time
+	if principal.User.CredentialMode == "external" && principal.Session.ExternalAuthorizedAt != nil && principal.ExternalAuthInterval > 0 {
+		value := principal.Session.ExternalAuthorizedAt.Add(principal.ExternalAuthInterval).UTC()
+		due = &value
+	}
+	view := struct {
+		User                       auth.User  `json:"user"`
+		Mode                       string     `json:"mode"`
+		CSRFToken                  string     `json:"csrfToken"`
+		Permissions                []string   `json:"permissions"`
+		InstallationState          string     `json:"installationState"`
+		ExternalAuthorizationDueAt *time.Time `json:"externalAuthorizationDueAt"`
+	}{principal.User, principal.Session.Mode, auth.CSRFToken(token), sessionPermissions(principal, now), principal.InstallationState, due}
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		WriteProblem(w, RequestID(r.Context()), err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(encoded) // A disconnected client cannot receive a replacement response.
+}
+
+// sessionPermissions supplies navigation hints, not resource-specific authority.
+// Workspace/template actions still require their own current resource decision.
+func sessionPermissions(principal auth.Principal, now time.Time) []string {
+	permissions := make([]string, 0)
+	for _, action := range []string{
+		"session.view", "session.logout", "session.change_password", "session.external_reauthorize",
+		"setup.view", "setup.mutate", "recovery.review", "recovery.activate",
+		"template.create", "notice.list", "notice.read", "notice.dismiss", "notice.publish",
+		"user.list", "user.create", "user.approve", "user.disable", "user.change_role",
+		"audit.list", "infrastructure.view", "infrastructure.manage", "maintenance.manage",
+		"backup.create", "restore.validate", "restore.activate", "migration.preflight",
+		"secret.manage_user", "git.manage",
+	} {
+		if auth.Authorize(principal, action, auth.Resource{Type: "user", ID: principal.User.ID}, nil, now).Allowed {
+			permissions = append(permissions, action)
+		}
+	}
+	return permissions
+}
 
 // SetSessionCookie issues only the management host's opaque session credential.
 // The caller must commit the session before handing its cookie to the browser.
