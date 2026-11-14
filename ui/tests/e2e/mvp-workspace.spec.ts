@@ -209,9 +209,19 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     const normalOrigin = await openIDE(page, 'Open IDE', managementOrigin);
     const markerEditor = await openFile(page, fixture.markerFile);
     await writeEditor(page, markerEditor, marker);
-    // Reload the workbench to prove the marker was saved before testing VM retention.
-    await page.reload();
-    await expect((await openFile(page, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
+    // Keep the saving editor open while a second tab verifies the remote write.
+    const reader = await page.context().newPage();
+    try {
+      const workbenchURL = page.url();
+      await expect(async () => {
+        await reader.goto(workbenchURL, { waitUntil: 'domcontentloaded' });
+        await dismissFixtureTrust(reader);
+        const saved = await openFile(reader, fixture.markerFile);
+        await expect(saved.locator('.view-lines')).toHaveText(marker, { timeout: 2_000 });
+      }).toPass({ timeout: workbenchTimeout });
+    } finally {
+      await reader.close();
+    }
     await page.goto(workspaceURL);
     await activate(page.getByRole('button', { name: 'Stop workspace' }));
     await stepCompleted(page, 'Stop workspace');
@@ -289,7 +299,15 @@ async function openIDE(page: Page, button: string, managementOrigin: string) {
   await activate(page.getByRole('button', { name: button, exact: true }));
   await page.waitForURL(url => url.protocol === 'https:' && url.origin !== managementOrigin, { timeout: workbenchTimeout });
   await expect(page.locator('.monaco-workbench')).toBeVisible({ timeout: workbenchTimeout });
+  await dismissFixtureTrust(page);
   return new URL(page.url()).origin;
+}
+
+async function dismissFixtureTrust(page: Page) {
+  // This journey needs only editor access. Decline any optional code execution.
+  const trust = page.getByRole('dialog', { name: /Do you trust the authors/ });
+  const cancel = trust.getByRole('button', { name: /^(Cancel|No, I don't trust the authors)$/ });
+  if (await cancel.isVisible()) await cancel.click();
 }
 
 async function openFile(page: Page, name: string) {
@@ -312,18 +330,16 @@ async function openFile(page: Page, name: string) {
 }
 
 async function writeEditor(page: Page, editor: Locator, content: string) {
-  await editor.locator('.view-lines').click();
+  await dismissFixtureTrust(page);
+  await editor.locator('.view-lines').click({ timeout: 15_000 });
   await page.keyboard.press('Escape');
   await page.keyboard.press('Control+Home');
   await page.keyboard.press('Control+Shift+End');
   await page.keyboard.press('Backspace');
   await expect(editor.locator('.view-lines')).toHaveText(/^\s*$/);
-  await page.keyboard.insertText(content);
+  await page.keyboard.type(content);
   await expect(editor.locator('.view-lines')).toHaveText(content);
-  // Pressing the Save command in the workbench avoids host shortcut handling.
-  await page.keyboard.press('F1');
-  const commands = page.locator('.quick-input-widget:visible');
-  await commands.getByRole('textbox').fill('> File: Save');
-  await commands.locator('a').filter({ hasText: /^File: Save$/ }).click();
+  // The pinned browser workbench advertises Ctrl+S even on the macOS host.
+  await page.keyboard.press('Control+s');
   await expect(page.locator('.tabs-container .tab.active')).not.toHaveClass(/\bdirty\b/);
 }

@@ -35,7 +35,11 @@ journey then completed another graceful stop and authenticated start and
 reopened the same IDE. The marker check failed. A follow-up test read the
 editor text, invoked File: Save, and reopened the file before requesting a
 stop. It read an older marker, so the failure can occur without a VM restart.
-Repair and the final Go journal check remain pending.
+In a short follow-up, typing the marker and using the workbench's Ctrl+S
+shortcut returned the new contents after a reload when the saving page
+remained open long enough for the remote write. The lifecycle test now uses a
+second tab to wait for the saved contents before stopping the VM. The full
+lifecycle, repair and Go journal checks remain pending.
 
 Run the browser spec with `SHIFTBOX_MVP_FIXTURE` pointing at a fresh local
 fixture and with the same valid certificate trust available to Chrome and the
