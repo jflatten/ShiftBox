@@ -1765,8 +1765,14 @@ This checkpoint does not itself change the goal status.
 - T111 persists private validation records bound to the verified archive
   and replacement target. Restore staging reauthenticates the archive
   with a freshly supplied passphrase, checks the target again, and
-  removes staged files if verification fails. Applying staged data and
-  opening recovery review remain open.
+  removes staged files if verification fails.
+- T111 can publish a verified SQLite stage to a new protected directory
+  with an exclusive rename. T112 commits the recovered installation,
+  initial review, old session and grant invalidation, GitHub reconnect
+  requirement, and interrupted job records in one transaction before
+  publication. The gate and rollback passed SQLite tests, and the gate
+  passed a disposable PostgreSQL test. PostgreSQL restore publication,
+  command integration, and the full recovery review remain open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.

@@ -295,10 +295,10 @@ func (j *Journal) LatestEventID(ctx context.Context, id string) (int64, error) {
 	return latest, err
 }
 
-// RecordLocalStepInTx records a one-step setup operation whose effect is entirely
+// RecordLocalStepInTx records a one-step setup or restore operation whose effect is entirely
 // in the caller's transaction. A retry returns the original committed evidence.
 func (j *Journal) RecordLocalStepInTx(ctx context.Context, tx *sql.Tx, request Request, evidence string) (Operation, error) {
-	if request.Type != "setup" || len(request.Steps) != 1 || evidence == "" || len(evidence) > 4096 {
+	if (request.Type != "setup" && request.Type != "restore") || len(request.Steps) != 1 || evidence == "" || len(evidence) > 4096 {
 		return Operation{}, ErrConflict
 	}
 	op, err := j.CreateInTx(ctx, tx, request)
