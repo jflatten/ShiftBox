@@ -220,7 +220,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 
 ### Models and implementation
 
-- [ ] T109 [US4] Add BackupRecord and RecoveryReview migrations in `migrations/sqlite/00006_recovery.sql` and `migrations/postgres/00006_recovery.sql`, preserving these verbatim constraints: BackupRecord state is "`preparing`, `checkpointing`, `encrypting`, `completed`, or `failed`", the password/archive plaintext are never stored, and completion occurs "only after archive close and integrity verification"; RecoveryReview state is "`identity_review`, `provider_reconcile`, `authorization_review`, `ready`, `activated`, or `blocked`" and normal mutations, workspace access, and overdue destructive retention remain gated until `activated`
+- [X] T109 [US4] Add BackupRecord and RecoveryReview migrations in `migrations/sqlite/00018_recovery.sql` and `migrations/postgres/00018_recovery.sql`, preserving these verbatim constraints: BackupRecord state is "`preparing`, `checkpointing`, `encrypting`, `completed`, or `failed`", the password/archive plaintext are never stored, and completion occurs "only after archive close and integrity verification"; RecoveryReview state is "`identity_review`, `provider_reconcile`, `authorization_review`, `ready`, `activated`, or `blocked`" and normal mutations, workspace access, and overdue destructive retention remain gated until `activated`
 - [ ] T110 [US4] Implement canonical backup manifest/checkpoint orchestration, scoped SQLite/PostgreSQL and Dex export, protected-file collection, passphrase age encryption, close/digest verification, and workspace-disk exclusion proven by T104 in `internal/backup/manifest.go`, `internal/backup/checkpoint.go`, and `internal/backup/backup.go`
 - [ ] T111 [US4] Implement whole-archive validation, compatibility/key/host/target ownership checks, empty replacement activation, and no merge/overwrite behavior proven by T105 in `internal/backup/validate.go` and `internal/backup/restore.go`
 - [ ] T112 [US4] Implement recovery-mode gate, stale-authority invalidation, identity review, provider reconciliation, workspace conflict decisions, authorization/retention review, and explicit normal-service activation proven by T106 in `internal/backup/recovery.go` and `internal/auth/recovery_gate.go`
@@ -1695,6 +1695,16 @@ This checkpoint does not itself change the goal status.
 - Unit tests cover manifest rejection and blocked preflight output.
   The installed backup verifier, identity-store privileges, management
   endpoint and irreversible migration acceptance remain open.
+
+### Backup and recovery schema
+
+- T109 creates the backup and recovery review tables in migration 18 for
+  both database profiles. Migration 6 is already used by GitHub OAuth
+  state. The schema requires archive verification metadata for completed
+  backups and administrator approval metadata for activated reviews.
+  Both profiles passed the constraint test under the race detector.
+- T110 still owns verifying actual archive contents and committing the
+  result. T112 owns recovery-mode authorization and activation checks.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
