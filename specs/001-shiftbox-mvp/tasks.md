@@ -1687,8 +1687,11 @@ This checkpoint does not itself change the goal status.
   deadline on the retained workspace and excludes deletions already
   committed when the campaign is scheduled. T101 lists and schedules
   campaigns from Infrastructure and follows the server operation.
-  Campaign execution, signed updates, and prior-state restoration remain
-  open under T095.
+  Guest staging now verifies the release and protocol, Ed25519 signature,
+  binary size, and SHA-256 digest before replacing a private staged file.
+  Verification tests use disposable keys. Production key provisioning,
+  campaign dispatch, activation, rollback, and prior-state restoration
+  remain open under T095.
 
 ### Migration preflight CLI
 

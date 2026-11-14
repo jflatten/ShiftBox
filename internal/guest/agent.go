@@ -293,12 +293,19 @@ func decodeAgentJSON(input io.Reader, value any) error {
 }
 
 func writePrivateState(path string, data []byte) error {
+	return replacePrivateState(path, func(file io.Writer) error {
+		_, err := file.Write(data)
+		return err
+	})
+}
+
+func replacePrivateState(path string, write func(io.Writer) error) error {
 	file, err := os.CreateTemp(filepath.Dir(path), ".guest-state-")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(file.Name())
-	_, err = file.Write(data)
+	err = write(file)
 	if err == nil {
 		err = file.Sync()
 	}
