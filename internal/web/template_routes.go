@@ -41,16 +41,20 @@ func TemplateHandlers(db *sql.DB, origin string, now func() time.Time, newID fun
 }
 
 func resolveTemplateRevision(ctx context.Context, tx *sql.Tx, r *http.Request, _ auth.Principal) (AuthorizationTarget, error) {
-	id := r.PathValue("templateId")
+	resource, err := loadTemplateResource(ctx, tx, r.PathValue("templateId"))
+	return AuthorizationTarget{Action: "template.create_revision", Resource: resource}, err
+}
+
+func loadTemplateResource(ctx context.Context, tx *sql.Tx, id string) (auth.Resource, error) {
 	if !ValidUUID(id) {
-		return AuthorizationTarget{}, Problem{Status: 400, Code: "request.invalid_id", Title: "Invalid template identifier"}
+		return auth.Resource{}, Problem{Status: 400, Code: "request.invalid_id", Title: "Invalid template identifier"}
 	}
 	resource := auth.Resource{Type: "template", ID: id}
 	err := tx.QueryRowContext(ctx, "SELECT owner_user_id,state FROM project_templates WHERE id=$1", id).Scan(&resource.OwnerID, &resource.State)
 	if errors.Is(err, sql.ErrNoRows) {
-		return AuthorizationTarget{}, Problem{Status: 403, Code: "auth.forbidden", Title: "This action is not permitted"}
+		return auth.Resource{}, Problem{Status: 403, Code: "auth.forbidden", Title: "This action is not permitted"}
 	}
-	return AuthorizationTarget{Action: "template.create_revision", Resource: resource}, err
+	return resource, err
 }
 
 func saveTemplate(now func() time.Time, newID func() string) func(context.Context, *sql.Tx, *http.Request, auth.Principal, AuthorizationTarget, auth.Decision) (http.Handler, error) {
@@ -92,13 +96,17 @@ func saveTemplate(now func() time.Time, newID func() string) func(context.Contex
 		case err != nil:
 			return nil, err
 		}
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(view.Version, 10)))
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(view)
-		}), nil
+		return templateResponse(view, http.StatusCreated), nil
 	}
+}
+
+func templateResponse(view template.View, status int) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(view.Version, 10)))
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(view)
+	})
 }
 
 func listTemplates(ctx context.Context, tx *sql.Tx, r *http.Request, p auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {

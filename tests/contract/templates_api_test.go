@@ -1,7 +1,9 @@
 package contract_test
 
 import (
+	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -51,12 +53,17 @@ func TestTemplateAPI(t *testing.T) {
 	mux.Handle("GET /api/v1/templates", &list)
 	mux.Handle("POST /api/v1/templates", &create)
 	mux.Handle("POST /api/v1/templates/{templateId}/revisions", &revise)
-	request := func(method, path, payload, key, version string, want int) *httptest.ResponseRecorder {
+	update := web.TemplateUpdateHandler(db, origin, func() time.Time { return now })
+	grant, revoke := web.TemplateGrantHandlers(db, origin, func() time.Time { return now })
+	mux.Handle("PATCH /api/v1/templates/{templateId}", &update)
+	mux.Handle("POST /api/v1/templates/{templateId}/grants", &grant)
+	mux.Handle("DELETE /api/v1/templates/{templateId}/grants/{userId}", &revoke)
+	send := func(sessionToken, method, path, payload, key, version string, want int) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, origin+"/api/v1/templates"+path, strings.NewReader(payload))
-		req.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		req.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: sessionToken})
 		req.Header.Set("Origin", origin)
-		req.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+		req.Header.Set("X-CSRF-Token", auth.CSRFToken(sessionToken))
 		req.Header.Set("Idempotency-Key", key)
 		req.Header.Set("If-Match", version)
 		w := httptest.NewRecorder()
@@ -65,6 +72,10 @@ func TestTemplateAPI(t *testing.T) {
 			t.Fatalf("%s %s = %d %s, want %d", method, path, w.Code, w.Body, want)
 		}
 		return w
+	}
+	request := func(method, path, payload, key, version string, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		return send(token, method, path, payload, key, version, want)
 	}
 	const createKey = "create-template-fixture"
 	const reviseKey = "revise-template-fixture"
@@ -134,5 +145,79 @@ func TestTemplateAPI(t *testing.T) {
 		AND cpu_count=2 AND memory_mib=1024 AND disk_mib=40)`, *op.WorkspaceID, template.ID, artifactID).Scan(&snapshotMatches)
 	if err != nil || !snapshotMatches {
 		t.Fatalf("snapshot matches saved revision and resolved configuration = %v, %v, want true", snapshotMatches, err)
+	}
+	projectPath := "/" + template.ID
+	request("PATCH", "/"+privateTemplate, `{"name":"Unauthorized"}`, "", `"1"`, 403)
+	request("PATCH", projectPath, `{"name":"Renamed"}`, "", `"1"`, 412)
+	updated := request("PATCH", projectPath, `{"name":"Renamed","state":"archived"}`, "", `"2"`, 200)
+	if updated.Header().Get("ETag") != `"3"` || !strings.Contains(updated.Body.String(), `"currentRevision":2`) {
+		t.Fatal("archive changed the current revision or returned the wrong version")
+	}
+	if strings.Contains(request("GET", "", "", "", "", 200).Body.String(), template.ID) {
+		t.Fatal("member list included an archived template")
+	}
+	request("GET", "?archived=true", "", "", "", 403)
+	w = httptest.NewRecorder()
+	nextLaunch := req.Clone(ctx)
+	nextLaunch.Body = io.NopCloser(strings.NewReader(`{"templateId":"` + template.ID + `","templateRevision":2}`))
+	nextLaunch.Header.Set("Idempotency-Key", "launch-archived-template")
+	launch.ServeHTTP(w, nextLaunch)
+	if w.Code != 403 {
+		t.Fatalf("launch archived template = %d, want 403", w.Code)
+	}
+	request("PATCH", projectPath, `{"state":"active"}`, "", `"3"`, 200)
+	grantee := uuid.NewString()
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
+		VALUES($1,'grantee@example.test','member','active','local','setup','now','now',1)`, grantee); err != nil {
+		t.Fatal(err)
+	}
+	const grantKey = "grant-launch-template"
+	payload := `{"userId":"` + grantee + `","acknowledgeProjectSecretExposure":true}`
+	request("POST", projectPath+"/grants", strings.Replace(payload, "true", "false", 1), grantKey, "", 400)
+	request("POST", projectPath+"/grants", payload, grantKey, "", 204)
+	request("POST", projectPath+"/grants", payload, grantKey, "", 204)
+	signIn := func(user string) string {
+		t.Helper()
+		session, token, err := auth.NewSession(uuid.NewString(), user, "normal", now, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			return auth.NewStore(db).SaveSession(ctx, tx, session)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return token
+	}
+	granteeToken := signIn(grantee)
+	visible := func(sessionToken, filter string, want bool) {
+		t.Helper()
+		list := send(sessionToken, "GET", filter, "", "", "", 200)
+		if got := strings.Contains(list.Body.String(), template.ID); got != want {
+			t.Fatalf("template visibility = %t, want %t", got, want)
+		}
+	}
+	visible(granteeToken, "", true)
+	request("PATCH", projectPath, `{"state":"archived"}`, "", `"4"`, 200)
+	visible(granteeToken, "", false)
+	adminToken := signIn("owner")
+	visible(adminToken, "?archived=true", true)
+	var retained bool
+	if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM template_grants WHERE template_id=$1 AND user_id=$2 AND revoked_at IS NULL)", template.ID, grantee).
+		Scan(&retained); err != nil || !retained {
+		t.Fatalf("launch grant retained on archive = %v, %v, want true", retained, err)
+	}
+	request("DELETE", projectPath+"/grants/"+grantee, "", "", "", 204)
+	request("POST", projectPath+"/grants", payload, grantKey, "", 204)
+	send(adminToken, "PATCH", projectPath, `{"state":"active"}`, "", `"5"`, 200)
+	visible(granteeToken, "", false)
+	if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM template_grants WHERE template_id=$1 AND user_id=$2 AND revoked_at IS NULL)", template.ID, grantee).
+		Scan(&retained); err != nil || retained {
+		t.Fatalf("launch grant restored by stale retry = %v, %v, want false", retained, err)
+	}
+	var auditCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE resource_id=$1 AND action='template.share'`, template.ID).
+		Scan(&auditCount); err != nil || auditCount != 2 {
+		t.Fatalf("template share audit count = %d, %v, want one grant and one revoke", auditCount, err)
 	}
 }

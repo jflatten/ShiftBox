@@ -16,11 +16,12 @@ import (
 // AuthorizationTarget contains controller-derived resource state and grants.
 // Resolve must read authoritative records; browser-provided ownership is not trusted.
 type AuthorizationTarget struct {
-	Action   string
-	Resource auth.Resource
-	Grants   []auth.ResourceGrant
-	launch   *workspaceLaunchRequest
-	entry    *proxy.OriginScope
+	Action         string
+	Resource       auth.Resource
+	Grants         []auth.ResourceGrant
+	launch         *workspaceLaunchRequest
+	entry          *proxy.OriginScope
+	templateChange *templateChange
 }
 
 // AuthorizedHandler keeps current authority, policy, required audit, and durable

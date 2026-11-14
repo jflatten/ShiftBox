@@ -37,10 +37,12 @@ func NewManagementServices(db *sql.DB, settings config.InstallationSettings, jou
 	listWorkspaces, getWorkspace := web.WorkspaceReadHandlers(db, origin, now)
 	getOperation, streamEvents := web.OperationHandlers(db, origin, now, journal, registry)
 	listTemplates, createTemplate, reviseTemplate := web.TemplateHandlers(db, origin, now, uuid.NewString)
+	grantTemplate, revokeTemplate := web.TemplateGrantHandlers(db, origin, now)
 	budget, resourceProfile := web.CapacityHandlers(db, origin, now, uuid.NewString, launchPolicy.Capabilities)
 	handlers := web.GitAuthorizationHandlers(db, origin, now, github)
 	for _, handler := range []web.AuthorizedHandler{
 		listWorkspaces, getWorkspace, getOperation, streamEvents, listTemplates, createTemplate, reviseTemplate, budget, resourceProfile,
+		web.TemplateUpdateHandler(db, origin, now), grantTemplate, revokeTemplate,
 		web.WorkspaceLaunchHandler(db, origin, now, journal, launchPolicy),
 		web.WorkspacePowerHandler(db, origin, now, journal),
 		*web.WorkspaceEntryGrantHandler(db, origin, now, hosts),

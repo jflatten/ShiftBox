@@ -1722,3 +1722,15 @@ This checkpoint does not itself change the goal status.
   guarded workspace list.
 - Outstanding management handlers still prevent production CLI startup
   under T060.
+
+### Template editing and launch grants
+
+- Owners and administrators can change template metadata and archive or
+  restore the template with a version check. Archiving blocks new launches
+  and preserves revisions, workspace provenance, and existing grants.
+- Launch grants require explicit acknowledgement of project-secret access.
+  Grant and revocation changes are audited. Replaying a grant request
+  after revocation cannot restore access.
+- The contract test verifies owner and administrator access, launch denial
+  after archive, visibility for grantees, and revocation. Guest-side project
+  secret resolution remains open.

@@ -32,7 +32,8 @@ func TestManagementServices(t *testing.T) {
 	}
 	for _, id := range []string{"listWorkspaces", "getWorkspace", "launchWorkspace", "requestWorkspaceAction",
 		"createWorkspaceEntryGrant", "getOperation", "streamOperationEvents", "listTemplates", "createTemplate",
-		"createTemplateRevision", "updateCapacityBudget", "createResourceProfile"} {
+		"createTemplateRevision", "updateTemplate", "grantTemplateLaunch", "revokeTemplateLaunch",
+		"updateCapacityBudget", "createResourceProfile"} {
 		handler, ok := services.Handlers[id]
 		if !ok || handler.Route != catalog[id] || handler.DB != db || handler.Origin != "https://management.test" {
 			t.Errorf("handler for %s = route %+v, want reviewed catalog route %+v", id, handler.Route, catalog[id])

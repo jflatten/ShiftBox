@@ -77,10 +77,7 @@ func ValidRepositoryRef(ref string) bool {
 // List reads a page of templates visible to the caller and their current revisions.
 func List(ctx context.Context, tx *sql.Tx, actor string, admin bool, state, cursor string) ([]View, *string, error) {
 	const limit = 50
-	rows, err := tx.QueryContext(ctx, `SELECT t.id,t.owner_user_id,t.name,t.state,t.current_revision,t.version,
-		r.repository_url,COALESCE(r.repository_ref,''),r.devcontainer_path,r.resource_profile_id,
-		r.platform_artifact_id,COALESCE(r.network_policy_id,''),r.secret_names_json
-		FROM project_templates t JOIN template_revisions r ON r.template_id=t.id AND r.revision=t.current_revision
+	rows, err := tx.QueryContext(ctx, templateViewQuery+`
 		WHERE t.id>$1 AND t.state=$2 AND ($3 OR (t.state='active' AND (t.owner_user_id=$4 OR EXISTS (
 		  SELECT 1 FROM template_grants g WHERE g.template_id=t.id AND g.user_id=$4 AND g.can_launch=1 AND g.revoked_at IS NULL
 		))))
@@ -94,14 +91,8 @@ func List(ctx context.Context, tx *sql.Tx, actor string, admin bool, state, curs
 		if len(items) == limit {
 			return items, &items[limit-1].ID, nil
 		}
-		var view View
-		var names string
-		err := rows.Scan(&view.ID, &view.OwnerID, &view.Name, &view.State, &view.CurrentRevision, &view.Version,
-			&view.RepositoryURL, &view.RepositoryRef, &view.DevcontainerPath, &view.ProfileID, &view.ArtifactID, &view.NetworkPolicyID, &names)
+		view, err := scanView(rows)
 		if err != nil {
-			return nil, nil, err
-		}
-		if err := json.Unmarshal([]byte(names), &view.SecretNames); err != nil {
 			return nil, nil, err
 		}
 		items = append(items, view)
