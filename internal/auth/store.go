@@ -126,6 +126,56 @@ func (s *Store) Session(ctx context.Context, tx *sql.Tx, token string) (Session,
 	return session, nil
 }
 
+// Principal reads session, membership, and installation gates in one database
+// statement. Callers evaluate policy and create durable intent in this transaction.
+// LocalBootstrap and RecoveryReady remain false until the protected flow proves them.
+func (s *Store) Principal(ctx context.Context, tx *sql.Tx, token string) (Principal, error) {
+	var principal Principal
+	var authenticated, expires string
+	var userExternal, sessionExternal, revoked, reason sql.NullString
+	var interval int64
+	err := tx.QueryRowContext(ctx, `SELECT
+ u.id,u.primary_email,u.display_name,u.role,u.membership_state,u.credential_mode,u.must_change_password,u.external_authorized_at,u.version,
+ s.id,s.token_digest,s.user_id,s.mode,s.csrf_digest,s.authenticated_at,s.external_authorized_at,s.expires_at,s.revoked_at,s.revocation_reason,
+ i.state,i.external_auth_interval_seconds
+ FROM sessions s JOIN users u ON u.id=s.user_id JOIN installations i ON i.singleton=1
+ WHERE s.token_digest=$1`, TokenDigest(token)).Scan(
+		&principal.User.ID, &principal.User.PrimaryEmail, &principal.User.DisplayName, &principal.User.Role, &principal.User.MembershipState, &principal.User.CredentialMode, &principal.User.MustChangePassword, &userExternal, &principal.User.Version,
+		&principal.Session.ID, &principal.Session.TokenDigest, &principal.Session.UserID, &principal.Session.Mode, &principal.Session.CSRFDigest, &authenticated, &sessionExternal, &expires, &revoked, &reason,
+		&principal.InstallationState, &interval,
+	)
+	if err != nil {
+		return Principal{}, err
+	}
+	if interval <= 0 || interval > int64((1<<63-1)/time.Second) {
+		return Principal{}, errors.New("invalid external authorization interval")
+	}
+	principal.ExternalAuthInterval = time.Duration(interval) * time.Second
+	principal.Session.AuthenticatedAt, err = time.Parse(time.RFC3339Nano, authenticated)
+	if err != nil {
+		return Principal{}, err
+	}
+	principal.Session.ExpiresAt, err = time.Parse(time.RFC3339Nano, expires)
+	if err != nil {
+		return Principal{}, err
+	}
+	for _, field := range []struct {
+		source sql.NullString
+		target **time.Time
+	}{{userExternal, &principal.User.ExternalAuthorizedAt}, {sessionExternal, &principal.Session.ExternalAuthorizedAt}, {revoked, &principal.Session.RevokedAt}} {
+		if !field.source.Valid {
+			continue
+		}
+		value, err := time.Parse(time.RFC3339Nano, field.source.String)
+		if err != nil {
+			return Principal{}, err
+		}
+		*field.target = &value
+	}
+	principal.Session.RevocationReason = reason.String
+	return principal, nil
+}
+
 // RevokeSession records invalidation inside the caller's transaction, before connection closure.
 func (s *Store) RevokeSession(ctx context.Context, tx *sql.Tx, id string, now time.Time, reason string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE sessions SET revoked_at=$1,revocation_reason=$2 WHERE id=$3 AND revoked_at IS NULL`, authTime(now), reason, id)

@@ -544,3 +544,17 @@ This checkpoint does not itself change the goal status.
   primitive, not a running tunnel: mTLS/Yamux registration and actual proxy stream
   enforcement remain T053 work. Runtime route authorization remains T013/T025 work.
 - 25 tasks are complete. Remaining foundation tasks: T013, T018, T023, T025.
+
+### Database-backed session authority
+
+- Added a single-statement principal read joining session, current membership, and
+  installation gates within the caller's transaction. Tests prove membership/role
+  changes apply to an existing cookie; unknown cookies do not produce authority.
+  Duration conversion rejects invalid/overflowing external authorization intervals.
+- Added normal session-handler construction using the active database and live
+  connection registry. The database-backed HTTP logout test now exercises this
+  production wiring instead of hand-assembling store callbacks and still proves
+  durable invalidation before connection closure and subsequent cookie rejection.
+- Auth/web race checks, formatting, and vet pass. Bootstrap/recovery eligibility
+  is not inferred from database state; protected flow wiring remains pending, as
+  do controller route registration and general authorization enforcement.

@@ -33,6 +33,9 @@ func TestLogoutPersistsRevocationBeforeConnectionClose(t *testing.T) {
 	}
 	store := auth.NewStore(db)
 	principal.User.PrimaryEmail = "member@example.test"
+	if _, err := db.ExecContext(ctx, `INSERT INTO installations(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version) VALUES('installation','active','ShiftBox','sqlite','https://management.test','{workspace}.ide.test','{workspace}-{service}.preview.test','release','release','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z',1)`); err != nil {
+		t.Fatal(err)
+	}
 	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
 		if _, err := store.CreateUser(ctx, tx, principal.User, "setup", handler.Now()); err != nil {
 			return err
@@ -41,20 +44,8 @@ func TestLogoutPersistsRevocationBeforeConnectionClose(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	handler.Lookup = func(ctx context.Context, token string) (auth.Principal, error) {
-		current := auth.Principal{InstallationState: "active"}
-		err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
-			var err error
-			current.Session, err = store.Session(ctx, tx, token)
-			if err != nil {
-				return err
-			}
-			current.User, err = store.User(ctx, tx, current.Session.UserID)
-			return err
-		})
-		return current, err
-	}
 	var registry proxy.Registry
+	handler = web.NewSessionHandler(db, "https://management.test", &registry, handler.Now)
 	closed := false
 	unregister, err := registry.Register(proxy.Scope{SessionID: principal.Session.ID}, func() error { return nil }, func() error {
 		current, err := handler.Lookup(ctx, token)
@@ -71,9 +62,6 @@ func TestLogoutPersistsRevocationBeforeConnectionClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(unregister)
-	handler.Revoke = func(ctx context.Context, id string) error {
-		return store.RevokeAndClose(ctx, id, handler.Now(), "logout", &registry)
-	}
 	request := httptest.NewRequest(http.MethodDelete, "https://management.test/api/v1/session", nil)
 	request.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
 	request.Header.Set("Origin", "https://management.test")

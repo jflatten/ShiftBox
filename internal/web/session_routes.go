@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/auth"
+	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 )
 
 const _sessionCookieName = "__Host-shiftbox_session"
@@ -22,6 +24,29 @@ type SessionHandler struct {
 	Now    func() time.Time
 	Lookup func(context.Context, string) (auth.Principal, error)
 	Revoke func(context.Context, string) error
+}
+
+// NewSessionHandler wires the active database and revocation registry into the
+// normal management session endpoint. Protected bootstrap/recovery flows supply
+// their additional verified gates separately; this constructor never infers them.
+func NewSessionHandler(db *sql.DB, origin string, registry *proxy.Registry, now func() time.Time) *SessionHandler {
+	store := auth.NewStore(db)
+	return &SessionHandler{
+		Origin: origin,
+		Now:    now,
+		Lookup: func(ctx context.Context, token string) (auth.Principal, error) {
+			var principal auth.Principal
+			err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+				var err error
+				principal, err = store.Principal(ctx, tx, token)
+				return err
+			})
+			return principal, err
+		},
+		Revoke: func(ctx context.Context, id string) error {
+			return store.RevokeAndClose(ctx, id, now(), "session.logout", registry)
+		},
+	}
 }
 
 // ServeHTTP evaluates fresh session authority before returning state or logging out.

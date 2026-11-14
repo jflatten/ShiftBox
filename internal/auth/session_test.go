@@ -17,6 +17,59 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// TestPrincipalReadsCurrentAuthority makes role changes, disablement and installation gates visible without issuing a new cookie.
+func TestPrincipalReadsCurrentAuthority(t *testing.T) {
+	db, store, grants := grantFixture(t)
+	ctx := context.Background()
+	now := grants[0].GrantedAt
+	session, token, err := auth.NewSession(testsupport.ID(50), grants[0].SubjectUserID, "normal", now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO installations(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version) VALUES('installation','active','ShiftBox','sqlite','https://management.test','{workspace}.ide.test','{workspace}-{service}.preview.test','release','release','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z',1)`); err != nil {
+			return err
+		}
+		return store.SaveSession(ctx, tx, session)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		principal, err := store.Principal(ctx, tx, token)
+		if err != nil {
+			return err
+		}
+		if principal.User.ID != session.UserID || principal.Session.ID != session.ID || principal.InstallationState != "active" || principal.ExternalAuthInterval != 4*time.Hour {
+			t.Errorf("Principal(cookie) = %+v, want current user/session/active installation/four-hour interval", principal)
+		}
+		if !auth.Authorize(principal, "infrastructure.view", auth.Resource{}, nil, now).Allowed {
+			t.Error("current administrator was denied infrastructure view")
+		}
+		if _, err := store.Principal(ctx, tx, "unknown-cookie"); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("Principal(unknown) = %v, want no rows", err)
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE users SET role='member', membership_state='disabled' WHERE id=$1`, session.UserID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		principal, err := store.Principal(ctx, tx, token)
+		if err != nil {
+			return err
+		}
+		if principal.User.Role != "member" || principal.User.MembershipState != "disabled" {
+			t.Errorf("Principal after membership change = %+v, want disabled member", principal.User)
+		}
+		if auth.Authorize(principal, "session.view", auth.Resource{}, nil, now).Allowed {
+			t.Error("disabled membership retained session access")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestSessionStoresOnlyDigests prevents a database read from yielding a usable browser credential.
 func TestSessionStoresOnlyDigests(t *testing.T) {
 	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
