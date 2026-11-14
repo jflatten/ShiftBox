@@ -188,6 +188,13 @@ func VerifyArchive(ctx context.Context, input io.Reader, password string) (Archi
 }
 
 func verifyArchive(ctx context.Context, input io.Reader, password string) (ArchiveEvidence, manifest, error) {
+	return readArchive(ctx, input, password, nil)
+}
+
+// readArchive always authenticates the same canonical stream. A staging
+// callback may copy regular entries into a private, disposable directory.
+func readArchive(ctx context.Context, input io.Reader, password string,
+	stage func(archiveFile, io.Reader) error) (ArchiveEvidence, manifest, error) {
 	identity, err := age.NewScryptIdentity(password)
 	if err != nil {
 		return ArchiveEvidence{}, manifest{}, errArchiveInvalid
@@ -222,8 +229,14 @@ func verifyArchive(ctx context.Context, input io.Reader, password string) (Archi
 			return ArchiveEvidence{}, manifest{}, errArchiveInvalid
 		}
 		hash := sha256.New()
-		n, err := io.Copy(hash, reader)
-		if err != nil || n != item.Size || hex.EncodeToString(hash.Sum(nil)) != item.Digest {
+		counter := &archiveBytes{}
+		entry := io.TeeReader(reader, io.MultiWriter(hash, counter))
+		if stage != nil {
+			err = stage(item, entry)
+		} else {
+			_, err = io.Copy(io.Discard, entry)
+		}
+		if err != nil || counter.n != item.Size || hex.EncodeToString(hash.Sum(nil)) != item.Digest {
 			return ArchiveEvidence{}, manifest{}, errArchiveInvalid
 		}
 	}

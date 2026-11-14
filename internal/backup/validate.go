@@ -44,6 +44,11 @@ func ValidateRestore(ctx context.Context, archive io.Reader, password string, ex
 	if err != nil {
 		return RestoreValidation{}, err
 	}
+	return assessRestore(ctx, evidence, doc, expected, checkTarget)
+}
+
+func assessRestore(ctx context.Context, evidence ArchiveEvidence, doc manifest, expected RestoreRequirements,
+	checkTarget func(context.Context) error) (RestoreValidation, error) {
 	if expected.ArchiveDigest != "" && subtle.ConstantTimeCompare([]byte(expected.ArchiveDigest), []byte(evidence.ArchiveDigest)) != 1 {
 		return RestoreValidation{}, errArchiveInvalid
 	}

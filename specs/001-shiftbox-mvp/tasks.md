@@ -1761,8 +1761,12 @@ This checkpoint does not itself change the goal status.
   separately owned schemas and preserves rows in a rejected occupied
   target. SQLite target checks reject existing files and sidecars.
 - T111 adds read-only validation and binds new production archives
-  to the current Mac. Durable validation IDs and restore activation
-  remain open.
+  to the current Mac.
+- T111 persists private validation records bound to the verified archive
+  and replacement target. Restore staging reauthenticates the archive
+  with a freshly supplied passphrase, checks the target again, and
+  removes staged files if verification fails. Applying staged data and
+  opening recovery review remain open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
