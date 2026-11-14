@@ -1049,3 +1049,17 @@ This checkpoint does not itself change the goal status.
 - CLI, identity and app race suites, formatting, and vet passed. This verifies
   the transfer with independent Dex SQLite stores. Target PostgreSQL Dex
   startup, application data transfer, and authority switching remain open.
+
+### PostgreSQL-backed Dex credential import
+
+- The setup Dex launcher now accepts explicit scoped PostgreSQL configuration
+  for the destination and selects only that storage mode.
+- The native CLI integration test imports the changed administrator credential
+  into a PostgreSQL-backed Dex with verified TLS. It confirms the changed
+  password works, the temporary password fails, and Dex's password table is
+  placed in the configured role's `dex` schema rather than `public`.
+- A missing PostgreSQL CA file blocks startup, and PostgreSQL startup does not
+  create a fallback Dex SQLite file. The disposable PostgreSQL database and
+  roles were cleaned up after the passing race test. Formatting and vet passed.
+- PostgreSQL setup still needs authenticated target collection, application
+  migrations and state transfer, and authority switching.

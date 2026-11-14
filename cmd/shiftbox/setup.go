@@ -83,7 +83,7 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 		if err != nil {
 			return nil, err
 		}
-		admin, login, done, cleanup, err := startSetupDex(ctx, *dir, *dex, origin, cert)
+		admin, login, done, cleanup, err := startSetupDex(ctx, *dir, *dex, origin, cert, nil)
 		if err != nil {
 			db.Close()
 			return nil, err

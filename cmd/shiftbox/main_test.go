@@ -17,10 +17,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/identity"
 )
@@ -350,7 +352,31 @@ func verifyCredentialTransfer(dir, origin, source, ownerID, temporary, replaceme
 	if err != nil {
 		return err
 	}
-	admin, _, _, closeDex, err := startSetupDex(ctx, target, os.Getenv("SHIFTBOX_TEST_DEX_BINARY"), origin, cert)
+	var postgres *identity.DexPostgres
+	if fixture := os.Getenv("SHIFTBOX_TEST_SETUP_DEX_URI"); fixture != "" {
+		u, err := url.Parse(fixture)
+		if err != nil || u.User == nil {
+			return fmt.Errorf("invalid PostgreSQL Dex fixture")
+		}
+		port, err := strconv.ParseUint(u.Port(), 10, 16)
+		if err != nil {
+			return fmt.Errorf("invalid PostgreSQL Dex fixture port")
+		}
+		password, _ := u.User.Password()
+		postgres = &identity.DexPostgres{Host: u.Hostname(), Port: uint16(port),
+			Database: strings.TrimPrefix(u.Path, "/"), User: u.User.Username(), Password: password,
+			CAFile: os.Getenv("SHIFTBOX_TEST_SETUP_CA")}
+	}
+	binary := os.Getenv("SHIFTBOX_TEST_DEX_BINARY")
+	if postgres != nil {
+		untrusted := *postgres
+		untrusted.CAFile = filepath.Join(target, "missing-ca.pem")
+		if _, _, _, cleanup, err := startSetupDex(ctx, target, binary, origin, cert, &untrusted); err == nil {
+			cleanup()
+			return fmt.Errorf("Dex startup accepted missing PostgreSQL trust")
+		}
+	}
+	admin, _, _, closeDex, err := startSetupDex(ctx, target, binary, origin, cert, postgres)
 	if err != nil {
 		return err
 	}
@@ -370,5 +396,28 @@ func verifyCredentialTransfer(dir, origin, source, ownerID, temporary, replaceme
 			return fmt.Errorf("Dex transfer did not preserve the changed administrator credential")
 		}
 	}
+	if postgres != nil {
+		if _, err := os.Lstat(filepath.Join(target, "dex.db")); !os.IsNotExist(err) {
+			return fmt.Errorf("PostgreSQL Dex created a SQLite fallback")
+		}
+		uri, err := url.Parse(os.Getenv("SHIFTBOX_TEST_SETUP_DEX_URI"))
+		if err != nil {
+			return fmt.Errorf("invalid PostgreSQL Dex fixture")
+		}
+		query := uri.Query()
+		query.Set("sslrootcert", postgres.CAFile)
+		uri.RawQuery = query.Encode()
+		db, err := sql.Open("pgx", uri.String())
+		if err != nil {
+			return fmt.Errorf("cannot open PostgreSQL verification connection")
+		}
+		defer db.Close()
+		var inDex, inPublic bool
+		if err := db.QueryRowContext(ctx, `SELECT to_regclass('dex.password') IS NOT NULL,
+			to_regclass('public.password') IS NOT NULL`).Scan(&inDex, &inPublic); err != nil || !inDex || inPublic {
+			return fmt.Errorf("Dex migrations did not land exclusively in the Dex schema")
+		}
+	}
+
 	return nil
 }

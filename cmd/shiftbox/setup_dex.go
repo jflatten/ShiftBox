@@ -20,7 +20,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/identity"
 )
 
-func startSetupDex(ctx context.Context, dir, binary, origin string, server tls.Certificate) (identity.PasswordAdmin, *app.SetupLogin, <-chan struct{}, func(), error) {
+func startSetupDex(ctx context.Context, dir, binary, origin string, server tls.Certificate, postgres *identity.DexPostgres) (identity.PasswordAdmin, *app.SetupLogin, <-chan struct{}, func(), error) {
 	var admin identity.PasswordAdmin
 	runtime, err := os.MkdirTemp(dir, ".setup-dex-")
 	if err != nil {
@@ -82,6 +82,10 @@ func startSetupDex(ctx context.Context, dir, binary, origin string, server tls.C
 		WebAddress: addresses[0], TelemetryAddress: addresses[1], GRPCAddress: addresses[2],
 		TLSCertFile: serverFile, TLSKeyFile: keyFile, GRPCCertFile: serverFile, GRPCKeyFile: keyFile, GRPCClientCAFile: clientCA,
 		SQLitePath: filepath.Join(dir, "dex.db"), ClientID: "shiftbox-local", ClientSecret: hex.EncodeToString(secret[:]),
+	}
+	if postgres != nil {
+		cfg.SQLitePath = ""
+		cfg.Postgres = postgres
 	}
 	configPath := filepath.Join(runtime, "dex.json")
 	if err := identity.WriteDexConfig(configPath, cfg); err != nil {
