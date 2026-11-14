@@ -94,7 +94,7 @@ func issueControllerSession(ctx context.Context, db *sql.DB, installation, subje
 			FROM users u CROSS JOIN installations i
 			WHERE i.id=$1 AND u.id=$2 AND u.credential_mode='local' AND u.membership_state='active'
 			AND ((i.state='active' AND u.role IN ('administrator','member'))
-				OR (i.state='recovery' AND u.role='administrator' AND NOT u.must_change_password))`,
+				OR (i.state='recovery' AND u.role='administrator' AND u.must_change_password=0))`,
 			installation, subject).Scan(&state, &passwordChange)
 		if err != nil {
 			return err

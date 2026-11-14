@@ -3,32 +3,59 @@ package app
 import (
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/migrations"
 )
 
 // TestRecoveryLoginIssuesOnlyRestrictedAdministratorSessions checks the local
 // Dex session issuer against recovery and active installation states.
 func TestRecoveryLoginIssuesOnlyRestrictedAdministratorSessions(t *testing.T) {
+	t.Run("sqlite", func(t *testing.T) {
+		checkRecoveryLogin(t, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "login.db")})
+	})
+	t.Run("postgres", func(t *testing.T) {
+		uri := os.Getenv("SHIFTBOX_TEST_POSTGRES_URI")
+		if uri == "" {
+			t.Skip("PostgreSQL fixture not configured")
+		}
+		checkRecoveryLogin(t, database.Config{Profile: "postgres", Schema: "shiftbox_test", PostgresURI: uri})
+	})
+}
+
+func checkRecoveryLogin(t *testing.T, cfg database.Config) {
+	t.Helper()
 	ctx := t.Context()
-	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "login.db")})
+	db, err := database.Open(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+	if cfg.Profile == "postgres" {
+		// Shadow durable tables with the real column types on one connection.
+		ddl, err := migrations.Files.ReadFile("postgres/00001_foundation.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		up, _, _ := strings.Cut(string(ddl), "-- +goose Down")
+		if _, err := db.ExecContext(ctx, strings.ReplaceAll(up, "CREATE TABLE ", "CREATE TEMPORARY TABLE ")); err != nil {
+			t.Fatal(err)
+		}
+	} else if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
 		t.Fatal(err)
 	}
 	installation, administrator, member := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	now := time.Now().UTC()
 	if _, err := db.ExecContext(ctx, `INSERT INTO installations(id,state,organization_name,data_profile,management_origin,
 		ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version)
-		VALUES($1,'recovery','Fixture','sqlite','https://management.test','{workspace}.ide.test','{service}--{workspace}.preview.test','v1','v1','now','now',1)`, installation); err != nil {
+		VALUES($1,'recovery','Fixture',$2,'https://management.test','{workspace}.ide.test','{service}--{workspace}.preview.test','v1','v1','now','now',1)`, installation, cfg.Profile); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
@@ -60,7 +87,7 @@ func TestRecoveryLoginIssuesOnlyRestrictedAdministratorSessions(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, "UPDATE installations SET state='active'"); err != nil {
+	if _, err := db.ExecContext(ctx, "UPDATE installations SET state='active' WHERE id=$1", installation); err != nil {
 		t.Fatal(err)
 	}
 	session, _, err = issue(administrator)

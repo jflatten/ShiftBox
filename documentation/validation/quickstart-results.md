@@ -62,5 +62,21 @@ trust input. The corrected fixture uses the separate trust input.
 The separately owned PostgreSQL replacement validation and activation tests
 also passed again with `-race` against fresh dedicated schemas.
 
+## Protected PostgreSQL setup in Chrome
+
+The pinned UTM image passed validation during protected setup. Activation
+ended the restricted browser session and locked the old SQLite installation.
+Starting the controller with the retired configuration failed. The first
+PostgreSQL sign-in returned 401 after Dex accepted the administrator's
+password. The session regression reproduced the failure with PostgreSQL's
+integer password-change flag. After an explicit integer comparison fixed
+the query, the race-enabled regression passed on both profiles.
+
+On the rerun, Chrome completed protected setup in 54.9 seconds and a
+separate Chrome session signed in to the active PostgreSQL installation
+as administrator. The controller was rebuilt with the embedded browser
+export and the `mvp-rc1` release ID. Its SHA-256 was
+`49e2d06a105e07e5f2441312bc740cb931648d154faa1bc364809e388e24f0b8`.
+
 T125 remains open for the outstanding scenarios in sections 3–10. The
 [release tracker](mvp-v1-v14.md) records the remaining live checks.
