@@ -73,6 +73,16 @@ func TestSetupCommandResumes(t *testing.T) {
 		if !status.reached {
 			t.Fatal("setup did not serve its advertised loopback URL")
 		}
+		db, err := sql.Open("sqlite", filepath.Join(dir, "bootstrap.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var active, minimum string
+		err = db.QueryRow("SELECT active_release,min_guest_release FROM installations").Scan(&active, &minimum)
+		db.Close()
+		if err != nil || active != controllerRelease || minimum != controllerRelease {
+			t.Fatalf("setup release tuple = %q/%q, %v; want the built controller release", active, minimum, err)
+		}
 		caRecord, err := os.ReadFile(filepath.Join(dir, "guest-ca.json"))
 		if err != nil {
 			t.Fatal(err)

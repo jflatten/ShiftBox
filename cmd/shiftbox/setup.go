@@ -27,6 +27,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Set at build time to the release shipped with the pinned guest agent.
+var controllerRelease = "development"
+
 func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	flags := flag.NewFlagSet("setup", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -106,7 +109,7 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 		db, id, err := database.OpenBootstrap(ctx, filepath.Join(*dir, "bootstrap.db"), database.BootstrapSeed{
 			ID: uuid.NewString(), Organization: "ShiftBox", Origin: origin,
 			IDEPattern: "{workspace}.ide.invalid", PreviewPattern: "{service}--{workspace}.preview.invalid",
-			Release: "development", MinGuestRelease: "development", Now: time.Now(),
+			Release: controllerRelease, MinGuestRelease: controllerRelease, Now: time.Now(),
 		})
 		if err != nil {
 			return nil, err
