@@ -219,12 +219,8 @@ func WorkspaceEntryGrantHandler(db *sql.DB, origin string, now func() time.Time,
 			if err != nil {
 				return AuthorizationTarget{}, err
 			}
-			target := AuthorizationTarget{Action: "workspace.connect_owner", Resource: resource,
-				entry: &proxy.OriginScope{WorkspaceID: workspace, Generation: generation, Service: input.Service, Origin: "https://" + host}}
-			if resource.OwnerID != principal.User.ID {
-				target.Action = "workspace.connect_admin"
-				target.Grants, err = store.ActiveGrants(ctx, tx, principal.User.ID, "workspace", workspace)
-			}
+			target, err := serviceEntryTarget(ctx, tx, store, principal, resource)
+			target.entry = &proxy.OriginScope{WorkspaceID: workspace, Generation: generation, Service: input.Service, Origin: "https://" + host}
 			return target, err
 		},
 		Apply: func(ctx context.Context, tx *sql.Tx, _ *http.Request, principal auth.Principal, target AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
@@ -253,6 +249,17 @@ func WorkspaceEntryGrantHandler(db *sql.DB, origin string, now func() time.Time,
 			}), nil
 		},
 	}
+}
+
+func serviceEntryTarget(ctx context.Context, tx *sql.Tx, store *auth.Store, principal auth.Principal, resource auth.Resource) (AuthorizationTarget, error) {
+	target := AuthorizationTarget{Action: "workspace.connect_owner", Resource: resource}
+	if resource.OwnerID == principal.User.ID {
+		return target, nil
+	}
+	target.Action = "workspace.connect_admin"
+	grants, err := store.ActiveGrants(ctx, tx, principal.User.ID, "workspace", resource.ID)
+	target.Grants = grants
+	return target, err
 }
 
 func serviceWorkspace(ctx context.Context, tx *sql.Tx, workspace, service string) (auth.Resource, int64, error) {

@@ -52,6 +52,21 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := web.WorkspaceEntryGrantHandler(db, origin, func() time.Time { return now }, hosts)
+	_, detail := web.WorkspaceReadHandlers(db, origin, func() time.Time { return now })
+	canOpenIDE := func(want bool) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, origin+"/api/v1/workspaces/"+workspace, nil)
+		r.SetPathValue("workspaceId", workspace)
+		r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		w := httptest.NewRecorder()
+		detail.ServeHTTP(w, r)
+		var view struct {
+			CanOpenIDE *bool `json:"canOpenIde"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil || w.Code != 200 || view.CanOpenIDE == nil || *view.CanOpenIDE != want {
+			t.Fatalf("workspace detail = %d %s (%v), want canOpenIde=%t", w.Code, w.Body, err, want)
+		}
+	}
 	request := func(id, service, csrf string, want int) *httptest.ResponseRecorder {
 		t.Helper()
 		r := httptest.NewRequest(http.MethodPost, origin+"/api/v1/workspaces/"+id+"/entry-grants", strings.NewReader(`{"service":"`+service+`"}`))
@@ -70,6 +85,7 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 	request(workspace, "preview-8080", "invalid", 403)
 	request(other, "preview-8080", csrf, 403)
 	request(workspace, "ide", csrf, 403)
+	canOpenIDE(false)
 	bootTime := now.Add(-time.Hour)
 	journal := operation.NewJournal(db, func() time.Time { return bootTime }, func() string { return bootTime.Format(time.RFC3339) })
 	recordBoot := func(action, kind, key string) operation.Operation {
@@ -98,11 +114,14 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 	}
 	verifyBoot(recordBoot("workspace.launch", "provision", "provision-fixture"))
 	request(workspace, "ide", csrf, 201)
+	canOpenIDE(true)
 	bootTime = now
 	restart := recordBoot("workspace.start", "start", "workspace-restart")
 	request(workspace, "ide", csrf, 403)
+	canOpenIDE(false)
 	verifyBoot(restart)
 	request(workspace, "ide", csrf, 201)
+	canOpenIDE(true)
 	result := request(workspace, "preview-8080", csrf, 201)
 	var grant struct {
 		ExchangeURL string    `json:"exchangeUrl"`

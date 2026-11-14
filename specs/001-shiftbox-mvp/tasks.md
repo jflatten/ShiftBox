@@ -1801,3 +1801,14 @@ This checkpoint does not itself change the goal status.
 - All 29 UI tests and the production build passed. Chrome verified review
   by keyboard and the accepted launch with fixture API responses. Template
   creation, repair and live controller validation remain open.
+
+### Browser IDE entry
+
+- Workspace detail returns an optional `canOpenIde` flag. The controller
+  evaluates the same readiness and permission rules as grant issuance,
+  and the browser refreshes the decision when the Stepper reaches IDE
+  verification. Opening the IDE requests a fresh grant and navigates to
+  the separate service origin.
+- Go web and contract race tests, UI tests and the production build
+  passed. Chrome verified keyboard entry and the exchange redirect with
+  fixture API responses. A live UTM-backed IDE session remains to verify.

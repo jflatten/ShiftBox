@@ -69,6 +69,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
           <Text>{data.resources.cpuCount} vCPU · {data.resources.memoryMiB} MiB memory · {data.resources.diskMiB} MiB disk</Text>
           <Text size="sm">Stop and start preserve project files, the developer home, and configured persistent mounts.</Text>
           {error !== undefined ? <APIProblemView error={error} /> : null}
+          {data.canOpenIde ? <OpenIDE id={id} csrfToken={csrfToken} /> : null}
           {action ? (
             <Button style={{ alignSelf: 'flex-start' }} loading={submitting}
               disabled={!!data.currentOperationId || operationBusy} onClick={() => void requestPower(action)}>
@@ -82,15 +83,56 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
   );
 }
 
+function OpenIDE({ id, csrfToken }: { id: string; csrfToken: string }) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<unknown>();
+
+  const open = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`/api/v1/workspaces/${encodeURIComponent(id)}/entry-grants`, {
+        method: 'POST', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ service: 'ide' }),
+      });
+      if (!response.ok) throw await readProblem(response);
+      const { exchangeUrl } = await response.json();
+      const url = new URL(exchangeUrl);
+      if (url.protocol !== 'https:' || url.origin === window.location.origin || url.pathname !== '/_shiftbox/entry' ||
+          url.username || url.password || !url.searchParams.get('grant')) {
+        throw new Error('Invalid IDE entry URL');
+      }
+      const entry = document.createElement('a');
+      entry.href = url.href;
+      entry.rel = 'noreferrer';
+      entry.click();
+    } catch (error) {
+      setError(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Stack align="flex-start" gap="xs">
+      <Button loading={submitting} onClick={() => void open()}>Open IDE</Button>
+      {error !== undefined ? <APIProblemView error={error} /> : null}
+    </Stack>
+  );
+}
+
 function WorkspaceProgress({ workspaceId, operationId, onFinished }: { workspaceId: string; operationId: string; onFinished: (busy: boolean) => void }) {
   const operation = useOperation(operationId);
   const client = useQueryClient();
   const state = operation.data?.status;
+  const ideVerified = operation.data?.steps.some(step => step.key === 'verify_ide' && step.status === 'succeeded');
   useEffect(() => {
-    if (state !== 'succeeded' && state !== 'failed' && state !== 'cancelled') return;
-    onFinished(false);
-    void client.invalidateQueries({ queryKey: ['workspaces', 'detail', workspaceId] });
-  }, [client, onFinished, state, workspaceId]);
+    const finished = state === 'succeeded' || state === 'failed' || state === 'cancelled';
+    if (finished) onFinished(false);
+    if (finished || ideVerified) void client.invalidateQueries({ queryKey: ['workspaces', 'detail', workspaceId] });
+  }, [client, ideVerified, onFinished, state, workspaceId]);
   if (operation.accessDenied) return <Text role="alert">You no longer have access to this operation.</Text>;
   if (operation.isError) return <APIProblemView error={operation.error} />;
   if (!operation.data) return <Text role="status">Loading operation…</Text>;

@@ -6,6 +6,7 @@ export interface Workspace {
   desiredState: string;
   observedState: string;
   currentOperationId: string | null;
+  canOpenIde?: boolean;
   version: number;
   resources: { cpuCount: number; memoryMiB: number; diskMiB: number };
 }

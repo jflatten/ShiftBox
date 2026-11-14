@@ -42,6 +42,7 @@ const workspaceProjection = `w.id,w.owner_user_id,w.template_id,w.template_revis
 
 // WorkspaceReadHandlers returns the list and detail operations for management.
 func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time) (AuthorizedHandler, AuthorizedHandler) {
+	store := auth.NewStore(db)
 	list := AuthorizedHandler{
 		DB: db, Origin: origin, Now: now,
 		Route: ManagementRoute{Method: http.MethodGet, Path: "/workspaces", OperationID: "listWorkspaces", Action: "workspace.list"},
@@ -54,15 +55,28 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time) (Aut
 		DB: db, Origin: origin, Now: now,
 		Route:   ManagementRoute{Method: http.MethodGet, Path: "/workspaces/{workspaceId}", OperationID: "getWorkspace", Action: "workspace.view"},
 		Resolve: resolveWorkspaceView,
-		Apply: func(ctx context.Context, tx *sql.Tx, _ *http.Request, _ auth.Principal, target AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
+		Apply: func(ctx context.Context, tx *sql.Tx, _ *http.Request, principal auth.Principal, target AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
 			view, err := scanWorkspace(tx.QueryRowContext(ctx, `SELECT `+workspaceProjection+` FROM workspaces w WHERE w.id=$1`, target.Resource.ID))
 			if err != nil {
 				return nil, err
 			}
+			resource, _, err := serviceWorkspace(ctx, tx, view.ID, "ide")
+			if err != nil {
+				return nil, err
+			}
+			entry, err := serviceEntryTarget(ctx, tx, store, principal, resource)
+			if err != nil {
+				return nil, err
+			}
+			// Expose the current entry decision without issuing a grant.
+			response := struct {
+				workspaceView
+				CanOpenIDE bool `json:"canOpenIde"`
+			}{view, auth.Authorize(principal, entry.Action, entry.Resource, entry.Grants, now()).Allowed}
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(view.Version, 10)))
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(view)
+				_ = json.NewEncoder(w).Encode(response)
 			}), nil
 		},
 	}

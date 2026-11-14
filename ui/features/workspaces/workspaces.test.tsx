@@ -141,3 +141,29 @@ test('shows the server operation after accepting a workspace launch', async () =
   expect(await screen.findByText('Failed — Boot workspace')).toBeVisible();
   expect(screen.getByRole('link', { name: 'View workspace' })).toHaveAttribute('href', '/workspaces/?id=workspace-one');
 });
+
+// A running VM can still be configuring its IDE. Once the controller allows
+// entry, a later denial must report the lost access without opening a URL.
+test('uses the controller IDE availability and requests a fresh entry grant', async () => {
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces/workspace-one') return json({
+      ...workspace, observedState: 'running', currentOperationId: null, canOpenIde: true,
+    });
+    if (input === '/api/v1/workspaces/workspace-one/entry-grants' && init?.method === 'POST') return {
+      ok: false, status: 403, headers: new Headers({ 'Content-Type': 'application/problem+json' }),
+      json: async () => ({ type: 'about:blank', title: 'Workspace service access denied', status: 403,
+        code: 'workspace.entry_denied', requestId: 'ref' }),
+    } as Response;
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Open IDE' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Workspace service access denied');
+  expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces/workspace-one/entry-grants', expect.objectContaining({
+    method: 'POST', body: '{"service":"ide"}', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'fixture' },
+  }));
+});
