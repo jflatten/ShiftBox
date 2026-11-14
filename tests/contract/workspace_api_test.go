@@ -39,10 +39,22 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	token := strings.Repeat("A", 43)
 	now := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
 	seedWorkspaceLaunch(t, db, templateID, token, now)
+	policyID := uuid.NewString()
+	if _, err := db.Exec(`INSERT INTO network_policies(id,name,mode,rules_json,required_exceptions_json,provider_capability_version)
+		VALUES($1,'Outbound access','all','[]','[]','5.0.8')`, policyID); err != nil {
+		t.Fatal(err)
+	}
+	// Template revisions are immutable, including their policy reference.
+	if _, err := db.Exec(`INSERT INTO template_revisions(template_id,revision,repository_url,devcontainer_path,resource_profile_id,platform_artifact_id,
+		network_policy_id,secret_names_json,created_by,created_at)
+		SELECT template_id,2,repository_url,devcontainer_path,resource_profile_id,platform_artifact_id,$1,secret_names_json,created_by,created_at
+		FROM template_revisions WHERE template_id=$2 AND revision=1`, policyID, templateID); err != nil {
+		t.Fatal(err)
+	}
 	clock := func() time.Time { return now }
 	journal := operation.NewJournal(db, clock, uuid.NewString)
 	handler := web.WorkspaceLaunchHandler(db, origin, clock, journal, web.WorkspaceLaunchPolicy{
-		Capabilities: provider.Capabilities{Create: true, Start: true, Architecture: "amd64", NetworkModes: []string{"shared"},
+		Capabilities: provider.Capabilities{Create: true, Start: true, Architecture: "amd64", Version: "5.0.8", NetworkModes: []string{"shared"},
 			Minimum: provider.Resources{CPU: 1, MemoryBytes: 512 << 20, DiskBytes: 1 << 20},
 			Maximum: provider.Resources{CPU: 8, MemoryBytes: 8192 << 20, DiskBytes: 100 << 20}},
 		Protocols: []string{"1"},
@@ -75,35 +87,37 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	}
 	withRetention := strings.TrimSuffix(body, "}") + `,"retentionSeconds":3600}`
 	check(request(withRetention, key, csrf), 409, "workspace.retention_unavailable")
-	accepted := request(body, key, csrf)
+	selectedBody := strings.Replace(body, `"templateRevision":1`, `"templateRevision":2`, 1)
+	selectedRetention := strings.Replace(withRetention, `"templateRevision":1`, `"templateRevision":2`, 1)
+	accepted := request(selectedBody, key, csrf)
 	check(accepted, 202, "")
 	var op operation.Operation
 	if err := json.Unmarshal(accepted.Body.Bytes(), &op); err != nil || op.WorkspaceID == nil || op.ID == "" {
 		t.Fatalf("launch response = %+v, %v, want durable operation", op, err)
 	}
-	replayed := request(body, key, csrf)
+	replayed := request(selectedBody, key, csrf)
 	check(replayed, 202, "")
 	if replayed.Body.String() != accepted.Body.String() {
 		t.Error("retry returned a different operation")
 	}
-	check(request(withRetention, key, csrf), 409, "workspace.launch_conflict")
+	check(request(selectedRetention, key, csrf), 409, "workspace.launch_conflict")
 	check(request(body, "workspace-launch-key-two", csrf), 409, "workspace.capacity_exceeded")
 	if _, err := db.Exec("UPDATE resource_profiles SET enabled=0 WHERE id='profile'"); err != nil {
 		t.Fatal(err)
 	}
-	check(request(body, key, csrf), 202, "")
+	check(request(selectedBody, key, csrf), 202, "")
 	check(request(body, "workspace-launch-key-two", csrf), 409, "workspace.template_unavailable")
 	if _, err := db.Exec("UPDATE template_grants SET revoked_at='now' WHERE template_id=$1", templateID); err != nil {
 		t.Fatal(err)
 	}
 	check(request(body, "workspace-launch-key-tri", csrf), 403, "auth.forbidden")
 	check(request(body, key, csrf), 403, "auth.forbidden")
-	var owner string
+	var owner, network string
 	var reservations, operations int
-	if err := db.QueryRow(`SELECT owner_user_id,(SELECT COUNT(*) FROM reservations),(SELECT COUNT(*) FROM operations)
-		FROM workspaces WHERE id=$1`, *op.WorkspaceID).Scan(&owner, &reservations, &operations); err != nil ||
-		owner != "member" || reservations != 1 || operations != 1 {
-		t.Fatalf("committed launch = %s, %d reservations, %d operations, %v, want member/1/1", owner, reservations, operations, err)
+	if err := db.QueryRow(`SELECT owner_user_id,network_policy_snapshot_json,(SELECT COUNT(*) FROM reservations),(SELECT COUNT(*) FROM operations)
+		FROM workspaces WHERE id=$1`, *op.WorkspaceID).Scan(&owner, &network, &reservations, &operations); err != nil ||
+		owner != "member" || !strings.Contains(network, policyID) || !strings.Contains(network, `"mode":"shared"`) || reservations != 1 || operations != 1 {
+		t.Fatalf("committed launch = %s, network %s, %d reservations, %d operations, %v; want member, selected shared policy, one reservation and one operation", owner, network, reservations, operations, err)
 	}
 	detail, stream := web.OperationHandlers(db, origin, clock, journal, &proxy.Registry{})
 	mux := http.NewServeMux()
@@ -139,7 +153,7 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil ||
 		view.OwnerID != "member" || view.DesiredState != "running" || view.ObservedState != "unknown" ||
-		view.PlatformRelease != "release" || view.TemplateRevision != 1 ||
+		view.PlatformRelease != "release" || view.TemplateRevision != 2 ||
 		view.CurrentOperationID != op.ID || response.Header().Get("ETag") != `"1"` {
 		t.Fatalf("workspace view = %+v, %v, want member-owned pending launch", view, err)
 	}

@@ -2125,3 +2125,16 @@ This checkpoint does not itself change the goal status.
   Dex rejects the old credential and accepts the replacement, with no
   local Dex database created. The disposable database and Dex role were
   removed after the run.
+
+### Network policy creation and launch
+
+- The administrator API stores named unrestricted policies when the
+  pinned provider advertises shared networking. Invalid allowlist rules
+  are rejected, and UTM configurations that require unverified restrictions
+  cannot be created through the API.
+- Template revisions can reference an enabled policy. Launch pins the
+  selected policy ID and effective network mode after checking current
+  capabilities. Existing templates without a policy retain shared networking.
+- Go vet, race-enabled application, template, web, workspace and contract
+  tests, and SQLite/PostgreSQL migration parity passed. Stopped-workspace
+  policy edits and browser selection remain open.

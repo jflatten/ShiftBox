@@ -100,6 +100,7 @@ func CheckSchema(ctx context.Context, db *sql.DB, profile string) error {
 		"SELECT id,severity,title,body,effective_at,expires_at,created_by,created_at FROM notices WHERE 1=0",
 		"SELECT notice_id,user_id,read_at,dismissed_at FROM notice_receipts WHERE 1=0",
 		"SELECT email,user_id,role,credential_json FROM local_user_creations WHERE 1=0",
+		"SELECT id,name,mode,rules_json,required_exceptions_json,provider_capability_version,enabled,version FROM network_policies WHERE 1=0",
 		"SELECT installation_id,user_id,operation_id,password_hash,password_ciphertext_id,credential_ready,delivered_at,created_at FROM bootstrap_administrator WHERE 1=0",
 	} {
 		probe, err := db.QueryContext(ctx, query)

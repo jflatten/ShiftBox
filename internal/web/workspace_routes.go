@@ -109,9 +109,15 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 		return operation.Operation{}, err
 	}
 	caps := policy.Capabilities
-	if !caps.Create || !caps.Start || caps.Architecture != architecture || !slices.Contains(policy.Protocols, protocol) ||
-		revision.NetworkPolicyID != "" || !slices.Contains(caps.NetworkModes, "shared") {
+	if !caps.Create || !caps.Start || caps.Architecture != architecture || !slices.Contains(policy.Protocols, protocol) {
 		return operation.Operation{}, launchCapabilityProblem()
+	}
+	network, err := workspace.LaunchNetworkSnapshot(ctx, tx, revision.NetworkPolicyID, caps)
+	if errors.Is(err, provider.ErrCapabilityUnsupported) {
+		return operation.Operation{}, launchCapabilityProblem()
+	}
+	if err != nil {
+		return operation.Operation{}, err
 	}
 	if _, err := workspace.ProfileResources(allocation, caps); err != nil {
 		return operation.Operation{}, launchCapabilityProblem()
@@ -125,7 +131,7 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 	intent.RepositoryURL = revision.RepositoryURL
 	intent.DevcontainerPath = revision.DevcontainerPath
 	intent.Allocation = allocation
-	intent.NetworkPolicyJSON = `{"mode":"shared"}`
+	intent.NetworkPolicyJSON = network
 	intent.SecretNames = revision.SecretNames
 	op, err := workspace.AdmitLaunch(ctx, tx, journal, intent, now)
 	return op, launchAdmissionProblem(err)

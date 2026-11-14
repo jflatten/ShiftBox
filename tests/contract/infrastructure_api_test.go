@@ -92,6 +92,53 @@ func TestInfrastructureStatus(t *testing.T) {
 	read(http.StatusServiceUnavailable)
 }
 
+// TestNetworkPolicyAdministration rejects restrictions that the pinned
+// provider cannot enforce and persists only the admitted unrestricted policy.
+func TestNetworkPolicyAdministration(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "network.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	const origin = "https://management.test"
+	now := time.Now().UTC()
+	token := strings.Repeat("A", 43)
+	seedWorkspaceLaunch(t, db, uuid.NewString(), token, now)
+	handler := web.NetworkPolicyHandler(db, origin, func() time.Time { return now }, uuid.NewString,
+		provider.Capabilities{Name: "utm", Version: "5.0.8", NetworkModes: []string{"shared"}})
+	request := func(body string, want int) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, origin+"/api/v1/admin/network-policies", strings.NewReader(body))
+		r.Header.Set("Origin", origin)
+		r.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+		r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Fatalf("create network policy %s = %d %s, want %d", body, w.Code, w.Body.String(), want)
+		}
+	}
+	const unrestricted = `{"name":"Outbound access","mode":"all"}`
+	request(unrestricted, 403)
+	if _, err := db.ExecContext(ctx, "UPDATE users SET role='administrator' WHERE id='member'"); err != nil {
+		t.Fatal(err)
+	}
+	request(`{"name":"Offline","mode":"no_network"}`, 409)
+	request(`{"name":"Restricted","mode":"allowlist","rules":[{"destination":"192.0.2.0/24","transport":"tcp","port":443}]}`, 409)
+	request(`{"name":"Broken","mode":"allowlist","rules":[{"destination":"arbitrary.example","transport":"tcp","port":443}]}`, 400)
+	request(unrestricted, 201)
+	request(unrestricted, 409)
+	var name, mode, version string
+	if err := db.QueryRowContext(ctx, "SELECT name,mode,provider_capability_version FROM network_policies").Scan(&name, &mode, &version); err != nil ||
+		name != "Outbound access" || mode != "all" || version != "5.0.8" {
+		t.Fatalf("stored policy = %q/%q/%q (%v), want Outbound access/all/5.0.8", name, mode, version, err)
+	}
+}
+
 // TestCapacityAdministration checks that only administrators can set budgets
 // or create profiles, that stale edits fail, and that provider limits apply.
 func TestCapacityAdministration(t *testing.T) {

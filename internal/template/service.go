@@ -125,12 +125,13 @@ func Save(ctx context.Context, tx *sql.Tx, intent SaveIntent, now time.Time) (Vi
 func saveRevision(ctx context.Context, tx *sql.Tx, intent SaveIntent, view View, now time.Time) error {
 	var available bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM resource_profiles p CROSS JOIN platform_artifacts a
-		WHERE p.id=$1 AND p.enabled=1 AND a.id=$2 AND a.state='available')`, view.ProfileID, view.ArtifactID).Scan(&available)
+		WHERE p.id=$1 AND p.enabled=1 AND a.id=$2 AND a.state='available'
+		AND ($3='' OR EXISTS (SELECT 1 FROM network_policies WHERE id=$3 AND enabled=1)))`,
+		view.ProfileID, view.ArtifactID, view.NetworkPolicyID).Scan(&available)
 	if err != nil {
 		return err
 	}
-	// The current UTM provider offers shared networking with no custom policy.
-	if !available || view.NetworkPolicyID != "" {
+	if !available {
 		return ErrUnavailable
 	}
 	stamp := now.UTC().Format(time.RFC3339Nano)
@@ -146,9 +147,9 @@ func saveRevision(ctx context.Context, tx *sql.Tx, intent SaveIntent, view View,
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO template_revisions(template_id,revision,repository_url,repository_ref,devcontainer_path,
-		resource_profile_id,platform_artifact_id,secret_names_json,created_by,created_at)
-		VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,$9,$10)`, view.ID, view.CurrentRevision,
-		view.RepositoryURL, view.RepositoryRef, view.DevcontainerPath, view.ProfileID, view.ArtifactID, string(names), intent.Actor, stamp); err != nil {
+		resource_profile_id,platform_artifact_id,network_policy_id,secret_names_json,created_by,created_at)
+		VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,NULLIF($8,''),$9,$10,$11)`, view.ID, view.CurrentRevision,
+		view.RepositoryURL, view.RepositoryRef, view.DevcontainerPath, view.ProfileID, view.ArtifactID, view.NetworkPolicyID, string(names), intent.Actor, stamp); err != nil {
 		return err
 	}
 	if intent.TemplateID == "" {
