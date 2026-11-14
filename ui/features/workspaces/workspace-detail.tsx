@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Anchor, Button, Group, Stack, Text, Title } from '@mantine/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
@@ -21,6 +21,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
     },
   });
   const data = !workspace.isError ? workspace.data : undefined;
+  const repairDescriptionId = useId();
   const [operationId, setOperationId] = useState<string>();
   const [operationBusy, setOperationBusy] = useState(false);
   const [submitting, setSubmitting] = useState<WorkspaceAction>();
@@ -91,9 +92,12 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
           </Stack>
           <RetentionWarning workspace={data} />
           <Text size="sm">Stop and start preserve project files, the developer home, and named application volumes. Rebuilding also preserves this data and replaces the container’s writable layer.</Text>
+          {data.canStartRepair || data.canOpenRepair || data.canRetryAfterRepair ? (
+            <Text id={repairDescriptionId} size="sm">Repair opens your project files in a separate IDE and skips project hooks, tasks, and extensions.</Text>
+          ) : null}
           {error !== undefined ? <APIProblemView error={error} /> : null}
           {data.canOpenIde ? <OpenIDE id={id} csrfToken={csrfToken} /> : null}
-          {data.canOpenRepair ? <OpenIDE id={id} csrfToken={csrfToken} service="repair" /> : null}
+          {data.canOpenRepair ? <OpenIDE id={id} csrfToken={csrfToken} service="repair" describedBy={repairDescriptionId} /> : null}
           {action ? (
             <Group>
               <Button loading={submitting === action} disabled={!!data.currentOperationId || operationBusy || !!submitting}
@@ -108,7 +112,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
               ) : null}
               {data.canStartRepair ? (
                 <Button variant="default" loading={submitting === 'repair'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
-                  onClick={() => void requestAction('repair')}>
+                  aria-describedby={repairDescriptionId} onClick={() => void requestAction('repair')}>
                   Start repair
                 </Button>
               ) : null}
@@ -134,7 +138,9 @@ function WorkspaceTime({ value, fallback }: { value: string | null; fallback: st
   return <time dateTime={value}>{date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>;
 }
 
-function OpenIDE({ id, csrfToken, service = 'ide' }: { id: string; csrfToken: string; service?: 'ide' | 'repair' }) {
+function OpenIDE({ id, csrfToken, service = 'ide', describedBy }: {
+  id: string; csrfToken: string; service?: 'ide' | 'repair'; describedBy?: string;
+}) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<unknown>();
 
@@ -168,7 +174,7 @@ function OpenIDE({ id, csrfToken, service = 'ide' }: { id: string; csrfToken: st
 
   return (
     <Stack align="flex-start" gap="xs">
-      <Button loading={submitting} onClick={() => void open()}>{service === 'repair' ? 'Open repair IDE' : 'Open IDE'}</Button>
+      <Button loading={submitting} aria-describedby={describedBy} onClick={() => void open()}>{service === 'repair' ? 'Open repair IDE' : 'Open IDE'}</Button>
       {error !== undefined ? <APIProblemView error={error} /> : null}
     </Stack>
   );

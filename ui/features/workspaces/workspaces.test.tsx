@@ -26,6 +26,38 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
+// Before entering repair, explain what developers can safely edit and tie the
+// explanation to the action so keyboard and screen-reader users receive it.
+test('explains repair before starting it and renders the server workflow', async () => {
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces/workspace-one') return json({
+      ...workspace, observedState: 'running', currentOperationId: null, canStartRepair: true,
+    });
+    if (input === '/api/v1/workspaces/workspace-one/actions/repair' && init?.method === 'POST') return json({ id: 'repair-op' });
+    if (input === '/api/v1/operations/repair-op') return json({
+      id: 'repair-op', version: 2, status: 'failed', currentStep: 'verify_repair',
+      steps: [{ key: 'verify_repair', index: 0, label: 'Verify the repair IDE', status: 'failed',
+        detail: 'The repair IDE did not respond.' }],
+    });
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  const start = await screen.findByRole('button', { name: 'Start repair' });
+  expect(start).toHaveAccessibleDescription(
+    'Repair opens your project files in a separate IDE and skips project hooks, tasks, and extensions.',
+  );
+  expect(screen.queryByRole('button', { name: 'Open repair IDE' })).not.toBeInTheDocument();
+  await user.click(start);
+  expect(await screen.findByText('Failed — Verify the repair IDE')).toBeVisible();
+  expect(screen.getByText('The repair IDE did not respond.')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces/workspace-one/actions/repair', expect.objectContaining({
+    method: 'POST', headers: expect.objectContaining({ 'If-Match': '"4"', 'Idempotency-Key': expect.any(String) }),
+  }));
+});
+
 // Repair is only offered with the controller's readiness decision and opens
 // through a grant scoped to the repair service.
 test('requests a repair entry grant for a verified repair workspace', async () => {
@@ -84,7 +116,10 @@ test('shows the saved workspace state and workflow', async () => {
   expect(screen.getByText('Retention deadline').nextElementSibling?.firstElementChild).toHaveAttribute('datetime', workspace.retentionDeadline);
   expect(await screen.findByText('Failed — Start workspace')).toBeVisible();
   expect(screen.getByText('The guest could not prepare the repository.')).toBeVisible();
-  expect(screen.getByText(/Stop and start preserve/)).toBeVisible();
+  expect(screen.getByText(/Stop and start preserve project files, the developer home, and named application volumes/)).toHaveTextContent(
+    'Rebuilding also preserves this data and replaces the container’s writable layer.',
+  );
+  expect(screen.queryByRole('button', { name: 'Start repair' })).not.toBeInTheDocument();
 });
 
 // An overdue workspace shows recovery grace and the files at risk alongside

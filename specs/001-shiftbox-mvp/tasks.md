@@ -91,7 +91,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T035 [P] [US1] Write failing workspace-domain tests for pinned launch snapshots, capacity reservation timing, desired/observed separation, owner privacy, lifecycle transitions, repair automation suppression, and retained-data contracts in `internal/workspace/service_test.go`
 - [ ] T036 [P] [US1] Write failing workspace API tests for `/workspaces`, lifecycle actions, operation lookup/events, conditional versions, idempotency, capacity problems, and short-lived entry grants in `tests/contract/workspace_api_test.go`
 - [X] T037 [P] [US1] Write failing guest executor tests for persisted operation attempts, repository preparation, prebuilt-image and Dockerfile/build-definition Dev Containers, declared features, lifecycle-hook ordering/failure, separate declared `waitFor` and proxy readiness, rebuild retention checks, and repair without project automation in `internal/guest/executor_test.go`
-- [ ] T038 [P] [US1] Write failing UI tests for setup forms, first-invalid focus, launch review, capacity refusal, server-driven progress, desired/observed state, retained-data copy, and repair explanation in `ui/features/setup/setup.test.tsx` and `ui/features/workspaces/workspaces.test.tsx`
+- [X] T038 [P] [US1] Write failing UI tests for setup forms, first-invalid focus, launch review, capacity refusal, server-driven progress, desired/observed state, retained-data copy, and repair explanation in `ui/features/setup/setup.test.tsx` and `ui/features/workspaces/workspaces.test.tsx`
 - [ ] T039 [P] [US1] Write failing Playwright MVP journey for keyboard-only setup, launch through SSE reconnect, delayed IDE readiness, file persistence across stop/start/rebuild, and repair access in `ui/tests/e2e/mvp-workspace.spec.ts`
 
 ### Models and stores
@@ -2528,3 +2528,8 @@ This checkpoint does not itself change the goal status.
   Tests reopen the operation journal to verify the `waitFor` milestone
   precedes the later hook. The fixtures passed against the Debian and
   amd64 Ubuntu images under the Go race detector.
+
+- T038 verifies the repair explanation, the server-driven failure step,
+  and the named data retained across rebuild. Both repair controls expose
+  the explanation to assistive technology. UI type checking and 72 tests
+  passed.
