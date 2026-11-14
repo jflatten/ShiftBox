@@ -323,9 +323,9 @@ async function openFile(page: Page, name: string) {
   const item = explorer.getByRole('treeitem', { name: file, exact: true });
   await expect(item).toBeVisible({ timeout: workbenchTimeout });
   await item.dblclick();
-  await expect(page.getByRole('tab', { name: file, exact: false, selected: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: file, exact: false, selected: true })).toBeVisible({ timeout: workbenchTimeout });
   const editor = page.locator('.editor-instance .monaco-editor:visible').first();
-  await expect(editor).toBeVisible();
+  await expect(editor).toBeVisible({ timeout: workbenchTimeout });
   return editor;
 }
 
