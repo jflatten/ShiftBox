@@ -939,3 +939,14 @@ This checkpoint does not itself change the goal status.
 - CLI/bootstrap installation composition and local trust presentation remain
   unfinished, as do explicit reset, sign-in/password change and remaining setup
   UI/endpoints. No additional task is marked complete.
+
+### SQLite bootstrap startup
+
+- Added the SQLite bootstrap opener for T044. It migrates the dedicated setup
+  database, seeds the singleton installation on first start, and returns its
+  existing identity when setup resumes.
+- Added a restart test for preserved identity, origin, state, and version, plus
+  refusal after activation. Updated the administrator HTTP contract test to
+  start with the bootstrap opener instead of a hand-seeded installation.
+- Database, app, and contract race tests pass, as do formatting and vet.
+  CLI composition and PostgreSQL preflight and activation remain open.

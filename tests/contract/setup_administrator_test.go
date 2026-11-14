@@ -33,18 +33,16 @@ func (a *setupPasswordAPI) Ensure(_ context.Context, _ string, _ string, hash []
 // TestProtectedAdministratorAPI proves first-owner creation, journal completion, one-time delivery, and safe status/retry behavior through the protected HTTP surface.
 func TestProtectedAdministratorAPI(t *testing.T) {
 	ctx := context.Background()
-	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "setup.db")})
+	db, installation, err := database.OpenBootstrap(ctx, filepath.Join(t.TempDir(), "setup.db"), database.BootstrapSeed{
+		ID:           "00000000-0000-4000-8000-000000000001",
+		Organization: "ShiftBox", Origin: "https://127.0.0.1:8443",
+		IDEPattern: "{workspace}.ide.test", PreviewPattern: "{service}--{workspace}.preview.test",
+		Release: "release", MinGuestRelease: "release", Now: time.Now(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
-		t.Fatal(err)
-	}
-	const installation = "00000000-0000-4000-8000-000000000001"
-	if _, err := db.Exec(`INSERT INTO installations(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version) VALUES($1,'bootstrap','ShiftBox','sqlite','https://127.0.0.1:8443','{workspace}.ide.test','{service}--{workspace}.preview.test','release','release','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z',1)`, installation); err != nil {
-		t.Fatal(err)
-	}
 	cipher, _ := cryptostore.New(make([]byte, 32))
 	api := &setupPasswordAPI{}
 	journal := operation.NewJournal(db, time.Now, func() string { return "00000000-0000-4000-8000-000000000003" })
