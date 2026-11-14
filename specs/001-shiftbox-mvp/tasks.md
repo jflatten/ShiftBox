@@ -2093,3 +2093,14 @@ This checkpoint does not itself change the goal status.
 - All 51 UI tests and the production build passed. Chrome verified role
   selection and one-time password clearing by keyboard using fixture
   responses. Credential recovery and production startup remain open.
+
+### Protected setup temporary-password reset
+
+- `shiftbox setup --reset-temporary-password` uses the existing private
+  installation directory and exclusive setup lock. It resets only a
+  delivered bootstrap password that still requires its first change, revokes
+  prior sessions, and writes the replacement only to standard output.
+- Go vet and the relevant race tests passed. Native Dex rejected the old
+  password and accepted the replacement. Ordinary setup resumed without
+  redisplaying it, and explicit reset refused a completed password change.
+  Recovery of an active installation's administrator remains open.

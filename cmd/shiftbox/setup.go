@@ -34,6 +34,7 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	email := flags.String("administrator-email", "", "")
 	dex := flags.String("dex-binary", "", "")
 	postgresPath := flags.String("postgres-identity-config", "", "")
+	reset := flags.Bool("reset-temporary-password", false, "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(*dir) {
 		return errors.New("setup requires an absolute installation directory and administrator email")
 	}
@@ -51,6 +52,9 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	}
 	if !filepath.IsAbs(*dex) {
 		return errors.New("Dex binary path must be absolute")
+	}
+	if *reset {
+		return resetSetupPassword(ctx, *dir, *dex, normalized, out)
 	}
 	postgres, err := readSetupPostgresProfile(*postgresPath)
 	if err != nil {

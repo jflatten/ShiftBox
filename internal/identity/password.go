@@ -99,14 +99,39 @@ func (a PasswordAdmin) PasswordVerified(ctx context.Context, email, password str
 
 // ReplacePassword stores a bcrypt hash in Dex for the existing local account.
 func (a PasswordAdmin) ReplacePassword(ctx context.Context, email, password string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return ErrPasswordAdministration
+	}
+	return a.replaceHash(ctx, email, hash)
+}
+
+// ResetPasswordHash replaces a credential only for the expected Dex subject.
+// The protected local caller holds exclusive ownership of the identity store.
+func (a PasswordAdmin) ResetPasswordHash(ctx context.Context, email, userID string, hash []byte) error {
+	if a.Client == nil || email == "" || userID == "" {
+		return ErrPasswordAdministration
+	}
+	if _, err := bcrypt.Cost(hash); err != nil {
+		return ErrPasswordAdministration
+	}
+	result, err := a.Client.ListPasswords(ctx, &api.ListPasswordReq{})
+	if err != nil || result == nil {
+		return ErrPasswordAdministration
+	}
+	for _, password := range result.Passwords {
+		if password != nil && password.Email == email && password.UserId == userID {
+			return a.replaceHash(ctx, email, hash)
+		}
+	}
+	return ErrLocalIdentityConflict
+}
+
+func (a PasswordAdmin) replaceHash(ctx context.Context, email string, hash []byte) error {
 	client, ok := a.Client.(interface {
 		UpdatePassword(context.Context, *api.UpdatePasswordReq, ...grpc.CallOption) (*api.UpdatePasswordResp, error)
 	})
 	if !ok {
-		return ErrPasswordAdministration
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
 		return ErrPasswordAdministration
 	}
 	result, err := client.UpdatePassword(ctx, &api.UpdatePasswordReq{Email: email, NewHash: hash})

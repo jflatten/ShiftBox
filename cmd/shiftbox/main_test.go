@@ -93,6 +93,62 @@ func TestSetupCommandResumes(t *testing.T) {
 	}
 }
 
+// TestSetupResetsLostTemporaryPassword recovers an unconsumed credential
+// through explicit local invocation and signs in using its replacement.
+func TestSetupResetsLostTemporaryPassword(t *testing.T) {
+	binary := os.Getenv("SHIFTBOX_TEST_DEX_BINARY")
+	if binary == "" {
+		t.Skip("set SHIFTBOX_TEST_DEX_BINARY to the pinned Dex binary")
+	}
+	dir := filepath.Join(t.TempDir(), "installation")
+	args := []string{"setup", "--installation-dir", dir, "--administrator-email", "owner@example.test", "--dex-binary", binary}
+	initialCtx, stopInitial := context.WithTimeout(t.Context(), 20*time.Second)
+	defer stopInitial()
+	var initial bytes.Buffer
+	initialStatus := &stopOnSetupURL{cancel: stopInitial, dir: dir, password: &bytes.Buffer{}}
+	if err := run(initialCtx, args, &initial, initialStatus); err != nil || initialStatus.probeErr != nil || !initialStatus.reached {
+		t.Fatalf("initial setup = %v, probe %v, reached %t", err, initialStatus.probeErr, initialStatus.reached)
+	}
+	firstPassword := strings.TrimSpace(initial.String())
+	if len(firstPassword) < 24 {
+		t.Fatal("initial setup did not issue a password")
+	}
+	var reset bytes.Buffer
+	if err := run(t.Context(), append(append([]string(nil), args...), "--reset-temporary-password"), &reset, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	newPassword := strings.TrimSpace(reset.String())
+	if len(newPassword) < 24 || newPassword == firstPassword {
+		t.Fatal("protected reset did not issue a replacement")
+	}
+	cert, err := app.EnsureBootstrapCertificate(filepath.Join(dir, "bootstrap-tls.pem"), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dexCtx, stopDex := context.WithTimeout(t.Context(), 10*time.Second)
+	defer stopDex()
+	admin, _, _, closeDex, err := startSetupDex(dexCtx, dir, binary, "https://127.0.0.1:9999", cert, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldAccepted, err := admin.PasswordVerified(dexCtx, "owner@example.test", firstPassword)
+	closeDex()
+	if err != nil || oldAccepted {
+		t.Fatalf("old temporary password accepted = %t (%v), want false", oldAccepted, err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	var out bytes.Buffer
+	status := &stopOnSetupURL{cancel: cancel, dir: dir, password: &reset}
+	if err := run(ctx, args, &out, status); err != nil || status.probeErr != nil || !status.reached || out.Len() != 0 {
+		t.Fatalf("setup after reset = %v, probe %v, reached %t, output length %d", err, status.probeErr, status.reached, out.Len())
+	}
+	reset.Reset()
+	if err := run(t.Context(), append(append([]string(nil), args...), "--reset-temporary-password"), &reset, io.Discard); err == nil || reset.Len() != 0 {
+		t.Fatal("temporary password reset must refuse an administrator who has already changed the initial password")
+	}
+}
+
 type stopOnSetupURL struct {
 	bytes.Buffer
 	cancel   context.CancelFunc
