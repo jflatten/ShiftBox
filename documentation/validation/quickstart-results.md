@@ -32,12 +32,20 @@ The saved acceptance installation was left intact.
 | Stopped workspace record with a previous guest release | Exit 7 with `migration.guests_not_current` and the matching workspace in `guestBlockers`. |
 | Same workspace record with the deployed guest release and protocol | Exit 0 with `ready: true` and zero blockers. |
 
-The workspace row was synthetic. Real guest convergence and the signed
-update and rollback exercise still require a frozen release candidate and
-a working UTM guest. The CLI performed checks only. The disposable schema
-was prepared separately before the run.
+The workspace row in the table was synthetic. On the subsequent `mvp-rc1`
+run, the check-only CLI reported ready with a real enrolled retained UTM
+workspace. The native signed maintenance fixture verified rollback and a
+successful replacement, including one retained-guest blocker after rollback
+and zero after replacement.
 
-T125 remains open for the live scenarios in sections 3–10 of the
-quickstart. UTM still reports the disposable workspace as `starting`.
-Prior native evidence and the remaining requirements are recorded in the
-[release tracker](mvp-v1-v14.md).
+## Frozen candidate follow-up
+
+| Quickstart scope | Verified result |
+| --- | --- |
+| Section 3 | Protected SQLite setup, image validation and fresh administrator sign-in on `mvp-rc1`. |
+| Section 4 | Native Chrome lifecycle and retain-file journey through repair and retry, plus the exact Go journal. |
+| Sections 8–9 | Authenticated native guest enrollment and stopped-state signed maintenance with rollback and successful replacement. |
+| Section 10 | Populated SQLite backup, protected restore, native provider and authority review, explicit activation and copied-grant revocation. |
+
+T125 remains open for the outstanding scenarios in sections 3–10. The
+[release tracker](mvp-v1-v14.md) records the remaining live checks.

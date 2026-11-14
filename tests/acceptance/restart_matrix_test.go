@@ -716,9 +716,9 @@ func TestRestartWorkspaceLaunch(t *testing.T) {
 	}
 }
 
-// TestRestartWorkspaceRepairAndRetry interrupts a failed rebuild and its
-// repair workflow at each active step before consuming the guest evidence.
-func TestRestartWorkspaceRepairAndRetry(t *testing.T) {
+// TestRestartWorkspaceLifecycle interrupts stop, start, rebuild and repair at
+// each active step before reconciling the provider or consuming guest evidence.
+func TestRestartWorkspaceLifecycle(t *testing.T) {
 	ctx := t.Context()
 	now := time.Now().UTC().Truncate(time.Second)
 	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "repair.db")}
@@ -735,7 +735,7 @@ func TestRestartWorkspaceRepairAndRetry(t *testing.T) {
 	if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
 		t.Fatal(err)
 	}
-	machines := fake.New()
+	machines := &restartLifecycleProvider{Provider: fake.New(), now: func() time.Time { return now }}
 	ref := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		Generation: 1, OwnershipMarker: "fixture-owner"}
 	allocation := workspace.Allocation{CPU: 2, MemoryMiB: 1024, DiskMiB: 40}
@@ -833,6 +833,61 @@ func TestRestartWorkspaceRepairAndRetry(t *testing.T) {
 			t.Fatalf("%s after restart = %s (%v), want %s", op.Type, got.Status, err, want)
 		}
 	}
+	checkPower := func(power provider.PowerState, compute string) {
+		t.Helper()
+		got, err := machines.Inspect(ctx, ref)
+		if err != nil || got.Ref != before.Ref || got.Power != power || !slices.Equal(got.Resources, before.Resources) {
+			t.Errorf("retained VM = %+v (%v), want original VM and resources with power %s", got, err, power)
+		}
+		var observed, computeState, diskState string
+		if err := db.QueryRowContext(ctx, `SELECT w.observed_state,r.cpu_memory_state,r.disk_state FROM workspaces w
+			JOIN reservations r ON r.workspace_id=w.id WHERE w.id=$1`, ref.WorkspaceID).
+			Scan(&observed, &computeState, &diskState); err != nil || observed != string(power) || computeState != compute || diskState != "reserved" {
+			t.Errorf("reconciled power and reservations = %s/%s/%s (%v), want %s/%s/reserved", observed, computeState, diskState, err, power, compute)
+		}
+	}
+	stop := admit("stop")
+	step(stop, 0, func() {
+		exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status) VALUES($1,1,'succeeded')`, stop.ID)
+	})
+	step(stop, 1, func() {
+		machines.LoseReply("stop")
+		if _, err := machines.Stop(ctx, provider.StopRequest{Ref: ref, OperationID: stop.ID}); !errors.Is(err, provider.ErrOutcomeUnknown) {
+			t.Fatalf("stop with lost reply = %v, want uncertain outcome", err)
+		}
+	})
+	check(stop, "succeeded")
+	checkPower(provider.Stopped, "released")
+	if machines.stops != 1 || machines.forcedStop {
+		t.Errorf("stop calls = %d, forced = %t, want one graceful stop", machines.stops, machines.forcedStop)
+	}
+	start := admit("start")
+	step(start, 0, func() {
+		machines.LoseReply("start")
+		if _, err := machines.Start(ctx, provider.StartRequest{Ref: ref, OperationID: start.ID, NetworkMode: "nat"}); !errors.Is(err, provider.ErrOutcomeUnknown) {
+			t.Fatalf("start with lost reply = %v, want uncertain outcome", err)
+		}
+		exec("UPDATE guest_registrations SET last_authenticated_at=$1 WHERE workspace_id=$2", now.Format(time.RFC3339Nano), ref.WorkspaceID)
+	})
+	finishDevelopment := func(op operation.Operation, configure int) {
+		t.Helper()
+		step(op, configure, func() {
+			exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,container_id)
+				VALUES($1,1,'running','development-container')`, op.ID)
+		})
+		step(op, configure+1, nil)
+		step(op, configure+2, func() {
+			exec("UPDATE guest_dispatches SET status='succeeded' WHERE operation_id=$1", op.ID)
+		})
+		check(op, "succeeded")
+	}
+	finishDevelopment(start, 1)
+	checkPower(provider.Running, "reserved")
+	if machines.starts != 2 {
+		t.Errorf("start calls = %d, want fixture boot and one retained start", machines.starts)
+	}
+	finishDevelopment(admit("rebuild"), 0)
+
 	rebuild := admit("rebuild")
 	step(rebuild, 0, func() {
 		exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,problem)
@@ -846,20 +901,8 @@ func TestRestartWorkspaceRepairAndRetry(t *testing.T) {
 	})
 	step(repair, 1, nil)
 	check(repair, "succeeded")
-	retry := admit("retry")
-	step(retry, 0, func() {
-		exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,container_id)
-			VALUES($1,1,'running','development-container')`, retry.ID)
-	})
-	step(retry, 1, nil)
-	step(retry, 2, func() {
-		exec("UPDATE guest_dispatches SET status='succeeded' WHERE operation_id=$1", retry.ID)
-	})
-	check(retry, "succeeded")
-	after, err := machines.Inspect(ctx, ref)
-	if err != nil || after.Ref != before.Ref || after.Power != provider.Running || !slices.Equal(after.Resources, before.Resources) {
-		t.Errorf("retained VM after repair and retry = %+v (%v), want original running VM and resources", after, err)
-	}
+	finishDevelopment(admit("retry"), 0)
+	checkPower(provider.Running, "reserved")
 }
 
 type restartLaunchProvider struct {
@@ -927,7 +970,7 @@ func checkRestartWorkspaceDeletion(t *testing.T, retention bool) {
 			t.Fatal(err)
 		}
 	}
-	machines := &restartDeletionProvider{Provider: fake.New(), now: clock}
+	machines := &restartLifecycleProvider{Provider: fake.New(), now: clock}
 	ref := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		Generation: 1, OwnershipMarker: "fixture-owner"}
 	created, err := machines.Create(ctx, provider.CreateRequest{Ref: ref, OperationID: "fixture-create",
@@ -1077,26 +1120,31 @@ func checkRestartWorkspaceDeletion(t *testing.T, retention bool) {
 	}
 }
 
-type restartDeletionProvider struct {
+type restartLifecycleProvider struct {
 	*fake.Provider
-	now            func() time.Time
-	stops, deletes int
-	forcedStop     bool
+	now                    func() time.Time
+	starts, stops, deletes int
+	forcedStop             bool
 }
 
-func (p *restartDeletionProvider) Inspect(ctx context.Context, ref provider.WorkspaceRef) (provider.Inventory, error) {
+func (p *restartLifecycleProvider) Inspect(ctx context.Context, ref provider.WorkspaceRef) (provider.Inventory, error) {
 	inventory, err := p.Provider.Inspect(ctx, ref)
 	inventory.ObservedAt = p.now()
 	return inventory, err
 }
 
-func (p *restartDeletionProvider) Stop(ctx context.Context, req provider.StopRequest) (provider.Inventory, error) {
+func (p *restartLifecycleProvider) Start(ctx context.Context, req provider.StartRequest) (provider.Inventory, error) {
+	p.starts++
+	return p.Provider.Start(ctx, req)
+}
+
+func (p *restartLifecycleProvider) Stop(ctx context.Context, req provider.StopRequest) (provider.Inventory, error) {
 	p.stops++
 	p.forcedStop = p.forcedStop || req.ForceRetentionDelete
 	return p.Provider.Stop(ctx, req)
 }
 
-func (p *restartDeletionProvider) Delete(ctx context.Context, req provider.DeleteRequest) (provider.Inventory, error) {
+func (p *restartLifecycleProvider) Delete(ctx context.Context, req provider.DeleteRequest) (provider.Inventory, error) {
 	p.deletes++
 	return p.Provider.Delete(ctx, req)
 }

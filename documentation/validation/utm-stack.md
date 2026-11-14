@@ -53,9 +53,17 @@ On November 14, the `mvp-rc1` UTM guest staged the signed failing fixture
 `a7e6a456b341666ad0b0ea88659434c5dc7f51066f183c1802d1995dbae63c83`,
 reported supervisor rollback over mutual TLS, and returned to stopped with
 its owned disk. The campaign was blocked and the live retained workspace
-appeared in the guest upgrade gate. The replacement campaign exceeded the
-original shared eight-minute test deadline after a slow native boot. Test
-cleanup removed the clone. The replacement outcome remains unverified.
+appeared in the guest upgrade gate. The first run's replacement campaign
+exceeded the shared eight-minute test deadline after a slow native boot.
+The race-enabled rerun passed both campaigns in 503.65 seconds. It accepted
+the replacement fixture digest
+`357f83d685255b633cc2825b3300552a80fc38391fd578bbdbfcf2a5ee4a3b31`,
+verified the authenticated activation, retained the same disk, restored
+stopped power and released compute capacity. The retained-guest checks
+reported one blocker after rollback and zero after replacement. Both trials
+used the same release ID with different signed binaries. The current and
+previous release admission tests exercise version compatibility separately.
+Test cleanup removed the disposable clone.
 
 ## Dev Container fixtures
 

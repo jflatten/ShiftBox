@@ -191,9 +191,9 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T092 [US3] Implement transactional user/permission/session/origin/guest revocation publication and closure of all established connection types proven by T081 in `internal/auth/revocation.go`, `internal/proxy/registry.go`, and `internal/guest/tunnel.go`
 - [X] T093 [US3] Implement activity observations, retention deadlines, host-outage grace, precommit authority/activity/state recheck, graceful then provider-enforced deletion, and verified reservation release proven by T082 in `internal/workspace/activity.go`, `internal/workspace/retention.go`, and `internal/workspace/delete.go`
 - [X] T094 [US3] Implement long-stop eligibility verification and provider-mediated enrollment recovery without disk/identity reset proven by T084 in `internal/workspace/recovery.go` and `internal/provider/utm/enrollment.go`
-- [ ] T095 [US3] Implement maintenance campaign scheduling, warnings, per-target durable operations, safe-boundary activation, signed update staging, verification/rollback evidence, prior-state restoration, and blocked completion proven by T083 in `internal/workspace/maintenance.go` and `internal/guest/update.go`
+- [X] T095 [US3] Implement maintenance campaign scheduling, warnings, per-target durable operations, safe-boundary activation, signed update staging, verification/rollback evidence, prior-state restoration, and blocked completion proven by T083 in `internal/workspace/maintenance.go` and `internal/guest/update.go`
 - [X] T096 [US3] Implement browser-certificate expiry/invalid notices, storage/provider/controller/key persistent conditions, and no unprotected listener fallback in `internal/app/conditions.go` and `internal/config/certificate.go`
-- [ ] T097 [US3] Implement current/N−1 compatibility evaluation and irreversible migration preflight requiring verified backup, guest gate, tools, keys, provider, database ownership, certificate, and CA lifetime in `internal/release/compatibility.go`, `internal/release/preflight.go`, and `cmd/shiftbox/migrate.go`
+- [X] T097 [US3] Implement current/N−1 compatibility evaluation and irreversible migration preflight requiring verified backup, guest gate, tools, keys, provider, database ownership, certificate, and CA lifetime in `internal/release/compatibility.go`, `internal/release/preflight.go`, and `cmd/shiftbox/migrate.go`
 - [X] T098 [US3] Implement system notices, receipts, condition persistence, dismissal/history, and protected retention pruning proven by T086 in `internal/app/notices.go` and `internal/app/retention.go`
 - [X] T099 [US3] Implement workspace policy/action, user disable, notice publish/list/receipt, infrastructure status, browser-certificate replacement, platform artifact, resource profile, capacity, network policy, maintenance, and migration-preflight handlers from the OpenAPI and authorization-matrix contracts in `internal/web/workspace_policy_routes.go`, `internal/web/admin_routes.go`, `internal/web/notice_routes.go`, `internal/web/infrastructure_routes.go`, and `internal/web/maintenance_routes.go`
 - [X] T100 [US3] Implement the accessible destructive workspace Modal with initial focus on Cancel, typed workspace name, “I have pushed work I need to keep” acknowledgement, retained-path list, and management-backup exclusion in `ui/features/workspaces/delete-workspace-modal.tsx`
@@ -228,7 +228,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T113 [US4] Implement backup, restore-validation, and recovery-activation OpenAPI handlers with durable Operation steps in `internal/web/backup_routes.go` and `internal/web/recovery_routes.go`
 - [X] T114 [US4] Implement `shiftbox backup`, `shiftbox restore validate`, and `shiftbox restore activate` with TTY/stdin password handling, human/JSON output, and stable exits proven by T107 in `cmd/shiftbox/backup.go` and `cmd/shiftbox/restore.go`
 - [X] T115 [US4] Implement Mantine Backup & Recovery forms, scope warnings, cleared password fields, operation Stepper, validation findings, and gated recovery review in `ui/features/recovery/backup.tsx`, `ui/features/recovery/restore.tsx`, `ui/features/recovery/review.tsx`, and `ui/app/recovery/page.tsx`
-- [ ] T116 [US4] Add and run the Go recovery acceptance test together with the T108 Playwright journey, then record separate recovery evidence without workspace-disk claims in `tests/acceptance/backup_recovery_test.go` and `documentation/validation/backup-recovery.md`
+- [X] T116 [US4] Add and run the Go recovery acceptance test together with the T108 Playwright journey, then record separate recovery evidence without workspace-disk claims in `tests/acceptance/backup_recovery_test.go` and `documentation/validation/backup-recovery.md`
 
 **Checkpoint**: User Story 4 safely restores owned management state while stale authority and destructive actions remain blocked until reviewed.
 
@@ -1761,8 +1761,9 @@ This checkpoint does not itself change the goal status.
   for fresh authenticated contact before clearing the media. The runtime
   test drives a persisted campaign through signed download, staging, trial
   confirmation receipt, and completion over the real mutual TLS listeners.
-  It uses a fixture guest client. Native signed-update validation remains
-  open under T095.
+  It uses a fixture guest client. The native UTM race run then proved
+  signed rollback and successful replacement on a retained stopped guest,
+  restoring its stopped state and keeping the same owned disk in both cases.
   Mutual TLS tests also prove a management-only guest can poll while
   development commands, tunnel and preview offers, secrets, and Git
   credentials are withheld. A lost graceful-stop reply keeps reservations
@@ -1841,8 +1842,9 @@ This checkpoint does not itself change the goal status.
   in use and verifies write access to both installation and UTM storage.
   Tests cover replaced, missing, and non-private keys and unavailable UTM
   storage.
-- Live irreversible-migration acceptance remains open under T097.
-  Preflight does not apply migrations.
+- The check-only CLI returned ready on `mvp-rc1` with a verified backup
+  and a current retained UTM workspace. A separate native maintenance run
+  proved that a rollback blocks that guest gate until successful activation.
 
 ### Backup and recovery schema
 
@@ -1949,7 +1951,10 @@ This checkpoint does not itself change the goal status.
   Chrome journeys with API fixtures. A native SQLite controller also
   completed browser backup and validation, protected CLI restore, and
   browser review and activation with a disposable empty workspace inventory.
-  T116 still needs the populated workspace acceptance run.
+  The November 14 populated `mvp-rc1` run passed browser backup with a live
+  IDE, protected restore, matched native provider inventory, and explicit
+  recovery activation. The Go journal verifier passed with `-race` on the
+  same archive and the source and restored databases.
 - T113 registers restore validation on the active router and keeps
   review and activation on the recovery listener. Validation uses
   the current installation identity and retained key, records the
@@ -2740,8 +2745,8 @@ This checkpoint does not itself change the goal status.
 - T095 and T097 also keep migration blocked when a current-version guest
   still has unresolved maintenance. A completed update or verified removal
   clears that maintenance blocker.
-- T097 stays open for signed update and rollback evidence, the migration
-  command and its remaining preflight checks.
+- The native UTM test confirmed the stopped guest remained a blocker after
+  rollback and cleared after an authenticated replacement succeeded.
 
 ### Local platform import and PostgreSQL cutover
 
@@ -2799,6 +2804,10 @@ This checkpoint does not itself change the goal status.
   at all three exit-and-retry steps. After the lease expires, it consumes
   the persisted receipts and verifies that the VM identity and owned disks
   remain the same. The provider and guest evidence are simulated.
+  The matrix now also restarts at both ordinary stop steps, all four start
+  steps, and all three successful rebuild steps. Lost stop and start replies
+  reconcile without duplicate calls, and reservations follow the verified
+  power state. The expanded lifecycle and deletion tests passed with `-race`.
 - T061 verified retained marker contents after native stop/start and rebuild,
   then passed the focused Chrome repair and retry journey on the same VM.
   The Go workspace journal check passed with the race detector in resumed
@@ -3051,7 +3060,8 @@ This checkpoint does not itself change the goal status.
 - T085 checks the actionable backup, key, certificate, provider, and tool
   prerequisites, exit statuses, N/N−1 handling, and refusal to fall back
   to plaintext after browser certificate expiry. The focused race suite
-  passed. T097 still owns live migration and update gates.
+  passed. The native signed update run and check-only preflight supplied
+  the controlled-host evidence for T097.
 
 ### Notice retention and workspace deletion confirmation
 

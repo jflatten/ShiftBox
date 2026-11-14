@@ -1,6 +1,23 @@
 # Backup and recovery validation
 
-## Native SQLite controller and Chrome
+## Populated `mvp-rc1` recovery
+
+On November 14, 2026, Chrome 157.0.8103.51 used the frozen `mvp-rc1`
+controller, SQLite schema 27, and UTM 5.0.8. The source held the ready
+native workspace from T061. The browser opened its IDE before backup and
+confirmed that the workbench and authenticated IDE HTTP access still worked
+after the archive was verified. The browser then validated the archive.
+
+| Check | Result |
+| --- | --- |
+| Playwright and protected local command | Chrome completed backup and validation. `restore activate` created a separate replacement installation directory. In the restricted listener, Chrome matched the retained workspace as running, completed the three ordered reviews, explicitly activated the installation, and confirmed a fresh sign-in was required. |
+| `TestBackupRecoveryJournal` with `-race` | Passed using the same archive, original database, and activated replacement database. Confirmed archive digest and size, matching owner, generation and provider identity, copied management session and origin-grant revocation, and recovery-session revocation on activation. |
+
+The original controller returned to service after the isolated review. The
+test verified management state and provider observations. Workspace VM disks
+remain outside the archive.
+
+## Earlier empty-inventory exercise
 
 On macOS 26.6.2 with the pinned Dex build and Chrome 157.0.8103.51, a
 disposable controller served the exported Backup & Recovery page over the
@@ -19,8 +36,8 @@ remained active.
 This fixture contained zero workspaces. The live check covered the provider
 review request with an empty inventory. The new Go acceptance verifier
 successfully matched the archive against its recorded digest and size and
-found the activated review, then rejected the empty inventory. T116 still
-needs the populated workspace fixture and live provider reconciliation.
+found the activated review, then rejected the empty inventory. The populated
+exercise above supplied the retained-workspace evidence.
 
 ## Populated recovery acceptance
 

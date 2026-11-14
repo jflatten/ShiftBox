@@ -1,4 +1,6 @@
-import { expect, test } from '@playwright/test';
+import { lstat, readFile } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
+import { chromium, expect, test, type Page, type WebSocket } from '@playwright/test';
 
 const workspaceId = '42c5a1d9-fc7a-4fc7-9905-0037e6bf0130';
 const operationId = '42c5a1d9-fc7a-4fc7-9905-0037e6bf0131';
@@ -268,3 +270,174 @@ test.describe('operations with a fixture controller', () => {
     await expect(page.getByRole('heading', { name: 'Private preview entry fixture' })).toBeVisible();
   });
 });
+
+type OperationsAccount = { email: string; password: string };
+type OperationsFixture = {
+  disposable: true;
+  managementURL: string;
+  previewURL: string;
+  workspaceID: string;
+  owner: OperationsAccount;
+  administrator: OperationsAccount;
+};
+
+const liveFixturePath = process.env.SHIFTBOX_OPERATIONS_FIXTURE;
+if (liveFixturePath) test.use({ trace: 'off', screenshot: 'off', video: 'off' });
+
+test.describe('operations with a live controller', () => {
+  test.skip(!liveFixturePath, 'Set SHIFTBOX_OPERATIONS_FIXTURE for the disposable UTM journey');
+  test.skip(({ browserName }) => browserName !== 'chromium', 'The live operations journey uses Chrome');
+
+  // The runner supplies a running member-owned workspace. Its configured
+  // HTTP preview opens a same-origin WebSocket that sends an initial frame.
+  // Seed an exact connection grant for the separate administrator account.
+  test('private preview isolates origins and closes a revoked administrator tunnel', async () => {
+    test.setTimeout(90_000);
+    const fixture = await readOperationsFixture(liveFixturePath);
+    const management = new URL(fixture.managementURL).origin;
+    const preview = new URL(fixture.previewURL);
+    const service = preview.hostname.split('--')[0];
+    const workspacePath = `/workspaces/?id=${fixture.workspaceID}`;
+    const entryURL = new URL(`/api/v1/workspaces/${fixture.workspaceID}/entry-grants`, management).href;
+    const browser = await chromium.launch({ channel: 'chrome' });
+    try {
+      const ownerContext = await browser.newContext();
+      const adminContext = await browser.newContext();
+      const owner = await ownerContext.newPage();
+      const administrator = await adminContext.newPage();
+      await Promise.all([
+        signInForOperations(owner, management, fixture.owner, 'member'),
+        signInForOperations(administrator, management, fixture.administrator, 'administrator'),
+      ]);
+      const adminSessionResponse = await administrator.request.get(new URL('/api/v1/session', management).href);
+      expect(adminSessionResponse.status()).toBe(200);
+      const { csrfToken } = await adminSessionResponse.json() as { csrfToken: string };
+      expect(Boolean(csrfToken), 'the administrator has a current CSRF token').toBe(true);
+
+      await test.step('Require an authorized entry from the management origin', async () => {
+        const direct = await owner.request.get(preview.href, { maxRedirects: 0 });
+        expect(direct.status()).toBe(403);
+        const wrongOrigin = await requestLivePreviewEntry(administrator, entryURL, preview.origin, csrfToken, service);
+        expect(wrongOrigin.status()).toBe(403);
+        expect((await wrongOrigin.json()).code).toBe('auth.invalid_origin_or_csrf');
+      });
+
+      const adminPreview = await adminContext.newPage();
+      const [ownerSocket, adminSocket] = await test.step('Open both private previews through the browser', async () => {
+        const sockets = await Promise.all([
+          openLivePreview(owner, management, preview, workspacePath, service),
+          openLivePreview(adminPreview, management, preview, workspacePath, service),
+        ]);
+        const managementCookieNames = (await adminContext.cookies(management)).map(cookie => cookie.name);
+        const previewCookieNames = (await adminContext.cookies(preview.href)).map(cookie => cookie.name);
+        expect(managementCookieNames).toContain('__Host-shiftbox_session');
+        expect(managementCookieNames).not.toContain('__Host-shiftbox_origin');
+        expect(previewCookieNames).toContain('__Host-shiftbox_origin');
+        expect(previewCookieNames).not.toContain('__Host-shiftbox_session');
+        return sockets;
+      });
+
+      await test.step('Revoke only the administrator grant and observe the open tunnel close', async () => {
+        await administrator.goto(new URL(workspacePath, management).href);
+        await administrator.getByRole('button', { name: `Revoke access for ${fixture.administrator.email}`, exact: true }).click();
+        const dialog = administrator.getByRole('dialog', { name: 'Revoke connection grant' });
+        await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+        expect(adminSocket.isClosed(), 'administrator tunnel is open before revocation').toBe(false);
+        expect(ownerSocket.isClosed(), 'owner tunnel is open before revocation').toBe(false);
+        await dialog.getByRole('button', { name: 'Revoke access', exact: true }).click();
+        await expect(dialog).toBeHidden();
+        await expect.poll(() => adminSocket.isClosed(), { timeout: 10_000 }).toBe(true);
+        expect(ownerSocket.isClosed(), 'revocation preserves the owner tunnel').toBe(false);
+        expect((await adminPreview.reload({ waitUntil: 'domcontentloaded' }))?.status()).toBe(403);
+        const nextEntry = await requestLivePreviewEntry(administrator, entryURL, management, csrfToken, service);
+        expect(nextEntry.status()).toBe(403);
+        expect((await owner.request.get(preview.href, { maxRedirects: 0 })).status()).toBe(200);
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+async function readOperationsFixture(path: string | undefined): Promise<OperationsFixture> {
+  if (!path || !isAbsolute(path)) throw new Error('SHIFTBOX_OPERATIONS_FIXTURE must be an absolute file path');
+  const info = await lstat(path);
+  if (!info.isFile() || (info.mode & 0o077) !== 0) throw new Error('Use a private regular operations fixture file');
+  let fixture: OperationsFixture;
+  let management: URL;
+  let preview: URL;
+  try {
+    fixture = JSON.parse(await readFile(path, 'utf8'));
+    management = new URL(fixture.managementURL);
+    preview = new URL(fixture.previewURL);
+  } catch {
+    throw new Error('Invalid operations fixture JSON or URL');
+  }
+  const bareHTTPS = (url: URL) => url.protocol === 'https:' && !url.username && !url.password &&
+    url.pathname === '/' && !url.search && !url.hash;
+  const previewName = /^preview-([1-9][0-9]{0,4})--([^.]+)\./.exec(preview.hostname);
+  if (fixture.disposable !== true || !bareHTTPS(management) || !bareHTTPS(preview) ||
+      management.hostname === preview.hostname || management.port !== preview.port ||
+      !previewName || Number(previewName[1]) > 65535 || previewName[2] !== fixture.workspaceID ||
+      !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(fixture.workspaceID) ||
+      !fixture.owner?.email || !fixture.owner.password || !fixture.administrator?.email ||
+      !fixture.administrator.password || fixture.owner.email === fixture.administrator.email) {
+    throw new Error('Supply a disposable HTTPS installation, separate preview origin, workspace UUID, and two fixture accounts');
+  }
+  return fixture;
+}
+
+async function requestLivePreviewEntry(page: Page, entryURL: string, origin: string, csrfToken: string, service: string) {
+  try {
+    return await page.request.post(entryURL, {
+      headers: { Origin: origin, 'X-CSRF-Token': csrfToken }, data: { service }, maxRedirects: 0,
+    });
+  } catch {
+    // Playwright request errors can contain the CSRF header. Keep it out of test output.
+    throw new Error('The preview entry endpoint did not respond');
+  }
+}
+
+async function signInForOperations(page: Page, management: string, account: OperationsAccount, role: string) {
+  await page.goto(new URL('/auth/login', management).href);
+  const username = page.locator('input[name=login]');
+  const emailConnector = page.getByRole('button', { name: /Log in with Email/i })
+    .or(page.getByRole('link', { name: /Log in with Email/i }));
+  await expect(username.or(emailConnector)).toBeVisible();
+  if (await emailConnector.isVisible()) await emailConnector.click();
+  await username.fill(account.email);
+  const password = page.locator('input[name=password]');
+  await expect(password).toBeEditable();
+  await password.focus();
+  await page.keyboard.insertText(account.password);
+  await page.getByRole('button', { name: 'Login', exact: true }).click();
+  await page.waitForURL(url => !url.pathname.startsWith('/dex/') || url.pathname === '/dex/approval');
+  if (new URL(page.url()).pathname === '/dex/approval') {
+    await page.getByRole('button', { name: 'Grant Access', exact: true }).click();
+  }
+  const sessionURL = new URL('/api/v1/session', management).href;
+  await expect.poll(async () => (await page.request.get(sessionURL)).status()).toBe(200);
+  const session = await (await page.request.get(sessionURL)).json();
+  expect(session.user.role).toBe(role);
+  expect(session.user.primaryEmail === account.email, 'the designated fixture account signed in').toBe(true);
+  expect(session.mode).toBe('normal');
+  expect(session.installationState).toBe('active');
+}
+
+async function openLivePreview(page: Page, management: string, preview: URL, workspacePath: string, service: string): Promise<WebSocket> {
+  const previewSocketOrigin = `wss://${preview.host}`;
+  let liveSocket: WebSocket | undefined;
+  page.on('websocket', socket => {
+    if (new URL(socket.url()).origin === previewSocketOrigin) {
+      socket.once('framereceived', () => { liveSocket = socket; });
+    }
+  });
+  await page.goto(new URL(workspacePath, management).href);
+  await page.getByRole('button', { name: `Open preview ${service.slice('preview-'.length)}`, exact: true }).click();
+  await page.waitForURL(preview.href);
+  await expect.poll(() => liveSocket !== undefined && !liveSocket.isClosed(), {
+    timeout: 20_000, message: 'the preview tunnel must deliver a frame before revocation',
+  }).toBe(true);
+  if (!liveSocket) throw new Error('Preview socket unavailable');
+  return liveSocket;
+}

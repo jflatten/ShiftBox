@@ -9,6 +9,7 @@ type Session = {
   csrfToken: string;
   mode: string;
   installationState: string;
+  organizationSecretScopeId?: string;
 };
 type SharingFixture = {
   disposable: true;
@@ -52,6 +53,8 @@ test('shares a template while preserving workspace and guest owner authority', a
     const adminSession = await signIn(administrator, fixture.administrator, 'administrator');
     const memberSession = await signIn(member, fixture.member, 'member');
     expect(adminSession.user.id === memberSession.user.id, 'use two distinct ShiftBox users').toBe(false);
+    const organizationScopeID = adminSession.organizationSecretScopeId;
+    if (!organizationScopeID) throw new Error('The fixture administrator must be able to manage organization secrets');
 
     const templateList = await administrator.request.get('/api/v1/templates');
     expect(templateList.status()).toBe(200);
@@ -96,10 +99,12 @@ test('shares a template while preserving workspace and guest owner authority', a
 
       await administrator.goto('/infrastructure/');
       await saveSecret(administrator, secretKey, values.organization);
+      await expectSecretMetadata(administrator, 'organization', organizationScopeID, secretKey, values.organization);
       await administrator.goto('/templates/');
       await templateRow(administrator, fixture.templateName).getByRole('button', { name: 'Project secrets' }).click();
       await saveSecret(administrator, secretKey, values.project);
       await saveSecret(administrator, projectOnlyKey, values.project);
+      await expectSecretMetadata(administrator, 'template', template.id, secretKey, values.project);
       const unacknowledged = await administrator.request.post(templateGrantsAPI, {
         headers: { Origin: origin, 'X-CSRF-Token': adminSession.csrfToken, 'Idempotency-Key': randomUUID() },
         data: { userId: memberSession.user.id, acknowledgeProjectSecretExposure: false },
@@ -141,14 +146,7 @@ test('shares a template while preserving workspace and guest owner authority', a
       await verifyGuestSecret(memberTerminal, secretKey, '');
       await saveSecret(member, secretKey, values.member, true);
       await verifyGuestSecret(memberTerminal, secretKey, values.member);
-      const metadata = await member.request.get(`/api/v1/secrets?scope=user&scopeId=${encodeURIComponent(memberSession.user.id)}`);
-      expect(metadata.status()).toBe(200);
-      const rows = await metadata.json() as Record<string, unknown>[];
-      const row = rows.find(item => item.name === secretKey);
-      expect(row, 'the management API must return metadata for the saved value').toBeDefined();
-      expect(Object.keys(row ?? {}).sort()).toEqual(['explicitEmpty', 'fallbackScope', 'name', 'scope', 'scopeId', 'updatedAt']);
-      expect((await metadata.text()).includes(values.member), 'personal secret is absent from API output').toBe(false);
-      expect((await member.locator('body').innerText()).includes(values.member), 'personal secret is absent from rendered management output').toBe(false);
+      await expectSecretMetadata(member, 'user', memberSession.user.id, secretKey, values.member);
     });
 
     const adminIDE = await adminContext.newPage();
@@ -297,6 +295,19 @@ async function saveSecret(page: Page, name: string, value: string, replace = fal
   await dialog.getByRole('button', { name: 'Save secret' }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('rowheader', { name, exact: true })).toBeVisible();
+}
+
+async function expectSecretMetadata(page: Page, scope: 'organization' | 'template' | 'user', id: string, name: string, value: string) {
+  const metadata = await page.request.get(`/api/v1/secrets?scope=${scope}&scopeId=${encodeURIComponent(id)}`);
+  expect(metadata.status()).toBe(200);
+  const rows = await metadata.json() as Record<string, unknown>[];
+  const row = rows.find(item => item.name === name);
+  expect(row, `the ${scope} metadata includes the saved secret name`).toBeDefined();
+  const keys = ['explicitEmpty', 'name', 'scope', 'scopeId', 'updatedAt'];
+  if (scope !== 'organization') keys.push('fallbackScope');
+  expect(Object.keys(row ?? {}).sort()).toEqual(keys.sort());
+  expect((await metadata.text()).includes(value), `${scope} secret is absent from API output`).toBe(false);
+  expect((await page.locator('body').innerText()).includes(value), `${scope} secret is absent from rendered management output`).toBe(false);
 }
 
 async function enterPassword(field: Locator, value: string) {

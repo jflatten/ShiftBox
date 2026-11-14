@@ -25,3 +25,17 @@ The Go acceptance test passed with the race detector. The live
 operations journey for T088 and T103 requires a native workspace and live
 browser sessions so origin isolation and established connection closure can
 be observed on the frozen candidate.
+
+Run the live Chrome case with `SHIFTBOX_OPERATIONS_FIXTURE` set to the
+absolute path of a private JSON file. Include `disposable: true`,
+`managementURL`, `workspaceID`, `previewURL`, and separate `owner` and
+`administrator` objects with `email` and `password` fields. Use the
+configured private HTTPS origin for `previewURL`. Its service must open a
+same-origin WebSocket and send an initial frame. The member owns the running
+workspace. The administrator needs an existing explicit connection grant,
+which the test revokes.
+
+```sh
+NODE_USE_SYSTEM_CA=1 npm --prefix ui run test:e2e -- operations.spec.ts \
+  --project=chromium -g 'private preview isolates'
+```
