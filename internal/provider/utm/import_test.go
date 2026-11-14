@@ -137,11 +137,25 @@ func checkLiveImport(t *testing.T, controller *PowerController, root string, fix
 		measured.Resources[1].GuestBytes == nil || *measured.Resources[1].GuestBytes != req.Resources.DiskBytes {
 		t.Fatalf("attached disk inventory = %+v, %v, want verified 64 MiB", measured, err)
 	}
-	repeat, err := controller.ImportCatalogArtifact(context.Background(), req, sourceRoot, manifest, stageRoot, root)
+	// Reconcile the imported copy through the compiled provider after a
+	// controller restart, with only the persisted workspace request.
+	adapter := &Provider{controller: NewPowerController(controller.version), staging: stageRoot, storage: root}
+	var native provider.Provider = adapter
+	repeat, err := native.Create(context.Background(), req)
 	if err != nil || repeat.InstanceID != got.InstanceID {
 		t.Fatalf("repeated import = %s, %v, want %s", repeat.InstanceID, err, got.InstanceID)
 	}
-	checkLiveDeletion(t, controller, got.Ref, destination)
+	if _, err := native.ApplyNetwork(context.Background(), provider.NetworkRequest{
+		Ref: got.Ref, Mode: "shared", OperationID: "fixture-network",
+	}); err != nil {
+		t.Fatalf("verify shared network: %v", err)
+	}
+	for range 2 {
+		deleted, err := native.Delete(context.Background(), provider.DeleteRequest{Ref: got.Ref, OperationID: "fixture-delete"})
+		if err != nil || deleted.Power != provider.Deleted || len(deleted.Resources) != 0 {
+			t.Fatalf("compiled provider delete = %+v, %v, want verified absence", deleted, err)
+		}
+	}
 	if got := bundleDigests(t, source); !maps.Equal(got, sourceFiles) {
 		t.Fatal("importing or deleting the workspace changed the exported source")
 	}

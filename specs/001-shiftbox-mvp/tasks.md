@@ -1283,3 +1283,17 @@ This checkpoint does not itself change the goal status.
 - Temporary export has storage and time costs on real platform images.
   Production provider composition, disk resizing and release boot validation
   remain pending.
+
+### Compiled UTM provider
+
+- Connected the native UTM operations to the controller's provider
+  interface. Creation uses the managed catalog. Inspection reconciles
+  stopped disk capacity and surfaces bundle remnants when the registry
+  no longer lists the VM. Recovery selects exactly one owned removable drive.
+- Capability discovery checks the running UTM version and inventory
+  access. Shared networking is the verified default; restricted
+  network policies remain unsupported on this adapter.
+- Native tests exercise compiled-interface restart reconciliation, shared
+  network verification and repeated deletion. Provider, workspace, release
+  and contract race tests passed. Controller startup composition and the
+  full Ubuntu release journey remain pending.

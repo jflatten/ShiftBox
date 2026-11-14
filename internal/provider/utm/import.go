@@ -34,6 +34,10 @@ func (p *PowerController) ImportCatalogArtifact(ctx context.Context, req provide
 	if err != nil {
 		return provider.Inventory{}, err
 	}
+	return p.importStagedArtifact(ctx, req, artifact, stagingRoot, storage)
+}
+
+func (p *PowerController) importStagedArtifact(ctx context.Context, req provider.CreateRequest, artifact release.Artifact, stagingRoot, storage string) (provider.Inventory, error) {
 	if artifact.Manifest.ReleaseID != req.Release {
 		return provider.Inventory{}, fmt.Errorf("%w: catalog release does not match workspace", release.ErrInvalidArtifact)
 	}
@@ -118,9 +122,13 @@ func (p *PowerController) ImportManagedVM(ctx context.Context, req provider.Crea
 }
 
 func managedBundleName(ref provider.WorkspaceRef) string {
+	return fmt.Sprintf("%s%d.utm", managedBundlePrefix(ref), ref.Generation)
+}
+
+func managedBundlePrefix(ref provider.WorkspaceRef) string {
 	identity, _ := json.Marshal([2]string{ref.InstallationID, ref.WorkspaceID})
 	digest := sha256.Sum256(identity)
-	return fmt.Sprintf("ShiftBox-%x-%d.utm", digest[:16], ref.Generation)
+	return fmt.Sprintf("ShiftBox-%x-", digest[:16])
 }
 
 func verifyImportedVM(vm provider.Inventory, req provider.CreateRequest, destination string) error {
