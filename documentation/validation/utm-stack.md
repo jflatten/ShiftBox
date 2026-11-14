@@ -61,6 +61,10 @@ Use the same native fixture settings as `TestUTMGuestEnrollment` plus
 `SHIFTBOX_TEST_UTM_EXPIRED_GUEST=1`. The test caps the issuer validity in
 memory for the first enrollment and uses the original issuer for recovery.
 
+The race-enabled rerun on the `mvp-rc2` image passed in 284.84 seconds.
+The restarted guest used a replacement identity on the same VM and
+owned disk, and the controller cleared the one-use media.
+
 ## Controller trust failures
 
 The race-enabled `TestUTMGuestRejectsControllerTrustFailures` passed
@@ -75,6 +79,9 @@ same guest certificate, running VM and owned disk.
 Use the same native fixture settings as `TestUTMGuestEnrollment` plus
 `SHIFTBOX_TEST_UTM_TRUST_FAILURES=1`. The future certificate simulates
 clock skew at the controller listener. The machine clocks are unchanged.
+
+The race-enabled rerun on `mvp-rc2` passed in 104.86 seconds. Both
+faults withheld authenticated contact until valid trust returned.
 
 ## Signed maintenance fixture
 
