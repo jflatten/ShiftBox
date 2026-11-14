@@ -2015,3 +2015,14 @@ This checkpoint does not itself change the goal status.
 - Go vet and race-enabled configuration, application, and contract tests
   passed. The pruning test used SQLite. Scheduling both history pruners
   in the active controller remains open under T098.
+
+### Controller history cleanup
+
+- The controller supervisor now owns the cleanup service alongside HTTPS
+  and reconciliation. It runs audit and dismissed-notice cleanup on startup
+  and daily. A failed run is reported and retried on the next schedule.
+- Retention and shutdown tests passed, with dismissal pruning verified on
+  SQLite and the disposable PostgreSQL fixture. Go vet and the full Go race
+  suite passed using a fresh PostgreSQL database and serial package execution.
+  The `shiftbox serve` entry point still needs to start the supervisor under
+  T060. Broader operational conditions remain open under T096 and T098.

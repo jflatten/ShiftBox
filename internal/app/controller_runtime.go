@@ -8,16 +8,18 @@ import (
 // ErrControllerIdentityStopped indicates that the managed Dex process exited.
 var ErrControllerIdentityStopped = errors.New("controller identity service stopped")
 
-// ServeController runs browser HTTPS and the workspace runtime under the same
-// lifetime as Dex. It joins the services before returning to the caller.
-func ServeController(ctx context.Context, dexDone <-chan struct{}, browser, workspaces func(context.Context) error) error {
+// ServeController runs browser HTTPS, workspaces and history cleanup under
+// the same lifetime as Dex. It joins the services before returning.
+func ServeController(ctx context.Context, dexDone <-chan struct{}, browser, workspaces, history func(context.Context) error) error {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	results := make(chan error, 2)
-	go func() { results <- browser(runCtx) }()
-	go func() { results <- workspaces(runCtx) }()
+	services := []func(context.Context) error{browser, workspaces, history}
+	results := make(chan error, len(services))
+	for _, serve := range services {
+		go func() { results <- serve(runCtx) }()
+	}
 
-	remaining := 2
+	remaining := len(services)
 	var cause error
 	select {
 	case <-ctx.Done():
@@ -27,7 +29,7 @@ func ServeController(ctx context.Context, dexDone <-chan struct{}, browser, work
 	case cause = <-results:
 		remaining--
 		if cause == nil {
-			cause = errors.New("controller listener stopped unexpectedly")
+			cause = errors.New("controller service stopped unexpectedly")
 		}
 	}
 	stop()

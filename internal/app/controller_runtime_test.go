@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-// TestControllerStopsOnIdentityExit proves an unexpected Dex exit stops both
-// listeners and reconciliation before the controller releases shared state.
+// TestControllerStopsOnIdentityExit proves an unexpected Dex exit stops
+// listeners, reconciliation and history cleanup before releasing shared state.
 func TestControllerStopsOnIdentityExit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	started := make(chan struct{}, 2)
-	stopped := make(chan struct{}, 2)
+	started := make(chan struct{}, 3)
+	stopped := make(chan struct{}, 3)
 	serve := func(ctx context.Context) error {
 		started <- struct{}{}
 		<-ctx.Done()
@@ -22,8 +22,8 @@ func TestControllerStopsOnIdentityExit(t *testing.T) {
 	}
 	dexDone := make(chan struct{})
 	result := make(chan error, 1)
-	go func() { result <- ServeController(ctx, dexDone, serve, serve) }()
-	for range 2 {
+	go func() { result <- ServeController(ctx, dexDone, serve, serve, serve) }()
+	for range 3 {
 		select {
 		case <-started:
 		case <-ctx.Done():
@@ -33,8 +33,8 @@ func TestControllerStopsOnIdentityExit(t *testing.T) {
 	close(dexDone)
 	select {
 	case err := <-result:
-		if !errors.Is(err, ErrControllerIdentityStopped) || len(stopped) != 2 {
-			t.Errorf("ServeController(Dex exit) = %v, stopped %d services, want identity failure and both services joined", err, len(stopped))
+		if !errors.Is(err, ErrControllerIdentityStopped) || len(stopped) != 3 {
+			t.Errorf("ServeController(Dex exit) = %v, stopped %d services, want identity failure and three services joined", err, len(stopped))
 		}
 	case <-ctx.Done():
 		t.Fatal("controller did not stop after identity exit")
@@ -52,6 +52,10 @@ func TestControllerPrimaryFailureKeepsCause(t *testing.T) {
 		func(context.Context) error { return cause },
 		func(ctx context.Context) error {
 			defer close(stopped)
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		func(ctx context.Context) error {
 			<-ctx.Done()
 			return ctx.Err()
 		},

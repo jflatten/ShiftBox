@@ -3,8 +3,42 @@ package app
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"log/slog"
 	"time"
+
+	"github.com/jflatten/ShiftBox/internal/audit"
+	"github.com/jflatten/ShiftBox/internal/config"
 )
+
+// RunHistoryRetention prunes management history on startup and daily afterward.
+// Cleanup failures are logged without interrupting management or reconciliation.
+func RunHistoryRetention(ctx context.Context, db *sql.DB, cfg config.Config) error {
+	return runHistoryRetention(ctx, 24*time.Hour, func(ctx context.Context) error {
+		now := time.Now().UTC()
+		_, auditErr := audit.Prune(ctx, db, now.AddDate(0, 0, -cfg.AuditHistoryDays()))
+		_, noticeErr := PruneDismissedNotices(ctx, db, now, now.AddDate(0, 0, -cfg.DismissedNoticeHistoryDays()))
+		return errors.Join(auditErr, noticeErr)
+	}, func(error) {
+		slog.WarnContext(ctx, "Management history cleanup failed; check database availability and schema")
+	})
+}
+
+func runHistoryRetention(ctx context.Context, interval time.Duration, prune func(context.Context) error, report func(error)) error {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for ctx.Err() == nil {
+		if err := prune(ctx); err != nil && ctx.Err() == nil {
+			report(err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+	return ctx.Err()
+}
 
 // PruneDismissedNotices drops old dismissal receipts for expired notices
 // during active operation. Keeping receipts for current notices prevents them
