@@ -69,3 +69,47 @@ func TestReadLocalGuestUpdate(t *testing.T) {
 		t.Errorf("ReadLocalGuestUpdate(symlink) = %v, want unavailable", err)
 	}
 }
+
+// TestSignLocalGuestUpdate ensures that signing binds the pinned binary and
+// leaves an existing signature intact when the binary no longer matches.
+func TestSignLocalGuestUpdate(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "releases")
+	folder := filepath.Join(root, "candidate")
+	if err := os.MkdirAll(folder, 0700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("fixture release agent")
+	digest := sha256.Sum256(body)
+	pin := ArtifactComponent{Version: "candidate", SHA256: hex.EncodeToString(digest[:])}
+	manifest := MigrationRelease{SchemaVersion: 1, ReleaseID: pin.Version, ProtocolVersion: "1",
+		Controller: pin, Dex: pin, UTM: pin, PackerFork: pin, Ubuntu: pin, Guest: pin, IDE: pin}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string][]byte{"release.json": raw, "shiftbox-agent": body} {
+		if err := os.WriteFile(filepath.Join(folder, name), content, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	public, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SignLocalGuestUpdate(t.Context(), root, pin.Version, private); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadLocalGuestUpdate(t.Context(), root, pin.Version, "1")
+	if err != nil || !ed25519.Verify(public, got.Metadata.SignedBytes(), got.Signature) {
+		t.Fatalf("signed local artifact = %v, want verifiable publisher signature", err)
+	}
+	if err := os.WriteFile(filepath.Join(folder, "shiftbox-agent"), []byte("unexpected binary"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SignLocalGuestUpdate(t.Context(), root, pin.Version, private); !errors.Is(err, ErrGuestUpdateUnavailable) {
+		t.Errorf("signing a changed binary = %v, want unavailable", err)
+	}
+	if sig, err := os.ReadFile(filepath.Join(folder, "shiftbox-agent.sig")); err != nil || !bytes.Equal(sig, got.Signature) {
+		t.Error("failed signing changed the published signature")
+	}
+}

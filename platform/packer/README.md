@@ -24,6 +24,20 @@ Supply the release publisher's raw 32-byte Ed25519 public key. The image
 installs it as `/usr/local/share/shiftbox/guest-update.pub`. Keep the matching
 private key in the release signing environment.
 
+To publish an update, prepare a private `releases/<release-id>/` directory
+with the pinned `release.json` and its matching `shiftbox-agent` binary.
+Run this from the release signing environment. The command writes
+`shiftbox-agent.sig` alongside the binary.
+
+```sh
+go run ./platform/packer/sign-guest-update /absolute/path/to/releases <release-id> \
+    < /absolute/path/to/publisher-key.pem
+```
+
+The signer reads an Ed25519 PKCS#8 PEM key from standard input. Deploy only
+the manifest, binary, and detached signature to the controller's release
+directory.
+
 The build creates a disposable VM under a unique name and provisions it
 using a temporary SSH key. The shutdown step removes the build key,
 clears machine identity and cloud-init seed state, and disables SSH. The

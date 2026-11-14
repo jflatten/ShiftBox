@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 )
 
@@ -40,22 +41,63 @@ type GuestUpdate struct {
 // ReadLocalGuestUpdate reads the agent and detached signature beside the private
 // manifest. The guest independently verifies the signature against its trusted key.
 func ReadLocalGuestUpdate(ctx context.Context, root, id, protocol string) (GuestUpdate, error) {
-	manifest, err := ReadLocalMigrationRelease(root, id)
-	if err != nil || protocol != manifest.ProtocolVersion || manifest.Guest.Version != id {
+	update, err := readPinnedGuestBinary(ctx, root, id)
+	if err != nil || update.Metadata.Protocol != protocol {
 		return GuestUpdate{}, ErrGuestUpdateUnavailable
 	}
-	folder := filepath.Join(root, id)
-	signature, err := readGuestReleaseFile(ctx, filepath.Join(folder, "shiftbox-agent.sig"), ed25519.SignatureSize)
+	signature, err := readGuestReleaseFile(ctx, filepath.Join(root, id, "shiftbox-agent.sig"), ed25519.SignatureSize)
 	if err != nil || len(signature) != ed25519.SignatureSize {
 		return GuestUpdate{}, ErrGuestUpdateUnavailable
 	}
-	binary, err := readGuestReleaseFile(ctx, filepath.Join(folder, "shiftbox-agent"), MaxGuestUpdateBytes)
+	update.Signature = signature
+	return update, nil
+}
+
+// SignLocalGuestUpdate signs the pinned binary in the publisher's release
+// directory and publishes its detached signature only after verification.
+func SignLocalGuestUpdate(ctx context.Context, root, id string, key ed25519.PrivateKey) error {
+	if len(key) != ed25519.PrivateKeySize {
+		return errors.New("invalid Ed25519 publisher private key")
+	}
+	update, err := readPinnedGuestBinary(ctx, root, id)
+	if err != nil {
+		return err
+	}
+	signature := ed25519.Sign(key, update.Metadata.SignedBytes())
+	folder := filepath.Join(root, id)
+	file, err := os.CreateTemp(folder, ".agent-signature-")
+	if err != nil {
+		return errors.New("could not create the detached guest update signature")
+	}
+	defer os.Remove(file.Name())
+	_, err = file.Write(signature)
+	if err == nil {
+		err = file.Sync()
+	}
+	if errors.Join(err, file.Close()) != nil {
+		return errors.New("could not write the detached guest update signature")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.Rename(file.Name(), filepath.Join(folder, "shiftbox-agent.sig")); err != nil {
+		return errors.New("could not publish the detached guest update signature")
+	}
+	return nil
+}
+
+func readPinnedGuestBinary(ctx context.Context, root, id string) (GuestUpdate, error) {
+	manifest, err := ReadLocalMigrationRelease(root, id)
+	if err != nil || manifest.Guest.Version != id {
+		return GuestUpdate{}, ErrGuestUpdateUnavailable
+	}
+	binary, err := readGuestReleaseFile(ctx, filepath.Join(root, id, "shiftbox-agent"), MaxGuestUpdateBytes)
 	digest := sha256.Sum256(binary)
 	if err != nil || len(binary) == 0 || hex.EncodeToString(digest[:]) != manifest.Guest.SHA256 {
 		return GuestUpdate{}, ErrGuestUpdateUnavailable
 	}
-	return GuestUpdate{Metadata: GuestUpdateMetadata{Release: id, Protocol: protocol, Size: int64(len(binary)), Digest: digest},
-		Signature: signature, Binary: binary}, nil
+	return GuestUpdate{Metadata: GuestUpdateMetadata{Release: id, Protocol: manifest.ProtocolVersion, Size: int64(len(binary)), Digest: digest},
+		Binary: binary}, nil
 }
 
 func readGuestReleaseFile(ctx context.Context, path string, limit int64) ([]byte, error) {
