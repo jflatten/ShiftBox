@@ -43,8 +43,17 @@ const workspaceProjection = `w.id,w.owner_user_id,w.template_id,w.template_revis
 
 const workspaceFrom = ` FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id`
 
+// WorkspaceRetentionStatus reports whether the automatic cleanup scheduler can
+// commit new deletions. The workspace's original deadline remains independent.
+type WorkspaceRetentionStatus struct {
+	State      string     `json:"state"`
+	GraceUntil *time.Time `json:"graceUntil,omitempty"`
+}
+
 // WorkspaceReadHandlers returns the list and detail operations for management.
-func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time) (AuthorizedHandler, AuthorizedHandler) {
+func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
+	retention func(time.Time) WorkspaceRetentionStatus,
+) (AuthorizedHandler, AuthorizedHandler) {
 	store := auth.NewStore(db)
 	list := AuthorizedHandler{
 		DB: db, Origin: origin, Now: now,
@@ -84,12 +93,17 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time) (Aut
 			// Expose the current entry decision without issuing a grant.
 			response := struct {
 				workspaceView
-				CanOpenIDE            bool    `json:"canOpenIde"`
-				LastFailedOperationID *string `json:"lastFailedOperationId"`
+				CanOpenIDE            bool                      `json:"canOpenIde"`
+				LastFailedOperationID *string                   `json:"lastFailedOperationId"`
+				Retention             *WorkspaceRetentionStatus `json:"retention,omitempty"`
 			}{
 				workspaceView:         view,
 				CanOpenIDE:            auth.Authorize(principal, entry.Action, entry.Resource, entry.Grants, now()).Allowed,
 				LastFailedOperationID: lastFailedID,
+			}
+			if retention != nil && view.RetentionDeadline != nil {
+				status := retention(now())
+				response.Retention = &status
 			}
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(view.Version, 10)))

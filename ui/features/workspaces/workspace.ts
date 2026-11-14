@@ -11,6 +11,7 @@ export interface Workspace {
   canOpenIde?: boolean;
   lastActivityAt: string | null;
   retentionDeadline: string | null;
+  retention?: { state: 'disabled' | 'paused' | 'grace' | 'ready'; graceUntil?: string };
   version: number;
   resources: { cpuCount: number; memoryMiB: number; diskMiB: number };
 }

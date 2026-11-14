@@ -123,7 +123,10 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/operations/{operationId}", &detail)
 	mux.Handle("GET /api/v1/operations/{operationId}/events", &stream)
-	listWorkspace, getWorkspace := web.WorkspaceReadHandlers(db, origin, clock)
+	graceUntil := now.Add(10 * time.Minute)
+	listWorkspace, getWorkspace := web.WorkspaceReadHandlers(db, origin, clock, func(time.Time) web.WorkspaceRetentionStatus {
+		return web.WorkspaceRetentionStatus{State: "grace", GraceUntil: &graceUntil}
+	})
 	mux.Handle("GET /api/v1/workspaces", &listWorkspace)
 	mux.Handle("GET /api/v1/workspaces/{workspaceId}", &getWorkspace)
 	path := "/api/v1/operations/" + op.ID
@@ -141,20 +144,25 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 		t.Error("operation detail differs from launch response")
 	}
 	workspacePath := "/api/v1/workspaces/" + *op.WorkspaceID
+	if _, err := db.Exec("UPDATE workspaces SET retention_deadline=$1 WHERE id=$2", now.Format(time.RFC3339Nano), *op.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
 	response = lookup(workspacePath)
 	check(response, 200, "")
 	var view struct {
-		OwnerID            string `json:"ownerId"`
-		PlatformRelease    string `json:"platformRelease"`
-		TemplateRevision   int    `json:"templateRevision"`
-		DesiredState       string `json:"desiredState"`
-		ObservedState      string `json:"observedState"`
-		CurrentOperationID string `json:"currentOperationId"`
+		OwnerID            string                       `json:"ownerId"`
+		PlatformRelease    string                       `json:"platformRelease"`
+		TemplateRevision   int                          `json:"templateRevision"`
+		DesiredState       string                       `json:"desiredState"`
+		ObservedState      string                       `json:"observedState"`
+		CurrentOperationID string                       `json:"currentOperationId"`
+		Retention          web.WorkspaceRetentionStatus `json:"retention"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil ||
 		view.OwnerID != "member" || view.DesiredState != "running" || view.ObservedState != "unknown" ||
 		view.PlatformRelease != "release" || view.TemplateRevision != 2 ||
-		view.CurrentOperationID != op.ID || response.Header().Get("ETag") != `"1"` {
+		view.CurrentOperationID != op.ID || response.Header().Get("ETag") != `"1"` ||
+		view.Retention.State != "grace" || view.Retention.GraceUntil == nil || !view.Retention.GraceUntil.Equal(graceUntil) {
 		t.Fatalf("workspace view = %+v, %v, want member-owned pending launch", view, err)
 	}
 	check(lookup("/api/v1/workspaces?state=running"), 200, "")

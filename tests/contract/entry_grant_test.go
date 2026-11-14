@@ -52,7 +52,7 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := web.WorkspaceEntryGrantHandler(db, origin, func() time.Time { return now }, hosts)
-	_, detail := web.WorkspaceReadHandlers(db, origin, func() time.Time { return now })
+	_, detail := web.WorkspaceReadHandlers(db, origin, func() time.Time { return now }, nil)
 	canOpenIDE := func(want bool) {
 		t.Helper()
 		r := httptest.NewRequest(http.MethodGet, origin+"/api/v1/workspaces/"+workspace, nil)

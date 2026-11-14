@@ -6,10 +6,12 @@ import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
 import { useOperation } from '../../lib/use-operation';
 import { workspaceState, type Workspace } from './workspace';
+import { RetentionWarning } from './retention';
 
 export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: string }) {
   const workspace = useQuery<Workspace>({
     queryKey: ['workspaces', 'detail', id],
+    refetchInterval: query => query.state.data?.retention?.state === 'disabled' || !query.state.data?.retention ? false : 30_000,
     queryFn: async ({ signal }) => {
       const response = await fetch('/api/v1/workspaces/' + encodeURIComponent(id), { signal, cache: 'no-store' });
       if (!response.ok) throw await readProblem(response);
@@ -85,6 +87,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
               <Text component="dd" m={0}><WorkspaceTime value={data.retentionDeadline} fallback="No deadline scheduled" /></Text>
             </div>
           </Stack>
+          <RetentionWarning workspace={data} />
           <Text size="sm">Stop and start preserve project files, the developer home, and configured persistent mounts.</Text>
           {error !== undefined ? <APIProblemView error={error} /> : null}
           {data.canOpenIde ? <OpenIDE id={id} csrfToken={csrfToken} /> : null}

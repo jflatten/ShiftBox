@@ -38,7 +38,7 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 	if err != nil {
 		return ManagementServices{}, err
 	}
-	listWorkspaces, getWorkspace := web.WorkspaceReadHandlers(db, origin, now)
+	listWorkspaces, getWorkspace := web.WorkspaceReadHandlers(db, origin, now, state.workspaceRetentionStatus)
 	getOperation, streamEvents := web.OperationHandlers(db, origin, now, journal, registry)
 	listTemplates, createTemplate, reviseTemplate := web.TemplateHandlers(db, origin, now, uuid.NewString)
 	grantTemplate, revokeTemplate := web.TemplateGrantHandlers(db, origin, now)

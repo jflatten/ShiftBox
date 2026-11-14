@@ -31,6 +31,7 @@ type ControllerState struct {
 	browserReplacement atomic.Pointer[servedBrowserCertificate]
 	retentionMaximum   *int64
 	retentionGrace     time.Duration
+	retentionStatus    atomic.Pointer[retentionSnapshot]
 }
 
 // Close releases the authoritative database on shutdown or failed composition.

@@ -53,6 +53,24 @@ test('shows the saved workspace state and workflow', async () => {
   expect(screen.getByText(/Stop and start preserve/)).toBeVisible();
 });
 
+// An overdue workspace shows recovery grace and the files at risk alongside
+// its original deadline, which stays visible while cleanup is paused.
+test('shows retention recovery grace and data loss guidance', async () => {
+  const graceUntil = '2026-11-16T10:10:00Z';
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces/workspace-one') return json({
+      ...workspace, currentOperationId: null, retention: { state: 'grace', graceUntil },
+    });
+    throw new Error('unexpected request');
+  });
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  expect(await screen.findByText('Retention cleanup paused')).toBeVisible();
+  expect(screen.getByText(/Recovery grace ends/).querySelector('time')).toHaveAttribute('datetime', graceUntil);
+  expect(screen.getByText(/Management backups exclude workspace disks/)).toBeVisible();
+  expect(screen.getByText('Retention deadline').nextElementSibling?.firstElementChild).toHaveAttribute('datetime', workspace.retentionDeadline);
+});
+
 // Cursor pagination follows the server response and workspace links use a
 // fixed static route with the selected ID in the query.
 test('lists workspaces and goes to the next page', async () => {
