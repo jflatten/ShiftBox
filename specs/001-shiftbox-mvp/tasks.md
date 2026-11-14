@@ -1114,3 +1114,18 @@ This checkpoint does not itself change the goal status.
 - Native provider and contract race tests, formatting, and vet passed.
   Artifact import/boot, lifecycle mutations, and complete owned-resource
   deletion still require the release fixture.
+
+### Native UTM power operations
+
+- Added serialized start and stop with pre-effect inspection and ownership
+  recheck at the Apple event. Post-effect inspection determines success,
+  even after a lost reply. Unconfirmed stop retains an uncertain outcome.
+- Start checks observed networking and refuses a pending enrollment delivery.
+  Ordinary shutdown sends a guest request. Only the explicit retention
+  deletion flag selects force stop.
+- The separately opted-in UTM 5.0.8 test starts a disposable blank QEMU VM,
+  repeats start, force-stops the fixture, and verifies cleanup. Unit tests
+  cover an unconfirmed graceful request, lost replies and prerequisite gates.
+  Provider and contract race tests, formatting and vet passed.
+- Graceful shutdown with the release guest, enrolled start, full provider
+  composition and remaining lifecycle operations are still pending.

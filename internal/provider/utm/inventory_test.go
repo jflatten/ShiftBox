@@ -93,8 +93,8 @@ func TestLiveUTMTaggedDrive(t *testing.T) {
 on run argv
     tell application "/Applications/UTM.app"
         if UTM version is not item 1 of argv then error "unexpected UTM version"
-        if item 2 of argv is "create" then
-            set vm to make new virtual machine with properties {backend:qemu, configuration:{name:item 3 of argv, notes:item 4 of argv, architecture:"x86_64", cpu cores:2, memory:512, drives:{{guest size:64}}}}
+        if item 2 of argv is "create" or item 2 of argv is "power" then
+            set vm to make new virtual machine with properties {backend:qemu, configuration:{name:item 3 of argv, notes:item 4 of argv, architecture:"x86_64", cpu cores:2, memory:512, hypervisor:false, drives:{{guest size:64}}}}
             return id of vm
         end if
         set vm to virtual machine id (item 3 of argv)
@@ -110,11 +110,20 @@ end run
 		out, err := exec.CommandContext(ctx, "/usr/bin/osascript", "-e", fixture, "--", version, action, value, notes).Output()
 		return strings.TrimSpace(string(out)), err
 	}
-	ref.InstanceID, err = run("create", "ShiftBox-Inventory-"+ref.WorkspaceID)
+	action := "create"
+	powerTest := os.Getenv("SHIFTBOX_TEST_UTM_POWER") == version
+	if powerTest {
+		action = "power"
+	}
+	ref.InstanceID, err = run(action, "ShiftBox-Inventory-"+ref.WorkspaceID)
 	if err != nil || ref.InstanceID == "" {
 		t.Fatalf("could not create fixture: %v", err)
 	}
+	controller := NewPowerController(version)
 	t.Cleanup(func() {
+		if powerTest {
+			_, _ = controller.Stop(context.Background(), provider.StopRequest{Ref: ref, OperationID: "fixture-cleanup", ForceRetentionDelete: true})
+		}
 		if _, err := run("delete", ref.InstanceID); err != nil {
 			t.Errorf("could not delete disposable fixture %s: %v", ref.InstanceID, err)
 			return
@@ -128,4 +137,21 @@ end run
 		inventory.Resources[1].Type != "disk" || inventory.Resources[1].HostBytes == nil {
 		t.Fatalf("native tagged inventory = %+v, error = %v", inventory, err)
 	}
+	if !powerTest {
+		return
+	}
+	// Blank fixture exercises hypervisor power only. Force is confined to this
+	// disposable fixture, which has no OS to acknowledge a shutdown request.
+	start := provider.StartRequest{Ref: ref, OperationID: "fixture-start", NetworkMode: "shared"}
+	for range 2 {
+		running, err := controller.Start(context.Background(), start)
+		if err != nil || running.Power != provider.Running {
+			t.Fatalf("native start: %s, %v", running.Power, err)
+		}
+	}
+	stopped, err := controller.Stop(context.Background(), provider.StopRequest{Ref: ref, OperationID: "fixture-stop", ForceRetentionDelete: true})
+	if err != nil || stopped.Power != provider.Stopped {
+		t.Fatalf("native stop: %s, %v", stopped.Power, err)
+	}
+
 }

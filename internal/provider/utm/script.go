@@ -77,3 +77,63 @@ func (i Inspector) Inspect(ctx context.Context, ref provider.WorkspaceRef) (prov
 	}
 	return normalizeInventory(ref, result.Machines)
 }
+
+// Recheck the VM identity at the point of mutation using the same scripting
+// surface as inspection. Treat a transport failure as a possibly applied effect.
+const powerScript = `
+function run(argv) {
+    const utm = Application("/Applications/UTM.app");
+    if (utm.utmVersion() !== argv[0]) return "version";
+    const vm = utm.virtualMachines.byId(argv[1]);
+    if (!vm.exists() || vm.backend() !== "qemu") return "ownership";
+    const configuration = vm.configuration();
+    const notes = configuration.notes || "";
+    if (!notes.startsWith("shiftbox:")) return "ownership";
+    const owner = JSON.parse(notes.slice("shiftbox:".length));
+    const expected = JSON.parse(argv[2]);
+    if (owner.installationId !== expected.InstallationID || owner.workspaceId !== expected.WorkspaceID ||
+        owner.generation !== expected.Generation || owner.marker !== expected.OwnershipMarker) return "ownership";
+    const status = vm.status();
+    if (argv[3] === "start" && status === "stopped") {
+        utm.start(vm);
+    } else if ((argv[3] === "request" || argv[3] === "force") && status === "started") {
+        utm.stop(vm, {by:argv[3]});
+    } else {
+        return "state";
+    }
+    return "issued";
+}
+`
+
+func applyPower(ctx context.Context, version string, ref provider.WorkspaceRef, action string) error {
+	if version == "" {
+		return provider.ErrCapabilityUnsupported
+	}
+	refJSON, err := json.Marshal(ref)
+	if err != nil {
+		return provider.ErrInvalidState
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "/usr/bin/osascript", "-l", "JavaScript", "-e", powerScript, "--", version, ref.InstanceID, string(refJSON), action)
+	out, err := cmd.Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && bytes.Contains(exit.Stderr, []byte("(-1743)")) {
+			return provider.ErrPermission
+		}
+		return provider.ErrOutcomeUnknown
+	}
+	switch string(bytes.TrimSpace(out)) {
+	case "issued":
+		return nil
+	case "version":
+		return provider.ErrCapabilityUnsupported
+	case "ownership":
+		return provider.ErrOwnershipMismatch
+	case "state":
+		return provider.ErrInvalidState
+	default:
+		return provider.ErrOutcomeUnknown
+	}
+}
