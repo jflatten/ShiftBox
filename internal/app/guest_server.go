@@ -17,6 +17,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/proxy"
+	"github.com/jflatten/ShiftBox/internal/release"
 	"github.com/jflatten/ShiftBox/internal/secret"
 	"github.com/jflatten/ShiftBox/internal/web"
 	"github.com/jflatten/ShiftBox/internal/workspace"
@@ -33,6 +34,7 @@ type GuestListenerConfig struct {
 	TunnelAddress     string
 	Tunnels           *proxy.Tunnels
 	Checkpoint        *backup.WriteFence
+	GuestUpdates      func(context.Context, string) (release.GuestUpdate, error)
 }
 
 // GuestListeners owns the initial enrollment and authenticated poll listeners.
@@ -74,6 +76,18 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 	}
 	internal := http.NewServeMux()
 	internal.Handle(guest.RenewalPath, web.GuestRenewalHandler(enrollment.Renew, now))
+	if config.GuestUpdates != nil {
+		internal.Handle(guest.UpdateDownloadPath, web.GuestUpdateHandler(func(ctx context.Context, leaf *x509.Certificate, stamp time.Time) (string, error) {
+			if config.Tunnels != nil {
+				if err := registerGuestPollConnection(ctx, config.Tunnels.Registry, func() (guest.Contact, error) {
+					return enrollment.Authenticate(ctx, leaf, now())
+				}); err != nil {
+					return "", err
+				}
+			}
+			return enrollment.UpdateRelease(ctx, leaf, stamp)
+		}, config.GuestUpdates, now))
+	}
 	if config.GitHub != nil {
 		internal.Handle(guest.GitAccessTokenPath, web.GuestGitTokenHandler(enrollment.Authenticate, config.GitHub.AccessToken, now))
 	}

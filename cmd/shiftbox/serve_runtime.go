@@ -175,6 +175,9 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		ActivityPolicy:    &workspace.ActivityPolicy{IDE: monitorIDE, CPU: monitorCPU, CPUThreshold: 5, Freshness: 90 * time.Second},
 		EnrollmentAddress: settings.EnrollmentAddress, PollAddress: settings.PollAddress,
 		TunnelAddress: settings.TunnelAddress, PublicHost: settings.GuestHost, Tunnels: tunnels, GitHub: github, Checkpoint: checkpoint,
+		GuestUpdates: func(ctx context.Context, id string) (release.GuestUpdate, error) {
+			return release.ReadLocalGuestUpdate(ctx, filepath.Join(filepath.Dir(configPath), "releases"), id, compatibility.Protocol)
+		},
 	}, compatibility, journal, machines, media, time.Now)
 	if err != nil {
 		return err

@@ -190,6 +190,52 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Download authority follows the current registration and the exact
+	// workspace generation's active staging step.
+	t.Run("maintenance download authority", func(t *testing.T) {
+		const campaign, target = "fixture-update-campaign", "fixture-update-target"
+		if _, err := enrollment.UpdateRelease(ctx, leaf, now); !errors.Is(err, guest.ErrGuestUnauthorized) {
+			t.Errorf("UpdateRelease without an assigned operation = %v, want denial", err)
+		}
+		defer func() {
+			for _, query := range []string{
+				"UPDATE installations SET active_release='release' WHERE id='00000000-0000-4000-8000-000000000001'",
+				"DELETE FROM maintenance_targets WHERE campaign_id='fixture-update-campaign'",
+				"DELETE FROM maintenance_campaigns WHERE operation_id='fixture-update-campaign'",
+				"DELETE FROM operation_steps WHERE operation_id='fixture-update-target'",
+				"DELETE FROM operations WHERE id IN ('fixture-update-campaign','fixture-update-target')",
+			} {
+				if _, err := db.Exec(query); err != nil {
+					t.Error(err)
+				}
+			}
+		}()
+		for _, query := range []string{
+			"UPDATE installations SET active_release='test' WHERE id='00000000-0000-4000-8000-000000000001'",
+			`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,version,originating_action) VALUES
+			('fixture-update-campaign',NULL,'update',1,'owner','campaign-fixture','waiting','update_guests','now',1,'maintenance.manage'),
+			('fixture-update-target','work','update',1,'controller','target-fixture','waiting','maintenance_stage','now',1,'maintenance.update_guest')`,
+			`INSERT INTO operation_steps(operation_id,step_index,step_key,label,status)
+			VALUES('fixture-update-target',0,'maintenance_stage','Stage update','active')`,
+			`INSERT INTO maintenance_campaigns(operation_id,installation_id,release_id,deadline,created_by,created_at,state)
+			SELECT 'fixture-update-campaign',id,'release','now','owner','now','active' FROM installations`,
+			`INSERT INTO maintenance_targets(campaign_id,workspace_id,generation,prior_desired_state,prior_observed_state,operation_id,state,updated_at)
+			VALUES('fixture-update-campaign','work',1,'running','running','fixture-update-target','waiting_safe','now')`,
+		} {
+			if _, err := db.Exec(query); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got, err := enrollment.UpdateRelease(ctx, leaf, now); err != nil || got != "test" {
+			t.Errorf("UpdateRelease during staging = %q, %v, want assigned release", got, err)
+		}
+		if _, err := db.Exec(`UPDATE operations SET current_step='maintenance_activate' WHERE id=$1`, target); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := enrollment.UpdateRelease(ctx, leaf, now); !errors.Is(err, guest.ErrGuestUnauthorized) {
+			t.Errorf("UpdateRelease after staging = %v, want denial", err)
+		}
+	})
 	if leaf.Subject.CommonName == "injected" || len(leaf.DNSNames) != 0 || len(leaf.URIs) != 1 ||
 		!leaf.NotAfter.Equal(issuer.NotAfter) || leaf.CheckSignatureFrom(issuer) != nil ||
 		len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {

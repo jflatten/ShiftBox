@@ -1707,9 +1707,11 @@ This checkpoint does not itself change the goal status.
   succeeds. A rejected poll leaves the trial unconfirmed for supervisor
   rollback. The controller can load the pinned binary and detached signature
   from the private local release directory. Tests cover the shared signed
-  metadata and rejection of changed or linked artifacts. Production key
-  provisioning, guest dispatch, and prior-state restoration remain open
-  under T095.
+  metadata and rejection of changed or linked artifacts. The internal guest
+  listener serves the download only during the authenticated workspace
+  generation's staging step and rechecks that assignment before sending
+  bytes. Production key provisioning, guest dispatch and download consumption,
+  and prior-state restoration remain open under T095.
 
 ### Migration preflight CLI
 
