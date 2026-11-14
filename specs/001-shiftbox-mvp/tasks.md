@@ -558,3 +558,17 @@ This checkpoint does not itself change the goal status.
 - Auth/web race checks, formatting, and vet pass. Bootstrap/recovery eligibility
   is not inferred from database state; protected flow wiring remains pending, as
   do controller route registration and general authorization enforcement.
+
+### Atomic configuration-generation records
+
+- Added the configuration-store activation-record primitive needed by T018's
+  generation invariant and the later T042/T045 activation flow. It advances the
+  expected generation by exactly one, retires the predecessor, records the new
+  settings snapshot, and updates the installation in the caller's transaction.
+- Test-first SQLite and PostgreSQL tests prove stale-generation rejection,
+  rollback after a subsequent activation failure, one current generation, and
+  retained history. Both profiles pass under the race detector; formatting/vet pass.
+- This records already-validated non-secret settings; it does not perform profile,
+  certificate, hostname, restore, or authorization validation. Those consuming
+  gates and the remaining T018 constraints are still pending. No additional task
+  is marked complete, and the architecture documents remain unchanged.
