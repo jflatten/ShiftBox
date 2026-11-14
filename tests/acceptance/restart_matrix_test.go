@@ -721,6 +721,124 @@ func (p *restartDeletionProvider) Delete(ctx context.Context, req provider.Delet
 	return p.Provider.Delete(ctx, req)
 }
 
+// TestRestartRestorePublication abandons a private replacement after the
+// recovery transaction and retries from the durable validation record.
+func TestRestartRestorePublication(t *testing.T) {
+	ctx, now := t.Context(), time.Now().UTC()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	open := func(path string) *sql.DB {
+		t.Helper()
+		db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: path})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return db
+	}
+	sourcePath := filepath.Join(dir, "source.db")
+	source := open(sourcePath)
+	if err := database.Migrate(ctx, source, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	ref := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		Generation: 1, InstanceID: "retained-instance", OwnershipMarker: "fixture-owner"}
+	actor := uuid.NewString()
+	seedRecoveryRestart(t, source, ref, actor, now)
+	schema, err := database.CurrentSchemaVersion("sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := backup.ArchiveMetadata{InstallationID: ref.InstallationID, Release: "fixture", Profile: "sqlite",
+		Schema: schema, HostID: "restart-fixture-host"}
+	const passphrase = "fixture restore passphrase"
+	archivePath := filepath.Join(dir, "management.age")
+	if _, err := backup.CaptureArchive(ctx, archivePath, passphrase, metadata, backupRestartCheckpoint(source)); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(dir, "replacement")
+	target := sha256.Sum256([]byte(destination))
+	targetDigest := hex.EncodeToString(target[:])
+	expected := backup.RestoreRequirements{Metadata: metadata}
+	checkTarget := func(context.Context) error {
+		if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
+			return backup.ErrRestoreTarget
+		}
+		return nil
+	}
+	archive, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := backup.CreateRestorePlan(ctx, dir, targetDigest, archive, passphrase, expected, checkTarget)
+	if err := errors.Join(err, archive.Close()); err != nil {
+		t.Fatal(err)
+	}
+	restage := func() string {
+		t.Helper()
+		loaded, err := backup.LoadRestorePlan(dir, plan.ID)
+		if err != nil || loaded != plan {
+			t.Fatalf("LoadRestorePlan after restart changed the validation record: %v", err)
+		}
+		archive, err := os.Open(archivePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stage, err := backup.StageRestore(ctx, dir, loaded, targetDigest, archive, passphrase, expected, checkTarget)
+		if err := errors.Join(err, archive.Close()); err != nil {
+			t.Fatal(err)
+		}
+		return stage
+	}
+	abandoned := restage()
+	prepared := open(filepath.Join(abandoned, "application.db"))
+	journal := operation.NewJournal(prepared, time.Now, uuid.NewString)
+	abandonedReview, err := backup.EnterRecovery(ctx, prepared, journal, ref.InstallationID, plan.ID, actor, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := errors.Join(prepared.Close(), source.Close()); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkTarget(ctx); err != nil {
+		t.Fatal("the interrupted restore published its private replacement")
+	}
+	stage := restage()
+	reviewID, err := backup.ActivateSQLiteRestore(ctx, stage, destination, ref.InstallationID, plan.ID, actor, now)
+	if err != nil || reviewID == "" || reviewID == abandonedReview {
+		t.Fatalf("activation after restart = %q (%v), want a newly reviewed replacement", reviewID, err)
+	}
+	if _, err := backup.ActivateSQLiteRestore(ctx, abandoned, destination, ref.InstallationID, plan.ID, actor, now); !errors.Is(err, backup.ErrRestoreTarget) {
+		t.Fatalf("activation replay = %v, want occupied target rejection", err)
+	}
+	assertAuthority := func(db *sql.DB, wantState string, wantRevoked bool) {
+		t.Helper()
+		var state string
+		var revoked bool
+		err := db.QueryRowContext(ctx, `SELECT i.state,s.revoked_at IS NOT NULL FROM installations i CROSS JOIN sessions s
+			WHERE i.id=$1 AND s.id='old-session'`, ref.InstallationID).Scan(&state, &revoked)
+		if err != nil || state != wantState || revoked != wantRevoked {
+			t.Errorf("installation authority = %s, revoked=%t (%v), want %s, revoked=%t", state, revoked, err, wantState, wantRevoked)
+		}
+	}
+	assertAuthority(open(sourcePath), "active", false)
+	replacement := open(filepath.Join(destination, "application.db"))
+	assertAuthority(replacement, "recovery", true)
+	review, err := backup.ReadRecoveryReview(ctx, replacement, reviewID)
+	if err != nil || review.State != "identity_review" {
+		t.Errorf("published recovery review after reopening = %q (%v), want identity_review", review.State, err)
+	}
+	var reviews, completed int
+	err = replacement.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(CASE WHEN o.status='succeeded'
+		AND o.originating_action='restore.activate' AND o.request_key=$1 THEN 1 END)
+		FROM recovery_reviews r JOIN operations o ON o.id=r.restore_operation_id`, plan.ID).Scan(&reviews, &completed)
+	if err != nil || reviews != 1 || completed != 1 {
+		t.Errorf("published replacement has %d reviews and %d completed restore operations (%v), want one of each", reviews, completed, err)
+	}
+}
+
 // TestRestartRecoveryReview reopens the controller database after each review
 // decision, including a provider conflict, then checks the activation fence.
 func TestRestartRecoveryReview(t *testing.T) {
@@ -1111,12 +1229,16 @@ func backupRestartCheckpoint(db *sql.DB) func(context.Context, string) (map[stri
 		if err := backup.SQLiteCheckpoint(ctx, db, application); err != nil {
 			return nil, err
 		}
-		// Only the application checkpoint is needed to exercise completion.
-		// The other archive members are opaque fixture data, never restored.
+		// Restart tests open the application checkpoint. They don't start
+		// Dex or use the protected fixture files to run a controller.
 		sources := map[string]string{"application.db": application}
 		for _, name := range []string{"configuration.json", "guest-ca.json", "installation.key", "dex.db"} {
 			path := filepath.Join(stage, name)
-			if err := os.WriteFile(path, []byte(name), 0600); err != nil {
+			payload := []byte(name)
+			if name == "installation.key" {
+				payload = bytes.Repeat([]byte{1}, 32)
+			}
+			if err := os.WriteFile(path, payload, 0600); err != nil {
 				return nil, err
 			}
 			sources[name] = path

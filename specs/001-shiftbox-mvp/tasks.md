@@ -1871,6 +1871,10 @@ This checkpoint does not itself change the goal status.
   requirement, and interrupted job records in one transaction before
   publication. The gate and rollback passed SQLite tests, and the gate
   passed a disposable PostgreSQL test.
+- T120 reopens a saved SQLite validation after interrupting publication.
+  The retry verifies the encrypted archive again and publishes a replacement
+  with one identity review and revoked copied sessions. The source stays
+  active and replay cannot overwrite the published replacement.
 - T111 verifies both PostgreSQL dumps before loading them into a
   replacement database. Each pre-provisioned owner restores only its
   schema in its own transaction. The local PostgreSQL 18 test confirmed
