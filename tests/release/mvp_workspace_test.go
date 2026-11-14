@@ -107,15 +107,29 @@ func TestMVPWorkspaceJournal(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{
-		"workspace.launch/succeeded/verify_ide/succeeded",
+	stopStartRebuild := []string{
 		"workspace.stop/succeeded/stop/succeeded",
 		"workspace.start/succeeded/verify_ide/succeeded",
 		"workspace.rebuild/succeeded/verify_ide/succeeded",
+	}
+	want := append([]string{"workspace.launch/succeeded/verify_ide/succeeded"}, stopStartRebuild...)
+	want = append(want,
 		"workspace.rebuild/failed/configure/failed",
 		"workspace.rebuild/failed/verify_ide/pending",
 		"workspace.repair/succeeded/verify_repair/succeeded",
 		"workspace.repair/succeeded/verify_ide/succeeded",
+	)
+	if os.Getenv("SHIFTBOX_TEST_MVP_PERSISTENCE") == "1" {
+		want = append(want, stopStartRebuild...)
+		var distinctContainers int
+		err := db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT NULLIF(g.container_id,''))
+			FROM guest_dispatches g WHERE operation_id IN (
+				SELECT id FROM operations WHERE workspace_id=$1 AND status='succeeded'
+				AND originating_action IN ('workspace.start','workspace.rebuild') ORDER BY created_at DESC,id DESC LIMIT 2
+			)`, workspaceID).Scan(&distinctContainers)
+		if err != nil || distinctContainers != 2 {
+			t.Errorf("persistence run used %d distinct containers after start and rebuild (%v), want two", distinctContainers, err)
+		}
 	}
 	if !matchesWorkspaceJourney(steps, want, os.Getenv("SHIFTBOX_MVP_RESUME_ACTIVE") == "1") {
 		got := strings.Join(steps, "\n")

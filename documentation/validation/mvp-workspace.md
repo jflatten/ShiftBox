@@ -136,3 +136,5 @@ after each lifecycle change. It removes its two files after verification.
 On November 14, this test passed in 8.4 minutes on the same `mvp-rc1` UTM
 workspace. Chrome verified both files after stop/start and after rebuild.
 The start and rebuild journal receipts identified two distinct containers.
+Run `TestMVPWorkspaceJournal` again with `SHIFTBOX_TEST_MVP_PERSISTENCE=1`
+to verify the additional lifecycle receipts and distinct containers.
