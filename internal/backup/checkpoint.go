@@ -60,11 +60,10 @@ type ProtectedInputs struct {
 // protected configuration while the caller holds the controller write fence.
 // The caller owns cleanup of the private staging directory on failure.
 func StageSQLiteCheckpoint(ctx context.Context, dir string, application *sql.DB, dexPath string, inputs ProtectedInputs) (map[string]string, error) {
-	info, err := os.Lstat(dir)
-	if err != nil || !filepath.IsAbs(dir) || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+	if !privateCheckpointDirectory(dir) {
 		return nil, errors.New("backup checkpoint requires a private staging directory")
 	}
-	info, err = os.Lstat(dexPath)
+	info, err := os.Lstat(dexPath)
 	if err != nil || !filepath.IsAbs(dexPath) || !info.Mode().IsRegular() {
 		return nil, errors.New("Dex SQLite store is unavailable")
 	}
@@ -141,4 +140,9 @@ func copyProtectedInput(ctx context.Context, source, destination string) error {
 		return errors.New("cannot capture protected backup input")
 	}
 	return nil
+}
+
+func privateCheckpointDirectory(dir string) bool {
+	info, err := os.Lstat(dir)
+	return err == nil && filepath.IsAbs(dir) && info.IsDir() && info.Mode().Perm()&0077 == 0
 }

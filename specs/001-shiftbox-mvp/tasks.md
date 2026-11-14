@@ -1721,9 +1721,14 @@ This checkpoint does not itself change the goal status.
   copies of the configuration, installation key, and guest CA. The
   capture requires private staging and rejects missing or uninitialized
   Dex stores, symlinked protected inputs, and files with public permissions.
+- T110 exports PostgreSQL application and Dex schemas with separate
+  schema owners using the same read-only snapshot. It releases the
+  checkpoint fence before running the native dumps. The PostgreSQL 18
+  fixture test checks that both dumps exclude writes after the cutoff
+  and unrelated schema contents. Credentials stay in private temporary
+  password files outside the archive allowlist.
 - T104 and T110 stay open for live controller and Dex coordination,
-  PostgreSQL checkpoint acquisition, and uninterrupted workspace
-  computation evidence.
+  durable backup completion, and uninterrupted workspace computation evidence.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.

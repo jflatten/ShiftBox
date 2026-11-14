@@ -27,25 +27,28 @@ type ArchiveEvidence struct {
 	Size           int64
 }
 
-// CaptureArchive acquires the coordinated management checkpoint, then resumes
-// writes before verifying or encrypting the staged files.
+// CaptureArchive owns the private staging directory through publication.
+// The profile's capture function must release its management write fence
+// before returning the staged files for encryption.
 func CaptureArchive(ctx context.Context, output, password string, metadata ArchiveMetadata,
-	pause func(context.Context) (func(), error), capture func(context.Context, string) (map[string]string, error),
+	capture func(context.Context, string) (map[string]string, error),
 ) (ArchiveEvidence, error) {
-	if !filepath.IsAbs(output) || !metadata.valid() || password == "" || pause == nil || capture == nil {
+	if !filepath.IsAbs(output) || !metadata.valid() || password == "" || capture == nil {
 		return ArchiveEvidence{}, errArchiveInvalid
+	}
+	if err := ctx.Err(); err != nil {
+		return ArchiveEvidence{}, err
+	}
+	if _, err := os.Lstat(output); !errors.Is(err, os.ErrNotExist) {
+		return ArchiveEvidence{}, errors.New("backup output path is unavailable")
 	}
 	dir, err := os.MkdirTemp(filepath.Dir(output), ".backup-checkpoint-")
 	if err != nil {
 		return ArchiveEvidence{}, errors.New("cannot stage protected backup checkpoint")
 	}
 	defer os.RemoveAll(dir)
-	var sources map[string]string
-	if err := captureCheckpoint(ctx, pause, func(ctx context.Context) error {
-		var err error
-		sources, err = capture(ctx, dir)
-		return err
-	}); err != nil {
+	sources, err := capture(ctx, dir)
+	if err != nil {
 		return ArchiveEvidence{}, err
 	}
 	return CreateArchive(ctx, output, password, metadata, sources)

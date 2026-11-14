@@ -2,6 +2,8 @@ package backup
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,5 +67,28 @@ func TestManagementArchiveRoundTrip(t *testing.T) {
 	}
 	if len(evidence.ArchiveDigest) != 64 || len(evidence.ManifestDigest) != 64 {
 		t.Error("expected two SHA-256 evidence digests")
+	}
+}
+
+// TestCaptureArchiveLetsProfileAcquireCheckpoint checks that the profile
+// controls its write fence and that a failed capture leaves no staged data.
+func TestCaptureArchiveLetsProfileAcquireCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "backup.age")
+	metadata := ArchiveMetadata{InstallationID: "fixture", Release: "development", Profile: "postgres", Schema: 18}
+	failure := errors.New("identity dump interrupted")
+	called := false
+	_, err := CaptureArchive(t.Context(), path, "test archive password", metadata, func(_ context.Context, stage string) (map[string]string, error) {
+		called = true
+		if err := os.WriteFile(filepath.Join(stage, "application.dump"), []byte("private test data"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return nil, failure
+	})
+	if !called || !errors.Is(err, failure) {
+		t.Fatalf("capture = %v, called %t; want the checkpoint error", err, called)
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Fatalf("failed capture left staged content: %v", err)
 	}
 }
