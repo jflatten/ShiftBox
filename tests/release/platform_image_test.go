@@ -172,3 +172,37 @@ func writeArtifactFile(t *testing.T, root, name string, data []byte) {
 		t.Fatal(err)
 	}
 }
+
+// TestGeneratePlatformManifest verifies an export manifest hashes the actual
+// generated files and refuses to declare unexpected files as owned resources.
+func TestGeneratePlatformManifest(t *testing.T) {
+	root, raw := artifactFixture(t)
+	const firmware = "ubuntu.utm/Data/efi_vars.fd"
+	writeArtifactFile(t, root, firmware, []byte("fixture firmware"))
+	var metadata release.ArtifactManifest
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata.Resources = nil
+	manifest, err := release.GenerateArtifactManifest(t.Context(), root, "ubuntu.utm", metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Resources) != 3 || manifest.Resources[0].Path != firmware || manifest.Resources[0].Type != "media" {
+		t.Fatalf("resources = %+v, want ordered firmware, disk, and VM records", manifest.Resources)
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := release.ValidateArtifact(t.Context(), root, bytes.NewReader(encoded)); err != nil {
+		t.Fatalf("validating generated manifest: %v", err)
+	}
+	writeArtifactFile(t, root, "ubuntu.utm/Data/extra.key", []byte("fixture"))
+	if _, err := release.GenerateArtifactManifest(t.Context(), root, "ubuntu.utm", metadata); !errors.Is(err, release.ErrInvalidArtifact) {
+		t.Fatalf("manifest with unexpected file = %v, want invalid artifact", err)
+	}
+	if _, err := release.GenerateArtifactManifest(t.Context(), root, "../ubuntu.utm", metadata); !errors.Is(err, release.ErrInvalidArtifact) {
+		t.Fatalf("manifest with nested export path = %v, want invalid artifact", err)
+	}
+}

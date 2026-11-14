@@ -37,6 +37,20 @@ The build output is a candidate bundle. Release admission requires the
 browser IDE, a manifest covering the final export,
 and verified boot, enrollment, and clone behavior through UTM.
 
+Once the release build has recorded the packaged guest and IDE versions and
+digests, generate the manifest from the prepared bundle. The build metadata
+uses the artifact schema fields except `resources`, which the tool derives
+from the final files.
+
+```sh
+go run ./platform/packer/manifest /absolute/path/to/final/shiftbox.utm \
+    < build-metadata.json > /absolute/path/to/final/manifest.json
+```
+
+Keep the manifest beside the bundle. The tool hashes the exported files
+without modifying them. Boot and enrollment validation remain separate
+release checks.
+
 To verify that a prepared development export can enroll, run the opt-in
 `utm_release` test with UTM 5.0.8 running. Set the guest host to a local IP
 address reachable from the VM and point storage at UTM's Documents directory.

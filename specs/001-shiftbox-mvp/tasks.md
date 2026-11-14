@@ -2329,3 +2329,16 @@ This checkpoint does not itself change the goal status.
 - All 68 UI tests, Go vet, the embedded build, and race-enabled identity
   and API tests passed. Chrome verified keyboard-only empty override and
   fallback deletion with local fixtures.
+
+### Prepared UTM artifact manifests
+
+- T046 has a release build tool that generates an artifact manifest from
+  the prepared UTM export and the build's component metadata. It hashes
+  the exported configuration, firmware data and persistent disk. It
+  refuses unexpected files and symlinks in the bundle.
+- The generated manifest passed catalog verification in the release
+  tests. The command also hashed the existing prepared Ubuntu bundle
+  using fixture component metadata. That bundle has no approved browser
+  IDE or release boot evidence.
+- T033, T046 and T058 stay open for the licensed browser IDE selection,
+  final image and native boot evidence, and setup import wiring.
