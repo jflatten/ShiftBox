@@ -65,6 +65,17 @@ func (s *Service) InterruptIncomplete(ctx context.Context) error {
 	})
 }
 
+// QueueLocal admits an operator request authenticated by the private socket.
+func (s *Service) QueueLocal(ctx context.Context, key string) (operation.Operation, error) {
+	var op operation.Operation
+	err := database.Transaction(ctx, s.db, func(tx *sql.Tx) error {
+		var err error
+		op, _, err = s.Queue(ctx, tx, "local-operator", key)
+		return err
+	})
+	return op, err
+}
+
 // Queue serializes backup admissions and returns whether to start a new
 // in-memory attempt. Replays return the original operation without its inputs.
 func (s *Service) Queue(ctx context.Context, tx *sql.Tx, actor, key string) (operation.Operation, bool, error) {

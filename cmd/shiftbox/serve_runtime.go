@@ -169,6 +169,14 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		return err
 	}
 	defer workspaces.Close()
+	captureBackup := func(ctx context.Context, dir string) (map[string]string, error) {
+		return state.CaptureBackupCheckpoint(ctx, dir, configPath, cfg, checkpoint)
+	}
+	localBackup, err := listenLocalBackup(cfg.InstallationDir, backups, captureBackup)
+	if err != nil {
+		return err
+	}
+	defer localBackup.Close()
 	err = app.ServeController(ctx, dexDone, browser.Serve, workspaces.Serve, func(ctx context.Context) error {
 		return app.RunHistoryRetention(ctx, state.DB, cfg, checkpoint)
 	}, func(ctx context.Context) error {
@@ -176,10 +184,8 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	}, func(ctx context.Context) error {
 		return preflightWorker.Run(ctx, time.Second)
 	}, func(ctx context.Context) error {
-		return web.RunBackupJobs(ctx, backupJobs, backups, func(ctx context.Context, dir string) (map[string]string, error) {
-			return state.CaptureBackupCheckpoint(ctx, dir, configPath, cfg, checkpoint)
-		})
-	})
+		return web.RunBackupJobs(ctx, backupJobs, backups, captureBackup)
+	}, localBackup.Serve)
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return nil
 	}

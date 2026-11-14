@@ -1799,7 +1799,10 @@ This checkpoint does not itself change the goal status.
   credentials in the recovery-entry transaction, and publishes a new
   controller configuration only after review is in place. The local TLS
   fixture verified a replacement in recovery and an unchanged source.
-  The backup CLI and cross-schema failure recovery remain open.
+  The backup CLI uses the running controller's private Unix socket and
+  shares the browser backup service. Its test verifies passphrase
+  confirmation and waits for durable archive verification. Cross-schema
+  failure recovery and the full T107 contract suite remain open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.

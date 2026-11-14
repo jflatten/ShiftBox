@@ -31,11 +31,13 @@ func run(ctx context.Context, args []string, out, status io.Writer) error {
 			return runServe(ctx, args[1:])
 		case "recover-admin":
 			return runRecoverAdmin(ctx, args[1:], out)
+		case "backup":
+			return runBackup(ctx, args[1:], os.Stdin, out, status)
 		case "restore":
 			return runRestore(ctx, args[1:], os.Stdin, out, status)
 		case "migrate":
 			return runMigrate(ctx, args[1:], out, status)
 		}
 	}
-	return errors.New("usage: shiftbox setup | shiftbox serve | shiftbox recover-admin | shiftbox migrate preflight | shiftbox restore")
+	return errors.New("usage: shiftbox setup | shiftbox serve | shiftbox recover-admin | shiftbox migrate preflight | shiftbox backup | shiftbox restore")
 }
