@@ -10,6 +10,7 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/config"
+	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
 )
 
@@ -23,10 +24,11 @@ type setupSnapshot struct {
 	certID, chain, keyID, notBefore, notAfter, fingerprint, ciphertext string
 }
 
-// StagePostgresSetup copies the selected setup records to the migrated target.
+// StagePostgresSetup copies the selected setup records and retains the scoped
+// identity credentials in the migrated target after database preflight.
 // Both stores remain inactive for production traffic. The caller owns Dex
 // transfer and the separate durable authority switch.
-func StagePostgresSetup(ctx context.Context, source, target *sql.DB, installationID string, now time.Time) (auth.User, error) {
+func StagePostgresSetup(ctx context.Context, source, target *sql.DB, installationID string, credentials PostgresSetupCredentials, cipher *cryptostore.Store, now time.Time) (auth.User, error) {
 	var staged setupSnapshot
 	err := database.Transaction(ctx, source, func(tx *sql.Tx) error {
 		var ownerID string
@@ -67,12 +69,12 @@ func StagePostgresSetup(ctx context.Context, source, target *sql.DB, installatio
 			if err != nil || !reflect.DeepEqual(existing, expected) {
 				return ErrSetupConflict
 			}
-			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		} else if err := staged.insert(ctx, tx, string(encoded), now); err != nil {
 			return err
 		}
-		return staged.insert(ctx, tx, string(encoded), now)
+		return retainPostgresDexStorage(ctx, tx, staged.id, credentials, cipher)
 	})
 	if err != nil {
 		return auth.User{}, err

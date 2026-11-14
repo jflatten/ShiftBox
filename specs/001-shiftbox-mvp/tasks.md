@@ -1522,3 +1522,15 @@ This checkpoint does not itself change the goal status.
   private identity endpoints. PostgreSQL startup leaves SQLite absent.
 - Production startup still needs to load scoped PostgreSQL credentials
   from protected configuration and mount the browser and management routes.
+
+### Protected PostgreSQL identity configuration
+
+- Target staging now commits the scoped Dex credentials alongside the
+  copied setup records. The installation key encrypts the record and binds
+  it to the installation. A retry accepts only matching credentials.
+- Controller preflight loads the retained record for the PostgreSQL profile
+  and verifies that Dex uses a separate role on the application database.
+- Unit tests cover credential and ciphertext conflicts. Live PostgreSQL
+  tests verify scoped staging, failed-transaction rollback, and no copying
+  of unrelated protected records. The setup HTTP workflow and authority
+  switch still need wiring.

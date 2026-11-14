@@ -13,6 +13,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/guest"
+	"github.com/jflatten/ShiftBox/internal/identity"
 )
 
 // ControllerState carries the active database and trust material loaded at startup.
@@ -21,6 +22,7 @@ type ControllerState struct {
 	Installation ActiveInstallation
 	BrowserTLS   tls.Certificate
 	GuestCA      *guest.Authority
+	DexPostgres  *identity.DexPostgres
 }
 
 // Close releases the authoritative database on shutdown or failed composition.
@@ -33,7 +35,7 @@ func PreflightController(ctx context.Context, cfg config.Config) (*ControllerSta
 	if err != nil {
 		return nil, err
 	}
-	state, err := loadControllerState(ctx, db, active, cfg.InstallationDir)
+	state, err := loadControllerState(ctx, db, active, cfg)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
@@ -41,7 +43,8 @@ func PreflightController(ctx context.Context, cfg config.Config) (*ControllerSta
 	return state, nil
 }
 
-func loadControllerState(ctx context.Context, db *sql.DB, active ActiveInstallation, dir string) (*ControllerState, error) {
+func loadControllerState(ctx context.Context, db *sql.DB, active ActiveInstallation, cfg config.Config) (*ControllerState, error) {
+	dir := cfg.InstallationDir
 	info, err := os.Lstat(dir)
 	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
 		return nil, errors.New("controller startup requires a private installation directory")
@@ -70,5 +73,12 @@ func loadControllerState(ctx context.Context, db *sql.DB, active ActiveInstallat
 	if err != nil {
 		return nil, errors.New("cannot validate the active browser certificate")
 	}
-	return &ControllerState{DB: db, Installation: active, BrowserTLS: browser, GuestCA: authority}, nil
+	state := &ControllerState{DB: db, Installation: active, BrowserTLS: browser, GuestCA: authority}
+	if active.Settings.DataProfile == "postgres" {
+		state.DexPostgres, err = loadPostgresDexStorage(ctx, db, active.InstallationID, cfg.PostgresURI, cipher)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return state, nil
 }

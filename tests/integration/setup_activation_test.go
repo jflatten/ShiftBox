@@ -14,6 +14,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/auth"
+	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
 	_ "modernc.org/sqlite"
 )
@@ -156,8 +157,22 @@ func TestStagePostgresSetup(t *testing.T) {
 	if err := database.Transaction(ctx, src, func(tx *sql.Tx) error { return auth.NewStore(src).SaveSession(ctx, tx, session) }); err != nil {
 		t.Fatal(err)
 	}
+	cipher, err := cryptostore.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials := app.PostgresSetupCredentials{ApplicationURI: appURI, DexURI: dexURI, CAFile: os.Getenv("SHIFTBOX_TEST_SETUP_CA")}
+	invalid := credentials
+	invalid.DexURI = invalid.ApplicationURI
+	if _, err := app.StagePostgresSetup(ctx, src, dst, id, invalid, cipher, now); err == nil {
+		t.Fatal("staging accepted a shared PostgreSQL role")
+	}
+	var installations int
+	if err := dst.QueryRowContext(ctx, "SELECT COUNT(*) FROM installations").Scan(&installations); err != nil || installations != 0 {
+		t.Fatalf("failed staging left %d installations, error %v", installations, err)
+	}
 	for range 2 {
-		owner, err := app.StagePostgresSetup(ctx, src, dst, id, now)
+		owner, err := app.StagePostgresSetup(ctx, src, dst, id, credentials, cipher, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -184,13 +199,17 @@ func TestStagePostgresSetup(t *testing.T) {
 		}
 	}
 	var count int
-	if err := dst.QueryRowContext(ctx, "SELECT count(*) FROM protected_values").Scan(&count); err != nil || count != 1 {
-		t.Fatal("staging copied unrelated protected data")
+	if err := dst.QueryRowContext(ctx, "SELECT count(*) FROM protected_values").Scan(&count); err != nil || count != 2 {
+		t.Fatal("staging did not retain exactly the certificate and identity settings")
+	}
+	if err := dst.QueryRowContext(ctx, "SELECT value_json FROM protected_values WHERE id=$1", id+":dex-postgres").Scan(&ciphertext); err != nil ||
+		!strings.Contains(ciphertext, `"ciphertext":`) || strings.Contains(ciphertext, dexURI) {
+		t.Fatalf("staged PostgreSQL identity credentials were not encrypted, error %v", err)
 	}
 	if _, err := dst.ExecContext(ctx, "UPDATE users SET primary_email='unrelated@example.test'"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := app.StagePostgresSetup(ctx, src, dst, id, now); err == nil {
+	if _, err := app.StagePostgresSetup(ctx, src, dst, id, credentials, cipher, now); err == nil {
 		t.Fatal("staging overwrote conflicting destination")
 	}
 }
