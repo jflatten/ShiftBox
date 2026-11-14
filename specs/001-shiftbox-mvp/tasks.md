@@ -1995,3 +1995,13 @@ This checkpoint does not itself change the goal status.
 - All 44 UI tests and the production build passed. Chrome verified the
   member keyboard flow using fixture responses. Operational conditions and
   automatic history retention remain open.
+
+### Certificate warnings in Notices
+
+- Notices uses the same authorized infrastructure status as the
+  Infrastructure page. Active certificate warnings appear as persistent
+  alerts for administrators with infrastructure access.
+- All 45 UI tests and the production build passed. Chrome verified that
+  the warning survives keyboard dismissal of a personal notice and clears
+  after a refreshed status shows replacement. Other operational conditions
+  and active-listener composition remain open under T096 and T101.

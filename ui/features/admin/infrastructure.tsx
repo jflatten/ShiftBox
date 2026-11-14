@@ -3,27 +3,12 @@
 import { useState } from 'react';
 import { Button, NumberInput, Stack, Text, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
-import { useQuery } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { ShiftBoxShell } from '../../components/app-shell';
 import { readProblem } from '../../lib/api-problem';
+import { useInfrastructure, type Capacity, type InfrastructureStatus } from '../../lib/use-infrastructure';
 import { useSession } from '../../lib/use-session';
 
-type Capacity = { cpuCount: number; memoryMiB: number; diskMiB: number };
-type Condition = { key: string; severity: 'info' | 'warning' | 'critical'; active: boolean; detail?: string };
-
-interface InfrastructureStatus {
-  provider: { name: string; version: string; architecture: string; networkModes: string[] | null };
-  capacity: Capacity;
-  version: number;
-  conditions: Condition[];
-}
-
-const conditionTitles: Record<string, string> = {
-  'browser_certificate.expiring': 'Browser certificate expires soon',
-  'browser_certificate.invalid': 'Browser certificate needs attention',
-};
-const conditionColors = { info: 'blue', warning: 'yellow', critical: 'red' };
 const capacityFields = [
   { name: 'cpuCount', label: 'CPU limit' },
   { name: 'memoryMiB', label: 'Memory limit (MiB)' },
@@ -35,20 +20,8 @@ export function Infrastructure() {
   const current = session.session;
   const allowed = current?.role === 'administrator' && current.mode === 'normal' &&
     current.installationState === 'active' && current.permissions.includes('infrastructure.view');
-  const status = useQuery<InfrastructureStatus>({
-    queryKey: ['infrastructure', current?.user.id],
-    enabled: allowed,
-    queryFn: async ({ signal }) => {
-      const response = await fetch('/api/v1/admin/infrastructure', { signal, cache: 'no-store' });
-      if (!response.ok) throw await readProblem(response);
-      return response.json();
-    },
-  });
-  const data = allowed && !status.isError ? status.data : undefined;
-  const alerts = (data?.conditions ?? []).filter(condition => condition.active).map(condition => ({
-    id: condition.key, title: conditionTitles[condition.key] ?? 'Infrastructure condition',
-    detail: condition.detail, color: conditionColors[condition.severity],
-  }));
+  const status = useInfrastructure(allowed ? current.user.id : undefined);
+  const { data, alerts } = status;
   return (
     <ShiftBoxShell session={current} alerts={alerts} error={session.error ?? (allowed ? status.error : undefined) ?? undefined}>
       <Title order={1}>Infrastructure</Title>

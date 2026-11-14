@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ShiftBoxShell, type ShellSession } from '../../components/app-shell';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
+import { useInfrastructure } from '../../lib/use-infrastructure';
 import { useSession } from '../../lib/use-session';
 import { PublishNotice } from './publish-notice';
 
@@ -26,8 +27,10 @@ export function Notices() {
   const session = useSession();
   const current = session.session;
   const allowed = current?.mode === 'normal' && current.installationState === 'active' && current.permissions.includes('notice.list');
+  const canViewInfrastructure = allowed && current.role === 'administrator' && current.permissions.includes('infrastructure.view');
+  const { alerts, error } = useInfrastructure(canViewInfrastructure ? current.user.id : undefined);
   return (
-    <ShiftBoxShell session={current} alerts={[]} error={session.error ?? undefined}>
+    <ShiftBoxShell session={current} alerts={alerts} error={session.error ?? (canViewInfrastructure ? error : undefined) ?? undefined}>
       <Title order={1}>Notices</Title>
       {session.isPending ? <Text role="status">Checking your session…</Text> : null}
       {session.data === null ? <Button component="a" href="/auth/login" style={{ alignSelf: 'flex-start' }}>Sign in</Button> : null}

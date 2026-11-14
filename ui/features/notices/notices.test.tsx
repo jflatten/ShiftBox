@@ -1,10 +1,14 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { focusManager } from '@tanstack/react-query';
 import { Providers } from '../../app/providers';
 import { Notices } from './notices';
 
 const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; });
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  focusManager.setFocused(undefined);
+});
 
 const session = {
   user: { id: 'member', role: 'member' }, mode: 'normal', installationState: 'active',
@@ -36,6 +40,7 @@ test('reads, dismisses and reopens a notice from history', async () => {
   render(<Providers><Notices /></Providers>);
   expect(await screen.findByRole('link', { name: 'Notices' })).toHaveAttribute('href', '/notices/');
   expect(await screen.findByText(notice.title)).toBeVisible();
+  expect(globalThis.fetch).not.toHaveBeenCalledWith('/api/v1/admin/infrastructure', expect.anything());
   expect(screen.queryByRole('button', { name: 'Publish notice' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Mark as read' }));
@@ -44,6 +49,40 @@ test('reads, dismisses and reopens a notice from history', async () => {
   await user.click(screen.getByRole('checkbox', { name: 'Include dismissed and historical notices' }));
   expect(await screen.findByText(notice.title)).toBeVisible();
   expect(screen.getByText('Dismissed')).toBeVisible();
+});
+
+// The certificate warning survives dismissal of a personal notice and clears after replacement.
+test('shows active certificate warnings to administrators', async () => {
+  let dismissed = false;
+  let replaced = false;
+  const detail = 'Replace the browser certificate before 2026-12-01 15:04 UTC.';
+  globalThis.fetch = jest.fn(async (input, init) => {
+    if (input === '/api/v1/session') return json({ ...session,
+      user: { id: 'admin', role: 'administrator' }, permissions: [...session.permissions, 'infrastructure.view'] });
+    if (input === '/api/v1/admin/infrastructure') return json({ conditions: replaced ? [] : [
+      { key: 'browser_certificate.expiring', severity: 'warning', active: true, detail },
+    ] });
+    if (input === '/api/v1/notices') return json(dismissed ? [] : [{ ...notice, readAt: '2026-11-14T10:00:00Z' }]);
+    if (input === '/api/v1/notices/notice-one/receipt' && init?.method === 'PATCH') {
+      dismissed = true;
+      return json(null);
+    }
+    throw new Error('unexpected request');
+  });
+  const user = userEvent.setup();
+  render(<Providers><Notices /></Providers>);
+  const conditions = within(screen.getByRole('region', { name: 'Persistent conditions' }));
+  expect(await conditions.findByText('Browser certificate expires soon')).toBeVisible();
+  expect(conditions.getByText(detail)).toBeVisible();
+  expect(conditions.queryByRole('button')).toBeNull();
+  await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+  expect(await screen.findByText('No notices.')).toBeVisible();
+  expect(conditions.getByText(detail)).toBeVisible();
+
+  replaced = true;
+  act(() => focusManager.setFocused(false));
+  act(() => focusManager.setFocused(true));
+  await waitFor(() => expect(conditions.queryByText(detail)).toBeNull());
 });
 
 // Administrators publish with the current CSRF token and see the saved notice.
