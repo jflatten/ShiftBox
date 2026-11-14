@@ -213,7 +213,7 @@ func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release, secr
 		return err
 	}
 	project := filepath.Join(stateDir, "project")
-	runtime := devContainer{workspace: project, credentials: secretSocket != "", ide: true, repository: &repositoryPreparation{
+	runtime := devContainer{workspace: project, credentials: secretSocket != "", ide: true, retainHome: true, repository: &repositoryPreparation{
 		project: project,
 		token: func(ctx context.Context) (string, error) {
 			return guestGitAccessToken(ctx, client, identity.PollEndpoint)

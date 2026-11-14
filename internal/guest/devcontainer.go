@@ -29,6 +29,7 @@ type devContainer struct {
 	repository      *repositoryPreparation
 	credentials     bool
 	ide             bool
+	retainHome      bool
 	run             func(context.Context, string, ...string) ([]byte, error)
 	setProjectOwner func(context.Context, string, int, int) error
 }
@@ -62,6 +63,12 @@ func (d devContainer) ensure(ctx context.Context) (containerConnection, error) {
 	}
 	if !dockerContainerID.MatchString(result.ID) || result.Merged == nil {
 		return containerConnection{}, errors.New("Dev Container CLI did not return connection evidence")
+	}
+	if d.retainHome {
+		result, err = d.ensureRetainedHome(ctx, result, options)
+		if err != nil {
+			return containerConnection{}, err
+		}
 	}
 	waitFor := result.Merged.WaitFor
 	if waitFor == "" {
@@ -119,6 +126,15 @@ func (d devContainer) command(ctx context.Context, stage string, options ...stri
 		"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", developmentLabel}
 	if stage == "up" && d.ide {
 		args = append(args, "--mount", "type=bind,source="+ideDirectory+",target="+ideDirectory)
+	}
+	if stage == "up" && d.retainHome {
+		home, err := d.retainedHome()
+		if err != nil {
+			return nil, err
+		}
+		if home != "" {
+			args = append(args, "--mount", "type=bind,source="+d.retainedHomeData()+",target="+home)
+		}
 	}
 	if stage == "up" && d.credentials {
 		// Mount the directory so an agent restart can replace its listener.

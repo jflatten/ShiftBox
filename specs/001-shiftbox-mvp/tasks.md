@@ -2438,3 +2438,15 @@ This checkpoint does not itself change the goal status.
 - Tests cover ordering, ownership failure, retry, and symlink handling.
   The pinned Dev Container CLI ran the required write hook as `vscode` on
   a disposable Linux volume and ran the later hook in a separate pass.
+
+### Retained developer home
+
+- T052 discovers the developer's home from the container account, seeds
+  it from the image before remote hooks, and binds the retained directory
+  from the VM disk. The guest checks the mount, home path, and owner before
+  running hooks. A different home mount or developer identity stops setup.
+- Tests cover discovery of a custom home, copying image files once, reuse
+  on restart, and mismatched mounts and owners. A disposable Docker test
+  with the pinned CLI preserved a home file through container replacement.
+- T052 remains open for managed rebuild and repair, retained application
+  mounts, and the full UTM browser journey.
