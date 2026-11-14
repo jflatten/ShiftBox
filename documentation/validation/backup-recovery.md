@@ -17,6 +17,27 @@ The original controller returned to service after the isolated review. The
 test verified management state and provider observations. Workspace VM disks
 remain outside the archive.
 
+## PostgreSQL recovery
+
+On November 14, 2026, the rebuilt `mvp-rc1` controller backed up a
+production-profile test installation with separate application and Dex
+owners. Chrome signed in as the administrator, created a second local user,
+and retained the live browser session for replay after restore.
+
+| Check | Result |
+| --- | --- |
+| Archive | The live controller created and verified the password-encrypted archive. Its entries were the manifest, application and Dex dumps, controller configuration, guest CA, and installation key. It contained no VM disks. The restored listener served HTTPS with the same trusted browser certificate. |
+| Refused restores | The CLI rejected the wrong password, truncated archive, incompatible release, mismatched key, unowned Dex schema, and non-empty application schema. No replacement directory was published. The non-empty target's original row survived. |
+| Protected restore | The CLI validated the two owned schemas and restored to an empty replacement on the same Mac. A fresh administrator session was restricted to recovery review. Chrome verified the copied session was invalid and the normal workspace and member-creation endpoints were unavailable. |
+| Review and activation | Chrome confirmed both identities, completed provider and authorization/retention review, and explicitly activated. Fresh administrator sign-in returned to normal mode and listed the restored member. Both the copied session and the recovery session were denied. PostgreSQL recorded an active installation and an activated review. |
+
+The first activation was followed by an intermittent UTM capability lookup
+failure as normal service restarted. A fresh replacement from the same
+archive completed review, activation, and the return to normal service
+without a manual restart. The production-profile fixture had no native
+workspace. Matching a live retained workspace while exercising PostgreSQL
+recovery still requires a separate run.
+
 ## Earlier empty-inventory exercise
 
 On macOS 26.6.2 with the pinned Dex build and Chrome 157.0.8103.51, a
