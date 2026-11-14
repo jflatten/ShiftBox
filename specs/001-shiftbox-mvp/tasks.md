@@ -1484,3 +1484,16 @@ This checkpoint does not itself change the goal status.
   are tested alongside operation replay and the contract suite.
 - Controller startup composition and the workspace UI still need to mount
   and consume these endpoints.
+
+### Workspace start and stop
+
+- Management handlers check current authority and version, replay committed
+  requests, and serialize workspace actions. Start commits requested state,
+  compute reservation, and the operation together. Stop leaves accounting
+  intact at admission.
+- The power executor inspects the exact VM before applying an effect. It
+  confirms graceful stop before releasing compute and waits for fresh guest
+  contact after start. Both actions retain the disk and provider generation.
+- Contract and worker race tests cover rollback, stale versions, exhausted
+  capacity, duplicate requests, and lost provider replies. Startup wiring,
+  the remaining lifecycle actions, and live guest readiness are still open.

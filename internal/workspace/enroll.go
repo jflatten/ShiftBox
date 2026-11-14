@@ -83,7 +83,7 @@ func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step
 	if err != nil {
 		return "", err
 	}
-	if err := verifyEnrollmentVM(req, started); err != nil {
+	if err := verifyWorkspaceVM(req, started); err != nil {
 		return "", err
 	}
 	if started.Power != provider.Running {
@@ -107,10 +107,10 @@ func (e *LaunchExecutor) inspectEnrollment(ctx context.Context, op operation.Ope
 	if err != nil {
 		return req, got, err
 	}
-	return req, got, verifyEnrollmentVM(req, got)
+	return req, got, verifyWorkspaceVM(req, got)
 }
 
-func verifyEnrollmentVM(req provider.CreateRequest, got provider.Inventory) error {
+func verifyWorkspaceVM(req provider.CreateRequest, got provider.Inventory) error {
 	if got.Ref != req.Ref || got.InstanceID != req.Ref.InstanceID {
 		return provider.ErrOwnershipMismatch
 	}
