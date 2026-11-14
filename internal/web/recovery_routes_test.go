@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -38,7 +39,8 @@ func TestRecoveryRoutesRequireRecoverySession(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
-		VALUES($1,'admin@example.test','administrator','active','local','setup','now','now',1)`, actor); err != nil {
+		VALUES($1,'admin@example.test','administrator','active','local','setup','now','now',1),
+		('pending-member','pending@example.test','member','pending','external','setup','now','now',1)`, actor); err != nil {
 		t.Fatal(err)
 	}
 	op, err := j.Create(ctx, operation.Request{Actor: actor, Key: uuid.NewString(), Type: "restore", Generation: 1,
@@ -66,7 +68,7 @@ func TestRecoveryRoutesRequireRecoverySession(t *testing.T) {
 		handler.Lookup = lookup
 		mux.Handle(handler.Route.Method+" /api/v1"+handler.Route.Path, handler)
 	}
-	request := func(method, path, body, version string, want int) {
+	request := func(method, path, body, version string, want int) []byte {
 		t.Helper()
 		r := httptest.NewRequest(method, "https://management.test/api/v1/recovery/"+id+path, strings.NewReader(body))
 		r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
@@ -80,12 +82,27 @@ func TestRecoveryRoutesRequireRecoverySession(t *testing.T) {
 		if w.Code != want {
 			t.Fatalf("%s recovery = %d %s; want %d", method, w.Code, w.Body, want)
 		}
+		return w.Body.Bytes()
 	}
 	request("GET", "", "", "", 403)
 	mode = "recovery_review"
-	request("GET", "", "", "", 200)
+	var view struct {
+		Sections struct {
+			Identities []struct {
+				PrimaryEmail, Role, MembershipState string
+			}
+		}
+	}
+	if err := json.Unmarshal(request("GET", "", "", "", 200), &view); err != nil {
+		t.Fatal(err)
+	}
+	identities := view.Sections.Identities
+	if len(identities) != 2 || identities[0].PrimaryEmail != "admin@example.test" ||
+		identities[1].PrimaryEmail != "pending@example.test" || identities[1].Role != "member" || identities[1].MembershipState != "pending" {
+		t.Fatal("authenticated recovery review must show both restored identities and their current membership")
+	}
 	request("POST", "/activate", "", "", 403)
-	request("PATCH", "", `{"section":"identities","decisions":{"userIds":["`+actor+`"]}}`, `"1"`, 200)
+	request("PATCH", "", `{"section":"identities","decisions":{"userIds":["`+actor+`","pending-member"]}}`, `"1"`, 200)
 	request("PATCH", "", `{"section":"provider","decisions":{}}`, `"2"`, 200)
 	request("PATCH", "", `{"section":"authorization_retention","decisions":{"acceptRetention":true}}`, `"3"`, 200)
 	request("POST", "/activate", "", "", 202)

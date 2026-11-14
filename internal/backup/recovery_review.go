@@ -34,6 +34,16 @@ type RecoveryReview struct {
 type RecoverySections struct {
 	UserIDs    []string            `json:"reviewedUserIds"`
 	Workspaces []RecoveryWorkspace `json:"workspaces"`
+	Identities []RecoveryIdentity  `json:"identities,omitempty"`
+}
+
+// RecoveryIdentity is the restored account information an administrator reviews.
+type RecoveryIdentity struct {
+	ID              string `json:"id"`
+	PrimaryEmail    string `json:"primaryEmail"`
+	Role            string `json:"role"`
+	MembershipState string `json:"membershipState"`
+	CredentialMode  string `json:"credentialMode"`
 }
 
 // RecoveryWorkspace summarizes the provider's observation of one retained VM.
@@ -130,6 +140,12 @@ func ReadRecoveryReview(ctx context.Context, db recoveryQueryer, id string) (Rec
 	if err := errors.Join(json.Unmarshal([]byte(users), &review.Sections.UserIDs), json.Unmarshal([]byte(workspaces), &review.Sections.Workspaces)); err != nil {
 		return RecoveryReview{}, err
 	}
+	if review.State == "identity_review" {
+		review.Sections.Identities, err = recoveryIdentities(ctx, db)
+		if err != nil {
+			return RecoveryReview{}, err
+		}
+	}
 	return review, nil
 }
 
@@ -161,6 +177,7 @@ func UpdateRecoveryReview(ctx context.Context, tx *sql.Tx, id, actor string, dec
 			return RecoveryReview{}, ErrRecoveryReview
 		}
 		review.Sections.UserIDs = users
+		review.Sections.Identities = nil
 		review.State = "provider_reconcile"
 	case "provider":
 		if review.State != "provider_reconcile" && review.State != "blocked" && review.State != "ready" {
@@ -239,6 +256,23 @@ func recoveryUsers(ctx context.Context, db recoveryQueryer) ([]string, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+func recoveryIdentities(ctx context.Context, db recoveryQueryer) ([]RecoveryIdentity, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id,primary_email,role,membership_state,credential_mode FROM users ORDER BY primary_email,id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var identities []RecoveryIdentity
+	for rows.Next() {
+		var identity RecoveryIdentity
+		if err := rows.Scan(&identity.ID, &identity.PrimaryEmail, &identity.Role, &identity.MembershipState, &identity.CredentialMode); err != nil {
+			return nil, err
+		}
+		identities = append(identities, identity)
+	}
+	return identities, rows.Err()
 }
 
 type recoveryWorkspaceRef struct {
