@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -43,9 +44,12 @@ func TestGuestPollPreparesRepository(t *testing.T) {
 				}
 			},
 		},
-		run: func(context.Context, string, ...string) ([]byte, error) {
+		run: func(_ context.Context, executable string, _ ...string) ([]byte, error) {
 			if _, err := os.Stat(repositoryReceipt(project)); err != nil {
 				t.Fatalf("Dev Container setup started before repository receipt was committed: %v", err)
+			}
+			if executable == "/usr/bin/docker" {
+				return []byte(strconv.Itoa(os.Getuid()) + " " + strconv.Itoa(os.Getgid())), nil
 			}
 			return []byte(`{"outcome":"success","containerId":"` + strings.Repeat("1", 64) + `","mergedConfiguration":{}}`), nil
 		},

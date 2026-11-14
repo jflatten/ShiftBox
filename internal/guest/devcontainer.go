@@ -24,12 +24,13 @@ const (
 var dockerContainerID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type devContainer struct {
-	workspace   string
-	config      string
-	repository  *repositoryPreparation
-	credentials bool
-	ide         bool
-	run         func(context.Context, string, ...string) ([]byte, error)
+	workspace       string
+	config          string
+	repository      *repositoryPreparation
+	credentials     bool
+	ide             bool
+	run             func(context.Context, string, ...string) ([]byte, error)
+	setProjectOwner func(context.Context, string, int, int) error
 }
 
 // containerConnection records successful execution through the declared waitFor
@@ -43,15 +44,19 @@ type devContainerResult struct {
 	Outcome string `json:"outcome"`
 	ID      string `json:"containerId"`
 	Merged  *struct {
-		WaitFor string `json:"waitFor"`
+		WaitFor    string `json:"waitFor"`
+		RemoteUser string `json:"remoteUser"`
 	} `json:"mergedConfiguration"`
 }
 
 func (d devContainer) ensure(ctx context.Context) (containerConnection, error) {
 	// Let the reference CLI read JSONC, resolve Features and image metadata,
 	// and execute lifecycle commands. The guest VM is the isolation boundary.
-	result, err := d.invoke(ctx, "up", "--skip-non-blocking-commands", "--skip-post-attach",
-		"--include-merged-configuration")
+	options := []string{"--skip-non-blocking-commands", "--skip-post-attach", "--include-merged-configuration"}
+	if d.repository != nil {
+		options = append(options, "--skip-post-create")
+	}
+	result, err := d.invoke(ctx, "up", options...)
 	if err != nil {
 		return containerConnection{}, err
 	}
@@ -66,6 +71,14 @@ func (d devContainer) ensure(ctx context.Context) (containerConnection, error) {
 		return containerConnection{}, errors.New("invalid Dev Container waitFor stage")
 	}
 	connection := containerConnection{ID: result.ID, WaitFor: waitFor}
+	if d.repository != nil {
+		if err := d.prepareProjectOwner(ctx, connection.ID, result.Merged.RemoteUser); err != nil {
+			return containerConnection{}, err
+		}
+		if _, err := d.invoke(ctx, "run-user-commands", "--container-id", connection.ID, "--skip-non-blocking-commands", "--skip-post-attach"); err != nil {
+			return containerConnection{}, err
+		}
+	}
 	if d.ide {
 		if err := d.startIDE(ctx, connection.ID); err != nil {
 			return containerConnection{}, err

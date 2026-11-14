@@ -2428,3 +2428,13 @@ This checkpoint does not itself change the goal status.
   is `b6c2f15712a9b33c6fadd00ed6a8a339ae29e390f93373029675d9217d977818`.
 - T052 still needs the full UTM workspace
   journey, project and home retention on rebuild, and repair entry and exit.
+
+### Writable project checkout
+
+- T052 now resolves the selected developer's UID and GID in the project
+  container and assigns checkout ownership before the remote lifecycle
+  hooks run. The ownership receipt stays in private guest state so a
+  restart with the same identity preserves file ownership changes.
+- Tests cover ordering, ownership failure, retry, and symlink handling.
+  The pinned Dev Container CLI ran the required write hook as `vscode` on
+  a disposable Linux volume and ran the later hook in a separate pass.
