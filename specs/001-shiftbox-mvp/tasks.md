@@ -744,3 +744,18 @@ This checkpoint does not itself change the goal status.
 - 26 tasks are complete. Remaining foundation tasks are T013, T023, and T025.
   Initial schema changes still do not upgrade the existing fixture's durable
   tables; PostgreSQL tests exercise temporary copies of current shipped SQL.
+
+### Field-dependent administrative action selection
+
+- User explicitly approved `user.disable` for transitions back to `pending`;
+  this removes active access. Recorded here without changing architecture docs.
+- Added secret scope selection bound to the loaded resource type and ID, notice
+  read/dismiss selection, template edit/archive selection, and membership
+  approve/disable/change-role selection. Unknown and empty changes fail closed.
+- Combined membership changes use the membership-state action after validating
+  both fields; all membership actions require administrator authority in the MVP
+  policy and cannot be delegated by resource grants. Archive plus rename uses
+  template.archive; both template actions retain the loaded owner context.
+- Failure-focused selection tests and web/auth/contract race suites pass;
+  formatting and vet pass. Concrete endpoint loading/decoding and operation-view
+  contextual action selection remain pending. No additional task is marked done.
