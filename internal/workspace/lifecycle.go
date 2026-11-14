@@ -87,8 +87,9 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 	}
 	var active bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM operations WHERE workspace_id=$1 AND generation=$2 AND status IN ('pending','running','waiting'))`,
-		intent.WorkspaceID, generation).Scan(&active); err != nil {
+		SELECT 1 FROM operations WHERE workspace_id=w.id AND generation=w.generation AND status IN ('pending','running','waiting'))
+		OR EXISTS (`+dueMaintenanceTarget+` AND c.deadline<=$2) FROM workspaces w WHERE w.id=$1`,
+		intent.WorkspaceID, now.UTC().Format(maintenanceTime)).Scan(&active); err != nil {
 		return operation.Operation{}, err
 	}
 	if active {

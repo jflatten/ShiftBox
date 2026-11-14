@@ -23,6 +23,12 @@ const maintenanceTime = "2006-01-02T15:04:05.000000000Z"
 const maintenanceCampaignAction = "maintenance.manage"
 const maintenanceTargetAction = "maintenance.update_guest"
 
+// Conflicting work is fenced by the durable deadline even before a worker
+// claims the target. A terminal target can be repaired or explicitly retired.
+const dueMaintenanceTarget = `SELECT 1 FROM maintenance_targets t JOIN maintenance_campaigns c ON c.operation_id=t.campaign_id
+	WHERE t.workspace_id=w.id AND t.generation=w.generation AND c.installation_id=w.installation_id
+	AND c.state IN ('scheduled','active') AND t.state NOT IN ('completed','failed')`
+
 // MaintenanceCampaign is the public campaign status and journal reference.
 type MaintenanceCampaign struct {
 	ID          string    `json:"id"`

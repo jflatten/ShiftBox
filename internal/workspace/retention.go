@@ -58,7 +58,8 @@ const retentionProjection = `SELECT w.installation_id,w.id,w.generation,w.provid
 	AND w.desired_state IN ('stopped','running') AND w.observed_state IN ('stopped','running','unreachable')
 	AND w.provider_instance_id IS NOT NULL
 	AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
-		AND o.status IN ('pending','running','waiting'))`
+		AND o.status IN ('pending','running','waiting'))
+	AND NOT EXISTS (` + dueMaintenanceTarget + ` AND c.deadline<=$3)`
 
 // RetentionCandidates inspects overdue workspaces once grace has elapsed and
 // returns only those that still match durable authority and provider identity.
@@ -96,7 +97,7 @@ func (s *Store) RetentionCandidates(ctx context.Context, installation string, no
 }
 
 func (s *Store) dueRetention(ctx context.Context, installation string, now time.Time, maximum int64) ([]RetentionCandidate, error) {
-	rows, err := s.db.QueryContext(ctx, retentionProjection+" ORDER BY w.id", installation, maximum)
+	rows, err := s.db.QueryContext(ctx, retentionProjection+" ORDER BY w.id", installation, maximum, now.UTC().Format(maintenanceTime))
 	if err != nil {
 		return nil, err
 	}
@@ -120,8 +121,8 @@ func recheckRetention(ctx context.Context, db interface {
 	if !policy.ready(now) {
 		return RetentionCandidate{}, sql.ErrNoRows
 	}
-	current, err := scanRetention(db.QueryRowContext(ctx, retentionProjection+" AND w.id=$3",
-		candidate.Ref.InstallationID, *policy.MaximumSeconds, candidate.Ref.WorkspaceID))
+	current, err := scanRetention(db.QueryRowContext(ctx, retentionProjection+" AND w.id=$4",
+		candidate.Ref.InstallationID, *policy.MaximumSeconds, now.UTC().Format(maintenanceTime), candidate.Ref.WorkspaceID))
 	if err != nil {
 		return RetentionCandidate{}, err
 	}

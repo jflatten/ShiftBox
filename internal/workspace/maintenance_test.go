@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
+	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/release"
 )
 
@@ -271,6 +272,71 @@ func TestScheduleMaintenanceSkipsCommittedDeletion(t *testing.T) {
 	}
 	if captured {
 		t.Error("ScheduleMaintenance captured a workspace with a committed retention deletion, want exclusion")
+	}
+}
+
+// TestMaintenanceDeadlineFencesNewPowerWork verifies admission at the exact
+// deadline, including when the campaign worker has yet to run.
+func TestMaintenanceDeadlineFencesNewPowerWork(t *testing.T) {
+	db, journal, now := maintenanceFixture(t, "retained")
+	ctx := t.Context()
+	maintenanceExec(t, db, "UPDATE workspaces SET observed_state='running' WHERE id='retained'")
+	deadline := now.Add(time.Hour)
+	campaign, err := scheduleMaintenanceFixture(t, db, journal, "reservation-release", deadline, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollback := errors.New("rollback accepted fixture request")
+	admit := func(at time.Time, action string) error {
+		return database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			_, err := AdmitPower(ctx, tx, journal, PowerIntent{WorkspaceID: "retained", ActorID: "reservation-owner",
+				RequestKey: "fixture-power-request", Action: action, Version: 1}, at)
+			if err != nil {
+				return err
+			}
+			return rollback
+		})
+	}
+	if err := admit(deadline.Add(-time.Nanosecond), "stop"); !errors.Is(err, rollback) {
+		t.Errorf("stop before the deadline = %v, want admission", err)
+	}
+	if err := admit(deadline, "stop"); !errors.Is(err, ErrOperationInProgress) {
+		t.Errorf("stop at the deadline = %v, want conflict", err)
+	}
+	maintenanceExec(t, db, "UPDATE maintenance_campaigns SET state='blocked' WHERE operation_id=$1", campaign.ID)
+	maintenanceExec(t, db, "UPDATE maintenance_targets SET state='failed' WHERE campaign_id=$1", campaign.ID)
+	if err := admit(deadline, "delete"); !errors.Is(err, rollback) {
+		t.Errorf("explicit retirement after failed maintenance = %v, want admission", err)
+	}
+}
+
+// TestMaintenanceDeadlineFencesRetention checks that an earlier provider
+// observation cannot commit retention deletion after maintenance becomes due.
+func TestMaintenanceDeadlineFencesRetention(t *testing.T) {
+	db, journal, now := maintenanceFixture(t, "retained")
+	ctx := t.Context()
+	maintenanceExec(t, db, `UPDATE workspaces SET desired_state='stopped',observed_state='stopped',
+		retention_seconds=60,network_policy_override_json='{"mode":"shared"}' WHERE id='retained'`)
+	deadline := now.Add(time.Hour)
+	if _, err := scheduleMaintenanceFixture(t, db, journal, "reservation-release", deadline, now); err != nil {
+		t.Fatal(err)
+	}
+	limit := int64(60)
+	policy := RetentionEligibility{MaximumSeconds: &limit, ReconciledAt: now.Add(-time.Hour), OutageGrace: time.Minute}
+	inspect := func(_ context.Context, ref provider.WorkspaceRef) (provider.Inventory, error) {
+		return provider.Inventory{Ref: ref, InstanceID: ref.InstanceID, ObservedAt: now, Power: provider.Stopped,
+			ArtifactID: "reservation-artifact", Release: "reservation-release", NetworkMode: "shared"}, nil
+	}
+	store := NewStore(db)
+	candidates, err := store.RetentionCandidates(ctx, testInstallation, now, policy, inspect)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("retention before deadline = %v (%v), want one candidate", candidates, err)
+	}
+	if _, err := store.CommitRetentionDeletion(ctx, journal, candidates[0], deadline, policy); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("retention commitment at deadline = %v, want ineligible", err)
+	}
+	if candidates, err := store.RetentionCandidates(ctx, testInstallation, deadline, policy, inspect); err != nil || len(candidates) != 0 {
+		t.Errorf("retention at deadline = %v (%v), want no candidates", candidates, err)
 	}
 }
 

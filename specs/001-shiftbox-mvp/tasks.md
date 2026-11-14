@@ -1692,6 +1692,9 @@ This checkpoint does not itself change the goal status.
   records the latest desired state and reuses the same operation after a
   restart. An already targeted workspace with deletion underway waits for
   verified removal without creating an update operation.
+  The persisted deadline fences new lifecycle actions and retention deletion
+  before the worker has claimed the target. Previously committed work still
+  reconciles, and terminal update failures allow explicit retirement.
   The campaign worker waits until the deadline and aggregates the target
   operation outcomes. A failed target blocks campaign completion. The
   controller starts both workers beside the guest listeners and coordinates
