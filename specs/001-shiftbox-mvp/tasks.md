@@ -1497,3 +1497,16 @@ This checkpoint does not itself change the goal status.
 - Contract and worker race tests cover rollback, stale versions, exhausted
   capacity, duplicate requests, and lost provider replies. Startup wiring,
   the remaining lifecycle actions, and live guest readiness are still open.
+
+### Active local sign-in
+
+- Added the management HTTPS login and callback handler. It reuses the
+  bootstrap flow's PKCE, state and nonce checks, then consults the active
+  database using the verified Dex user ID. The active flow has its own
+  host-only cookie and commits each session before issuing it.
+- The pinned native Dex test verifies normal and password-change sessions,
+  denial for inactive installations and ineligible users, and refusal on
+  a foreign host or unbound callback. Setup and authentication race tests
+  also passed.
+- The controller command still needs production Dex and management router
+  composition. Active password changes and upstream identity stay open.

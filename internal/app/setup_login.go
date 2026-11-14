@@ -26,45 +26,67 @@ type SetupLogin struct {
 
 const setupLoginCookie = "__Secure-shiftbox-setup-login"
 
-func setupLoginValue(label, verifier string) string {
+type loginFlow struct {
+	login      *SetupLogin
+	cookie     string
+	cookiePath string
+	redirect   string
+	deny       http.HandlerFunc
+	issue      func(context.Context, identity.VerifiedIdentity) (auth.Session, string, error)
+}
+
+func loginBinding(label, verifier string) string {
 	sum := sha256.Sum256([]byte(label + ":" + verifier))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-func (s SetupHTTP) startLogin(w http.ResponseWriter, r *http.Request) {
+func (f loginFlow) start(w http.ResponseWriter, r *http.Request) {
 	verifier := oauth2.GenerateVerifier()
-	http.SetCookie(w, &http.Cookie{Name: setupLoginCookie, Value: verifier, Path: "/auth/callback",
+	http.SetCookie(w, &http.Cookie{Name: f.cookie, Value: verifier, Path: f.cookiePath,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 300})
-	location := s.Login.Config.AuthCodeURL(setupLoginValue("state", verifier),
-		oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", setupLoginValue("nonce", verifier)))
+	location := f.login.Config.AuthCodeURL(loginBinding("state", verifier),
+		oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", loginBinding("nonce", verifier)))
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, location, http.StatusSeeOther)
 }
 
-func (s SetupHTTP) finishLogin(w http.ResponseWriter, r *http.Request) {
-	cookies := r.CookiesNamed(setupLoginCookie)
-	http.SetCookie(w, &http.Cookie{Name: setupLoginCookie, Path: "/auth/callback", HttpOnly: true,
+func (f loginFlow) finish(w http.ResponseWriter, r *http.Request) {
+	cookies := r.CookiesNamed(f.cookie)
+	http.SetCookie(w, &http.Cookie{Name: f.cookie, Path: f.cookiePath, HttpOnly: true,
 		Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	query := r.URL.Query()
 	code, state := query["code"], query["state"]
 	if len(cookies) != 1 || len(cookies[0].Value) != 43 || len(code) != 1 || code[0] == "" ||
-		len(state) != 1 || subtle.ConstantTimeCompare([]byte(state[0]), []byte(setupLoginValue("state", cookies[0].Value))) != 1 {
-		setupLoginDenied(w, r)
+		len(state) != 1 || subtle.ConstantTimeCompare([]byte(state[0]), []byte(loginBinding("state", cookies[0].Value))) != 1 {
+		f.deny(w, r)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	verified, err := s.Login.Provider.ExchangeLocal(ctx, s.Login.Config, code[0], cookies[0].Value,
-		setupLoginValue("nonce", cookies[0].Value), s.Login.Issuer)
+	verified, err := f.login.Provider.ExchangeLocal(ctx, f.login.Config, code[0], cookies[0].Value,
+		loginBinding("nonce", cookies[0].Value), f.login.Issuer)
 	if err != nil {
-		setupLoginDenied(w, r)
+		f.deny(w, r)
 		return
 	}
+	session, token, err := f.issue(ctx, verified)
+	if err != nil {
+		f.deny(w, r)
+		return
+	}
+	if err := web.SetSessionCookie(w, token, session.ExpiresAt); err != nil {
+		web.WriteProblem(w, web.RequestID(r.Context()), err)
+		return
+	}
+	http.Redirect(w, r, f.redirect, http.StatusSeeOther)
+}
+
+func (s SetupHTTP) issueBootstrapSession(ctx context.Context, verified identity.VerifiedIdentity) (auth.Session, string, error) {
 	var session auth.Session
 	var token string
-	err = database.Transaction(ctx, s.DB, func(tx *sql.Tx) error {
+	err := database.Transaction(ctx, s.DB, func(tx *sql.Tx) error {
 		var id string
 		err := tx.QueryRowContext(ctx, `SELECT u.id FROM bootstrap_administrator b
 			JOIN users u ON u.id=b.user_id JOIN installations i ON i.id=b.installation_id
@@ -80,15 +102,7 @@ func (s SetupHTTP) finishLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		return auth.NewStore(s.DB).SaveSession(ctx, tx, session)
 	})
-	if err != nil {
-		setupLoginDenied(w, r)
-		return
-	}
-	if err := web.SetSessionCookie(w, token, session.ExpiresAt); err != nil {
-		web.WriteProblem(w, web.RequestID(r.Context()), err)
-		return
-	}
-	http.Redirect(w, r, "/api/v1/session", http.StatusSeeOther)
+	return session, token, err
 }
 
 func setupLoginDenied(w http.ResponseWriter, r *http.Request) {

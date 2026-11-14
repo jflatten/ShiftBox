@@ -41,8 +41,10 @@ func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 	mux.HandleFunc("GET /api/v1/setup/status", setup.status)
 	mux.HandleFunc("POST /api/v1/setup/administrator", setup.administrator)
 	if setup.Login != nil {
-		mux.HandleFunc("GET /auth/login", setup.startLogin)
-		mux.HandleFunc("GET /auth/callback", setup.finishLogin)
+		flow := loginFlow{login: setup.Login, cookie: setupLoginCookie, cookiePath: "/auth/callback",
+			redirect: "/api/v1/session", deny: setupLoginDenied, issue: setup.issueBootstrapSession}
+		mux.HandleFunc("GET /auth/login", flow.start)
+		mux.HandleFunc("GET /auth/callback", flow.finish)
 		sessions := setup.sessionHandler()
 		mux.Handle("/api/v1/session", sessions)
 		mux.Handle("PUT /api/v1/setup/data-profile", setup.profileHandler())
