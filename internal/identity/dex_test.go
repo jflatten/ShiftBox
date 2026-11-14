@@ -261,6 +261,7 @@ func TestPinnedDexProcess(t *testing.T) {
 	if err != nil || !verified.Verified {
 		t.Fatal("native Dex retry did not preserve changed password")
 	}
+	verifyNativeBootstrap(t, adminCtx, apiClient)
 	cancel()
 	select {
 	case err := <-finished:

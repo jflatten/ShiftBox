@@ -111,10 +111,41 @@ func checkAdministratorIntent(t *testing.T, profile string) {
 	}); !errors.Is(err, app.ErrSetupConflict) {
 		t.Fatalf("stale readiness = %v, want conflict", err)
 	}
-	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
-		return app.MarkAdministratorReady(ctx, tx, installation, first.UserID, first.PasswordHash)
-	}); err != nil {
+	// Dex is called only after intent commits and while no DB transaction is
+	// held. With a one-connection pool this read would time out otherwise.
+	calls := 0
+	apiFailure := errors.New("Dex unavailable")
+	admin := passwordEnsurer(func(callCtx context.Context, email, userID string, hash []byte) error {
+		calls++
+		if email != first.Email || userID != first.UserID || string(hash) != string(first.PasswordHash) {
+			t.Error("reconciliation changed persisted credential intent")
+		}
+		checkCtx, cancel := context.WithTimeout(callCtx, time.Second)
+		defer cancel()
+		var stored string
+		if err := db.QueryRowContext(checkCtx, `SELECT user_id FROM bootstrap_administrator`).Scan(&stored); err != nil {
+			return err
+		}
+		if stored != first.UserID {
+			t.Error("Dex called before stable intent was committed")
+		}
+		return apiFailure
+	})
+	if err := app.ReconcileAdministrator(ctx, db, installation, admin); !errors.Is(err, apiFailure) {
+		t.Fatalf("Dex failure = %v, want fixture failure", err)
+	}
+	if password, err := app.ClaimTemporaryPassword(ctx, db, installation, cipher, time.Now()); err == nil || password != "" {
+		t.Fatal("failed Dex call enabled delivery")
+	}
+	apiFailure = nil
+	if err := app.ReconcileAdministrator(ctx, db, installation, admin); err != nil {
 		t.Fatal(err)
+	}
+	if err := app.ReconcileAdministrator(ctx, db, installation, admin); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("Dex calls = %d, want failed attempt and successful retry only", calls)
 	}
 	wrongCipher, _ := cryptostore.New([]byte(strings.Repeat("x", 32)))
 	if password, err := app.ClaimTemporaryPassword(ctx, db, installation, wrongCipher, time.Now()); err == nil || password != "" {
@@ -161,4 +192,10 @@ func checkAdministratorIntent(t *testing.T, profile string) {
 	if err := database.Transaction(ctx, db, prepare); !errors.Is(err, app.ErrSetupConflict) {
 		t.Errorf("prepare after activation = %v, want conflict", err)
 	}
+}
+
+type passwordEnsurer func(context.Context, string, string, []byte) error
+
+func (f passwordEnsurer) Ensure(ctx context.Context, email, userID string, hash []byte) error {
+	return f(ctx, email, userID, hash)
 }

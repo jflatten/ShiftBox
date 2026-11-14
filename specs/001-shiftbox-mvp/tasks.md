@@ -862,3 +862,18 @@ This checkpoint does not itself change the goal status.
 - App/contract race suites pass with PostgreSQL enabled; formatting/vet pass.
   Explicit local reset, credential reconciliation orchestration, session/password
   changes and protected HTTP/CLI delivery remain unfinished. T030/T043 stay open.
+
+### Administrator credential reconciliation
+
+- Connected committed administrator intent to idempotent Dex creation and fenced
+  readiness recording. The external API runs outside the database transaction;
+  an unavailable/ambiguous result leaves delivery blocked for a safe retry.
+- Both-profile tests read the committed intent from inside the API callback to
+  prove no database transaction remains held. Failure/retry uses identical user,
+  email and hash; already-confirmed readiness skips repeat API calls.
+- Extended native Dex validation through actual persisted setup intent,
+  reconciliation, one-time claim and VerifyPassword. The delivered random
+  credential authenticates in Dex, and a later reconciliation cannot redisplay it.
+- App race tests pass on SQLite/PostgreSQL; native Dex integration and formatting/
+  vet pass. Visible setup operations, protected HTTP/CLI composition, explicit
+  local reset, and forced-password-change transitions remain unfinished.
