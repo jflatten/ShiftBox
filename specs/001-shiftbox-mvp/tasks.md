@@ -349,3 +349,30 @@ After T109: T110 backup creation and T112 recovery gating can proceed in paralle
 - Test tasks always precede implementation and require explanatory comments in every test.
 - A task is complete only when its named tests pass and its file paths match the approved structure.
 - Commit after each task or small coherent group; never hide unrelated scope inside a checklist item.
+
+## Execution checkpoint — paused for Codex restart
+
+User requested a pause to restart Codex after changing the global context window
+and automatic compaction settings. Resume this same goal after the restart.
+
+- Completed: 18 tasks marked above. Implementation commits: `cfd09bf`, `c6d0800`,
+  and `adc8fd0`. No user-story implementation has begun.
+- Foundation remains incomplete. Continue T013–T016 and the remaining shared
+  implementation, including T018 constraint verification. UI skills and Mantine
+  MCP documentation were consulted, but no UI component implementation has begun.
+- Latest checks: operation journal/reconciler tests pass with the race detector;
+  formatting and vet pass. Earlier full Go unit/race checks and real TLS plus
+  SQLite/PostgreSQL contracts passed. UI TypeScript and test configuration checks
+  pass; application build/browser journeys are not yet implemented.
+- Local tools are in ignored `.cache/toolchains/go/bin` and
+  `.cache/toolchains/node-v26.13.0-darwin-arm64/bin`. Set `GOPATH` to
+  `$PWD/.cache/gopath` and `GOCACHE` to `$PWD/.cache/go-build` for Go commands.
+- User authorized installing local validation requirements. PostgreSQL runs in
+  container `shiftbox-mvp-postgres`, bound to `127.0.0.1:55432`, with verified TLS
+  and an owned `shiftbox_test` schema. Its test connection URI is in ignored
+  `.cache/test-postgres/uri`; read it into `SHIFTBOX_TEST_POSTGRES_URI` without
+  printing it. TLS fixture validity is seven days. UTM has not been installed.
+- npm reports 19 development-tool dependency audit findings (none in production
+  dependencies); review before release without blindly downgrading Jest.
+- Existing user changes to `spec.md` and untracked plan/research/data-model/
+  quickstart/contracts were left untouched. Architecture documents remain read-only.
