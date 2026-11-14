@@ -125,7 +125,7 @@ func (e *Enrollment) Enroll(ctx context.Context, token string, csr []byte, now t
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE guest_registrations SET state='active',public_key_fingerprint=$3,
-			certificate_serial=$4,certificate_not_after=$5 WHERE workspace_id=$1 AND generation=$2`,
+			certificate_serial=$4,certificate_not_after=$5,last_authenticated_at=NULL WHERE workspace_id=$1 AND generation=$2`,
 			workspace, generation, proof, leaf.SerialNumber.Text(16), leaf.NotAfter.UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}

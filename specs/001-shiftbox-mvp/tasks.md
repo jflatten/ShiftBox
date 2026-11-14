@@ -1347,3 +1347,15 @@ This checkpoint does not itself change the goal status.
 - The workspace enrollment worker still needs to call these operations and
   confirm guest contact. A crash while building an ISO before the tracking
   write can leave an untracked file with an expiring grant.
+
+### Authenticated guest contact
+
+- The internal poll route derives workspace identity from the verified TLS
+  leaf and rechecks the current registration, serial, key, generation and
+  owner before recording contact. Unsupported versions and undispatched
+  operation reports are refused.
+- Recovery media now survives issuance and is eligible for cleanup after
+  the current key proves possession over mTLS. A live TLS test covers
+  contact, forged workspace input, revocation and media cleanup.
+- Guest operation dispatch, poll replay and bounded execution evidence
+  still need implementation.

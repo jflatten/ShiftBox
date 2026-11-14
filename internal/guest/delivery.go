@@ -131,9 +131,12 @@ func (e *Enrollment) failDelivery(ctx context.Context, id, image string, cause e
 func (e *Enrollment) CleanupDelivery(ctx context.Context, operationID string, ref provider.WorkspaceRef, root string) error {
 	rows, err := e.db.QueryContext(ctx, `SELECT g.id,g.media_directory FROM enrollment_grants g
 		JOIN workspaces w ON w.id=g.workspace_id
+		JOIN guest_registrations r ON r.workspace_id=g.workspace_id AND r.generation=g.generation
 		WHERE g.operation_id=$1 AND g.workspace_id=$2 AND g.generation=$3 AND g.provider_instance_id=$4
 		AND w.installation_id=$5 AND w.ownership_marker=$6 AND w.generation=$3 AND w.provider_instance_id=$4
-		AND g.state IN ('consumed','invalidated','expired') AND g.media_directory IS NOT NULL`,
+		AND (g.state IN ('invalidated','expired') OR (g.state='consumed' AND r.state='active'
+		  AND r.public_key_fingerprint=g.key_proof AND r.last_authenticated_at IS NOT NULL))
+		AND g.media_directory IS NOT NULL`,
 		operationID, ref.WorkspaceID, ref.Generation, ref.InstanceID, ref.InstallationID, ref.OwnershipMarker)
 	if err != nil {
 		return err

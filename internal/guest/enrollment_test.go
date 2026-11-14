@@ -159,7 +159,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	if err := db.QueryRow("SELECT id FROM enrollment_grants").Scan(&digest); err != nil || len(digest) != 64 || digest == token {
 		t.Fatalf("stored grant ID length = %d, %v, want digest", len(digest), err)
 	}
-	csr := fixtureCSR(t)
+	csr, clientKey := fixtureCSRWithKey(t)
 	first := enrollOverTLS(t, ca, leafFixture(t, issuerKey, issuer, false), enrollment, token, csr, now)
 	leaf, err := x509.ParseCertificate(first)
 	if err != nil {
@@ -173,6 +173,44 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	replay, err := enrollment.Enroll(ctx, token, csr, now.Add(time.Minute))
 	if err != nil || !bytes.Equal(replay, first) {
 		t.Errorf("same-key retry = %v, want exact issued certificate", err)
+	}
+	if retainedImage != "" {
+		if err := enrollment.CleanupDelivery(ctx, "op", ref, mediaRoot); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(retainedImage); err != nil {
+			t.Fatalf("cleanup before authenticated contact removed the image: %v", err)
+		}
+	}
+	server := httptest.NewUnstartedServer(web.GuestPollHandler(
+		web.GuestCompatibility{Protocol: "1", CurrentRelease: "test"}, enrollment.Authenticate, func() time.Time { return now }))
+	server.TLS = guest.ServerTLS(leafFixture(t, issuerKey, issuer, false), ca)
+	server.StartTLS()
+	defer server.Close()
+	transport := &http.Transport{TLSClientConfig: guest.ClientTLS(
+		tls.Certificate{Certificate: [][]byte{first}, PrivateKey: clientKey}, ca, "controller.test")}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	poll := func(payload string) int {
+		t.Helper()
+		response, err := client.Post(server.URL+"/internal/v1/guest/poll", "application/json", bytes.NewBufferString(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		return response.StatusCode
+	}
+	const hello = `{"protocolVersion":"1","guestRelease":"test"}`
+	if code := poll(hello); code != 200 {
+		t.Fatalf("registered poll = %d, want 200", code)
+	}
+	if code := poll(`{"protocolVersion":"1","guestRelease":"test","workspaceId":"foreign"}`); code != 400 {
+		t.Errorf("poll with forged workspace = %d, want 400", code)
+	}
+	var authenticated string
+	if err := db.QueryRow("SELECT last_authenticated_at FROM guest_registrations WHERE workspace_id='work'").Scan(&authenticated); err != nil ||
+		authenticated != now.Format("2006-01-02T15:04:05.000000000Z") {
+		t.Errorf("authenticated contact = %q, %v, want controller time", authenticated, err)
 	}
 	if retainedImage != "" {
 		reopened := guest.NewEnrollment(db, ca)
@@ -193,6 +231,9 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	}
 	if _, err := db.Exec("UPDATE guest_registrations SET state='revoked' WHERE workspace_id='work'"); err != nil {
 		t.Fatal(err)
+	}
+	if code := poll(hello); code != 403 {
+		t.Errorf("poll after revocation = %d, want 403", code)
 	}
 	if _, err := enrollment.Enroll(ctx, token, csr, now); !errors.Is(err, guest.ErrEnrollmentDenied) {
 		t.Errorf("revoked registration replay = %v, want denial", err)
@@ -241,6 +282,12 @@ func enrollOverTLS(t *testing.T, ca *guest.Authority, serverLeaf tls.Certificate
 
 func fixtureCSR(t *testing.T) []byte {
 	t.Helper()
+	csr, _ := fixtureCSRWithKey(t)
+	return csr
+}
+
+func fixtureCSRWithKey(t *testing.T) ([]byte, *ecdsa.PrivateKey) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -251,5 +298,5 @@ func fixtureCSR(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return csr
+	return csr, key
 }
