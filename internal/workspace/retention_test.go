@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/provider/fake"
 )
 
 // TestRetentionCandidates verifies that an outage does not reset inactivity,
@@ -118,4 +119,104 @@ func TestRetentionCandidates(t *testing.T) {
 		desired != "deleted" || observed != "stopped" || committed != now.Format(time.RFC3339Nano) || audits != 1 {
 		t.Fatalf("commit state = %q/%q, time %q, %d audits (%v), want deleted/stopped, commit time and one audit", desired, observed, committed, audits, err)
 	}
+}
+
+// TestRetentionWorkerPreservesDiskUntilVerified exercises the grace timeout,
+// provider-enforced stop, partial removal, and a lost final deletion reply.
+func TestRetentionWorkerPreservesDiskUntilVerified(t *testing.T) {
+	ctx := t.Context()
+	db := openWorkspaceDatabase(t, "sqlite")
+	seedReservationWorkspaces(t, db)
+	now := time.Now().UTC()
+	clock := func() time.Time { return now }
+	const id = "retention-worker"
+	machines := &retentionTestProvider{Provider: fake.New()}
+	machine, err := machines.Create(ctx, provider.CreateRequest{
+		Ref:         provider.WorkspaceRef{InstallationID: testInstallation, WorkspaceID: id, Generation: 1, OwnershipMarker: "owned"},
+		OperationID: "fixture-create", ArtifactID: "reservation-artifact", Release: "reservation-release", NetworkMode: "nat",
+		Resources: provider.Resources{CPU: 2, MemoryBytes: 1024 << 20, DiskBytes: 40 << 20},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := machines.Start(ctx, provider.StartRequest{Ref: machine.Ref, OperationID: "fixture-start"}); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, query := range []string{"DELETE FROM reservations WHERE workspace_id=$1", "DELETE FROM workspaces WHERE id=$1"} {
+			if _, err := db.Exec(query, id); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	exec(`INSERT INTO workspaces(id,installation_id,owner_user_id,template_id,template_revision,platform_artifact_id,repository_url,
+		devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,desired_state,observed_state,generation,
+		ownership_marker,provider_instance_id,created_at,updated_at,version,retention_seconds)
+		VALUES($1,$2,'reservation-owner','template',1,'reservation-artifact','https://github.com/example/project',
+		'devcontainer.json',2,1024,40,'{"mode":"nat"}','running','running',1,'owned',$3,$4,$4,1,600)`,
+		id, testInstallation, machine.InstanceID, now.Add(-time.Hour).Format(time.RFC3339Nano))
+	exec(`INSERT INTO reservations(workspace_id,cpu_count,memory_mib,disk_mib,cpu_memory_state,disk_state,reserved_at)
+		VALUES($1,2,1024,40,'reserved','reserved',$2)`, id, now.Add(-time.Hour).Format(time.RFC3339Nano))
+	store := NewStore(db)
+	limit := int64(3600)
+	policy := RetentionEligibility{MaximumSeconds: &limit, ReconciledAt: now.Add(-time.Hour), OutageGrace: 10 * time.Minute}
+	list, err := store.RetentionCandidates(ctx, testInstallation, now, policy, machines.Inspect)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("retention candidates = %d (%v), want one", len(list), err)
+	}
+	journal := operation.NewJournal(db, clock, uuid.NewString)
+	op, err := store.CommitRetentionDeletion(ctx, journal, list[0], now, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := NewWorker(journal, nil, NewPowerExecutor(store, machines, clock, nil))
+	run := func(want error) {
+		t.Helper()
+		if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, want) {
+			t.Fatalf("retention worker = %v, want %v", err, want)
+		}
+	}
+	run(errGuestShutdownPending)
+	now = now.Add(59 * time.Second)
+	run(errGuestShutdownPending)
+	if machines.forced != 0 {
+		t.Fatal("provider force stop ran during the graceful window")
+	}
+	now = now.Add(time.Second)
+	run(nil)
+	run(nil)
+	if machines.forced != 1 {
+		t.Fatalf("provider force stop calls = %d, want 1", machines.forced)
+	}
+	checkReservation(t, db, id, "released", "reserved")
+	machines.FailDelete()
+	run(provider.ErrPartial)
+	checkReservation(t, db, id, "released", "reserved")
+	machines.LoseReply("delete")
+	run(provider.ErrOutcomeUnknown)
+	checkReservation(t, db, id, "released", "reserved")
+	run(nil)
+	checkReservation(t, db, id, "released", "released")
+	finished, err := journal.Get(ctx, op.ID)
+	if err != nil || finished.Status != "succeeded" {
+		t.Fatalf("deletion status = %q (%v), want succeeded", finished.Status, err)
+	}
+}
+
+type retentionTestProvider struct {
+	*fake.Provider
+	forced int
+}
+
+func (p *retentionTestProvider) Stop(ctx context.Context, req provider.StopRequest) (provider.Inventory, error) {
+	if req.ForceRetentionDelete {
+		p.forced++
+	}
+	return p.Provider.Stop(ctx, req)
 }

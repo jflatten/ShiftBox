@@ -57,7 +57,7 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 	}
 	err := database.Transaction(ctx, e.db, func(tx *sql.Tx) error {
 		var err error
-		contact, err = e.authenticate(ctx, tx, leaf, now)
+		contact, err = e.authenticate(ctx, tx, leaf, now, true)
 		if err != nil {
 			return err
 		}
@@ -74,6 +74,13 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 	if err != nil {
 		return Contact{}, nil, err
 	}
+	if contact.DesiredState == "deleted" {
+		// Existing agents already understand the graceful-stop command.
+		contact.DesiredState = "stopped"
+		if dispatch != nil {
+			dispatch.Type = "stop"
+		}
+	}
 	return contact, dispatch, nil
 }
 
@@ -83,7 +90,7 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 	switch contact.DesiredState {
 	case "running":
 		dispatch.Command, step = "ensure-development-container", "configure"
-	case "stopped":
+	case "stopped", "deleted":
 		dispatch.Command, step = "shutdown-for-stop", "shutdown"
 	default:
 		return nil, nil
@@ -93,10 +100,13 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 		FROM operations o JOIN workspaces w ON w.id=o.workspace_id
 		JOIN operation_steps s ON s.operation_id=o.id AND s.step_key=$3
 		LEFT JOIN guest_dispatches g ON g.operation_id=o.id
-		WHERE w.id=$1 AND w.generation=$2 AND o.generation=$2 AND w.observed_state='running'
+		WHERE w.id=$1 AND w.generation=$2 AND o.generation=$2
+		  AND (w.observed_state='running' OR ($4='deleted' AND w.observed_state IN ('stopped','unreachable')))
 		  AND w.desired_state=$4
 		  AND (($3='configure' AND o.type='provision' AND o.originating_action='workspace.launch' AND o.requested_by=w.owner_user_id)
-		    OR (($3='shutdown' AND o.type='stop' AND o.originating_action='workspace.stop'
+		    OR ($3='shutdown' AND $4='deleted' AND o.type='delete' AND o.originating_action='workspace.retention_delete'
+		      AND w.deletion_commit_at IS NOT NULL)
+		    OR (($3='shutdown' AND $4='stopped' AND o.type='stop' AND o.originating_action='workspace.stop'
 		      OR $3='configure' AND o.type='start' AND o.originating_action='workspace.start')
 		      AND EXISTS(SELECT 1 FROM users actor WHERE actor.id=o.requested_by AND actor.membership_state='active'
 		        AND (actor.id=w.owner_user_id OR actor.role='administrator'))))
@@ -161,7 +171,7 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 	if err != nil {
 		return err
 	}
-	if (shutdown && kind != "stop") || (!shutdown && kind != "provision" && kind != "start") {
+	if (shutdown && kind != "stop" && kind != "delete") || (!shutdown && kind != "provision" && kind != "start") {
 		return ErrGuestReportConflict
 	}
 	if status == report.Status && container == report.Evidence.ContainerID && problem == report.Problem {
@@ -170,6 +180,9 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 	expectedStep, expectedDesired := "configure", "running"
 	if shutdown {
 		expectedStep, expectedDesired = "shutdown", "stopped"
+		if kind == "delete" {
+			expectedDesired = "deleted"
+		}
 	}
 	inStage := step == expectedStep ||
 		!shutdown && status == "running" && (step == "verify_ide" || step == "finish_setup")

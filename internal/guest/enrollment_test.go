@@ -589,6 +589,38 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 			t.Fatalf("restart setup completion = %d, want 200", code)
 		}
 	})
+	// A committed deletion permits only the current graceful shutdown poll.
+	t.Run("retention shutdown remains available until stop", func(t *testing.T) {
+		const deleteID = "99999999-0000-4000-8000-000000000005"
+		if _, err := db.Exec("UPDATE workspaces SET desired_state='deleted',deletion_commit_at=$1 WHERE id='work'", now.Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,version,originating_action)
+			VALUES($1,'work','delete',1,'controller','retention-fixture','waiting','shutdown','now',13,'workspace.retention_delete')`, deleteID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO operation_steps(operation_id,step_index,step_key,label,status)
+			VALUES($1,0,'shutdown','Shutdown','active')`, deleteID); err != nil {
+			t.Fatal(err)
+		}
+		code, body := pollResponse(hello)
+		if code != 200 || !strings.Contains(body, `"command":"shutdown-for-stop"`) ||
+			!strings.Contains(body, `"desiredState":"stopped"`) || !strings.Contains(body, `"type":"stop"`) {
+			t.Fatalf("retention poll = %d %s, want compatible shutdown command", code, body)
+		}
+		const report = `{"protocolVersion":"1","guestRelease":"test","lastOperationId":"` + deleteID + `","lastOperationVersion":13,
+			"operationReport":{"operationId":"` + deleteID + `","workspaceGeneration":1,
+			"status":"succeeded","step":"workload.shutdown","attempt":1,"evidence":{"waitForReached":false}}}`
+		if code := poll(report); code != 200 {
+			t.Fatalf("retention shutdown report = %d, want 200", code)
+		}
+		if _, err := db.Exec("UPDATE operations SET current_step='stop' WHERE id=$1", deleteID); err != nil {
+			t.Fatal(err)
+		}
+		if code := poll(hello); code != 403 {
+			t.Fatalf("poll after retention shutdown = %d, want 403", code)
+		}
+	})
 	var authenticated string
 	if err := db.QueryRow("SELECT last_authenticated_at FROM guest_registrations WHERE workspace_id='work'").Scan(&authenticated); err != nil ||
 		authenticated != now.Format("2006-01-02T15:04:05.000000000Z") {

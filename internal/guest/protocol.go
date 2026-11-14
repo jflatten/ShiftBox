@@ -29,14 +29,14 @@ type Contact struct {
 // Authenticate checks the leaf against current registration and records
 // authenticated contact. The caller obtains the leaf from the verified TLS peer.
 func (e *Enrollment) Authenticate(ctx context.Context, leaf *x509.Certificate, now time.Time) (Contact, error) {
-	return e.authenticate(ctx, e.db, leaf, now)
+	return e.authenticate(ctx, e.db, leaf, now, false)
 }
 
 type pollQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func (e *Enrollment) authenticate(ctx context.Context, db pollQueryer, leaf *x509.Certificate, now time.Time) (Contact, error) {
+func (e *Enrollment) authenticate(ctx context.Context, db pollQueryer, leaf *x509.Certificate, now time.Time, allowRetentionShutdown bool) (Contact, error) {
 	if e.authority == nil || leaf == nil || leaf.SerialNumber == nil || len(leaf.URIs) != 1 {
 		return Contact{}, ErrGuestUnauthorized
 	}
@@ -67,11 +67,15 @@ func (e *Enrollment) authenticate(ctx context.Context, db pollQueryer, leaf *x50
 		  AND EXISTS (SELECT 1 FROM workspaces w JOIN installations i ON i.id=w.installation_id
 		    JOIN users u ON u.id=w.owner_user_id
 		    WHERE w.id=$2 AND w.generation=$3 AND w.installation_id=$7 AND i.state='active'
-		      AND u.membership_state='active' AND w.desired_state<>'deleted' AND w.provider_instance_id IS NOT NULL)
+		      AND u.membership_state='active' AND w.provider_instance_id IS NOT NULL
+		      AND (w.desired_state<>'deleted' OR ($8 AND w.deletion_commit_at IS NOT NULL AND EXISTS (
+		        SELECT 1 FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
+		        AND o.type='delete' AND o.originating_action='workspace.retention_delete'
+		        AND o.status IN ('running','waiting') AND o.current_step='shutdown'))))
 		RETURNING (SELECT desired_state FROM workspaces WHERE id=$2),
 		          (SELECT owner_user_id FROM workspaces WHERE id=$2),
 		          (SELECT repository_url FROM workspaces WHERE id=$2)`,
-		stamp, parts[2], generation, leaf.SerialNumber.Text(16), hex.EncodeToString(fingerprint[:]), expiry, identity.Host).
+		stamp, parts[2], generation, leaf.SerialNumber.Text(16), hex.EncodeToString(fingerprint[:]), expiry, identity.Host, allowRetentionShutdown).
 		Scan(&contact.DesiredState, &contact.OwnerID, &contact.Repository)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Contact{}, ErrGuestUnauthorized

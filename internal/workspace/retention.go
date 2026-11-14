@@ -147,12 +147,17 @@ func scanRetention(row interface{ Scan(...any) error }) (RetentionCandidate, err
 		return RetentionCandidate{}, err
 	}
 	candidate.Deadline = at.Add(time.Duration(candidate.seconds) * time.Second)
+	candidate.request.Ref = candidate.Ref
+	candidate.request.NetworkMode, err = effectiveNetworkMode(network)
+	return candidate, err
+}
+
+func effectiveNetworkMode(network string) (string, error) {
 	var snapshot struct {
 		Mode string `json:"mode"`
 	}
 	if json.Unmarshal([]byte(network), &snapshot) != nil || snapshot.Mode == "" {
-		return RetentionCandidate{}, provider.ErrInvalidState
+		return "", provider.ErrInvalidState
 	}
-	candidate.request.Ref, candidate.request.NetworkMode = candidate.Ref, snapshot.Mode
-	return candidate, nil
+	return snapshot.Mode, nil
 }

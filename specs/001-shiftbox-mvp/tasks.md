@@ -2192,3 +2192,15 @@ This checkpoint does not itself change the goal status.
 - Tests cover cancellation by a policy change, duplicate commitment and
   rollback when the audit write fails. Go vet and the relevant race tests
   passed. Scheduling and the provider executor remain open under T093.
+
+### Retention deletion execution
+
+- The workspace worker executes committed retention deletions. During the
+  graceful phase, an authenticated guest can receive and acknowledge its
+  shutdown command. Only retention operations can force a provider stop
+  after the default 60-second graceful window.
+- Confirmed stop releases compute. Partial cleanup and lost deletion replies
+  keep disk capacity reserved until the adapter confirms owned resources
+  were removed. Go vet and race-enabled workspace, guest, application and
+  contract tests passed. Scheduling and native UTM end-to-end validation
+  remain open under T093.

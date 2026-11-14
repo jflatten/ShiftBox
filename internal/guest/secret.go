@@ -22,7 +22,7 @@ func (e *Enrollment) ResolveSecret(ctx context.Context, leaf *x509.Certificate, 
 	var value []byte
 	var scope string
 	err := database.Transaction(ctx, e.db, func(tx *sql.Tx) error {
-		contact, err := e.authenticate(ctx, tx, leaf, now)
+		contact, err := e.authenticate(ctx, tx, leaf, now, false)
 		if err != nil {
 			return err
 		}
