@@ -44,11 +44,11 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 		return errors.New("setup requires a valid administrator email")
 	}
 	if *dex == "" {
-		executable, err := os.Executable()
+		defaultPath, err := defaultDexPath()
 		if err != nil {
-			return errors.New("cannot locate the managed Dex binary")
+			return err
 		}
-		*dex = filepath.Join(filepath.Dir(executable), "dex")
+		*dex = defaultPath
 	}
 	if !filepath.IsAbs(*dex) {
 		return errors.New("Dex binary path must be absolute")
@@ -169,6 +169,14 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	}
 }
 
+func defaultDexPath() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", errors.New("cannot locate the managed Dex binary")
+	}
+	return filepath.Join(filepath.Dir(executable), "dex"), nil
+}
+
 func deliverAdministrator(ctx context.Context, setup app.SetupHTTP, email string, out io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -212,7 +220,7 @@ func lockSetup(dir string) (*os.File, error) {
 	}
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		lock.Close()
-		return nil, errors.New("another setup process holds the installation lock")
+		return nil, errors.New("another ShiftBox process holds the installation lock")
 	}
 	return lock, nil
 }

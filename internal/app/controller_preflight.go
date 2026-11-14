@@ -51,16 +51,7 @@ func PreflightController(ctx context.Context, cfg config.Config) (*ControllerSta
 
 func loadControllerState(ctx context.Context, db *sql.DB, active ActiveInstallation, cfg config.Config) (*ControllerState, error) {
 	dir := cfg.InstallationDir
-	info, err := os.Lstat(dir)
-	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("controller startup requires a private installation directory")
-	}
-	key, err := cryptostore.LoadKey(filepath.Join(dir, "installation.key"))
-	if err != nil {
-		return nil, err
-	}
-	defer clear(key)
-	cipher, err := cryptostore.New(key)
+	cipher, err := loadControllerCipher(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -88,4 +79,17 @@ func loadControllerState(ctx context.Context, db *sql.DB, active ActiveInstallat
 		}
 	}
 	return state, nil
+}
+
+func loadControllerCipher(dir string) (*cryptostore.Store, error) {
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+		return nil, errors.New("controller requires a private installation directory")
+	}
+	key, err := cryptostore.LoadKey(filepath.Join(dir, "installation.key"))
+	if err != nil {
+		return nil, err
+	}
+	defer clear(key)
+	return cryptostore.New(key)
 }

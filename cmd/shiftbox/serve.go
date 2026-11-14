@@ -29,6 +29,11 @@ func runServe(ctx context.Context, args []string) error {
 		return err
 	}
 	defer runtime.Close()
+	lock, err := lockSetup(cfg.InstallationDir)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 
 	return errors.New("controller startup requires management route composition")
 }

@@ -2104,3 +2104,15 @@ This checkpoint does not itself change the goal status.
   password and accepted the replacement. Ordinary setup resumed without
   redisplaying it, and explicit reset refused a completed password change.
   Recovery of an active installation's administrator remains open.
+
+### Active local administrator recovery
+
+- `shiftbox recover-admin --email <existing-email> [--config <path>]`
+  defaults to `config.json` in the current directory. It requires an
+  exclusive installation lock, the protected key and the active database.
+  Only an existing active local administrator with a matching Dex subject
+  receives a replacement. Prior sessions and browser origin grants are
+  revoked, the next login requires a password change, and recovery is audited.
+- Go vet and the relevant race tests passed. Native Dex verified the lock,
+  refusal of the original password, and acceptance of the replacement on
+  SQLite. PostgreSQL recovery and signed-in administrator resets remain open.
