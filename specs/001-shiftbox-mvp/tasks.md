@@ -892,3 +892,20 @@ This checkpoint does not itself change the goal status.
 - This supplies authoritative Stepper/SSE data but does not yet mount protected
   setup endpoints or render setup forms. HTTP/CLI composition, explicit reset,
   forced password change, and the remaining setup steps remain incomplete.
+
+### Protected setup HTTP status and administrator creation
+
+- Mounted local setup status and initial-administrator endpoints behind the exact
+  loopback HTTPS guard and controller request IDs. The unauthenticated first-owner
+  mutation additionally requires exact Origin, a valid idempotency key, bounded
+  strict JSON, and a normalized valid email.
+- The administrator endpoint admits the durable workflow, advances its two
+  reconciled steps with a bounded request context, and claims the temporary
+  password only after credential readiness. Successful output includes the
+  completed operation; subsequent requests cannot redisplay/reset the password.
+- Status exposes only setup gate/step names. Tests cover foreign Origin, unknown
+  fields, Dex outage followed by successful retry, correct delivered credential,
+  completed operation, secret-free status, and repeat-delivery refusal.
+- App/contract race suites and formatting/vet pass. The TLS listener/CLI, setup UI,
+  sign-in/password change, explicit local reset and later setup endpoints remain
+  unfinished. T030/T043 are still not complete.

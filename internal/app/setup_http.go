@@ -1,0 +1,153 @@
+package app
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/mail"
+	"strings"
+	"time"
+
+	"github.com/jflatten/ShiftBox/internal/cryptostore"
+	"github.com/jflatten/ShiftBox/internal/identity"
+	"github.com/jflatten/ShiftBox/internal/operation"
+	"github.com/jflatten/ShiftBox/internal/web"
+)
+
+// SetupHTTP composes protected local setup with committed database authority.
+type SetupHTTP struct {
+	DB             *sql.DB
+	InstallationID string
+	Origin         string
+	Cipher         *cryptostore.Store
+	Admin          PasswordAdministrator
+	Journal        *operation.Journal
+	Now            func() time.Time
+	NewID          func() string
+}
+
+// NewSetupHandler exposes only currently implemented local bootstrap routes.
+// It must be served by a loopback-bound TLS listener, not the public management mux.
+func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
+	if setup.DB == nil || setup.Cipher == nil || setup.Admin == nil || setup.Journal == nil || setup.Now == nil || setup.NewID == nil || !web.ValidUUID(setup.InstallationID) {
+		return nil, ErrSetupConflict
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/setup/status", setup.status)
+	mux.HandleFunc("POST /api/v1/setup/administrator", setup.administrator)
+	guarded, err := ProtectBootstrap(setup.Origin, mux)
+	if err != nil {
+		return nil, err
+	}
+	return web.WithRequestID(guarded), nil
+}
+
+func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
+	var state string
+	var userID sql.NullString
+	var ready, change sql.NullBool
+	err := s.DB.QueryRowContext(r.Context(), `SELECT i.state,b.user_id,b.credential_ready,u.must_change_password FROM installations i LEFT JOIN bootstrap_administrator b ON b.installation_id=i.id LEFT JOIN users u ON u.id=b.user_id WHERE i.id=$1`, s.InstallationID).Scan(&state, &userID, &ready, &change)
+	if err != nil {
+		setupProblem(w, r, err)
+		return
+	}
+	completed, available := []string{}, []string{}
+	if state == "bootstrap" || state == "configuring" {
+		if !userID.Valid || !ready.Bool {
+			available = append(available, "administrator")
+		} else {
+			completed = append(completed, "administrator")
+			if change.Bool {
+				available = append(available, "password")
+			} else {
+				completed = append(completed, "password")
+				available = append(available, "data_profile")
+			}
+		}
+	}
+	writeSetupJSON(w, 200, struct {
+		State     string   `json:"state"`
+		LocalOnly bool     `json:"localOnly"`
+		Completed []string `json:"completedSteps"`
+		Available []string `json:"availableSteps"`
+	}{state, true, completed, available})
+}
+
+func (s SetupHTTP) administrator(w http.ResponseWriter, r *http.Request) {
+	// The first account has no session yet. Exact Origin prevents a foreign page
+	// from driving this otherwise unauthenticated, loopback-only bootstrap mutation.
+	origins := r.Header.Values("Origin")
+	if len(origins) != 1 || origins[0] != s.Origin {
+		setupProblem(w, r, web.Problem{Status: 403, Code: "setup.invalid_origin", Title: "Return to the local setup page"})
+		return
+	}
+	key, err := web.IdempotencyKey(r)
+	if err != nil {
+		setupProblem(w, r, err)
+		return
+	}
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := web.DecodeJSON(w, r, &body, 16<<10); err != nil {
+		setupProblem(w, r, err)
+		return
+	}
+	body.Email = strings.ToLower(strings.TrimSpace(body.Email))
+	address, err := mail.ParseAddress(body.Email)
+	if err != nil || address.Name != "" || address.Address != body.Email {
+		setupProblem(w, r, web.Problem{Status: 400, Code: "setup.invalid_email", Title: "Enter a valid administrator email"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	admission, err := BeginAdministrator(ctx, s.DB, s.Journal, AdministratorIntent{InstallationID: s.InstallationID, UserID: s.NewID(), Email: body.Email, CreatedAt: s.Now()}, s.Cipher, key)
+	if err != nil {
+		setupProblem(w, r, err)
+		return
+	}
+	worker := operation.Worker{Journal: s.Journal, Name: "initial-administrator", LeaseDuration: time.Minute, Executor: &AdministratorExecutor{DB: s.DB, InstallationID: s.InstallationID, Admin: s.Admin}}
+	for count := 0; count < 2 && admission.Operation.Status != "succeeded"; count++ {
+		if err := worker.RunOnce(ctx, admission.Operation.ID); err != nil {
+			setupProblem(w, r, err)
+			return
+		}
+		admission.Operation, err = s.Journal.Get(ctx, admission.Operation.ID)
+		if err != nil {
+			setupProblem(w, r, err)
+			return
+		}
+	}
+	if admission.Operation.Status != "succeeded" {
+		setupProblem(w, r, ErrSetupConflict)
+		return
+	}
+	password, err := ClaimTemporaryPassword(ctx, s.DB, s.InstallationID, s.Cipher, s.Now())
+	if err != nil {
+		setupProblem(w, r, err)
+		return
+	}
+	writeSetupJSON(w, 201, struct {
+		AdministratorAdmission
+		TemporaryPassword string `json:"temporaryPassword"`
+	}{admission, password})
+}
+
+func setupProblem(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, ErrSetupConflict) || errors.Is(err, operation.ErrConflict) {
+		err = web.Problem{Status: 409, Code: "setup.state_conflict", Title: "Refresh the local setup state", Detail: "An issued password is never shown again. If delivery was lost, use the explicit protected local reset."}
+	}
+	if errors.Is(err, identity.ErrPasswordAdministration) {
+		err = web.Problem{Status: 503, Code: "setup.identity_unavailable", Title: "Local sign-in is not ready", Detail: "Retry setup when the local identity service is available.", Retryable: true}
+	}
+	web.WriteProblem(w, web.RequestID(r.Context()), err)
+}
+
+func writeSetupJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value) // Lost one-time delivery requires explicit local reset.
+}
