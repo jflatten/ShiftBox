@@ -10,6 +10,27 @@ import (
 	"github.com/jflatten/ShiftBox/internal/config"
 )
 
+// TestRetentionActivitySelection keeps the default monitors enabled and
+// preserves an operator's explicit decision to turn an individual signal off.
+func TestRetentionActivitySelection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"dataProfile":"sqlite","sqlitePath":"/tmp/shiftbox.db","installationDir":"/tmp/shiftbox","managementOrigin":"https://shiftbox.test","retentionMonitorIDE":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ide, cpu := cfg.RetentionActivitySignals()
+	if ide || !cpu {
+		t.Errorf("configured IDE/CPU signals = %t/%t, want false/true", ide, cpu)
+	}
+	ide, cpu = (config.Config{}).RetentionActivitySignals()
+	if !ide || !cpu {
+		t.Errorf("default IDE/CPU signals = %t/%t, want true/true", ide, cpu)
+	}
+}
+
 // TestManagementOriginCanonicalForm prevents browser Origin serialization from disagreeing with configured mutation checks.
 func TestManagementOriginCanonicalForm(t *testing.T) {
 	for _, origin := range []string{"https://management.test?", "https://management.test#", "https://management.test:", "https://management.test:443", "https://Management.test", "https://management.test:65536"} {

@@ -19,10 +19,12 @@ import (
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/secret"
 	"github.com/jflatten/ShiftBox/internal/web"
+	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 // GuestListenerConfig assigns distinct binds and the guest-reachable TLS host.
 type GuestListenerConfig struct {
+	ActivityPolicy    *workspace.ActivityPolicy
 	EnrollmentAddress string
 	PollAddress       string
 	PublicHost        string
@@ -120,6 +122,7 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		listeners.TunnelAddress = guestAddress(config.PublicHost, tunnel.network)
 	}
 	exchange := func(ctx context.Context, leaf *x509.Certificate, stamp time.Time, report guest.PollReport) (guest.Contact, *guest.PollOperation, error) {
+		report.ActivityPolicy = config.ActivityPolicy
 		if config.Tunnels != nil {
 			if err := registerGuestPollConnection(ctx, config.Tunnels.Registry, func() (guest.Contact, error) {
 				return enrollment.AuthenticatePoll(ctx, leaf, stamp)

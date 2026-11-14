@@ -20,6 +20,8 @@ type Config struct {
 	DismissedNoticeRetentionDays     *int               `json:"dismissedNoticeRetentionDays,omitempty"`
 	WorkspaceRetentionMaximumSeconds *int64             `json:"workspaceRetentionMaximumSeconds,omitempty"`
 	RetentionOutageGraceSeconds      *int64             `json:"retentionOutageGraceSeconds,omitempty"`
+	RetentionMonitorIDE              *bool              `json:"retentionMonitorIDE,omitempty"`
+	RetentionMonitorCPU              *bool              `json:"retentionMonitorCPU,omitempty"`
 	Runtime                          *ControllerRuntime `json:"runtime,omitempty"`
 }
 
@@ -50,6 +52,11 @@ func (c Config) RetentionOutageGrace() time.Duration {
 		return 10 * time.Minute
 	}
 	return time.Duration(*c.RetentionOutageGraceSeconds) * time.Second
+}
+
+// RetentionActivitySignals selects the IDE and CPU signals enabled by the operator.
+func (c Config) RetentionActivitySignals() (ide, cpu bool) {
+	return c.RetentionMonitorIDE == nil || *c.RetentionMonitorIDE, c.RetentionMonitorCPU == nil || *c.RetentionMonitorCPU
 }
 
 // AuditHistoryDays returns the configured age limit or the 90-day default.

@@ -26,9 +26,11 @@ func RecordActivity(ctx context.Context, db interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }, id string, generation int64, received time.Time, policy ActivityPolicy, cpu *CPUActivity, ideConnected bool) error {
-	cpuActive := policy.CPU && cpu != nil && cpu.Percent > policy.CPUThreshold && cpu.Percent <= 100 &&
+	cpuObserved := policy.CPU && cpu != nil && cpu.Percent >= 0 && cpu.Percent <= 100 &&
 		!cpu.SampledAt.IsZero() && !cpu.SampledAt.After(received) && received.Sub(cpu.SampledAt) <= policy.Freshness
-	if !cpuActive && !(policy.IDE && ideConnected) {
+	cpuActive := cpuObserved && cpu.Percent > policy.CPUThreshold
+	ideActive := policy.IDE && ideConnected
+	if !cpuObserved && !policy.IDE {
 		return nil
 	}
 	var prior sql.NullString
@@ -41,6 +43,28 @@ func RecordActivity(ctx context.Context, db interface {
 	}
 	if err != nil {
 		return err
+	}
+	// Keep only the latest observation for each selected signal. Idle samples
+	// remain useful evidence without accumulating history or moving deadlines.
+	const observation = `INSERT INTO activity_observations(workspace_id,generation,source,active,received_at)
+		SELECT id,generation,$3,$4,$5 FROM workspaces
+		WHERE id=$1 AND generation=$2 AND desired_state='running' AND observed_state IN ('starting','running')
+		AND deletion_commit_at IS NULL
+		ON CONFLICT(workspace_id,generation,source) DO UPDATE SET active=excluded.active,received_at=excluded.received_at
+		WHERE activity_observations.received_at < excluded.received_at`
+	stamp := received.UTC().Format("2006-01-02T15:04:05.000000000Z")
+	if cpuObserved {
+		if _, err := db.ExecContext(ctx, observation, id, generation, "cpu", cpuActive, stamp); err != nil {
+			return err
+		}
+	}
+	if policy.IDE {
+		if _, err := db.ExecContext(ctx, observation, id, generation, "ide", ideActive, stamp); err != nil {
+			return err
+		}
+	}
+	if !cpuActive && !ideActive {
+		return nil
 	}
 	if prior.Valid {
 		last, err := time.Parse(time.RFC3339Nano, prior.String)

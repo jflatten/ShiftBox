@@ -9,8 +9,15 @@ import (
 // TestRecordActivity keeps idle, stale, and wrong-generation reports from
 // extending retention, even when a guest continues polling.
 func TestRecordActivity(t *testing.T) {
+	for _, profile := range []string{"sqlite", "postgres"} {
+		t.Run(profile, func(t *testing.T) { checkRecordActivity(t, profile) })
+	}
+}
+
+func checkRecordActivity(t *testing.T, profile string) {
+	t.Helper()
 	ctx := t.Context()
-	db := openWorkspaceDatabase(t, "sqlite")
+	db := openWorkspaceDatabase(t, profile)
 	seedReservationWorkspaces(t, db)
 	const id = "activity-workspace"
 	t.Cleanup(func() {
@@ -60,7 +67,19 @@ func TestRecordActivity(t *testing.T) {
 	assert(now)
 	record(1, now.Add(time.Minute), &CPUActivity{SampledAt: now.Add(time.Minute), Percent: 0}, false)
 	assert(now)
+	var source string
+	var active bool
+	var received string
+	if err := db.QueryRowContext(ctx, `SELECT source,active,received_at FROM activity_observations
+		WHERE workspace_id=$1 AND generation=1 AND source='cpu'`, id).Scan(&source, &active, &received); err != nil ||
+		source != "cpu" || active || received != now.Add(time.Minute).Format("2006-01-02T15:04:05.000000000Z") {
+		t.Fatalf("idle observation = %s/%t/%s (%v), want persisted CPU idle at controller receipt time", source, active, received, err)
+	}
 	record(1, now.Add(2*time.Minute), nil, true)
 	record(1, now.Add(time.Minute), nil, true)
 	assert(now.Add(2 * time.Minute))
+	var count int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM activity_observations WHERE workspace_id=$1", id).Scan(&count); err != nil || count != 2 {
+		t.Errorf("activity evidence contains %d rows (%v), want one current observation per selected source", count, err)
+	}
 }

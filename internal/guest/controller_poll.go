@@ -26,6 +26,7 @@ type PollReport struct {
 	Operation       *OperationReport
 	Activity        *workspace.CPUActivity
 	IDEConnected    func(workspaceID string) bool
+	ActivityPolicy  *workspace.ActivityPolicy
 }
 
 // PollOperation is one controller-approved action and its workspace snapshot.
@@ -57,8 +58,12 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 	var dispatch *PollOperation
 	// Proxy admission takes the registry lock before checking the database.
 	// Read presence in the same order, then authenticate the workspace in SQL.
+	policy := workspace.ActivityPolicy{IDE: true, CPU: true, CPUThreshold: 5, Freshness: 90 * time.Second}
+	if report.ActivityPolicy != nil {
+		policy = *report.ActivityPolicy
+	}
 	ideConnected := false
-	if report.IDEConnected != nil && leaf != nil && len(leaf.URIs) == 1 {
+	if policy.IDE && report.IDEConnected != nil && leaf != nil && len(leaf.URIs) == 1 {
 		if parts := strings.Split(leaf.URIs[0].Path, "/"); len(parts) == 4 {
 			ideConnected = report.IDEConnected(parts[2])
 		}
@@ -88,8 +93,7 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 				return err
 			}
 		}
-		if err := workspace.RecordActivity(ctx, tx, contact.WorkspaceID, contact.Generation, now,
-			workspace.ActivityPolicy{IDE: true, CPU: true, CPUThreshold: 5, Freshness: 90 * time.Second}, report.Activity, ideConnected); err != nil {
+		if err := workspace.RecordActivity(ctx, tx, contact.WorkspaceID, contact.Generation, now, policy, report.Activity, ideConnected); err != nil {
 			return err
 		}
 		dispatch, err = nextGuestOperation(ctx, tx, contact)

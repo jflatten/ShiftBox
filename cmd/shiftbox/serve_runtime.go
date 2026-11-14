@@ -23,6 +23,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/release"
 	"github.com/jflatten/ShiftBox/internal/web"
+	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 const guestProtocol = "1"
@@ -169,7 +170,9 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		return err
 	}
 	defer browser.Close()
+	monitorIDE, monitorCPU := cfg.RetentionActivitySignals()
 	workspaces, err := app.ListenWorkspaceRuntime(state, app.GuestListenerConfig{
+		ActivityPolicy:    &workspace.ActivityPolicy{IDE: monitorIDE, CPU: monitorCPU, CPUThreshold: 5, Freshness: 90 * time.Second},
 		EnrollmentAddress: settings.EnrollmentAddress, PollAddress: settings.PollAddress,
 		TunnelAddress: settings.TunnelAddress, PublicHost: settings.GuestHost, Tunnels: tunnels, GitHub: github, Checkpoint: checkpoint,
 	}, compatibility, journal, machines, media, time.Now)
