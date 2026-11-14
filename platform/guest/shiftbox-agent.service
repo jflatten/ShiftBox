@@ -1,0 +1,19 @@
+[Unit]
+Description=ShiftBox workspace agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+RuntimeDirectory=shiftbox-enrollment
+RuntimeDirectoryMode=0700
+PrivateMounts=yes
+ExecStart=/usr/local/libexec/shiftbox-start-agent
+Restart=on-failure
+RestartSec=5
+StateDirectory=shiftbox-agent
+StateDirectoryMode=0700
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

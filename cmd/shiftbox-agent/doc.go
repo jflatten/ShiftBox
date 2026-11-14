@@ -1,2 +1,2 @@
-// Command shiftbox-agent will provide the supervised VM guest service.
+// Command shiftbox-agent provides the supervised VM guest service.
 package main

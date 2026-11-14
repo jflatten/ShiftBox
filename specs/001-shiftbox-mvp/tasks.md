@@ -1383,3 +1383,15 @@ This checkpoint does not itself change the goal status.
   Guest, API, and contract race tests passed.
 - Agent CLI and supervision, boot media discovery, polling and local
   operation execution still need wiring.
+
+### Supervised guest agent entry point
+
+- Added `shiftbox-agent serve` with supervisor-owned paths. It loads a
+  valid identity or enrolls from mounted recovery media, then polls over
+  mTLS on a jittered 30-second cadence.
+- The systemd unit runs a launcher that mounts the SHIFTBOX ISO read-only
+  inside the service's mount namespace. The guest command passed a Linux
+  amd64 build, and local TLS and CLI race tests passed.
+- The platform build still needs to install the unit, launcher, binary and
+  controller poll endpoint configuration. Guest operation dispatch, local
+  attempt journaling, renewal and validation inside Ubuntu remain pending.

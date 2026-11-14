@@ -142,7 +142,8 @@ func GuestPollHandler(compatibility GuestCompatibility,
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"protocolVersion": compatibility.Protocol, "serverTime": stamp,
 			"workspaceGeneration": contact.Generation, "desiredState": contact.DesiredState, "operation": nil,
-			"certificate": map[string]time.Time{"renewAfter": contact.RenewAfter},
+			"certificate":          map[string]time.Time{"renewAfter": contact.RenewAfter},
+			"nextPollAfterSeconds": 30,
 		})
 	})
 	return WithRequestID(mux)

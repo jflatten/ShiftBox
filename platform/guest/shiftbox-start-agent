@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+# The recovery drive is optional on ordinary boots. Mount it in the
+# service's namespace so no development-container process needs access.
+seed_device=/dev/disk/by-label/SHIFTBOX
+seed_directory=/run/shiftbox-enrollment
+if [ -b "$seed_device" ]; then
+    mount -t iso9660 -o ro,nosuid,nodev,noexec "$seed_device" "$seed_directory"
+fi
+
+exec /usr/local/bin/shiftbox-agent serve
