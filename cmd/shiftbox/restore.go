@@ -16,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/backup"
@@ -68,9 +67,6 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 	}
 	var plan backup.RestorePlan
 	if activating {
-		if cfg.DataProfile != "sqlite" {
-			return fail(5, "restore.activation_unavailable", "PostgreSQL activation requires the replacement publication workflow.")
-		}
 		lock, err := lockSetup(cfg.InstallationDir)
 		if err != nil {
 			return fail(6, "restore.installation_busy", "Stop the controller before applying the reviewed restore plan.")
@@ -100,7 +96,7 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 		}
 		defer clear(expected.MountedKey)
 	}
-	targetDigest, checkTarget, err := restoreTarget(cfg, *destination, *postgresConfig)
+	target, err := restoreTarget(cfg, *destination, *postgresConfig)
 	if err != nil {
 		return fail(2, "restore.invalid_target", "Provide a private replacement directory and scoped PostgreSQL settings if required.")
 	}
@@ -114,15 +110,15 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 		return fail(2, "restore.password_input", "Read the passphrase from a terminal or explicitly use --password-stdin.")
 	}
 	if activating {
-		stage, err := backup.StageRestore(ctx, filepath.Dir(*destination), plan, targetDigest, archive, password, expected, checkTarget)
+		stage, err := backup.StageRestore(ctx, filepath.Dir(*destination), plan, target.digest, archive, password, expected, target.check)
 		if err != nil {
 			return fail(7, "restore.revalidation_failed", "Verify the archive, passphrase, retained key, and empty replacement against the saved validation.")
 		}
 		defer os.RemoveAll(stage)
-		if err := prepareSQLiteRestore(stage, *destination, expected.MountedKey); err != nil {
+		if err := prepareRestoreConfiguration(stage, *destination, cfg.DataProfile, target.postgres, expected.MountedKey); err != nil {
 			return fail(7, "restore.invalid_configuration", "Verify the archived controller configuration and retained key.")
 		}
-		review, err := backup.ActivateSQLiteRestore(ctx, stage, *destination, *installation, plan.ID, "local-operator", time.Now())
+		review, err := activateRestore(ctx, stage, *destination, expected.Metadata, plan.ID, target.postgres)
 		if err != nil {
 			return fail(1, "restore.activation_failed", "Cannot publish the replacement in recovery review. Inspect the replacement before retrying.")
 		}
@@ -132,7 +128,7 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 			ReviewSteps: []string{"identities", "provider", "authorization_retention", "activate"}}
 		return restoreOutput(command, out, status, *asJSON, &result, 0, "", "")
 	}
-	validation, err := backup.ValidateRestore(ctx, archive, password, expected, checkTarget)
+	validation, err := backup.ValidateRestore(ctx, archive, password, expected, target.check)
 	if err != nil {
 		code, title := "restore.invalid_archive", "Verify the archive integrity and passphrase."
 		switch {
@@ -148,7 +144,7 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 	if err := os.Mkdir(plans, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 		return fail(1, "restore.validation_unavailable", "Cannot record restore validation in the installation directory.")
 	}
-	plan, err = backup.RecordRestorePlan(ctx, plans, targetDigest, validation)
+	plan, err = backup.RecordRestorePlan(ctx, plans, target.digest, validation)
 	if err != nil {
 		return fail(1, "restore.validation_unavailable", "Cannot save the private restore validation record.")
 	}
@@ -161,14 +157,29 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 	return restoreOutput(command, out, status, *asJSON, &result, 0, "", "")
 }
 
-func prepareSQLiteRestore(stage, destination string, retainedKey []byte) error {
+func prepareRestoreConfiguration(stage, destination, profile string, target *postgresReplacement, retainedKey []byte) error {
 	path := filepath.Join(stage, "configuration.json")
 	cfg, err := config.Load(path)
-	if err != nil || cfg.DataProfile != "sqlite" {
+	if err != nil || cfg.DataProfile != profile {
 		return backup.ErrRestoreCompatibility
 	}
 	cfg.InstallationDir = destination
-	cfg.SQLitePath = filepath.Join(destination, "application.db")
+	if target == nil {
+		cfg.SQLitePath = filepath.Join(destination, "application.db")
+	} else {
+		application, err := url.Parse(target.database.ApplicationURI)
+		if err != nil {
+			return backup.ErrRestoreTarget
+		}
+		q := application.Query()
+		ca := target.caPath
+		if ca == "" {
+			ca = "system"
+		}
+		q.Set("sslrootcert", ca)
+		application.RawQuery = q.Encode()
+		cfg.PostgresURI = application.String()
+	}
 	encoded, err := json.Marshal(cfg)
 	if err != nil {
 		return err
@@ -193,7 +204,18 @@ func writeRestoreFile(path string, data []byte, flags int) error {
 	return errors.Join(writeErr, file.Sync(), file.Close())
 }
 
-func restoreTarget(cfg config.Config, destination, postgresPath string) (string, func(context.Context) error, error) {
+type restoreReplacement struct {
+	digest   string
+	check    func(context.Context) error
+	postgres *postgresReplacement
+}
+
+type postgresReplacement struct {
+	database database.PostgresSetupTarget
+	caPath   string
+}
+
+func restoreTarget(cfg config.Config, destination, postgresPath string) (restoreReplacement, error) {
 	checkLocal := func() error {
 		parent, err := os.Lstat(filepath.Dir(destination))
 		if err != nil || !parent.IsDir() || parent.Mode().Perm()&0077 != 0 {
@@ -205,32 +227,32 @@ func restoreTarget(cfg config.Config, destination, postgresPath string) (string,
 		return nil
 	}
 	if cfg.DataProfile == "sqlite" && postgresPath == "" {
-		return restoreDigest("sqlite", destination), func(context.Context) error { return checkLocal() }, nil
+		return restoreReplacement{digest: restoreDigest("sqlite", destination), check: func(context.Context) error { return checkLocal() }}, nil
 	}
 	if cfg.DataProfile != "postgres" || postgresPath == "" {
-		return "", nil, backup.ErrRestoreTarget
+		return restoreReplacement{}, backup.ErrRestoreTarget
 	}
 	profile, err := readSetupPostgresProfile(postgresPath)
 	if err != nil {
-		return "", nil, err
+		return restoreReplacement{}, err
 	}
 	application, err := url.Parse(cfg.PostgresURI)
 	if err != nil {
-		return "", nil, backup.ErrRestoreTarget
+		return restoreReplacement{}, backup.ErrRestoreTarget
 	}
 	dex, err := url.Parse(profile.DexURI)
 	if err != nil {
-		return "", nil, backup.ErrRestoreTarget
+		return restoreReplacement{}, backup.ErrRestoreTarget
 	}
 	// Credentials may be rotated. Bind host, database and role identity.
-	digest := restoreDigest("postgres", destination, application.Redacted(), dex.Redacted())
+	digest := restoreDigest("postgres", destination, application.Redacted(), dex.Redacted(), profile.CAFile)
 	target := database.PostgresSetupTarget{ApplicationURI: cfg.PostgresURI, DexURI: profile.DexURI, Roots: profile.Roots}
-	return digest, func(ctx context.Context) error {
+	return restoreReplacement{digest: digest, postgres: &postgresReplacement{database: target, caPath: profile.CAFile}, check: func(ctx context.Context) error {
 		if err := checkLocal(); err != nil {
 			return err
 		}
 		return backup.ValidatePostgresReplacement(ctx, target)
-	}, nil
+	}}, nil
 }
 
 func restoreDigest(values ...string) string {

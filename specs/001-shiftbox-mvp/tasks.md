@@ -1777,8 +1777,7 @@ This checkpoint does not itself change the goal status.
   schema in its own transaction. The local PostgreSQL 18 test confirmed
   new role ownership, damaged dump rejection before load, and refusal
   to retry against an occupied target. Replacement configuration,
-  command integration, cross-schema failure recovery, and the full
-  recovery review remain open.
+  cross-schema failure recovery, and live recovery acceptance remain open.
 - T112 records ordered identity, provider, and authorization/retention
   decisions. Provider ownership conflicts block approval, and activation
   requires fresh matching evidence and a current administrator. Approval
@@ -1796,7 +1795,11 @@ This checkpoint does not itself change the goal status.
   working source database. SQLite activation reopens the saved validation,
   rereads the passphrase, requires the controller installation lock, and
   publishes a recovery-only replacement with a rebased configuration.
-  PostgreSQL activation and the backup CLI remain open.
+  PostgreSQL activation loads scoped dumps, seals the replacement Dex
+  credentials in the recovery-entry transaction, and publishes a new
+  controller configuration only after review is in place. The local TLS
+  fixture verified a replacement in recovery and an unchanged source.
+  The backup CLI and cross-schema failure recovery remain open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.

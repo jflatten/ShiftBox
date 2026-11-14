@@ -92,3 +92,51 @@ func TestRetainPostgresDexStorage(t *testing.T) {
 		t.Fatalf("loading transplanted ciphertext returned %v, want installation binding error", err)
 	}
 }
+
+// TestReplaceRecoveredDexStorage verifies replacement credentials are sealed
+// for the same installation and only while it is entering recovery.
+func TestReplaceRecoveredDexStorage(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "restore.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	const id = "00000000-0000-4000-8000-000000000001"
+	if _, err := db.ExecContext(ctx, `INSERT INTO installations(id,state,organization_name,data_profile,management_origin,
+		ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version)
+		VALUES($1,'active','Fixture','postgres','https://manage.test','{workspace}.ide.test','{service}--{workspace}.preview.test','fixture','fixture','now','now',1)`, id); err != nil {
+		t.Fatal(err)
+	}
+	cipher, err := cryptostore.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := PostgresSetupCredentials{ApplicationURI: "postgres://app:fixture@db.test/replacement?sslmode=verify-full",
+		DexURI: "postgres://dex:replacement-fixture@db.test/replacement?sslmode=verify-full"}
+	replace := func() error {
+		return database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			return ReplaceRecoveredDexStorage(ctx, tx, id, input, cipher)
+		})
+	}
+	if err := replace(); err == nil {
+		t.Fatal("changed Dex credentials outside recovery")
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE installations SET state='recovery' WHERE id=$1", id); err != nil {
+		t.Fatal(err)
+	}
+	if err := replace(); err != nil {
+		t.Fatal(err)
+	}
+	input.DexURI = "postgres://dex:rotated-fixture@db.test/replacement?sslmode=verify-full"
+	if err := replace(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadPostgresDexStorage(ctx, db, id, input.ApplicationURI, cipher)
+	if err != nil || got.Database != "replacement" || got.Password != "rotated-fixture" {
+		t.Fatal("recovery did not load the replacement Dex credentials")
+	}
+}

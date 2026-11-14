@@ -48,6 +48,28 @@ func retainPostgresDexStorage(ctx context.Context, tx *sql.Tx, installation stri
 	if !errors.Is(err, sql.ErrNoRows) {
 		return errPostgresDexStorage
 	}
+	return writeDexStorage(ctx, tx, binding, target, cipher, false)
+}
+
+// ReplaceRecoveredDexStorage seals the replacement credentials in the
+// recovery-entry transaction. The archived credentials stay unusable.
+func ReplaceRecoveredDexStorage(ctx context.Context, tx *sql.Tx, installation string, credentials PostgresSetupCredentials, cipher *cryptostore.Store) error {
+	if cipher == nil || installation == "" {
+		return errPostgresDexStorage
+	}
+	target, err := postgresDexStorage(credentials.ApplicationURI, credentials.DexURI, credentials.CAFile)
+	if err != nil {
+		return err
+	}
+	var profile string
+	if err := tx.QueryRowContext(ctx, "SELECT data_profile FROM installations WHERE id=$1 AND state='recovery'", installation).
+		Scan(&profile); err != nil || profile != "postgres" {
+		return errPostgresDexStorage
+	}
+	return writeDexStorage(ctx, tx, dexStorageContext(installation), target, cipher, true)
+}
+
+func writeDexStorage(ctx context.Context, tx *sql.Tx, binding cryptostore.Context, target identity.DexPostgres, cipher *cryptostore.Store, replace bool) error {
 	plaintext, err := json.Marshal(target)
 	if err != nil {
 		return errPostgresDexStorage
@@ -61,7 +83,11 @@ func retainPostgresDexStorage(ctx context.Context, tx *sql.Tx, installation stri
 	if err != nil {
 		return errPostgresDexStorage
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO protected_values(id,value_json) VALUES($1,$2)", binding.RecordID, string(encoded)); err != nil {
+	query := "INSERT INTO protected_values(id,value_json) VALUES($1,$2)"
+	if replace {
+		query += " ON CONFLICT(id) DO UPDATE SET value_json=excluded.value_json"
+	}
+	if _, err := tx.ExecContext(ctx, query, binding.RecordID, string(encoded)); err != nil {
 		return errPostgresDexStorage
 	}
 	return nil

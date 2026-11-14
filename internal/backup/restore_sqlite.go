@@ -70,6 +70,17 @@ func publishSQLiteRestore(ctx context.Context, stage, destination string, prepar
 	if err := errors.Join(prepare(ctx, db), db.Close()); err != nil {
 		return err
 	}
+	return PublishRecoveryDirectory(ctx, stage, destination)
+}
+
+// PublishRecoveryDirectory publishes private files after the replacement
+// database has committed recovery review.
+func PublishRecoveryDirectory(ctx context.Context, stage, destination string) error {
+	parent := filepath.Dir(stage)
+	if !privateCheckpointDirectory(stage) || !privateCheckpointDirectory(parent) ||
+		filepath.Clean(destination) != destination || filepath.Dir(destination) != parent {
+		return ErrRestoreTarget
+	}
 	if err := syncRestoreDirectory(stage); err != nil {
 		return ErrRestoreTarget
 	}

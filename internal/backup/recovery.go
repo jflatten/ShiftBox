@@ -17,6 +17,13 @@ var errRecoveryState = errors.New("cannot enter recovery review for the restored
 // before the verified replacement database becomes authoritative.
 func EnterRecovery(ctx context.Context, db *sql.DB, journal *operation.Journal,
 	installationID, validationID, actor string, now time.Time) (string, error) {
+	return EnterRecoveryWithConfiguration(ctx, db, journal, installationID, validationID, actor, now, nil)
+}
+
+// EnterRecoveryWithConfiguration replaces profile-specific configuration in
+// the same transaction that creates the recovery gate and revokes authority.
+func EnterRecoveryWithConfiguration(ctx context.Context, db *sql.DB, journal *operation.Journal,
+	installationID, validationID, actor string, now time.Time, configure func(context.Context, *sql.Tx) error) (string, error) {
 	if id, err := uuid.Parse(validationID); err != nil || id.String() != validationID || actor == "" || now.IsZero() {
 		return "", errRecoveryState
 	}
@@ -27,6 +34,11 @@ func EnterRecovery(ctx context.Context, db *sql.DB, journal *operation.Journal,
 			WHERE singleton=1 AND id=$2 AND state='active'`, stamp, installationID)
 		if err := changedRecord(result, err); err != nil {
 			return err
+		}
+		if configure != nil {
+			if err := configure(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if err := invalidateRestoredAuthority(ctx, tx, stamp); err != nil {
 			return err
