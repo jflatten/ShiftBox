@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/jflatten/ShiftBox/internal/config"
@@ -46,6 +47,9 @@ func OpenActiveDatabase(ctx context.Context, cfg config.Config) (*sql.DB, Active
 	}
 	if err := database.CheckSchema(ctx, db, cfg.DataProfile); err != nil {
 		_ = db.Close()
+		if errors.Is(err, database.ErrSchemaDrift) {
+			return nil, ActiveInstallation{}, fmt.Errorf("%w: %w", ErrActiveDatabase, err)
+		}
 		return nil, ActiveInstallation{}, ErrActiveDatabase
 	}
 	return db, active, nil

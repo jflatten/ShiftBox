@@ -104,6 +104,9 @@ func TestMigrationProfiles(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if err := database.CheckSchema(ctx, db, profile); err != nil {
+				t.Fatalf("CheckSchema(%s) after migration = %v, want compatible schema", profile, err)
+			}
 			version, err := database.Version(ctx, db, profile)
 			if err != nil || version < 1 {
 				t.Fatalf("Version(%s) = %d, %v; want installed foundation", profile, version, err)

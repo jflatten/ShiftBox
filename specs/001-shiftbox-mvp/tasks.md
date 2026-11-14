@@ -1655,3 +1655,13 @@ This checkpoint does not itself change the goal status.
   the disposable VM. The test still ends at authenticated enrollment.
 - Production management composition and full workspace acceptance remain
   open under T060 and T061.
+
+### Foundation schema preflight
+
+- Startup checks that required foundation tables and operation authority
+  columns exist after verifying migration history. Earlier development
+  databases can have current history with an older foundation layout.
+- Valid SQLite and fresh PostgreSQL schemas passed. A PostgreSQL fixture
+  missing the operation authority column and SQLite fixtures missing
+  foundation records were rejected before controller startup. The check
+  leaves database repair to the reviewed recovery workflow.

@@ -71,6 +71,17 @@ func TestOpenActiveDatabaseRequiresActivation(t *testing.T) {
 	if _, _, err := OpenActiveDatabase(ctx, cfg); !errors.Is(err, ErrActiveDatabase) {
 		t.Errorf("open with changed origin = %v, want activation error", err)
 	}
+	cfg.ManagementOrigin = "https://management.test"
+	if _, err := db.Exec("ALTER TABLE operations DROP COLUMN originating_action"); err != nil {
+		t.Fatal(err)
+	}
+	stale, _, err := OpenActiveDatabase(ctx, cfg)
+	if stale != nil {
+		stale.Close()
+	}
+	if !errors.Is(err, ErrActiveDatabase) || !errors.Is(err, database.ErrSchemaDrift) {
+		t.Errorf("open active database with foundation drift = %v, want schema drift", err)
+	}
 }
 
 // TestOpenActiveDatabaseDoesNotFallBack verifies that failure of the selected
