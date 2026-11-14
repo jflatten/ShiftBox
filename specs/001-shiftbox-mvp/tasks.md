@@ -1883,3 +1883,12 @@ This checkpoint does not itself change the goal status.
 - All 36 UI tests and the production build passed. Chrome exercised mobile
   keyboard navigation and retry with fixture responses. Approval and
   offboarding actions remain open under T077 and T101.
+
+### Pending member approval
+
+- Administrators can approve a pending membership from People after
+  selecting Member or Administrator. Approval checks the current version
+  and records the change and its audit event in one transaction.
+- Contract and UI tests cover explicit role selection, authorization,
+  CSRF, and stale requests. Web, app and contract race suites and all
+  37 UI tests passed. Offboarding and role-only changes remain open.

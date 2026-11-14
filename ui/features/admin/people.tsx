@@ -1,9 +1,11 @@
 'use client';
 
-import { Button, Table, Text, Title } from '@mantine/core';
+import { useState } from 'react';
+import { Button, NativeSelect, Stack, Table, Text, Title } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { ShiftBoxShell } from '../../components/app-shell';
-import { readProblem } from '../../lib/api-problem';
+import { APIProblemView } from '../../components/api-problem';
+import { APIProblemError, readProblem } from '../../lib/api-problem';
 import { useSession } from '../../lib/use-session';
 
 interface Person {
@@ -13,6 +15,7 @@ interface Person {
   role: 'member' | 'administrator';
   membershipState: 'pending' | 'active' | 'disabled';
   credentialMode: 'local' | 'external';
+  version: number;
 }
 
 const roleLabels = { administrator: 'Administrator', member: 'Member' };
@@ -45,12 +48,18 @@ export function People() {
         <Button variant="default" style={{ alignSelf: 'flex-start' }} onClick={() => void people.refetch()}>Retry</Button>
       ) : null}
       {data?.length === 0 ? <Text>No accounts found.</Text> : null}
-      {data?.length ? <PeopleTable people={data} /> : null}
+      {data?.length && current ? <PeopleTable people={data}
+        approvalToken={current.permissions.includes('user.approve') ? current.csrfToken : undefined}
+        refresh={people.refetch} /> : null}
     </ShiftBoxShell>
   );
 }
 
-function PeopleTable({ people }: { people: Person[] }) {
+function PeopleTable({ people, approvalToken, refresh }: {
+  people: Person[];
+  approvalToken?: string;
+  refresh: () => Promise<unknown>;
+}) {
   return (
     <Table.ScrollContainer minWidth={520} type="native">
       <Table aria-label="Organization membership">
@@ -60,6 +69,7 @@ function PeopleTable({ people }: { people: Person[] }) {
             <Table.Th scope="col">Role</Table.Th>
             <Table.Th scope="col">Membership</Table.Th>
             <Table.Th scope="col">Sign-in</Table.Th>
+            {approvalToken ? <Table.Th scope="col">Approval</Table.Th> : null}
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -72,10 +82,59 @@ function PeopleTable({ people }: { people: Person[] }) {
               <Table.Td>{roleLabels[person.role]}</Table.Td>
               <Table.Td>{membershipLabels[person.membershipState]}</Table.Td>
               <Table.Td>{credentialLabels[person.credentialMode]}</Table.Td>
+              {approvalToken ? (
+                <Table.Td>{person.membershipState === 'pending' ? (
+                  <ApprovePerson key={person.version} person={person} csrfToken={approvalToken} refresh={refresh} />
+                ) : null}</Table.Td>
+              ) : null}
             </Table.Tr>
           ))}
         </Table.Tbody>
       </Table>
     </Table.ScrollContainer>
+  );
+}
+
+function ApprovePerson({ person, csrfToken, refresh }: {
+  person: Person;
+  csrfToken: string;
+  refresh: () => Promise<unknown>;
+}) {
+  const [role, setRole] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<unknown>();
+  const stale = error instanceof APIProblemError && error.problem.status === 412;
+  const approve = async () => {
+    if (!role || saving) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`/api/v1/admin/users/${encodeURIComponent(person.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'If-Match': `"${person.version}"` },
+        body: JSON.stringify({ membershipState: 'active', role }),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        if (response.status === 412) setRole('');
+        throw problem;
+      }
+      await refresh();
+    } catch (error) {
+      setError(error);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Stack gap="xs" align="flex-start">
+      <NativeSelect aria-label={`Role for ${person.primaryEmail}`} value={role} disabled={saving || stale}
+        onChange={event => setRole(event.currentTarget.value)}
+        data={[{ value: '', label: 'Choose role' }, { value: 'member', label: 'Member' },
+          { value: 'administrator', label: 'Administrator' }]} />
+      <Button size="compact-sm" disabled={!role} loading={saving} onClick={() => void approve()}>Approve</Button>
+      {error !== undefined ? <APIProblemView error={error} /> : null}
+      {stale ? <Button variant="default" size="compact-sm" onClick={() => void refresh()}>Refresh membership</Button> : null}
+    </Stack>
   );
 }

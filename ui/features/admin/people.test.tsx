@@ -56,3 +56,38 @@ test('requires administrator access before reading memberships', async () => {
   expect(await screen.findByText('Administrator access required.')).toBeVisible();
   expect(fetch.mock.calls.map(([input]) => input)).toEqual(['/api/v1/session']);
 });
+
+// Approval starts with no selected role and sends the choice with the
+// membership version. The table refreshes after the controller commits it.
+test('approves a pending account with an explicitly selected role', async () => {
+  const account = { id: 'pending', primaryEmail: 'pending@example.test', membershipState: 'pending',
+    credentialMode: 'external', role: 'member', version: 2 };
+  let approved = false;
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json({ ...session, permissions: ['user.list', 'user.approve'] });
+    if (input === '/api/v1/admin/users') return json([approved
+      ? { ...account, membershipState: 'active', role: 'administrator', version: 3 } : account]);
+    if (input === '/api/v1/admin/users/pending' && init?.method === 'PATCH') {
+      approved = true;
+      return json(null);
+    }
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><People /></Providers>);
+  const row = await screen.findByRole('row', { name: /pending@example.test/ });
+  const role = within(row).getByRole('combobox', { name: /Role for/ });
+  const approve = within(row).getByRole('button', { name: 'Approve' });
+  expect(role).toHaveValue('');
+  expect(approve).toBeDisabled();
+  await user.selectOptions(role, 'administrator');
+  await user.click(approve);
+  expect(await within(row).findByText('Active')).toBeVisible();
+  expect(within(row).getByText('Administrator')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/admin/users/pending', expect.objectContaining({
+    method: 'PATCH',
+    headers: expect.objectContaining({ 'If-Match': '"2"', 'X-CSRF-Token': 'fixture' }),
+    body: JSON.stringify({ membershipState: 'active', role: 'administrator' }),
+  }));
+});
