@@ -1783,8 +1783,12 @@ This checkpoint does not itself change the goal status.
   decisions. Provider ownership conflicts block approval, and activation
   requires fresh matching evidence and a current administrator. Approval
   commits review history and reopens the installation with fresh sign-in.
-  Recovery session issuance, operational route wiring, and live recovery
-  acceptance remain open.
+  T112 and T113 allow the serving preflight to open a restored
+  installation only with an unfinished, linked review. The restricted
+  listener issues local administrator review sessions and serves review
+  and activation routes without guest listeners or retention workers.
+  Review activation closes that listener and reruns startup checks.
+  Restore-validation routing and live recovery acceptance remain open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.

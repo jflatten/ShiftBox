@@ -45,10 +45,15 @@ func runServe(ctx context.Context, args []string) error {
 		return err
 	}
 	defer lock.Close()
-	state, err := app.PreflightController(ctx, cfg)
-	if err != nil {
-		return err
+	for {
+		state, err := app.PreflightServingController(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		err = serveActiveController(ctx, cfg, state, configPath)
+		closeErr := state.Close()
+		if !errors.Is(err, errRecoveryActivated) || closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
 	}
-	defer state.Close()
-	return serveActiveController(ctx, cfg, state, configPath)
 }

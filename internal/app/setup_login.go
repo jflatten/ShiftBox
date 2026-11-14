@@ -80,7 +80,11 @@ func (f loginFlow) finish(w http.ResponseWriter, r *http.Request) {
 		web.WriteProblem(w, web.RequestID(r.Context()), err)
 		return
 	}
-	http.Redirect(w, r, f.redirect, http.StatusSeeOther)
+	redirect := f.redirect
+	if session.Mode == "recovery_review" {
+		redirect = "/recovery/"
+	}
+	http.Redirect(w, r, redirect, http.StatusSeeOther)
 }
 
 func (s SetupHTTP) issueBootstrapSession(ctx context.Context, verified identity.VerifiedIdentity) (auth.Session, string, error) {

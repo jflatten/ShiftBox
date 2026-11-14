@@ -21,9 +21,11 @@ const _sessionCookieName = "__Host-shiftbox_session"
 // Revoke must commit invalidation and finish live connection closure before returning.
 type SessionHandler struct {
 	Origin string
-	Now    func() time.Time
-	Lookup func(context.Context, string) (auth.Principal, error)
-	Revoke func(context.Context, string) error
+	// RecoveryReviewID identifies the review served by the restricted listener.
+	RecoveryReviewID string
+	Now              func() time.Time
+	Lookup           func(context.Context, string) (auth.Principal, error)
+	Revoke           func(context.Context, string) error
 }
 
 // NewSessionHandler wires the active database and revocation registry into the
@@ -100,6 +102,10 @@ func (h *SessionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if organization.ID != "" && auth.Authorize(principal, "secret.manage_organization", organization, nil, now).Allowed {
 		organizationSecretScopeID = organization.ID
 	}
+	reviewID := ""
+	if principal.Session.Mode == "recovery_review" && principal.InstallationState == "recovery" {
+		reviewID = h.RecoveryReviewID
+	}
 	view := struct {
 		User                       auth.User  `json:"user"`
 		Mode                       string     `json:"mode"`
@@ -108,7 +114,8 @@ func (h *SessionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		InstallationState          string     `json:"installationState"`
 		ExternalAuthorizationDueAt *time.Time `json:"externalAuthorizationDueAt"`
 		OrganizationSecretScopeID  string     `json:"organizationSecretScopeId,omitempty"`
-	}{principal.User, principal.Session.Mode, auth.CSRFToken(token), sessionPermissions(principal, now), principal.InstallationState, due, organizationSecretScopeID}
+		RecoveryReviewID           string     `json:"recoveryReviewId,omitempty"`
+	}{principal.User, principal.Session.Mode, auth.CSRFToken(token), sessionPermissions(principal, now), principal.InstallationState, due, organizationSecretScopeID, reviewID}
 	encoded, err := json.Marshal(view)
 	if err != nil {
 		WriteProblem(w, RequestID(r.Context()), err)

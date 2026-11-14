@@ -56,6 +56,40 @@ func TestOpenActiveDatabaseRequiresActivation(t *testing.T) {
 	if active.ActiveRelease != "test" || active.MinimumGuestRelease != "test" {
 		t.Errorf("activation releases = %q/%q, want both from the active database", active.ActiveRelease, active.MinimumGuestRelease)
 	}
+	if _, err := db.Exec("UPDATE installations SET state='recovery'"); err != nil {
+		t.Fatal(err)
+	}
+	if opened, _, err := OpenActiveDatabase(ctx, cfg); !errors.Is(err, ErrActiveDatabase) {
+		if opened != nil {
+			opened.Close()
+		}
+		t.Fatalf("normal opener accepted recovery database: %v", err)
+	}
+	if opened, _, err := openServingDatabase(ctx, cfg); !errors.Is(err, ErrActiveDatabase) {
+		if opened != nil {
+			opened.Close()
+		}
+		t.Fatalf("recovery opener accepted database without a review: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO operations(id,type,generation,requested_by,request_key,status,created_at,version,originating_action)
+		VALUES('restore','restore',1,'owner','validated-restore','succeeded','now',1,'restore.activate')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO recovery_reviews(id,restore_operation_id,state,started_by,started_at,version)
+		VALUES('review','restore','identity_review','owner','now',1)`); err != nil {
+		t.Fatal(err)
+	}
+	recoveryDB, restored, err := openServingDatabase(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryDB.Close()
+	if restored.RecoveryReviewID != "review" {
+		t.Fatalf("recovery identity = %q; want linked review", restored.RecoveryReviewID)
+	}
+	if _, err := db.Exec("UPDATE installations SET state='active'"); err != nil {
+		t.Fatal(err)
+	}
 	// The committed interval can be updated through external identity
 	// configuration without requiring a rewrite of the startup file.
 	cfg.ExternalAuthIntervalSeconds = 3600

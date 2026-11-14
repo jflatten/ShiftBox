@@ -45,7 +45,17 @@ func (s *ControllerState) GitHub(clientID, clientSecret string, installationID i
 // PreflightController loads the database and retained TLS material before any
 // listener can be opened. It uses the system roots for browser certificates.
 func PreflightController(ctx context.Context, cfg config.Config) (*ControllerState, error) {
-	db, active, err := OpenActiveDatabase(ctx, cfg)
+	return preflightController(ctx, cfg, OpenActiveDatabase)
+}
+
+// PreflightServingController admits recovery state only with a durable review.
+func PreflightServingController(ctx context.Context, cfg config.Config) (*ControllerState, error) {
+	return preflightController(ctx, cfg, openServingDatabase)
+}
+
+func preflightController(ctx context.Context, cfg config.Config,
+	open func(context.Context, config.Config) (*sql.DB, ActiveInstallation, error)) (*ControllerState, error) {
+	db, active, err := open(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}

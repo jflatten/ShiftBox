@@ -51,7 +51,6 @@ func activeLoginHandler(db *sql.DB, installation string, login *SetupLogin, exte
 		callback.ForceQuery || callback.Fragment != "" {
 		return nil, errors.New("active sign-in requires a management HTTPS callback")
 	}
-	store := auth.NewStore(db)
 	flow := loginFlow{
 		login: login, cookie: "__Host-shiftbox_login", cookiePath: "/", redirect: "/",
 		deny: func(w http.ResponseWriter, r *http.Request) {
@@ -60,29 +59,7 @@ func activeLoginHandler(db *sql.DB, installation string, login *SetupLogin, exte
 			})
 		},
 		issue: func(ctx context.Context, verified identity.VerifiedIdentity) (auth.Session, string, error) {
-			var session auth.Session
-			var token string
-			err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
-				var passwordChange bool
-				err := tx.QueryRowContext(ctx, `SELECT u.must_change_password
-					FROM users u CROSS JOIN installations i
-					WHERE i.id=$1 AND i.state='active' AND u.id=$2 AND u.credential_mode='local'
-					  AND u.membership_state='active' AND u.role IN ('administrator','member')`,
-					installation, verified.Subject).Scan(&passwordChange)
-				if err != nil {
-					return err
-				}
-				mode := "normal"
-				if passwordChange {
-					mode = "password_change"
-				}
-				session, token, err = auth.NewSession(newID(), verified.Subject, mode, now(), 30*time.Minute)
-				if err != nil {
-					return err
-				}
-				return store.SaveSession(ctx, tx, session)
-			})
-			return session, token, err
+			return issueControllerSession(ctx, db, installation, verified.Subject, now(), newID)
 		},
 	}
 	mux := http.NewServeMux()
@@ -105,4 +82,35 @@ func activeLoginHandler(db *sql.DB, installation string, login *SetupLogin, exte
 		}
 		mux.ServeHTTP(w, r)
 	})), nil
+}
+
+func issueControllerSession(ctx context.Context, db *sql.DB, installation, subject string, now time.Time, newID func() string) (auth.Session, string, error) {
+	var session auth.Session
+	var token string
+	err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		var state string
+		var passwordChange bool
+		err := tx.QueryRowContext(ctx, `SELECT i.state,u.must_change_password
+			FROM users u CROSS JOIN installations i
+			WHERE i.id=$1 AND u.id=$2 AND u.credential_mode='local' AND u.membership_state='active'
+			AND ((i.state='active' AND u.role IN ('administrator','member'))
+				OR (i.state='recovery' AND u.role='administrator' AND NOT u.must_change_password))`,
+			installation, subject).Scan(&state, &passwordChange)
+		if err != nil {
+			return err
+		}
+		mode := "normal"
+		switch {
+		case state == "recovery":
+			mode = "recovery_review"
+		case passwordChange:
+			mode = "password_change"
+		}
+		session, token, err = auth.NewSession(newID(), subject, mode, now, 30*time.Minute)
+		if err != nil {
+			return err
+		}
+		return auth.NewStore(db).SaveSession(ctx, tx, session)
+	})
+	return session, token, err
 }

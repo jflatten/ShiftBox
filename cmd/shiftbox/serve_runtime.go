@@ -72,6 +72,9 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if err != nil {
 		return err
 	}
+	if active.RecoveryReviewID != "" {
+		return serveRecoveryController(ctx, cfg, state, binary, assets, machines)
+	}
 	caps, err := machines.Capabilities(ctx)
 	if err != nil {
 		return errors.New("cannot verify UTM capabilities; check the supported UTM version and macOS automation access")

@@ -36,10 +36,12 @@ type AuthorizedHandler struct {
 	Route  ManagementRoute
 	// Lookup defaults to the database store. Protected setup/recovery wiring can
 	// supply a lookup that additionally proves its local/review eligibility gates.
-	Lookup  func(context.Context, *sql.Tx, string) (auth.Principal, error)
-	Resolve func(context.Context, *sql.Tx, *http.Request, auth.Principal) (AuthorizationTarget, error)
-	Audit   func(context.Context, *sql.Tx, auth.Principal, AuthorizationTarget) error
-	Apply   func(context.Context, *sql.Tx, *http.Request, auth.Principal, AuthorizationTarget, auth.Decision) (http.Handler, error)
+	// ReviewReady loads the durable activation gate for a recovery session.
+	ReviewReady func(context.Context, *sql.Tx) (bool, error)
+	Lookup      func(context.Context, *sql.Tx, string) (auth.Principal, error)
+	Resolve     func(context.Context, *sql.Tx, *http.Request, auth.Principal) (AuthorizationTarget, error)
+	Audit       func(context.Context, *sql.Tx, auth.Principal, AuthorizationTarget) error
+	Apply       func(context.Context, *sql.Tx, *http.Request, auth.Principal, AuthorizationTarget, auth.Decision) (http.Handler, error)
 }
 
 // ServeHTTP denies invalid authority before invoking the intent callback and
@@ -72,6 +74,12 @@ func (h *AuthorizedHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			return err
+		}
+		if h.ReviewReady != nil && principal.Session.Mode == "recovery_review" {
+			principal.RecoveryReady, err = h.ReviewReady(r.Context(), tx)
+			if err != nil {
+				return err
+			}
 		}
 		now := h.Now()
 		if principal.Session.TokenDigest != auth.TokenDigest(token) || !auth.Authorize(principal, "session.view", auth.Resource{}, nil, now).Allowed {
