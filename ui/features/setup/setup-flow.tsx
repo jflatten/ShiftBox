@@ -6,6 +6,7 @@ import { useForm } from '@mantine/form';
 import { useQuery } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
+import { ActivateForm, CapacityForm, SetupComplete } from './setup-activation';
 import { CertificateForm, DatabaseForm } from './setup-configuration';
 
 const steps = [
@@ -21,6 +22,9 @@ interface SetupStatus {
   state: string;
   completedSteps: string[];
   availableSteps: string[];
+  capacityVersion?: number;
+  compatibleArtifact?: boolean;
+  managementOrigin?: string;
 }
 
 interface SetupSession {
@@ -52,7 +56,9 @@ export function SetupFlow() {
   const session = useQuery({ queryKey: ['session', 'setup'], queryFn: ({ signal }) => readSession(signal) });
   const [administratorCreated, setAdministratorCreated] = useState(false);
   const [passwordChanged, setPasswordChanged] = useState(false);
-  const stage = status.data?.availableSteps[0];
+  const [activated, setActivated] = useState(false);
+  const setupComplete = activated || status.data?.state === 'active';
+  const stage = setupComplete ? undefined : status.data?.availableSteps[0];
   const completed = status.data?.completedSteps ?? [];
   const current = passwordChanged ? 'data_profile' : administratorCreated && stage === 'administrator' ? 'password' : stage;
   const active = steps.findIndex(([key]) => key === current);
@@ -65,7 +71,7 @@ export function SetupFlow() {
       <Stack gap="lg">
         <Image src={`/brand/shiftbox-logo-${scheme}.svg`} alt="ShiftBox" w={160} h={40} fit="contain" />
         <Title order={1}>Local setup</Title>
-        <Stepper active={status.data?.state === 'active' ? steps.length : active < 0 ? completed.length : active}
+        <Stepper active={setupComplete ? steps.length : active < 0 ? completed.length : active}
           orientation="vertical" size="sm" allowNextStepsSelect={false}>
           {steps.map(([key, label]) => (
             <Stepper.Step key={key} label={label} aria-label={label} aria-current={key === current ? 'step' : undefined} allowStepSelect={false} />
@@ -74,7 +80,7 @@ export function SetupFlow() {
         {error ? <APIProblemView error={error} /> : null}
         {!error && (status.isPending || session.isPending) ? <Text role="status">Checking setup…</Text> : null}
         {showAdministrator ? <AdministratorForm onAcknowledged={() => setAdministratorCreated(true)} /> : null}
-        {!error && !session.isPending && !showAdministrator && (administratorCreated || passwordChanged || (stage && !currentSession)) ? (
+        {!error && !session.isPending && !showAdministrator && (!setupComplete && (administratorCreated || passwordChanged || (stage && !currentSession))) ? (
           <Stack align="flex-start">
             <Text role="status">{passwordChanged ? 'Sign in again with your new password.' : 'Sign in with the administrator account to continue.'}</Text>
             <Button component="a" href="/auth/login">Sign in</Button>
@@ -89,10 +95,14 @@ export function SetupFlow() {
         {!error && stage === 'certificate' && currentSession && !passwordChanged ? (
           <CertificateForm csrfToken={currentSession.csrfToken} onSaved={refreshStatus} />
         ) : null}
-        {!error && active > 3 && currentSession && !passwordChanged ? (
-          <Text role="status">{steps[active][1]} configuration is pending.</Text>
+        {!error && stage === 'provider' && currentSession && !passwordChanged ? (
+          <CapacityForm csrfToken={currentSession.csrfToken} version={status.data?.capacityVersion ?? 0}
+            compatibleArtifact={status.data?.compatibleArtifact === true} onSaved={refreshStatus} />
         ) : null}
-        {!error && status.data?.state === 'active' ? <Text role="status">Setup is complete. Sign in at the management address.</Text> : null}
+        {!error && stage === 'activation' && currentSession && !passwordChanged ? (
+          <ActivateForm csrfToken={currentSession.csrfToken} onActivated={() => setActivated(true)} />
+        ) : null}
+        {setupComplete ? <SetupComplete origin={status.data?.managementOrigin} /> : null}
       </Stack>
     </Container>
   );

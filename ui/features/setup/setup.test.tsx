@@ -109,7 +109,7 @@ test('saves SQLite and validates browser certificate files', async () => {
   await user.upload(inputs[0], file('certificate-fixture', 'chain.pem'));
   await user.upload(inputs[1], file('key-fixture', 'key.pem'));
   await user.click(save);
-  expect(await screen.findByText('Provider configuration is pending.')).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'Workspace capacity' })).toBeVisible();
   expect(fetch).toHaveBeenCalledWith('/api/v1/setup/certificate', expect.objectContaining({
     headers: expect.objectContaining({ 'X-CSRF-Token': 'csrf-fixture', 'Idempotency-Key': expect.any(String) }),
     body: JSON.stringify({
@@ -157,4 +157,40 @@ test('keeps a failed PostgreSQL profile available for retry', async () => {
   expect(requests[1]).toEqual(requests[0]);
   expect(requests[0].body).toBe(JSON.stringify({ profile: 'postgres', connectionUri, tlsMode: 'verify-full' }));
   expect(screen.getByRole('alert')).not.toHaveTextContent(connectionUri);
+});
+
+// Capacity uses the server revision and activation waits for acknowledgement.
+test('saves capacity and confirms activation before submitting', async () => {
+  let stage = 'provider';
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/setup/status') return response(200, {
+      ...bootstrap(stage), capacityVersion: 3, compatibleArtifact: true,
+      managementOrigin: 'https://shiftbox.example.test',
+    }) as Response;
+    if (input === '/api/v1/session') return response(200, { mode: 'bootstrap_restricted', csrfToken: 'csrf-fixture' }) as Response;
+    if (input === '/api/v1/admin/capacity' && init?.method === 'PUT') {
+      stage = 'activation';
+      return response(204) as Response;
+    }
+    if (input === '/api/v1/setup/activate' && init?.method === 'POST') {
+      return response(202, { status: 'succeeded' }) as Response;
+    }
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><SetupFlow /></Providers>);
+  await user.type(await screen.findByLabelText(/^vCPU limit/), '4');
+  await user.type(screen.getByLabelText(/^Memory limit/), '8192');
+  await user.type(screen.getByLabelText(/^Disk limit/), '32768');
+  await user.click(screen.getByRole('button', { name: 'Save capacity' }));
+  expect(fetch).toHaveBeenCalledWith('/api/v1/admin/capacity', expect.objectContaining({
+    headers: expect.objectContaining({ 'If-Match': '"3"', 'X-CSRF-Token': 'csrf-fixture' }),
+    body: JSON.stringify({ cpuCount: 4, memoryMiB: 8192, diskMiB: 32768 }),
+  }));
+  const activate = await screen.findByRole('button', { name: 'Activate installation' });
+  expect(activate).toBeDisabled();
+  await user.click(screen.getByRole('checkbox', { name: 'I understand that I will need to sign in again' }));
+  await user.click(activate);
+  expect(await screen.findByRole('link', { name: 'Sign in to ShiftBox' })).toHaveAttribute('href', 'https://shiftbox.example.test/auth/login');
 });

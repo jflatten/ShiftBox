@@ -77,13 +77,22 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 	var state string
 	var userID sql.NullString
 	var ready, change sql.NullBool
-	var profileSelected, certificateConfigured bool
+	var profileSelected, certificateConfigured, compatibleArtifact bool
+	var capacityVersion int64
+	var managementOrigin string
 	err := s.DB.QueryRowContext(r.Context(), `SELECT i.state,b.user_id,b.credential_ready,u.must_change_password, EXISTS (
 		SELECT 1 FROM operations o JOIN operation_steps step ON step.operation_id=o.id
 		WHERE o.requested_by=b.user_id AND o.type='setup' AND o.status='succeeded'
 		AND step.step_key IN ($2,$3) AND step.status='succeeded'
 	),
-		EXISTS (SELECT 1 FROM browser_certificates WHERE state='active') FROM installations i LEFT JOIN bootstrap_administrator b ON b.installation_id=i.id LEFT JOIN users u ON u.id=b.user_id WHERE i.id=$1`, s.InstallationID, profileStep, postgresProfileStep).Scan(&state, &userID, &ready, &change, &profileSelected, &certificateConfigured)
+		EXISTS (SELECT 1 FROM browser_certificates WHERE state='active'),
+		EXISTS (SELECT 1 FROM platform_artifacts WHERE state='available' AND is_default=1
+		    AND protocol_version='1' AND guest_release IN (i.active_release,i.min_guest_release)),
+		COALESCE((SELECT version FROM capacity_budgets WHERE installation_id=i.id),0),
+		i.management_origin
+		FROM installations i LEFT JOIN bootstrap_administrator b ON b.installation_id=i.id
+		LEFT JOIN users u ON u.id=b.user_id WHERE i.id=$1`, s.InstallationID, profileStep, postgresProfileStep).
+		Scan(&state, &userID, &ready, &change, &profileSelected, &certificateConfigured, &compatibleArtifact, &capacityVersion, &managementOrigin)
 	if err != nil {
 		setupProblem(w, r, err)
 		return
@@ -102,7 +111,12 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 					completed = append(completed, "data_profile")
 					if certificateConfigured {
 						completed = append(completed, "certificate")
-						available = append(available, "provider")
+						if compatibleArtifact && capacityVersion > 0 {
+							completed = append(completed, "provider")
+							available = append(available, "activation")
+						} else {
+							available = append(available, "provider")
+						}
 					} else {
 						available = append(available, "certificate")
 					}
@@ -112,12 +126,18 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if !certificateConfigured {
+		managementOrigin = ""
+	}
 	writeSetupJSON(w, 200, struct {
-		State     string   `json:"state"`
-		LocalOnly bool     `json:"localOnly"`
-		Completed []string `json:"completedSteps"`
-		Available []string `json:"availableSteps"`
-	}{state, true, completed, available})
+		State              string   `json:"state"`
+		LocalOnly          bool     `json:"localOnly"`
+		Completed          []string `json:"completedSteps"`
+		Available          []string `json:"availableSteps"`
+		CapacityVersion    int64    `json:"capacityVersion"`
+		CompatibleArtifact bool     `json:"compatibleArtifact"`
+		ManagementOrigin   string   `json:"managementOrigin,omitempty"`
+	}{state, true, completed, available, capacityVersion, compatibleArtifact, managementOrigin})
 }
 
 func (s SetupHTTP) administrator(w http.ResponseWriter, r *http.Request) {

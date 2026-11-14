@@ -94,6 +94,7 @@ func TestSetupCertificateUpload(t *testing.T) {
 	mux.Handle("PUT /certificate", setup.certificateHandler())
 	mux.Handle("POST /activate", setup.activationHandler())
 	mux.Handle("PUT /capacity", setup.capacityHandler())
+	mux.HandleFunc("GET /status", setup.status)
 	handler, err := ProtectBootstrap(origin, mux)
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +131,26 @@ func TestSetupCertificateUpload(t *testing.T) {
 		return w.Body.String()
 	}
 	budget := map[string]int{"cpuCount": 4, "memoryMiB": 4096, "diskMiB": 10240}
+	checkStatus := func(stage string, compatible bool, budgetVersion int64) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, origin+"/status", nil)
+		r.RemoteAddr = "127.0.0.1:61520"
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		var status struct {
+			AvailableSteps     []string `json:"availableSteps"`
+			CompatibleArtifact bool     `json:"compatibleArtifact"`
+			CapacityVersion    int64    `json:"capacityVersion"`
+			ManagementOrigin   string   `json:"managementOrigin"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil || w.Code != 200 ||
+			len(status.AvailableSteps) != 1 || status.AvailableSteps[0] != stage ||
+			status.CompatibleArtifact != compatible || status.CapacityVersion != budgetVersion ||
+			status.ManagementOrigin != "https://management.test" {
+			t.Fatalf("setup status = %d, %+v, %v, want %s, compatible artifact %v, capacity version %d",
+				w.Code, status, err, stage, compatible, budgetVersion)
+		}
+	}
 	request("/capacity", "", budget, 409)
 	request("/certificate", "setup-cert-upload-001", input, 409)
 	request("/profile", "setup-profile-select-1", map[string]string{"profile": "sqlite"}, 202)
@@ -158,12 +179,14 @@ func TestSetupCertificateUpload(t *testing.T) {
 	if _, err := db.Exec(`UPDATE bootstrap_administrator SET credential_ready=1,delivered_at=$1,password_ciphertext_id=NULL WHERE installation_id=$2`, now.Format(time.RFC3339Nano), id); err != nil {
 		t.Fatal(err)
 	}
+	checkStatus("provider", false, 0)
 	request("/activate", "setup-activate-0001", nil, 409)
 	if _, err := db.Exec(`INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state,is_default)
 		VALUES('fixture','fixture','amd64','test','development','1','[]','{}','{}','{}','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','fixture.utm',$1,$2,'available',1)`, owner, now.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
 	request("/capacity", "", budget, 204)
+	checkStatus("activation", true, 1)
 	request("/capacity", "", budget, 412)
 	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
 		return setup.savePendingPostgres(ctx, tx, selectedPostgresProfile{RequestKey: "test-postgres-selection"})

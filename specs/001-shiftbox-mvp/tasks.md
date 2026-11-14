@@ -1697,3 +1697,16 @@ This checkpoint does not itself change the goal status.
   focus, certificate submission, and advancement from server-reported
   progress. Chrome verified SQLite selection and certificate form validation
   against the embedded setup server. Provider and activation remain open.
+
+### Capacity and activation in local setup
+
+- The setup status reports the saved capacity revision and compatible
+  default image prerequisite. The setup page uses the revision when
+  saving capacity and advances after the server reports both prerequisites.
+- Activation requires acknowledgement that the local session ends, then
+  offers fresh sign-in at the configured management origin. Go tests cover
+  the status transition and committed SQLite activation. UI tests cover the
+  capacity request, acknowledgement, and management sign-in link.
+- Live provider validation and importing the initial workspace artifact
+  through setup remain open under T058. The controller still needs T060
+  composition before the management sign-in journey can run end to end.
