@@ -1705,6 +1705,21 @@ This checkpoint does not itself change the goal status.
   Both profiles passed the constraint test under the race detector.
 - T110 still owns verifying actual archive contents and committing the
   result. T112 owns recovery-mode authorization and activation checks.
+
+### Management archive and checkpoint primitives
+
+- T110 writes a canonical management manifest and an age passphrase
+  archive assembled from a fixed list of staged files. Before publishing
+  it, the code closes the encrypted file, decrypts the entire stream, and
+  checks every recorded file digest. Archive publication refuses to
+  replace an existing file.
+- T104 exercises the checkpoint fence callback through success,
+  cancellation, and acquisition failure. The SQLite checkpoint test
+  uses a real WAL database and verifies that the snapshot includes
+  committed changes and excludes later writes.
+- T104 and T110 stay open for live controller and Dex coordination,
+  PostgreSQL checkpoint acquisition, and uninterrupted workspace
+  computation evidence.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
