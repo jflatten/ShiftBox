@@ -2083,3 +2083,13 @@ This checkpoint does not itself change the goal status.
   interrupted Dex writes and one-time delivery. Migration parity passed
   on SQLite and PostgreSQL. The People form and credential recovery remain
   open under T070 and T077.
+
+### Local account creation in People
+
+- Authorized administrators can enter an email address and explicitly
+  choose Member or Administrator. People refreshes after the account is
+  created and clears the one-time password when the administrator confirms
+  they saved it for private delivery.
+- All 51 UI tests and the production build passed. Chrome verified role
+  selection and one-time password clearing by keyboard using fixture
+  responses. Credential recovery and production startup remain open.

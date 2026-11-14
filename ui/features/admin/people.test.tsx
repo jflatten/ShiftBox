@@ -44,6 +44,47 @@ test('retries a failed membership read and shows account states', async () => {
   expect(within(disabled).getByText('Disabled')).toBeVisible();
   expect(within(disabled).getByRole('link', { name: /View workspaces/ })).toHaveAttribute('href', '/workspaces/?owner=disabled');
   expect(reads).toBe(2);
+  expect(screen.queryByRole('button', { name: 'Create local account' })).toBeNull();
+});
+
+// Local account creation requires an explicit role and shows the temporary
+// password only until the administrator acknowledges private delivery.
+test('creates a local account and clears the one-time password', async () => {
+  const account = { id: 'new-user', primaryEmail: 'new@example.test', role: 'administrator',
+    membershipState: 'active', credentialMode: 'local', version: 1 };
+  let created = false;
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (path, init) => {
+    if (path === '/api/v1/session') return json({ ...session, permissions: ['user.list', 'user.create'] });
+    if (path === '/api/v1/admin/users' && init?.method === 'POST') {
+      created = true;
+      return { ...json({ user: account, temporaryPassword: 'one-time-fixture' }), status: 201 } as Response;
+    }
+    if (path === '/api/v1/admin/users') return json(created ? [account] : []);
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><People /></Providers>);
+  const submit = await screen.findByRole('button', { name: 'Create local account' });
+  await user.type(screen.getByLabelText(/^Email address/), account.primaryEmail);
+  await user.click(submit);
+  expect(screen.getByText('Choose a role.')).toBeVisible();
+  expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+  await user.click(screen.getByRole('radio', { name: 'Administrator' }));
+  await user.click(submit);
+  expect(await screen.findByText('one-time-fixture')).toBeVisible();
+  const row = await screen.findByRole('row', { name: /new@example.test/ });
+  expect(within(row).getByText('Active')).toBeVisible();
+  const done = screen.getByRole('button', { name: 'Done' });
+  expect(done).toBeDisabled();
+  await user.click(screen.getByRole('checkbox', { name: 'I saved the temporary password' }));
+  await user.click(done);
+  expect(screen.queryByText('one-time-fixture')).toBeNull();
+  expect(screen.getByLabelText(/^Email address/)).toHaveValue('');
+  expect(fetch).toHaveBeenCalledWith('/api/v1/admin/users', expect.objectContaining({
+    method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'fixture' }),
+    body: JSON.stringify({ email: account.primaryEmail, role: 'administrator' }),
+  }));
 });
 
 // Direct navigation by a member never fetches the administrator's list.

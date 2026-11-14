@@ -7,6 +7,7 @@ import { ShiftBoxShell } from '../../components/app-shell';
 import { APIProblemView } from '../../components/api-problem';
 import { APIProblemError, readProblem } from '../../lib/api-problem';
 import { useSession } from '../../lib/use-session';
+import { CreateLocalAccount } from './create-local-account';
 import { Offboarding } from './offboarding';
 
 interface Person {
@@ -48,6 +49,9 @@ export function People() {
       {allowed && people.isPending ? <Text role="status">Loading people…</Text> : null}
       {allowed && people.isError ? (
         <Button variant="default" style={{ alignSelf: 'flex-start' }} onClick={() => void people.refetch()}>Retry</Button>
+      ) : null}
+      {allowed && current.permissions.includes('user.create') ? (
+        <CreateLocalAccount key={current.user.id} csrfToken={current.csrfToken} refresh={people.refetch} />
       ) : null}
       {data?.length === 0 ? <Text>No accounts found.</Text> : null}
       {data?.length && current ? <PeopleTable people={data}
