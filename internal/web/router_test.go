@@ -3,12 +3,13 @@ package web_test
 import (
 	"context"
 	"database/sql"
-	"github.com/jflatten/ShiftBox/internal/auth"
-	"github.com/jflatten/ShiftBox/internal/web"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jflatten/ShiftBox/internal/auth"
+	"github.com/jflatten/ShiftBox/internal/web"
 )
 
 // TestManagementRouterRequiresCompleteWiring prevents missing or unknown API implementations from silently shipping.
@@ -16,20 +17,23 @@ func TestManagementRouterRequiresCompleteWiring(t *testing.T) {
 	session, _, _ := sessionHandlerFixture(t)
 	session.Revoke = func(context.Context, string) error { return nil }
 	handlers := routerHandlers(t)
+	if _, err := web.NewManagementRouter(session, handlers, nil); err == nil {
+		t.Fatal("NewManagementRouter(missing GitHub callback) succeeded")
+	}
 	delete(handlers, "launchWorkspace")
-	if _, err := web.NewManagementRouter(session, handlers); err == nil {
+	if _, err := web.NewManagementRouter(session, handlers, routerGitCallback()); err == nil {
 		t.Fatal("NewManagementRouter(missing launch) succeeded")
 	}
 	handlers = routerHandlers(t)
 	handlers["unreviewedOperation"] = handlers["launchWorkspace"]
-	if _, err := web.NewManagementRouter(session, handlers); err == nil {
+	if _, err := web.NewManagementRouter(session, handlers, routerGitCallback()); err == nil {
 		t.Fatal("NewManagementRouter(unknown operation) succeeded")
 	}
 	handlers = routerHandlers(t)
 	h := handlers["launchWorkspace"]
 	h.Apply = nil
 	handlers["launchWorkspace"] = h
-	if _, err := web.NewManagementRouter(session, handlers); err == nil {
+	if _, err := web.NewManagementRouter(session, handlers, routerGitCallback()); err == nil {
 		t.Fatal("NewManagementRouter(missing intent callback) succeeded")
 	}
 }
@@ -43,7 +47,7 @@ func TestManagementRouterGuardsCatalogRoutes(t *testing.T) {
 	h := handlers["launchWorkspace"]
 	h.Route = web.ManagementRoute{Method: "GET", Path: "/unreviewed", Action: "session.view"}
 	handlers["launchWorkspace"] = h
-	router, err := web.NewManagementRouter(session, handlers)
+	router, err := web.NewManagementRouter(session, handlers, routerGitCallback())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,8 +60,12 @@ func TestManagementRouterGuardsCatalogRoutes(t *testing.T) {
 		request := httptest.NewRequest(route.Method, "https://management.test/api/v1"+path, nil)
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
-		if response.Code != 401 {
-			t.Errorf("registered %s %s status = %d, want 401", route.Method, path, response.Code)
+		want := http.StatusUnauthorized
+		if route.OperationID == "completeGitAuthorization" {
+			want = http.StatusBadRequest
+		}
+		if response.Code != want {
+			t.Errorf("registered %s %s status = %d, want %d", route.Method, path, response.Code, want)
 		}
 		if response.Header().Get("X-Request-ID") == "" {
 			t.Errorf("registered %s missing controller request ID", route.OperationID)
@@ -81,7 +89,7 @@ func routerHandlers(t *testing.T) map[string]web.AuthorizedHandler {
 	t.Cleanup(func() { db.Close() })
 	handlers := make(map[string]web.AuthorizedHandler)
 	for _, route := range web.ManagementRoutes() {
-		if route.OperationID == "getSession" || route.OperationID == "logout" {
+		if route.OperationID == "getSession" || route.OperationID == "logout" || route.OperationID == "completeGitAuthorization" {
 			continue
 		}
 		handlers[route.OperationID] = web.AuthorizedHandler{DB: db, Origin: session.Origin, Now: session.Now,
@@ -96,4 +104,8 @@ func routerHandlers(t *testing.T) map[string]web.AuthorizedHandler {
 		}
 	}
 	return handlers
+}
+
+func routerGitCallback() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadRequest) })
 }

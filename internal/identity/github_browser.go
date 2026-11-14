@@ -28,6 +28,15 @@ type GitHubAuthorizationStart struct {
 
 // BeginAuthorization creates a short-lived state for the authenticated owner.
 func (g *GitHub) BeginAuthorization(ctx context.Context, owner, origin string) (GitHubAuthorizationStart, error) {
+	return g.beginAuthorization(ctx, g.service.store.db, owner, origin)
+}
+
+// BeginAuthorizationInTx saves OAuth intent alongside the caller's session check.
+func (g *GitHub) BeginAuthorizationInTx(ctx context.Context, tx *sql.Tx, owner, origin string) (GitHubAuthorizationStart, error) {
+	return g.beginAuthorization(ctx, tx, owner, origin)
+}
+
+func (g *GitHub) beginAuthorization(ctx context.Context, db githubWriter, owner, origin string) (GitHubAuthorizationStart, error) {
 	redirect, err := githubCallback(origin)
 	if err != nil {
 		return GitHubAuthorizationStart{}, err
@@ -45,11 +54,12 @@ func (g *GitHub) BeginAuthorization(ctx context.Context, owner, origin string) (
 	if err != nil {
 		return GitHubAuthorizationStart{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO github_oauth_states(user_id,app_id,digest,redirect_uri,nonce,ciphertext,expires_at)
+	result, err := db.ExecContext(ctx, `INSERT INTO github_oauth_states(user_id,app_id,digest,redirect_uri,nonce,ciphertext,expires_at)
 		SELECT $1,$2,$3,$4,$5,$6,$7 WHERE EXISTS(SELECT 1 FROM users WHERE id=$1 AND membership_state='active')
+		  AND EXISTS(SELECT 1 FROM installations WHERE management_origin=$8 AND state='active')
 		ON CONFLICT(user_id,app_id) DO UPDATE SET digest=excluded.digest,redirect_uri=excluded.redirect_uri,
 		nonce=excluded.nonce,ciphertext=excluded.ciphertext,expires_at=excluded.expires_at,used=0`,
-		owner, s.appID, digest, redirect, value.Nonce, value.Ciphertext, githubStateTime(expires))
+		owner, s.appID, digest, redirect, value.Nonce, value.Ciphertext, githubStateTime(expires), origin)
 	if err := githubWrite(result, err, ErrGitHubState); err != nil {
 		return GitHubAuthorizationStart{}, err
 	}
@@ -73,7 +83,8 @@ func (g *GitHub) CompleteAuthorization(ctx context.Context, state, code, origin 
 	err = s.db.QueryRowContext(ctx, `UPDATE github_oauth_states SET used=1
 		WHERE app_id=$1 AND digest=$2 AND redirect_uri=$3 AND expires_at>$4 AND used=0
 		  AND EXISTS(SELECT 1 FROM users WHERE id=github_oauth_states.user_id AND membership_state='active')
-		RETURNING user_id,nonce,ciphertext`, s.appID, digest, redirect, githubStateTime(g.service.now())).
+		  AND EXISTS(SELECT 1 FROM installations WHERE management_origin=$5 AND state='active')
+		RETURNING user_id,nonce,ciphertext`, s.appID, digest, redirect, githubStateTime(g.service.now()), origin).
 		Scan(&owner, &value.Nonce, &value.Ciphertext)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrGitHubState
@@ -97,8 +108,9 @@ func (g *GitHub) CompleteAuthorization(ctx context.Context, state, code, origin 
 	return database.Transaction(ctx, s.db, func(tx *sql.Tx) error {
 		now := g.service.now()
 		result, err := tx.ExecContext(ctx, `DELETE FROM github_oauth_states
-			WHERE user_id=$1 AND app_id=$2 AND digest=$3 AND used=1 AND expires_at>$4`,
-			owner, s.appID, digest, githubStateTime(now))
+			WHERE user_id=$1 AND app_id=$2 AND digest=$3 AND used=1 AND expires_at>$4
+			  AND EXISTS(SELECT 1 FROM installations WHERE management_origin=$5 AND state='active')`,
+			owner, s.appID, digest, githubStateTime(now), origin)
 		if err := githubWrite(result, err, ErrGitHubState); err != nil {
 			return err
 		}
@@ -108,13 +120,18 @@ func (g *GitHub) CompleteAuthorization(ctx context.Context, state, code, origin 
 
 // RevokeAuthorization clears stored GitHub credentials and outstanding browser state.
 func (g *GitHub) RevokeAuthorization(ctx context.Context, owner string) error {
-	s := g.service.store
-	return database.Transaction(ctx, s.db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM github_oauth_states WHERE user_id=$1 AND app_id=$2", owner, s.appID); err != nil {
-			return err
-		}
-		return s.revokeWith(ctx, tx, owner, g.service.now())
+	return database.Transaction(ctx, g.service.store.db, func(tx *sql.Tx) error {
+		return g.RevokeAuthorizationInTx(ctx, tx, owner)
 	})
+}
+
+// RevokeAuthorizationInTx clears authorization alongside the caller's session check.
+func (g *GitHub) RevokeAuthorizationInTx(ctx context.Context, tx *sql.Tx, owner string) error {
+	s := g.service.store
+	if _, err := tx.ExecContext(ctx, "DELETE FROM github_oauth_states WHERE user_id=$1 AND app_id=$2", owner, s.appID); err != nil {
+		return err
+	}
+	return s.revokeWith(ctx, tx, owner, g.service.now())
 }
 
 func githubCallback(origin string) (string, error) {

@@ -10,7 +10,7 @@ import (
 // fails until every operation is wired; an incomplete controller must not appear
 // ready. The separate session handler preserves revoke-before-close semantics.
 // The caller mounts this only on the management HTTPS origin, never a guest host.
-func NewManagementRouter(session *SessionHandler, handlers map[string]AuthorizedHandler) (http.Handler, error) {
+func NewManagementRouter(session *SessionHandler, handlers map[string]AuthorizedHandler, githubCallback http.Handler) (http.Handler, error) {
 	if session == nil || session.Origin == "" || session.Now == nil || session.Lookup == nil || session.Revoke == nil {
 		return nil, errors.New("management session handler is incomplete")
 	}
@@ -18,6 +18,12 @@ func NewManagementRouter(session *SessionHandler, handlers map[string]Authorized
 	known := make(map[string]bool, len(routes))
 	for _, route := range routes {
 		if route.OperationID == "getSession" || route.OperationID == "logout" {
+			continue
+		}
+		if route.OperationID == "completeGitAuthorization" {
+			if githubCallback == nil {
+				return nil, errors.New("GitHub authorization callback is incompletely wired")
+			}
 			continue
 		}
 		known[route.OperationID] = true
@@ -39,6 +45,10 @@ func NewManagementRouter(session *SessionHandler, handlers map[string]Authorized
 		pattern := route.Method + " /api/v1" + route.Path
 		if route.OperationID == "getSession" || route.OperationID == "logout" {
 			mux.Handle(pattern, &sessionCopy)
+			continue
+		}
+		if route.OperationID == "completeGitAuthorization" {
+			mux.Handle(pattern, githubCallback)
 			continue
 		}
 		handler := handlers[route.OperationID]

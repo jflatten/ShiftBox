@@ -153,6 +153,19 @@ func TestGitHubBrowserRejectsExpiredAndSupersededState(t *testing.T) {
 func gitHubBrowserFixture(t *testing.T) (*GitHub, *sql.DB, time.Time) {
 	t.Helper()
 	store, db, now := gitHubFixture(t)
+	profile := "sqlite"
+	if os.Getenv("SHIFTBOX_TEST_GITHUB_POSTGRES_URI") != "" {
+		profile = "postgres"
+	}
+	if _, err := db.Exec(`INSERT INTO installations(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version)
+		VALUES('00000000-0000-4000-8000-000000000001','active','ShiftBox',$1,'https://management.test','ide.test','preview.test','release','release','now','now',1)`, profile); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := db.Exec("DELETE FROM installations WHERE id='00000000-0000-4000-8000-000000000001'"); err != nil {
+			t.Errorf("clean up GitHub installation fixture: %v", err)
+		}
+	})
 	app, err := NewGitHub(db, store.key, store.appID, "fixture-secret", 55, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)

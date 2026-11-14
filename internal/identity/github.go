@@ -65,6 +65,39 @@ func (g *GitHub) AccessToken(ctx context.Context, owner, repository string) (str
 	return g.service.accessToken(ctx, owner, repository)
 }
 
+// GitHubAuthorizationView is management metadata for the current user's connection.
+type GitHubAuthorizationView struct {
+	Provider       string     `json:"provider"`
+	ProviderUserID *string    `json:"providerUserId"`
+	State          string     `json:"state"`
+	AccessExpiry   *time.Time `json:"accessExpiresAt"`
+	Version        int64      `json:"version"`
+}
+
+// AuthorizationViewInTx reads connection metadata without loading protected values.
+func (g *GitHub) AuthorizationViewInTx(ctx context.Context, tx *sql.Tx, owner string) (GitHubAuthorizationView, error) {
+	s := g.service.store
+	view := GitHubAuthorizationView{Provider: "github.com", State: "revoked", Version: 1}
+	var expires string
+	err := tx.QueryRowContext(ctx, `SELECT provider_user_id,state,access_expires_at,version
+		FROM github_authorizations WHERE user_id=$1 AND app_id=$2`, owner, s.appID).
+		Scan(&view.ProviderUserID, &view.State, &expires, &view.Version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return view, nil
+	}
+	if err != nil {
+		return GitHubAuthorizationView{}, err
+	}
+	if expires != "" {
+		stamp, err := time.Parse(time.RFC3339Nano, expires)
+		if err != nil {
+			return GitHubAuthorizationView{}, err
+		}
+		view.AccessExpiry = &stamp
+	}
+	return view, nil
+}
+
 func (g *githubService) accessToken(ctx context.Context, owner, repository string) (string, error) {
 	if !template.ValidSource(repository, "devcontainer.json") {
 		return "", ErrGitHubRepositoryDenied
