@@ -2,6 +2,7 @@ package contract_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -67,7 +68,7 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 			t.Fatalf("workspace detail = %d %s (%v), want canOpenIde=%t", w.Code, w.Body, err, want)
 		}
 	}
-	request := func(id, service, csrf string, want int) *httptest.ResponseRecorder {
+	requestAs := func(token, id, service, csrf string, want int) *httptest.ResponseRecorder {
 		t.Helper()
 		r := httptest.NewRequest(http.MethodPost, origin+"/api/v1/workspaces/"+id+"/entry-grants", strings.NewReader(`{"service":"`+service+`"}`))
 		r.SetPathValue("workspaceId", id)
@@ -80,6 +81,10 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 			t.Fatalf("entry grant for %s/%s = %d %s, want %d", id, service, w.Code, w.Body, want)
 		}
 		return w
+	}
+	request := func(id, service, csrf string, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		return requestAs(token, id, service, csrf, want)
 	}
 	csrf := auth.CSRFToken(token)
 	request(workspace, "preview-8080", "invalid", 403)
@@ -214,6 +219,42 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 		return response
 	}
 	serviceOrigin := "https://" + destination.Host
+	// An administrator needs the explicit grant even on a running preview.
+	// Removing that permission also invalidates an origin cookie already issued.
+	admin, adminToken, err := auth.NewSession("admin-preview-session", "owner", "normal", now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		return auth.NewStore(db).SaveSession(ctx, tx, admin)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	adminCSRF := auth.CSRFToken(adminToken)
+	requestAs(adminToken, workspace, "preview-8080", adminCSRF, 403)
+	if _, err := db.ExecContext(ctx, `INSERT INTO resource_grants(id,subject_user_id,resource_type,resource_id,action,granted_by,granted_at)
+		VALUES('preview-admin-grant','owner','workspace',$1,'workspace.connect_admin','owner',$2)`, workspace, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	var adminGrant struct{ ExchangeURL string }
+	adminResponse := requestAs(adminToken, workspace, "preview-8080", adminCSRF, 201)
+	if err := json.Unmarshal(adminResponse.Body.Bytes(), &adminGrant); err != nil {
+		t.Fatal(err)
+	}
+	var audited int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE action='workspace.connect_admin'
+		AND outcome='allowed' AND actor_id='owner' AND resource_id=$1`, workspace).Scan(&audited); err != nil || audited != 1 {
+		t.Fatalf("administrator entry audit count = %d (%v), want one before redemption", audited, err)
+	}
+	adminCookies := send("GET", adminGrant.ExchangeURL, "", nil, 303).Result().Cookies()
+	if len(adminCookies) != 1 {
+		t.Fatal("administrator entry did not issue a service cookie")
+	}
+	send("GET", serviceOrigin+"/", "", adminCookies[0], 204)
+	if _, err := db.ExecContext(ctx, `UPDATE resource_grants SET revoked_at=$1 WHERE id='preview-admin-grant'`, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	send("GET", serviceOrigin+"/", "", adminCookies[0], 403)
 	send("GET", repairGrant.ExchangeURL, "", nil, 403)
 	sibling := strings.Replace(serviceOrigin, "preview-8080", "preview-9000", 1)
 	send("GET", sibling+destination.RequestURI(), "", nil, 403)
@@ -253,7 +294,7 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 		t.Fatal("session revocation did not cancel the active proxy request")
 	}
 	send("GET", serviceOrigin+"/", "", cookies[0], 403)
-	if forwarded != 3 {
-		t.Errorf("forwarded %d requests, want three authorized requests", forwarded)
+	if forwarded != 4 {
+		t.Errorf("forwarded %d requests, want four authorized requests", forwarded)
 	}
 }
