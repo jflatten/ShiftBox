@@ -112,7 +112,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 ### Guest, workspace, API, and UI implementation
 
 - [X] T049 [US1] Implement provider-mediated one-use enrollment, CSR key-proof retry, controller-owned certificate fields, and four-hour replacement/eight-hour validity in `internal/guest/enrollment.go` and `internal/guest/certificates.go`
-- [ ] T050 [US1] Implement authenticated guest poll handling with derived identity, one active operation, generation fencing, bounded evidence, 30-second jittered cadence, and N/N−1 checks proven by T034 in `internal/guest/protocol.go` and `internal/web/guest_routes.go`
+- [X] T050 [US1] Implement authenticated guest poll handling with derived identity, one active operation, generation fencing, bounded evidence, 30-second jittered cadence, and N/N−1 checks proven by T034 in `internal/guest/protocol.go` and `internal/web/guest_routes.go`
 - [X] T051 [US1] Implement `shiftbox-agent serve` supervision and persistent operation attempt/step journal in `cmd/shiftbox-agent/main.go`, `internal/guest/agent.go`, and `internal/guest/local_journal.go`
 - [ ] T052 [US1] Implement the fixed approved guest command executor for repository preparation, prebuilt-image and Dockerfile/build-definition Dev Containers, declared features, lifecycle hooks, declared connection-ready stage, rebuild, IDE verification, repair entry/exit, and graceful shutdown proven by T037 in `internal/guest/executor.go`, `internal/guest/devcontainer.go`, and `internal/guest/repair.go`
 - [ ] T053 [US1] Implement guest-initiated mTLS Yamux registration, one stream per HTTP/WebSocket request, service allowlisting, heartbeats, and expiry/revocation closure in `internal/guest/tunnel.go` and `internal/proxy/tunnel.go`
@@ -2749,3 +2749,10 @@ This checkpoint does not itself change the goal status.
   the lost-response retry and the first poll with the replacement. SQLite
   and PostgreSQL migration parity passed. Native UTM lifecycle acceptance
   remains under T061 and the recovery tasks.
+
+- T050 passed the T034 contract over real mTLS. It verifies accepted current
+  and previous releases, stable dispatch replay, stale generation and version
+  denial, independent IDE verification, and the 30-second cadence advertised
+  by the controller. Invalid and oversized evidence leave the dispatch able
+  to accept its subsequent valid report. The agent polls with 27–33 second
+  jitter.

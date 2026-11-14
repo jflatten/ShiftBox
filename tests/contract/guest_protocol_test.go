@@ -248,12 +248,13 @@ func TestGuestPollContract(t *testing.T) {
 		}
 	}
 	type pollView struct {
-		WorkspaceGeneration int64
-		Operation           *guest.PollOperation
+		WorkspaceGeneration  int64
+		NextPollAfterSeconds int
+		Operation            *guest.PollOperation
 	}
 	var first pollView
 	response := poll("current", http.StatusOK, "")
-	if err := json.Unmarshal(response, &first); err != nil || first.WorkspaceGeneration != 1 ||
+	if err := json.Unmarshal(response, &first); err != nil || first.WorkspaceGeneration != 1 || first.NextPollAfterSeconds != 30 ||
 		first.Operation == nil || first.Operation.ID != op.ID || first.Operation.Command != "ensure-development-container" {
 		t.Fatalf("registered poll returned %s (%v), want generation 1 and the workspace launch dispatch", response, err)
 	}
@@ -277,6 +278,14 @@ func TestGuestPollContract(t *testing.T) {
 	report["workspaceGeneration"] = 2
 	postGuestContract(t, registered, pollURL, input, http.StatusConflict, "operation.conflict")
 	report["workspaceGeneration"] = 1
+	// Reject an invalid evidence value and oversized payload before they can
+	// advance the operation. The same dispatch must still accept its real evidence.
+	evidence := report["evidence"].(map[string]any)
+	evidence["containerId"] = strings.Repeat("a", 65)
+	postGuestContract(t, registered, pollURL, input, http.StatusConflict, "operation.conflict")
+	evidence["containerId"] = strings.Repeat("a", 17<<10)
+	postGuestContract(t, registered, pollURL, input, http.StatusRequestEntityTooLarge, "request.too_large")
+	evidence["containerId"] = strings.Repeat("a", 64)
 	for range 2 {
 		postGuestContract(t, registered, pollURL, input, http.StatusOK, "")
 	}
