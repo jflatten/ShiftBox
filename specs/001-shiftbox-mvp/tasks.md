@@ -1884,6 +1884,10 @@ This checkpoint does not itself change the goal status.
   to keep the replacement offline and prepare an empty target. The
   fixture revalidated and restored both schemas after it was reset.
   Full recovery acceptance remains open under T116.
+- T120 terminates a disposable PostgreSQL restore process after the Dex
+  schema commits and before application loading. A fresh process refuses
+  the occupied target and preserves the committed Dex rows. After fixture
+  reprovisioning both schemas restore successfully.
 - T112 records ordered identity, provider, and authorization/retention
   decisions. Provider ownership conflicts block approval, and activation
   requires fresh matching evidence and a current administrator. Approval
