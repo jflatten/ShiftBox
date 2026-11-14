@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"encoding/pem"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -90,9 +91,16 @@ func TestReplaceBrowserCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller := &ControllerState{DB: db, BrowserTLS: initial, Installation: ActiveInstallation{InstallationID: id, Generation: 1, Settings: settings},
+	guestDir := t.TempDir()
+	guestCA, err := EnsureInstallationCA(guestDir, id, cipher, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &ControllerState{DB: db, BrowserTLS: initial, GuestCA: guestCA, Installation: ActiveInstallation{InstallationID: id, Generation: 1, Settings: settings},
 		cipher: cipher, browserRoots: roots}
-	server, err := ListenBrowser("127.0.0.1:0", controller, http.NotFoundHandler(), &proxy.Tunnels{Registry: &proxy.Registry{}}, clock, nil)
+	server, err := ListenBrowser("127.0.0.1:0", controller, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "secure fixture response")
+	}), &proxy.Tunnels{Registry: &proxy.Registry{}}, clock, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +187,11 @@ func TestReplaceBrowserCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	retained, err := LoadInstallationCA(guestDir, id, cipher, now)
+	if err != nil || !bytes.Equal(retained.Certificate.Raw, guestCA.Certificate.Raw) ||
+		bytes.Equal(retained.Certificate.RawSubjectPublicKeyInfo, pair.Leaf.RawSubjectPublicKeyInfo) {
+		t.Fatalf("browser certificate replacement changed the separate guest CA or reused its key: %v", err)
+	}
 	served(pair)
 	if retry := send(token, requestKey, replacement, 202); retry != accepted {
 		t.Fatal("certificate retry returned different operation evidence")
@@ -189,6 +202,19 @@ func TestReplaceBrowserCertificate(t *testing.T) {
 	if conn, err := dial(); err == nil {
 		conn.Close()
 		t.Fatal("listener accepted a fresh TLS connection after certificate expiry")
+	}
+	plaintext := &http.Client{Timeout: 3 * time.Second}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+server.Address, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Host = "management.test"
+	if response, err := plaintext.Do(request); err == nil {
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		if err != nil || response.StatusCode < http.StatusBadRequest || bytes.Contains(body, []byte("secure fixture response")) {
+			t.Errorf("plaintext after expiry = HTTP %d (%v), want rejection before reaching management", response.StatusCode, err)
+		}
 	}
 }
 
