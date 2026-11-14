@@ -89,6 +89,15 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	check(request(withRetention, key, csrf), 409, "workspace.retention_unavailable")
 	selectedBody := strings.Replace(body, `"templateRevision":1`, `"templateRevision":2`, 1)
 	selectedRetention := strings.Replace(withRetention, `"templateRevision":1`, `"templateRevision":2`, 1)
+	// The template's old image still speaks protocol 1, but its agent is
+	// outside the deployed release window and cannot enroll on a new VM.
+	if _, err := db.Exec("UPDATE installations SET active_release='current',min_guest_release='older'"); err != nil {
+		t.Fatal(err)
+	}
+	check(request(selectedBody, key, csrf), 409, "workspace.platform_incompatible")
+	if _, err := db.Exec("UPDATE installations SET min_guest_release='release'"); err != nil {
+		t.Fatal(err)
+	}
 	accepted := request(selectedBody, key, csrf)
 	check(accepted, 202, "")
 	var op operation.Operation
@@ -298,7 +307,7 @@ func seedWorkspaceLaunch(t *testing.T, db *sql.DB, templateID, token string, now
 			('owner','owner@example.test','administrator','active','local','setup','now','now',1),
 			('member','member@example.test','member','active','local','setup','now','now',1)`,
 			`INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state)
-			VALUES('artifact','release','amd64','test','test','1','[]','{}','{}','{}','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','fixture.utm','owner','now','available')`,
+			VALUES('artifact','release','amd64','test','release','1','[]','{}','{}','{}','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','fixture.utm','owner','now','available')`,
 			`INSERT INTO resource_profiles(id,name,cpu_count,memory_mib,disk_mib,enabled,version) VALUES('profile','Small',2,1024,40,1,1)`,
 			`INSERT INTO capacity_budgets(installation_id,cpu_limit,memory_mib_limit,disk_mib_limit,updated_by,updated_at,version)
 			  SELECT id,2,1024,40,'owner','now',1 FROM installations`,

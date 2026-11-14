@@ -82,8 +82,9 @@ func resolveWorkspaceLaunch(ctx context.Context, tx *sql.Tx, r *http.Request, ac
 
 func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, actor string, input workspaceLaunchRequest, policy WorkspaceLaunchPolicy, now time.Time) (operation.Operation, error) {
 	revision := input.revision
-	var installation string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM installations WHERE singleton=1`).Scan(&installation); err != nil {
+	var installation, currentGuest, previousGuest string
+	if err := tx.QueryRowContext(ctx, `SELECT id,active_release,min_guest_release FROM installations WHERE singleton=1`).
+		Scan(&installation, &currentGuest, &previousGuest); err != nil {
 		return operation.Operation{}, err
 	}
 	intent := workspace.LaunchIntent{
@@ -98,16 +99,19 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 		return operation.Operation{}, Problem{Status: 409, Code: "workspace.retention_unavailable", Title: "Choose an allowed retention period"}
 	}
 	var allocation workspace.Allocation
-	var architecture, protocol string
-	err := tx.QueryRowContext(ctx, `SELECT p.cpu_count,p.memory_mib,p.disk_mib,a.architecture,a.protocol_version
+	var architecture, protocol, guestRelease string
+	err := tx.QueryRowContext(ctx, `SELECT p.cpu_count,p.memory_mib,p.disk_mib,a.architecture,a.protocol_version,a.guest_release
 		FROM resource_profiles p CROSS JOIN platform_artifacts a
 		WHERE p.id=$1 AND p.enabled=1 AND a.id=$2 AND a.state='available'`, revision.ProfileID, revision.ArtifactID).
-		Scan(&allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB, &architecture, &protocol)
+		Scan(&allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB, &architecture, &protocol, &guestRelease)
 	if errors.Is(err, sql.ErrNoRows) {
 		return operation.Operation{}, Problem{Status: 409, Code: "workspace.template_unavailable", Title: "The template's profile or platform release is unavailable"}
 	}
 	if err != nil {
 		return operation.Operation{}, err
+	}
+	if guestRelease == "" || (guestRelease != currentGuest && guestRelease != previousGuest) {
+		return operation.Operation{}, Problem{Status: 409, Code: "workspace.platform_incompatible", Title: "The template's platform release is incompatible with this controller"}
 	}
 	caps := policy.Capabilities
 	if !caps.Create || !caps.Start || caps.Architecture != architecture || !slices.Contains(policy.Protocols, protocol) {

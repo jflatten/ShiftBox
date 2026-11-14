@@ -86,7 +86,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T030 [P] [US1] Write failing setup and controller CLI contract tests for protected loopback access, one-time temporary password, forced change, resumable steps, certificate/profile validation, activation, bootstrap-session retirement, fresh sign-in, `shiftbox serve`, and secret-safe command output in `tests/contract/setup_api_test.go` and `cmd/shiftbox/main_test.go`
 - [ ] T031 [P] [US1] Write failing setup integration tests for SQLite bootstrap, PostgreSQL ownership/TLS/schema preflight, activation copy of only initial administrator/setup state, and prohibition on SQLite fallback in `tests/integration/setup_activation_test.go`
 - [X] T032 [P] [US1] Write the reusable failing provider contract suite for inspect-before-retry, idempotent create/start, complete inventory, partial deletion, shared-resource preservation, generation fencing, and typed failures in `tests/contract/provider_suite_test.go`
-- [ ] T033 [P] [US1] Write failing platform-image and UTM adapter tests for pinned Packer inputs, Ubuntu 24.04 Minimal amd64, supervised guest agent, VS Code Browser, immutable artifact manifest/digests, import/boot health, normalized complete inventory, preserved drive lists, supported capabilities, lost responses, and no direct bundle edits in `tests/release/platform_image_test.go` and `internal/provider/utm/provider_test.go`
+- [X] T033 [P] [US1] Write failing platform-image and UTM adapter tests for pinned Packer inputs, Ubuntu 24.04 Minimal amd64, supervised guest agent, VS Code Browser, immutable artifact manifest/digests, import/boot health, normalized complete inventory, preserved drive lists, supported capabilities, lost responses, and no direct bundle edits in `tests/release/platform_image_test.go` and `internal/provider/utm/provider_test.go`
 - [ ] T034 [P] [US1] Write failing guest protocol tests for mTLS-derived identity, N/N−1 compatibility, poll replay, operation fencing, enrollment replay/alternate-key denial, and readiness evidence in `tests/contract/guest_protocol_test.go`
 - [ ] T035 [P] [US1] Write failing workspace-domain tests for pinned launch snapshots, capacity reservation timing, desired/observed separation, owner privacy, lifecycle transitions, repair automation suppression, and retained-data contracts in `internal/workspace/service_test.go`
 - [ ] T036 [P] [US1] Write failing workspace API tests for `/workspaces`, lifecycle actions, operation lookup/events, conditional versions, idempotency, capacity problems, and short-lived entry grants in `tests/contract/workspace_api_test.go`
@@ -2360,6 +2360,14 @@ This checkpoint does not itself change the goal status.
   and PostgreSQL. T046 stays open for production admission through setup.
   The approved MVP source is a local import folder containing the UTM
   bundle and its `manifest.json`.
+- T033 is complete. Exact Packer pin and systemd supervision assertions
+  and UTM capability tests passed with the race detector. Native UTM 5.0.8
+  inventory and recovery-media tests verified preserved drive lists,
+  unchanged source digests, separate VM and disk IDs, and clone cleanup.
+- Workspace launch now rejects an image whose agent is outside the
+  controller's supported release window, even if its protocol matches.
+  The launch contract test verifies refusal and acceptance after the same
+  image is declared compatible as the previous release.
   T052 stays open for starting the IDE inside the project Dev Container
   and verifying it through the ShiftBox proxy.
 

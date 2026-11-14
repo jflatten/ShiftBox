@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jflatten/ShiftBox/internal/release"
@@ -18,6 +19,49 @@ const (
 	configPath = "ubuntu.utm/config.plist"
 	diskPath   = "ubuntu.utm/Data/platform.qcow2"
 )
+
+// TestPlatformImageBootConfiguration guards the exact Ubuntu/UTM build inputs
+// and ensures a reboot starts the guest under systemd supervision.
+func TestPlatformImageBootConfiguration(t *testing.T) {
+	root := filepath.Join("..", "..", "platform")
+	for _, file := range []struct {
+		path  string
+		lines []string
+	}{
+		{path: "packer/shiftbox.pkr.hcl", lines: []string{
+			`required_version = "= 1.14.2"`,
+			`source = "github.com/naveenrajm7/utm"`,
+			`version = "= 4.0.0"`,
+			`vm_arch = "x86_64"`,
+			`vm_backend = "qemu"`,
+			`hypervisor = false`,
+			`iso_url = "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20260716/ubuntu-24.04-minimal-cloudimg-amd64.img"`,
+			`"sudo systemctl enable shiftbox-agent.service",`,
+		}},
+		{path: "guest/shiftbox-agent.service", lines: []string{
+			"ExecStart=/usr/local/libexec/shiftbox-start-agent",
+			"Restart=on-failure",
+			"WantedBy=multi-user.target",
+		}},
+		{path: "guest/shiftbox-start-agent", lines: []string{
+			"exec /usr/local/bin/shiftbox-agent serve",
+		}},
+	} {
+		raw, err := os.ReadFile(filepath.Join(root, file.path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := make(map[string]bool)
+		for line := range strings.SplitSeq(string(raw), "\n") {
+			lines[strings.Join(strings.Fields(line), " ")] = true
+		}
+		for _, want := range file.lines {
+			if !lines[want] {
+				t.Errorf("%s is missing expected line %q", file.path, want)
+			}
+		}
+	}
+}
 
 // TestValidatePlatformArtifact accepts a complete versioned amd64 export
 // whose configuration and disk match the manifest digests.
