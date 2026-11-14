@@ -19,6 +19,27 @@ func TestMVPReleaseManifest(t *testing.T) {
 	readMVPRelease(t)
 }
 
+// TestMVPReleaseManifestOverride lets a frozen candidate keep a distinct
+// manifest while the working branch still points at its previous build.
+func TestMVPReleaseManifestOverride(t *testing.T) {
+	t.Setenv("SHIFTBOX_TEST_MVP_RELEASE", "")
+	raw, err := os.ReadFile("../../platform/manifests/release.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := readMVPRelease(t).ReleaseID
+	const candidate = "fixture-candidate-override"
+	raw = []byte(strings.Replace(string(raw), `"releaseId": "`+original+`"`, `"releaseId": "`+candidate+`"`, 1))
+	path := filepath.Join(t.TempDir(), "release.json")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHIFTBOX_TEST_MVP_RELEASE", path)
+	if got := readMVPRelease(t).ReleaseID; got != candidate {
+		t.Errorf("manifest release = %q, want %q", got, candidate)
+	}
+}
+
 // TestMVPWorkspaceJournal checks controller-side evidence from a fresh
 // exact-stack browser run. Run it against the same disposable SQLite database
 // after the browser journey finishes and before deleting the fixture.
@@ -138,7 +159,13 @@ func matchesWorkspaceJourney(steps, want []string, resumed bool) bool {
 
 func readMVPRelease(t *testing.T) release.MigrationRelease {
 	t.Helper()
-	file, err := os.Open("../../platform/manifests/release.json")
+	path := os.Getenv("SHIFTBOX_TEST_MVP_RELEASE")
+	if path == "" {
+		path = "../../platform/manifests/release.json"
+	} else if !filepath.IsAbs(path) {
+		t.Fatal("SHIFTBOX_TEST_MVP_RELEASE must be an absolute path")
+	}
+	file, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
