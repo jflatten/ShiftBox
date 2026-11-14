@@ -1598,3 +1598,16 @@ This checkpoint does not itself change the goal status.
   The live integration test edits the budget after a failed transfer
   and confirms the retry activates PostgreSQL with the newer revision.
 - Default artifact import and real UTM guest validation remain open.
+
+### Ubuntu Minimal guest build
+
+- Pinned Packer 1.14.2, the upstream UTM 5-compatible plugin revision,
+  and the Ubuntu 24.04 Minimal amd64 cloud-image checksum. The local build
+  cross-compiles the guest agent and uses a temporary SSH key.
+- UTM 5.0.8 booted and provisioned the Ubuntu image, enabled the systemd
+  agent, shut down, exported the bundle, and removed the disposable VM.
+  Supported UTM scripting then preserved the persistent drive, removed the
+  build-only network, and added the empty removable recovery drive.
+- The release candidate still needs browser IDE and container tooling,
+  artifact manifest generation, and boot and enrollment validation of the
+  final prepared export before catalog admission.
