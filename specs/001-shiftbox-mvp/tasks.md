@@ -1809,6 +1809,11 @@ This checkpoint does not itself change the goal status.
   returned exit 7 with `migration.installation_unverified` against the older
   SQLite acceptance snapshots, whose schema versions were 17 and 19 while
   the current executable expects 27.
+  On a disposable copy at schema 27, the CLI returned ready after a
+  verified SQLite backup with a matching test manifest. It refused the
+  archived Dex pin and reported a synthetic stopped, previous-release
+  workspace as a blocker until its record matched the deployed release.
+  Details are in `documentation/validation/quickstart-results.md`.
   Irreversible migration acceptance remains open.
 
 ### Migration preflight management route
