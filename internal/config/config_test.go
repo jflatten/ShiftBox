@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jflatten/ShiftBox/internal/config"
 )
@@ -145,5 +146,32 @@ func TestDismissedNoticeRetentionDays(t *testing.T) {
 				t.Errorf("dismissed notice history = %d days (%v), want %d", cfg.DismissedNoticeHistoryDays(), err, tc.days)
 			}
 		})
+	}
+}
+
+// TestWorkspaceRetentionConfig rejects intervals that cannot safely be applied.
+func TestWorkspaceRetentionConfig(t *testing.T) {
+	const base = `{"dataProfile":"sqlite","sqlitePath":"/tmp/shiftbox-fixture.db","installationDir":"/tmp/shiftbox-fixture","managementOrigin":"https://shiftbox.test"`
+	for _, tc := range []struct {
+		value string
+		ok    bool
+	}{
+		{"", true},
+		{`,"workspaceRetentionMaximumSeconds":3600,"retentionOutageGraceSeconds":600`, true},
+		{`,"workspaceRetentionMaximumSeconds":0`, false},
+		{`,"retentionOutageGraceSeconds":0`, false},
+		{`,"workspaceRetentionMaximumSeconds":9223372036854775807`, false},
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(base+tc.value+"}"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := config.Load(path)
+		if (err == nil) != tc.ok {
+			t.Errorf("config %q = %v, want valid=%t", tc.value, err, tc.ok)
+		}
+		if tc.value == "" && (cfg.WorkspaceRetentionMaximumSeconds != nil || cfg.RetentionOutageGrace() != 10*time.Minute) {
+			t.Error("default config must disable workspace retention and use ten minutes of grace")
+		}
 	}
 }

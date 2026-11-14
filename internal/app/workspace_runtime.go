@@ -18,6 +18,7 @@ import (
 type WorkspaceRuntime struct {
 	listeners *GuestListeners
 	worker    *operation.Worker
+	retention *workspaceRetentionSchedule
 }
 
 // ListenWorkspaceRuntime binds guest endpoints before constructing the worker
@@ -51,20 +52,28 @@ func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfi
 	worker := workspace.NewWorker(journal,
 		workspace.NewLaunchExecutor(store, machines, enrollment, mediaRoot, endpoints.EnrollURL, endpoints.PollURL, now, probe),
 		workspace.NewPowerExecutor(store, machines, now, probe))
-	return &WorkspaceRuntime{listeners: endpoints, worker: worker}, nil
+	return &WorkspaceRuntime{listeners: endpoints, worker: worker,
+		retention: newWorkspaceRetention(state, store, machines, journal, listeners.Tunnels.Registry, now)}, nil
 }
 
-// Serve runs workspace reconciliation and guest communication together. A
-// listener or worker exit cancels the other and waits for it to finish.
+// Serve runs workspace reconciliation, guest communication and configured
+// retention together. A service exit cancels its peers and waits for them.
 func (r *WorkspaceRuntime) Serve(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	done := make(chan error, 2)
+	done := make(chan error, 3)
+	count := 2
 	go func() { done <- r.listeners.Serve(ctx) }()
 	go func() { done <- r.worker.Run(ctx, time.Second) }()
+	if r.retention != nil {
+		count++
+		go func() { done <- r.retention.run(ctx) }()
+	}
 	err := <-done
 	cancel()
-	<-done
+	for range count - 1 {
+		<-done
+	}
 	return err
 }
 

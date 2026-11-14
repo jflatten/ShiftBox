@@ -17,6 +17,12 @@ func (c Config) Validate() error {
 	if c.ExternalAuthIntervalSeconds <= 0 {
 		return errors.New("external authorization interval must be positive")
 	}
+	const maxSeconds = int64((1<<63 - 1) / time.Second)
+	for _, value := range []*int64{c.WorkspaceRetentionMaximumSeconds, c.RetentionOutageGraceSeconds} {
+		if value != nil && (*value <= 0 || *value > maxSeconds) {
+			return errors.New("workspace retention intervals must be positive supported numbers of seconds")
+		}
+	}
 	if days := c.AuditHistoryDays(); days <= 0 || days > int(time.Duration(1<<63-1)/(24*time.Hour)) {
 		return errors.New("audit retention must be a positive supported number of days")
 	}

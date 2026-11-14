@@ -30,6 +30,9 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 		return ManagementServices{}, errors.New("management services are incompletely configured")
 	}
 	db, settings := state.DB, state.Installation.Settings
+	if state.retentionMaximum != nil {
+		launchPolicy.RetentionMaximum = state.retentionMaximum
+	}
 	origin := settings.ManagementOrigin
 	hosts, err := config.NewServiceHosts(origin, settings.IDEHostPattern, settings.PreviewHostPattern)
 	if err != nil {

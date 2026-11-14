@@ -23,8 +23,16 @@ func TestIDEConnectionPresence(t *testing.T) {
 	if !registry.HasIDEConnection("target") {
 		t.Fatal("open IDE connection did not count as activity")
 	}
+	calls := 0
+	commit := func() error { calls++; return nil }
+	if err := registry.IfIDEDisconnected("target", commit); err != nil || calls != 0 {
+		t.Fatalf("commit with open IDE ran %d times (%v), want zero", calls, err)
+	}
 	unregister()
 	if registry.HasIDEConnection("target") {
 		t.Fatal("closed IDE connection still counted as activity")
+	}
+	if err := registry.IfIDEDisconnected("target", commit); err != nil || calls != 1 {
+		t.Fatalf("commit after IDE closed ran %d times (%v), want one", calls, err)
 	}
 }

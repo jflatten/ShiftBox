@@ -2204,3 +2204,15 @@ This checkpoint does not itself change the goal status.
   were removed. Go vet and race-enabled workspace, guest, application and
   contract tests passed. Scheduling and native UTM end-to-end validation
   remain open under T093.
+
+### Runtime retention scheduling
+
+- Workspace cleanup is disabled unless `workspaceRetentionMaximumSeconds`
+  is configured. The workspace runtime checks provider availability and
+  deletion capability each minute. Startup, failed provider probes and
+  missed cycles renew the grace window, which defaults to ten minutes and
+  can be configured with `retentionOutageGraceSeconds`.
+- An open IDE request blocks commitment under the same lock used to admit
+  new IDE requests. Go vet and race-enabled application, configuration,
+  proxy, workspace and contract tests passed. Native UTM automatic cleanup,
+  visible grace and production startup wiring remain open.

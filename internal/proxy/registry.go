@@ -32,6 +32,21 @@ type Registry struct {
 func (r *Registry) HasIDEConnection(workspaceID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.hasIDEConnection(workspaceID)
+}
+
+// IfIDEDisconnected fences a short database commitment against new browser
+// IDE connections. The callback must not call the registry or a provider.
+func (r *Registry) IfIDEDisconnected(workspaceID string, commit func() error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.hasIDEConnection(workspaceID) {
+		return nil
+	}
+	return commit()
+}
+
+func (r *Registry) hasIDEConnection(workspaceID string) bool {
 	for _, entry := range r.connections {
 		if entry.scope.WorkspaceID == workspaceID && entry.scope.IDE {
 			return true

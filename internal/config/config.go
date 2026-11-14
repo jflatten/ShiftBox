@@ -5,18 +5,29 @@ import (
 	"errors"
 	"io"
 	"os"
+	"time"
 )
 
 // Config holds explicit installation inputs; only composition chooses its path.
 type Config struct {
-	InstallationDir              string `json:"installationDir"`
-	DataProfile                  string `json:"dataProfile"`
-	SQLitePath                   string `json:"sqlitePath"`
-	PostgresURI                  string `json:"postgresURI"`
-	ManagementOrigin             string `json:"managementOrigin"`
-	ExternalAuthIntervalSeconds  int64  `json:"externalAuthIntervalSeconds"`
-	AuditRetentionDays           *int   `json:"auditRetentionDays,omitempty"`
-	DismissedNoticeRetentionDays *int   `json:"dismissedNoticeRetentionDays,omitempty"`
+	InstallationDir                  string `json:"installationDir"`
+	DataProfile                      string `json:"dataProfile"`
+	SQLitePath                       string `json:"sqlitePath"`
+	PostgresURI                      string `json:"postgresURI"`
+	ManagementOrigin                 string `json:"managementOrigin"`
+	ExternalAuthIntervalSeconds      int64  `json:"externalAuthIntervalSeconds"`
+	AuditRetentionDays               *int   `json:"auditRetentionDays,omitempty"`
+	DismissedNoticeRetentionDays     *int   `json:"dismissedNoticeRetentionDays,omitempty"`
+	WorkspaceRetentionMaximumSeconds *int64 `json:"workspaceRetentionMaximumSeconds,omitempty"`
+	RetentionOutageGraceSeconds      *int64 `json:"retentionOutageGraceSeconds,omitempty"`
+}
+
+// RetentionOutageGrace returns the configured grace period or ten minutes.
+func (c Config) RetentionOutageGrace() time.Duration {
+	if c.RetentionOutageGraceSeconds == nil {
+		return 10 * time.Minute
+	}
+	return time.Duration(*c.RetentionOutageGraceSeconds) * time.Second
 }
 
 // AuditHistoryDays returns the configured age limit or the 90-day default.
