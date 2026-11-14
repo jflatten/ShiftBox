@@ -25,10 +25,12 @@ func TestManagementServices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := NewManagementServices(db, config.InstallationSettings{
+	settings := config.InstallationSettings{
 		ManagementOrigin: "https://management.test", IDEHostPattern: "{workspace}.ide.test",
 		PreviewHostPattern: "{service}--{workspace}.preview.test",
-	}, operation.NewJournal(db, time.Now, uuid.NewString), &proxy.Registry{}, web.WorkspaceLaunchPolicy{}, nil, secret.NewService(cipher), time.Now)
+	}
+	state := &ControllerState{DB: db, Installation: ActiveInstallation{Settings: settings}, Secrets: secret.NewService(cipher)}
+	services, err := NewManagementServices(state, operation.NewJournal(db, time.Now, uuid.NewString), &proxy.Registry{}, web.WorkspaceLaunchPolicy{}, nil, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +41,8 @@ func TestManagementServices(t *testing.T) {
 	for _, id := range []string{"listWorkspaces", "getWorkspace", "launchWorkspace", "requestWorkspaceAction",
 		"createWorkspaceEntryGrant", "getOperation", "streamOperationEvents", "listTemplates", "createTemplate",
 		"createTemplateRevision", "updateTemplate", "grantTemplateLaunch", "revokeTemplateLaunch",
-		"updateCapacityBudget", "createResourceProfile", "getInfrastructureStatus", "listSecretMetadata", "setSecret", "deleteSecretOverride", "listUsers"} {
+		"updateCapacityBudget", "createResourceProfile", "getInfrastructureStatus", "replaceBrowserCertificate",
+		"listSecretMetadata", "setSecret", "deleteSecretOverride", "listUsers"} {
 		handler, ok := services.Handlers[id]
 		if !ok || handler.Route != catalog[id] || handler.DB != db || handler.Origin != "https://management.test" {
 			t.Errorf("handler for %s = route %+v, want reviewed catalog route %+v", id, handler.Route, catalog[id])

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/config"
@@ -19,12 +20,15 @@ import (
 
 // ControllerState carries the active database and trust material loaded at startup.
 type ControllerState struct {
-	DB           *sql.DB
-	Installation ActiveInstallation
-	BrowserTLS   tls.Certificate
-	GuestCA      *guest.Authority
-	DexPostgres  *identity.DexPostgres
-	Secrets      *secret.Service
+	DB                 *sql.DB
+	Installation       ActiveInstallation
+	BrowserTLS         tls.Certificate
+	GuestCA            *guest.Authority
+	DexPostgres        *identity.DexPostgres
+	Secrets            *secret.Service
+	browserCipher      *cryptostore.Store
+	browserRoots       *x509.CertPool
+	browserReplacement atomic.Pointer[servedBrowserCertificate]
 }
 
 // Close releases the authoritative database on shutdown or failed composition.
@@ -75,7 +79,8 @@ func loadControllerState(ctx context.Context, db *sql.DB, active ActiveInstallat
 	if err != nil {
 		return nil, errors.New("cannot validate the active browser certificate")
 	}
-	state := &ControllerState{DB: db, Installation: active, BrowserTLS: browser, GuestCA: authority, Secrets: secret.NewService(cipher)}
+	state := &ControllerState{DB: db, Installation: active, BrowserTLS: browser, GuestCA: authority,
+		Secrets: secret.NewService(cipher), browserCipher: cipher, browserRoots: roots}
 	if active.Settings.DataProfile == "postgres" {
 		state.DexPostgres, err = loadPostgresDexStorage(ctx, db, active.InstallationID, cfg.PostgresURI, cipher)
 		if err != nil {

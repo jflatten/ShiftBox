@@ -25,9 +25,11 @@ type BrowserServer struct {
 // ListenBrowser mounts management and workspace services on their own origins.
 // It uses the browser certificate already validated by controller preflight.
 func ListenBrowser(address string, state *ControllerState, management http.Handler, tunnels *proxy.Tunnels, now func() time.Time) (*BrowserServer, error) {
-	if address == "" || state == nil || state.DB == nil || len(state.BrowserTLS.Certificate) == 0 ||
-		state.BrowserTLS.PrivateKey == nil || tunnels == nil || tunnels.Registry == nil || now == nil {
+	if address == "" || state == nil || state.DB == nil || tunnels == nil || tunnels.Registry == nil || now == nil {
 		return nil, errors.New("browser listener is incompletely configured")
+	}
+	if _, err := state.browserCertificateAt(now()); err != nil {
+		return nil, err
 	}
 	settings := state.Installation.Settings
 	hosts, err := config.NewServiceHosts(settings.ManagementOrigin, settings.IDEHostPattern, settings.PreviewHostPattern)
@@ -44,7 +46,8 @@ func ListenBrowser(address string, state *ControllerState, management http.Handl
 		return nil, errors.New("cannot bind browser HTTPS listener")
 	}
 	server := &http.Server{
-		Handler: router, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{state.BrowserTLS}},
+		Handler: router, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, SessionTicketsDisabled: true,
+			GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return state.browserCertificateAt(now()) }},
 		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute, ErrorLog: log.New(io.Discard, "", 0),
 	}
 	return &BrowserServer{Address: listener.Addr().String(), listener: listener, server: server}, nil

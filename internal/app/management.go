@@ -1,7 +1,6 @@
 package app
 
 import (
-	"database/sql"
 	"errors"
 	"net/http"
 	"time"
@@ -11,7 +10,6 @@ import (
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/proxy"
-	"github.com/jflatten/ShiftBox/internal/secret"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -25,12 +23,13 @@ type ManagementServices struct {
 // NewManagementServices binds workspace, template, operation, capacity, and Git
 // services to shared controller state. The active router checks its catalog
 // separately from the protected setup listener.
-func NewManagementServices(db *sql.DB, settings config.InstallationSettings, journal *operation.Journal,
-	registry *proxy.Registry, launchPolicy web.WorkspaceLaunchPolicy, github *identity.GitHub, secrets *secret.Service, now func() time.Time,
+func NewManagementServices(state *ControllerState, journal *operation.Journal,
+	registry *proxy.Registry, launchPolicy web.WorkspaceLaunchPolicy, github *identity.GitHub, now func() time.Time,
 ) (ManagementServices, error) {
-	if db == nil || journal == nil || registry == nil || now == nil {
+	if state == nil || state.DB == nil || journal == nil || registry == nil || now == nil {
 		return ManagementServices{}, errors.New("management services are incompletely configured")
 	}
+	db, settings := state.DB, state.Installation.Settings
 	origin := settings.ManagementOrigin
 	hosts, err := config.NewServiceHosts(origin, settings.IDEHostPattern, settings.PreviewHostPattern)
 	if err != nil {
@@ -43,12 +42,13 @@ func NewManagementServices(db *sql.DB, settings config.InstallationSettings, jou
 	budget, resourceProfile := web.CapacityHandlers(db, origin, now, uuid.NewString, launchPolicy.Capabilities)
 	publishNotice, listNotices, noticeReceipt := web.NoticeHandlers(db, origin, now, uuid.NewString)
 	handlers := web.GitAuthorizationHandlers(db, origin, now, github)
-	for id, handler := range web.SecretHandlers(db, origin, secrets, now) {
+	for id, handler := range web.SecretHandlers(db, origin, state.Secrets, now) {
 		handlers[id] = handler
 	}
 	for _, handler := range []web.AuthorizedHandler{
 		listWorkspaces, getWorkspace, getOperation, streamEvents, listTemplates, createTemplate, reviseTemplate, budget, resourceProfile,
 		web.InfrastructureStatusHandler(db, origin, now, launchPolicy.Capabilities),
+		state.browserCertificateHandler(journal, now),
 		web.ListUsersHandler(db, origin, now),
 		web.ListAuditEventsHandler(db, origin, now),
 		publishNotice, listNotices, noticeReceipt,

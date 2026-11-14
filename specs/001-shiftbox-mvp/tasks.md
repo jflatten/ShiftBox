@@ -2026,3 +2026,16 @@ This checkpoint does not itself change the goal status.
   suite passed using a fresh PostgreSQL database and serial package execution.
   The `shiftbox serve` entry point still needs to start the supervisor under
   T060. Broader operational conditions remain open under T096 and T098.
+
+### Active browser certificate replacement
+
+- Wired the administrator replacement operation into the management
+  composition. Certificate validation, encrypted storage, configuration
+  generation and idempotent operation evidence commit in one transaction.
+- New HTTPS connections use the latest committed replacement. Failed
+  replacements preserve the prior certificate. Expiry refuses new TLS
+  connections, with no plaintext or temporary certificate fallback.
+- Go vet and race-enabled application, configuration, web, command and
+  contract tests passed. A loopback TLS test verified replacement and
+  expiry. The Infrastructure upload form and production CLI composition
+  remain open under T101 and T060.
