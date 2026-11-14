@@ -16,17 +16,10 @@ func (c Config) Validate() error {
 	if c.ExternalAuthIntervalSeconds <= 0 {
 		return errors.New("external authorization interval must be positive")
 	}
-	origin, err := url.Parse(c.ManagementOrigin)
-	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || origin.ForceQuery || origin.String() != c.ManagementOrigin || origin.Host != strings.ToLower(origin.Host) || strings.HasSuffix(origin.Host, ":") {
-		return errors.New("management origin must be a canonical HTTPS origin")
+	if err := validateManagementOrigin(c.ManagementOrigin); err != nil {
+		return err
 	}
-	// Browsers omit the default HTTPS port when serializing their Origin header.
-	if port := origin.Port(); port != "" {
-		number, err := strconv.Atoi(port)
-		if err != nil || number < 1 || number > 65535 || number == 443 || strconv.Itoa(number) != port {
-			return errors.New("management origin must use a canonical HTTPS port")
-		}
-	}
+
 	switch c.DataProfile {
 	case "sqlite":
 		if !filepath.IsAbs(c.SQLitePath) || c.PostgresURI != "" {
@@ -39,6 +32,22 @@ func (c Config) Validate() error {
 		}
 	default:
 		return errors.New("data profile must be sqlite or postgres")
+	}
+	return nil
+}
+
+// validateManagementOrigin keeps configured origins equal to browser serialization.
+func validateManagementOrigin(value string) error {
+	origin, err := url.Parse(value)
+	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || origin.ForceQuery || origin.String() != value || origin.Host != strings.ToLower(origin.Host) || strings.HasSuffix(origin.Host, ":") {
+		return errors.New("management origin must be a canonical HTTPS origin")
+	}
+	// Browsers omit the default HTTPS port when serializing their Origin header.
+	if port := origin.Port(); port != "" {
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 || number == 443 || strconv.Itoa(number) != port {
+			return errors.New("management origin must use a canonical HTTPS port")
+		}
 	}
 	return nil
 }

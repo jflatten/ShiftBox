@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -43,5 +44,32 @@ func ValidateBrowserCertificate(chainPEM, keyPEM []byte, hostnames []string, roo
 		}
 	}
 	pair.Leaf = leaf
+	return pair, nil
+}
+
+// ValidateCertificate verifies the configured management hostname and requires
+// wildcard SANs for both service namespaces, including workspaces created later.
+// Trust roots remain an explicit activation input; uploaded keys are not stored.
+func (h *ServiceHosts) ValidateCertificate(chainPEM, keyPEM []byte, roots *x509.CertPool, now time.Time) (tls.Certificate, error) {
+	if h == nil {
+		return tls.Certificate{}, ErrInvalidBrowserCertificate
+	}
+	wildcards := []string{"*" + h.ideSuffix, "*" + h.previewSuffix}
+	pair, err := ValidateBrowserCertificate(chainPEM, keyPEM, append([]string{h.management}, wildcards...), roots, now)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	for _, wildcard := range wildcards {
+		covered := false
+		for _, name := range pair.Leaf.DNSNames {
+			if strings.EqualFold(name, wildcard) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return tls.Certificate{}, ErrInvalidBrowserCertificate
+		}
+	}
 	return pair, nil
 }

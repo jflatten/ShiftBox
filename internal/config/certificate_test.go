@@ -60,7 +60,7 @@ func TestBrowserCertificateRejectsClientOnlyUsage(t *testing.T) {
 	}
 }
 
-func browserCertificateFixture(t *testing.T, usage x509.ExtKeyUsage) ([]byte, []byte, *x509.CertPool, time.Time) {
+func browserCertificateFixture(t *testing.T, usage x509.ExtKeyUsage, names ...string) ([]byte, []byte, *x509.CertPool, time.Time) {
 	t.Helper()
 	now := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
 	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -80,7 +80,10 @@ func browserCertificateFixture(t *testing.T, usage x509.ExtKeyUsage) ([]byte, []
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), DNSNames: []string{"management.test", "*.ide.test", "*.preview.test"}, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{usage}}
+	if len(names) == 0 {
+		names = []string{"management.test", "*.ide.test", "*.preview.test"}
+	}
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), DNSNames: names, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{usage}}
 	der, err := x509.CreateCertificate(rand.Reader, leaf, root, &key.PublicKey, rootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -93,4 +96,31 @@ func browserCertificateFixture(t *testing.T, usage x509.ExtKeyUsage) ([]byte, []
 	roots.AddCert(root)
 	chain := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER})...)
 	return chain, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), roots, now
+}
+
+// TestConfiguredCertificateCoverage requires wildcard coverage for future workspaces, not just one sample host.
+func TestConfiguredCertificateCoverage(t *testing.T) {
+	hosts, err := config.NewServiceHosts("https://management.test", "{workspace}.ide.test", "{service}--{workspace}.preview.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		names     []string
+		wantError bool
+	}{
+		{[]string{"management.test", "*.ide.test", "*.preview.test"}, false},
+		{[]string{"management.test", "00000000-0000-4000-8000-000000000001.ide.test", "*.preview.test"}, true},
+		{[]string{"management.test", "*.ide.test", "web--00000000-0000-4000-8000-000000000001.preview.test"}, true},
+		{[]string{"management.test", "*.test"}, true},
+		{[]string{"*.ide.test", "*.preview.test"}, true},
+	} {
+		chain, key, roots, now := browserCertificateFixture(t, x509.ExtKeyUsageServerAuth, tc.names...)
+		pair, err := hosts.ValidateCertificate(chain, key, roots, now)
+		if (err != nil) != tc.wantError {
+			t.Errorf("ValidateCertificate(SANs %v) = %v, want error %t", tc.names, err, tc.wantError)
+		}
+		if err != nil && pair.PrivateKey != nil {
+			t.Error("ValidateCertificate(invalid) returned private key")
+		}
+	}
 }

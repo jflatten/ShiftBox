@@ -607,3 +607,19 @@ This checkpoint does not itself change the goal status.
 - Configuration race tests and formatting/vet pass. Host routing, management
   collision checks, wildcard certificate coverage, and activation wiring remain
   pending; T018 is not marked complete. Architecture documents were not changed.
+
+### Service identity routing and certificate pattern coverage
+
+- Added construction/parsing of the approved hostname formats using canonical
+  workspace UUIDs and DNS-safe service keys. Fixed-width UUID parsing preserves
+  service keys containing consecutive hyphens; `ide` selects the IDE namespace.
+  Preview keys occupy at most 25 bytes to keep the combined DNS label within 63.
+- Rejects management hostnames that overlap a service hostname, including on
+  different ports because host-scoped cookies are shared across ports.
+- Added configured-certificate validation requiring both wildcard SANs as well
+  as management coverage and existing key/chain/time/trust validation. A single
+  workspace certificate cannot substitute for coverage of future workspaces.
+- Test-first configuration race tests, formatting, and vet pass. These are
+  routing/validation primitives; controller request dispatch and configuration
+  activation still need to consume them. Trust-policy selection and protected
+  key persistence remain pending. No additional task is marked complete.
