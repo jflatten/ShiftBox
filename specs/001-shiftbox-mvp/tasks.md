@@ -114,7 +114,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T049 [US1] Implement provider-mediated one-use enrollment, CSR key-proof retry, controller-owned certificate fields, and four-hour replacement/eight-hour validity in `internal/guest/enrollment.go` and `internal/guest/certificates.go`
 - [X] T050 [US1] Implement authenticated guest poll handling with derived identity, one active operation, generation fencing, bounded evidence, 30-second jittered cadence, and N/N−1 checks proven by T034 in `internal/guest/protocol.go` and `internal/web/guest_routes.go`
 - [X] T051 [US1] Implement `shiftbox-agent serve` supervision and persistent operation attempt/step journal in `cmd/shiftbox-agent/main.go`, `internal/guest/agent.go`, and `internal/guest/local_journal.go`
-- [ ] T052 [US1] Implement the fixed approved guest command executor for repository preparation, prebuilt-image and Dockerfile/build-definition Dev Containers, declared features, lifecycle hooks, declared connection-ready stage, rebuild, IDE verification, repair entry/exit, and graceful shutdown proven by T037 in `internal/guest/executor.go`, `internal/guest/devcontainer.go`, and `internal/guest/repair.go`
+- [X] T052 [US1] Implement the fixed approved guest command executor for repository preparation, prebuilt-image and Dockerfile/build-definition Dev Containers, declared features, lifecycle hooks, declared connection-ready stage, rebuild, IDE verification, repair entry/exit, and graceful shutdown proven by T037 in `internal/guest/executor.go`, `internal/guest/devcontainer.go`, and `internal/guest/repair.go`
 - [X] T053 [US1] Implement guest-initiated mTLS Yamux registration, one stream per HTTP/WebSocket request, service allowlisting, heartbeats, and expiry/revocation closure in `internal/guest/tunnel.go` and `internal/proxy/tunnel.go`
 - [X] T054 [US1] Implement template creation/revision validation and workspace admission that snapshots owner, template revision, repository, resources, platform, network policy, and secret references before reserving capacity in `internal/template/service.go` and `internal/workspace/launch.go`
 - [X] T055 [US1] Implement provision/start/stop/rebuild/repair/open-IDE reconciliation with inspect-before-retry, desired/observed separation, durable steps, readiness evidence, and reservation release rules in `internal/workspace/reconciler.go` and `internal/workspace/lifecycle.go`
@@ -2892,6 +2892,12 @@ This checkpoint does not itself change the goal status.
 
 ### Guest executor coverage
 
+- T052's native retained-VM run verified repository-backed IDE readiness,
+  graceful stop, rebuild, repair entry and exit, and preservation of the
+  checkout marker. The pinned Debian and Ubuntu Dev Container fixtures
+  also passed under the race detector, including the failed required hook,
+  separate later hook, and named-volume retention checks. The complete
+  frozen-candidate browser journey remains under T061.
 - T037 adds executable tests with the pinned Dev Container CLI for a
   prebuilt image, a Dockerfile, a local Feature, and required hook failure.
   Tests reopen the operation journal to verify the `waitFor` milestone
