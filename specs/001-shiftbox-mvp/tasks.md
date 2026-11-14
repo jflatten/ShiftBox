@@ -690,3 +690,18 @@ This checkpoint does not itself change the goal status.
   formatting and vet pass. Initial schema edits do not upgrade the existing
   fixture's durable tables. Retention (T071), concrete entry grants/proxy access,
   and broader sharing flows remain unfinished; no additional task is marked done.
+
+### Contextual route permission bounds
+
+- Added reviewed action sets for each contextual resolver and enforced them in
+  the authorization handler. A workspace-entry resolver cannot substitute a
+  session or template permission; unknown resolver categories fail closed.
+- Workspace retries retain possible original launch/connection actions as well
+  as lifecycle actions. Concrete resolvers must still select the exact action
+  from persisted operation context, ownership, and requested fields; an allowed
+  vocabulary is not a replacement for those checks.
+- Catalog-wide action tests and an HTTP mismatch test pass. Web/auth/contract
+  race suites pass with PostgreSQL enabled; formatting and vet pass.
+- Foundation remains at 25 complete tasks. T013 contextual action selection,
+  T018 certificate activation, and dependent T023/T025 completion evidence still
+  require work; later user-story endpoint implementations are not claimed.

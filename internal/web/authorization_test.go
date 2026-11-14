@@ -69,7 +69,11 @@ func TestAuthorizedHandlerCommitsBeforeResponse(t *testing.T) {
 	if got := request(handler.Origin); got != 500 {
 		t.Fatalf("resolver/action mismatch status = %d, want 500", got)
 	}
-	handler.Route.Action = "template.create"
+	handler.Route = web.ManagementRoute{Method: "POST", Resolver: "workspace_entry"}
+	if got := request(handler.Origin); got != 500 {
+		t.Fatalf("contextual route/action mismatch status = %d, want 500", got)
+	}
+	handler.Route = web.ManagementRoute{Method: "POST", Action: "template.create"}
 	fail = true
 	if got := request(handler.Origin); got != 500 {
 		t.Fatalf("failed intent status = %d, want 500", got)

@@ -79,7 +79,7 @@ func (h *AuthorizedHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		if target.Action == "" || (h.Route.Action != "" && target.Action != h.Route.Action) {
+		if !h.Route.AcceptsAction(target.Action) {
 			return errors.New("authorization resolver disagrees with route")
 		}
 		decision := auth.Authorize(principal, target.Action, target.Resource, target.Grants, now)
