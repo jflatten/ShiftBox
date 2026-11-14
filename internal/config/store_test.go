@@ -3,6 +3,7 @@ package config_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -95,4 +96,59 @@ func checkActivationGeneration(t *testing.T, profile string) {
 		t.Fatal(err)
 	}
 	check(2)
+	// Updating installation settings must preserve the active profile and use the
+	// same transaction for the live row and its immutable generation snapshot.
+	settings := config.InstallationSettings{OrganizationName: "Updated", DataProfile: "sqlite", ManagementOrigin: "https://management.test", IDEHostPattern: "{workspace}.ide.test", PreviewHostPattern: "{service}--{workspace}.preview.test", ExternalAuthIntervalSeconds: 14400}
+	activation.ExpectedGeneration = 2
+	applySettings := func(tx *sql.Tx) error {
+		_, err := config.RecordInstallationSettings(ctx, tx, activation, settings)
+		return err
+	}
+	settings.DataProfile = "postgres"
+	if err := database.Transaction(ctx, db, applySettings); !errors.Is(err, config.ErrProfileImmutable) {
+		t.Fatalf("RecordInstallationSettings(profile switch) = %v, want immutable profile", err)
+	}
+	settings.DataProfile = "sqlite"
+	settings.PreviewHostPattern = "{workspace}.{service}.preview.test"
+	if err := database.Transaction(ctx, db, applySettings); err == nil {
+		t.Fatal("RecordInstallationSettings(invalid hostname) succeeded")
+	}
+	settings.PreviewHostPattern = "{service}--{workspace}.preview.test"
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		if err := applySettings(tx); err != nil {
+			return err
+		}
+		return failure
+	}); !errors.Is(err, failure) {
+		t.Fatalf("RecordInstallationSettings(rollback) = %v, want injected error", err)
+	}
+	check(2)
+	var name string
+	if err := db.QueryRowContext(ctx, `SELECT organization_name FROM installations`).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if name != "ShiftBox" {
+		t.Errorf("organization after rollback = %q, want ShiftBox", name)
+	}
+	if err := database.Transaction(ctx, db, applySettings); err != nil {
+		t.Fatal(err)
+	}
+	check(3)
+	var snapshot string
+	if err := db.QueryRowContext(ctx, `SELECT settings_json FROM activated_configurations WHERE retired_at IS NULL`).Scan(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	var recorded config.InstallationSettings
+	if err := json.Unmarshal([]byte(snapshot), &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded != settings {
+		t.Errorf("recorded settings = %+v, want %+v", recorded, settings)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT organization_name FROM installations`).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if name != settings.OrganizationName {
+		t.Errorf("organization after activation = %q, want %q", name, settings.OrganizationName)
+	}
 }

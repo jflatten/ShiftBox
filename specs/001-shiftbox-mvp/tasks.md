@@ -623,3 +623,20 @@ This checkpoint does not itself change the goal status.
   routing/validation primitives; controller request dispatch and configuration
   activation still need to consume them. Trust-policy selection and protected
   key persistence remain pending. No additional task is marked complete.
+
+### Validated installation settings records
+
+- Added typed non-secret installation settings and transactional recording that
+  consumes the canonical management-origin and service-pattern validation.
+  The live installation row and its generation snapshot come from the same
+  validated fields; caller-supplied snapshot JSON cannot disagree with them.
+- Ordinary updates reject database-profile changes after a durable generation
+  exists or the installation is active. Guarded restore remains a separate,
+  unfinished flow; no boolean bypass or automatic authority switch was added.
+- SQLite and PostgreSQL race tests verify invalid-host rejection, immutable
+  profiles, rollback of both settings and generation, and matching durable
+  snapshots. Formatting and vet pass.
+- Certificate/key persistence, database prerequisite checks, guarded restore,
+  listener activation, and runtime authority switching remain consuming flow
+  requirements. T018 remains incomplete; these records alone do not activate
+  an installation or claim a runnable product.
