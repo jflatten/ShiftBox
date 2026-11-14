@@ -103,7 +103,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 ### Setup and provider implementation
 
 - [X] T043 [US1] Implement resumable protected setup state, first-administrator creation, one-time password output, password-change gate, and exact activation transitions proven by T030 in `internal/app/setup.go` and `cmd/shiftbox/setup.go`
-- [ ] T044 [US1] Implement SQLite bootstrap and PostgreSQL profile preflight/activation with separate ShiftBox/Dex ownership and no fallback after activation proven by T031 in `internal/database/profile.go` and `internal/app/activate.go`
+- [X] T044 [US1] Implement SQLite bootstrap and PostgreSQL profile preflight/activation with separate ShiftBox/Dex ownership and no fallback after activation proven by T031 in `internal/database/profile.go` and `internal/app/activate.go`
 - [X] T045 [US1] Implement browser certificate chain/key/hostname validation and atomic configuration activation in `internal/config/certificate.go`
 - [X] T046 [US1] Build the pinned Packer Ubuntu 24.04 Minimal amd64 artifact with supervised guest agent and VS Code Browser, then implement immutable artifact import, manifest/digest/provenance validation, default selection, resource profiles, capacity budget, and provider capability admission proven by T033 in `platform/packer/shiftbox.pkr.hcl`, `platform/guest/`, `internal/release/catalog.go`, and `internal/workspace/capacity.go`
 - [X] T047 [US1] Define the consumer-owned Provider interface, complete inventory/types, semantic errors, fake provider, and shared suite adapter proven by T032 in `internal/provider/provider.go`, `internal/provider/types.go`, `internal/provider/errors.go`, and `internal/provider/fake/fake.go`
@@ -2777,6 +2777,10 @@ This checkpoint does not itself change the goal status.
   It covers setup restart, swapped schema owners, the exact bootstrap data
   allowed through activation, and refusal to reopen the retired SQLite
   bootstrap after PostgreSQL cutover.
+- T044 also passed the native setup command test against separately scoped
+  PostgreSQL logins over verified TLS. Pinned Dex imported the changed
+  administrator password, rejected the temporary password, and wrote only
+  to its dedicated schema without creating a SQLite fallback.
 - T065 passed the race-enabled guest, management, identity, and command
   contracts. The mTLS test distinguishes workspace owner secrets from
   template author secrets and verifies fallback on revocation. An archived
