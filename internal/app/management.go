@@ -23,7 +23,8 @@ type ManagementServices struct {
 }
 
 // NewManagementServices binds workspace, template, operation, capacity, and Git
-// services to shared controller state. NewManagementRouter checks the full catalog.
+// services to shared controller state. The active router checks its catalog
+// separately from the protected setup listener.
 func NewManagementServices(db *sql.DB, settings config.InstallationSettings, journal *operation.Journal,
 	registry *proxy.Registry, launchPolicy web.WorkspaceLaunchPolicy, github *identity.GitHub, secrets *secret.Service, now func() time.Time,
 ) (ManagementServices, error) {
@@ -47,6 +48,7 @@ func NewManagementServices(db *sql.DB, settings config.InstallationSettings, jou
 	for _, handler := range []web.AuthorizedHandler{
 		listWorkspaces, getWorkspace, getOperation, streamEvents, listTemplates, createTemplate, reviseTemplate, budget, resourceProfile,
 		web.InfrastructureStatusHandler(db, origin, now, launchPolicy.Capabilities),
+		web.ListUsersHandler(db, origin, now),
 		web.TemplateUpdateHandler(db, origin, now), grantTemplate, revokeTemplate,
 		web.WorkspaceLaunchHandler(db, origin, now, journal, launchPolicy),
 		web.WorkspacePowerHandler(db, origin, now, journal),

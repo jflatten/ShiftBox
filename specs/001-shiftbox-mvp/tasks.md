@@ -1864,3 +1864,13 @@ This checkpoint does not itself change the goal status.
 - Added shared shutdown for the browser listener and workspace runtime when
   either service fails or Dex exits. Application, CLI, and contract race
   suites passed. The `serve` command still needs to invoke the supervisor.
+
+### Active management routing and membership list
+
+- The active router requires all normal management handlers and keeps
+  bootstrap APIs on the local setup listener. Missing normal handlers
+  still prevent active router construction.
+- Added the administrator membership list through the reviewed route.
+  Contract tests cover pending and disabled accounts and live role changes.
+  Web, application, CLI, and contract race suites passed. Account mutations
+  and `serve` startup composition remain open.

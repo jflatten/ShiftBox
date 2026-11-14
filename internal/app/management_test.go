@@ -39,13 +39,13 @@ func TestManagementServices(t *testing.T) {
 	for _, id := range []string{"listWorkspaces", "getWorkspace", "launchWorkspace", "requestWorkspaceAction",
 		"createWorkspaceEntryGrant", "getOperation", "streamOperationEvents", "listTemplates", "createTemplate",
 		"createTemplateRevision", "updateTemplate", "grantTemplateLaunch", "revokeTemplateLaunch",
-		"updateCapacityBudget", "createResourceProfile", "getInfrastructureStatus", "listSecretMetadata", "setSecret", "deleteSecretOverride"} {
+		"updateCapacityBudget", "createResourceProfile", "getInfrastructureStatus", "listSecretMetadata", "setSecret", "deleteSecretOverride", "listUsers"} {
 		handler, ok := services.Handlers[id]
 		if !ok || handler.Route != catalog[id] || handler.DB != db || handler.Origin != "https://management.test" {
 			t.Errorf("handler for %s = route %+v, want reviewed catalog route %+v", id, handler.Route, catalog[id])
 		}
 	}
-	if _, err := web.NewManagementRouter(services.Session, services.Handlers, services.GitHubCallback); err == nil {
+	if _, err := web.NewActiveManagementRouter(services.Session, services.Handlers, services.GitHubCallback); err == nil {
 		t.Fatal("management API accepted a partial catalog")
 	}
 }

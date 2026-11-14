@@ -38,6 +38,46 @@ func TestManagementRouterRequiresCompleteWiring(t *testing.T) {
 	}
 }
 
+// TestActiveManagementRouterKeepsSetupLocal prevents bootstrap APIs from
+// reaching the active HTTPS origin while requiring normal routes.
+func TestActiveManagementRouterKeepsSetupLocal(t *testing.T) {
+	session, _, _ := sessionHandlerFixture(t)
+	session.Revoke = func(context.Context, string) error { return nil }
+	handlers := routerHandlers(t)
+	if _, err := web.NewActiveManagementRouter(session, handlers, routerGitCallback()); err == nil {
+		t.Fatal("active router accepted protected setup handlers")
+	}
+	for _, route := range web.ManagementRoutes() {
+		if strings.HasPrefix(route.Path, "/setup/") {
+			delete(handlers, route.OperationID)
+		}
+	}
+	router, err := web.NewActiveManagementRouter(session, handlers, routerGitCallback())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		method, path string
+		status       int
+	}{
+		{"GET", "/setup/status", http.StatusNotFound},
+		{"POST", "/setup/activate", http.StatusNotFound},
+		{"PUT", "/setup/certificate", http.StatusNotFound},
+		{"PUT", "/session/password", http.StatusUnauthorized},
+		{"POST", "/workspaces", http.StatusUnauthorized},
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(tc.method, "https://management.test/api/v1"+tc.path, nil))
+		if response.Code != tc.status {
+			t.Errorf("active router %s %s = %d, want %d", tc.method, tc.path, response.Code, tc.status)
+		}
+	}
+	delete(handlers, "launchWorkspace")
+	if _, err := web.NewActiveManagementRouter(session, handlers, routerGitCallback()); err == nil || !strings.Contains(err.Error(), "launchWorkspace") {
+		t.Errorf("active router without workspace launch = %v, want incomplete launch wiring", err)
+	}
+}
+
 // TestManagementRouterGuardsCatalogRoutes exercises real mux registration for every reviewed endpoint before resource resolution.
 func TestManagementRouterGuardsCatalogRoutes(t *testing.T) {
 	session, _, _ := sessionHandlerFixture(t)

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
+	"strings"
 )
 
 // NewManagementRouter registers exactly the reviewed API catalog. Construction
@@ -11,10 +13,22 @@ import (
 // ready. The separate session handler preserves revoke-before-close semantics.
 // The caller mounts this only on the management HTTPS origin, never a guest host.
 func NewManagementRouter(session *SessionHandler, handlers map[string]AuthorizedHandler, githubCallback http.Handler) (http.Handler, error) {
+	return newManagementRouter(ManagementRoutes(), session, handlers, githubCallback)
+}
+
+// NewActiveManagementRouter requires all active management operations.
+// Bootstrap APIs are served separately by the protected local setup listener.
+func NewActiveManagementRouter(session *SessionHandler, handlers map[string]AuthorizedHandler, githubCallback http.Handler) (http.Handler, error) {
+	routes := slices.DeleteFunc(ManagementRoutes(), func(route ManagementRoute) bool {
+		return strings.HasPrefix(route.Path, "/setup/")
+	})
+	return newManagementRouter(routes, session, handlers, githubCallback)
+}
+
+func newManagementRouter(routes []ManagementRoute, session *SessionHandler, handlers map[string]AuthorizedHandler, githubCallback http.Handler) (http.Handler, error) {
 	if session == nil || session.Origin == "" || session.Now == nil || session.Lookup == nil || session.Revoke == nil {
 		return nil, errors.New("management session handler is incomplete")
 	}
-	routes := ManagementRoutes()
 	known := make(map[string]bool, len(routes))
 	for _, route := range routes {
 		if route.OperationID == "getSession" || route.OperationID == "logout" {
