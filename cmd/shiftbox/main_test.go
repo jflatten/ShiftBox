@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -24,6 +25,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jflatten/ShiftBox/internal/app"
+	"github.com/jflatten/ShiftBox/internal/config"
+	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/identity"
 )
 
@@ -33,6 +36,44 @@ func TestSetupRejectsUnknownSecretFlag(t *testing.T) {
 	err := run(context.Background(), []string{"setup", "--password=sentinel-secret"}, &out, &status)
 	if err == nil || strings.Contains(err.Error()+out.String()+status.String(), "sentinel-secret") {
 		t.Fatal("setup accepted or echoed an unsupported credential argument")
+	}
+}
+
+// TestServeRejectsBootstrapInstallation verifies that the real command cannot
+// treat a resumable local setup as an activated installation or announce readiness.
+func TestServeRejectsBootstrapInstallation(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "installation")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "controller.json")
+	settings := config.Config{InstallationDir: dir, DataProfile: "sqlite", SQLitePath: filepath.Join(dir, "bootstrap.db"),
+		ManagementOrigin: "https://management.test", ExternalAuthIntervalSeconds: 14400}
+	const installationID = "00000000-0000-4000-8000-000000000001"
+	db, _, err := database.OpenBootstrap(t.Context(), settings.SQLitePath, database.BootstrapSeed{
+		ID: installationID, Organization: "Fixture", Origin: "https://127.0.0.1:8443", IDEPattern: "{workspace}.ide.test",
+		PreviewPattern: "{service}--{workspace}.preview.test", Release: controllerRelease, MinGuestRelease: controllerRelease, Now: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err = run(t.Context(), []string{"serve", "--config", configPath}, &stdout, &stderr)
+	if !errors.Is(err, app.ErrActiveDatabase) || stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("serve against bootstrapping state = %v and output lengths %d/%d, want inactive installation and no output", err, stdout.Len(), stderr.Len())
+	}
+	var state string
+	if err := db.QueryRowContext(t.Context(), "SELECT state FROM installations WHERE id=$1", installationID).Scan(&state); err != nil || state != "bootstrap" {
+		t.Fatalf("serve left installation in %q (%v), want setup still resumable", state, err)
 	}
 }
 

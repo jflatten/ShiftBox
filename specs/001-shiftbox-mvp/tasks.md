@@ -83,7 +83,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 
 ### Tests first
 
-- [ ] T030 [P] [US1] Write failing setup and controller CLI contract tests for protected loopback access, one-time temporary password, forced change, resumable steps, certificate/profile validation, activation, bootstrap-session retirement, fresh sign-in, `shiftbox serve`, and secret-safe command output in `tests/contract/setup_api_test.go` and `cmd/shiftbox/main_test.go`
+- [X] T030 [P] [US1] Write failing setup and controller CLI contract tests for protected loopback access, one-time temporary password, forced change, resumable steps, certificate/profile validation, activation, bootstrap-session retirement, fresh sign-in, `shiftbox serve`, and secret-safe command output in `tests/contract/setup_api_test.go` and `cmd/shiftbox/main_test.go`
 - [X] T031 [P] [US1] Write failing setup integration tests for SQLite bootstrap, PostgreSQL ownership/TLS/schema preflight, activation copy of only initial administrator/setup state, and prohibition on SQLite fallback in `tests/integration/setup_activation_test.go`
 - [X] T032 [P] [US1] Write the reusable failing provider contract suite for inspect-before-retry, idempotent create/start, complete inventory, partial deletion, shared-resource preservation, generation fencing, and typed failures in `tests/contract/provider_suite_test.go`
 - [X] T033 [P] [US1] Write failing platform-image and UTM adapter tests for pinned Packer inputs, Ubuntu 24.04 Minimal amd64, supervised guest agent, VS Code Browser, immutable artifact manifest/digests, import/boot health, normalized complete inventory, preserved drive lists, supported capabilities, lost responses, and no direct bundle edits in `tests/release/platform_image_test.go` and `internal/provider/utm/provider_test.go`
@@ -2764,6 +2764,11 @@ This checkpoint does not itself change the goal status.
 
 ### Setup and guest credential contracts
 
+- T030 passed the setup and CLI contracts under the race detector with the
+  pinned Dex binary. Tests cover the protected listener, temporary password,
+  step resumption, validation, activation, retirement of setup sessions, fresh
+  sign-in, safe command output, and startup refusal before activation or when
+  the active database is missing.
 - T031 passed against SQLite and a fresh local PostgreSQL fixture over TLS.
   It covers setup restart, swapped schema owners, the exact bootstrap data
   allowed through activation, and refusal to reopen the retired SQLite
