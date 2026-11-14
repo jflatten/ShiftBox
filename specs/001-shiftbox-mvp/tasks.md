@@ -1735,8 +1735,10 @@ This checkpoint does not itself change the goal status.
   service, maintenance can deliver recovery media for an expired guest
   registration while keeping desired state stopped. The boot step waits
   for fresh authenticated contact before clearing the media. The runtime
-  test verifies that a persisted campaign advances into guest staging
-  after startup. Native signed-update validation remains open under T095.
+  test drives a persisted campaign through signed download, staging, trial
+  confirmation receipt, and completion over the real mutual TLS listeners.
+  It uses a fixture guest client. Native signed-update validation remains
+  open under T095.
 
 ### Migration preflight CLI
 

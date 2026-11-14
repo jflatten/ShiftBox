@@ -11,7 +11,7 @@ single frozen candidate and record its component versions and hashes in
 | V1 Platform and provider | Pinned Packer build and disposable native UTM boot, stop, and removal | Complete distinct clone identity and owned-disk lifecycle checks on the frozen candidate |
 | V2 Enrollment delivery | Native initial enrollment. Controller tests prove fresh delivery before power-on after expiry and lost-reply reconciliation. | Native prolonged-stop re-enrollment and drive preservation |
 | V3 Certificates | Rotation, expired-leaf rejection, and local TLS revocation tests | Native clock, long-offline, and CA failure cases on the pinned stack |
-| V4 Compatibility | Current and previous guest admission, retained-guest blocking, and migration preflight tests | Verified signed update and rollback including a previously stopped guest |
+| V4 Compatibility | Current and previous guest admission, retained-guest blocking, migration preflight, and a complete controller campaign over mutual TLS with a fixture guest client | Verified signed update and rollback including a previously stopped UTM guest |
 | V5 Networking | Pinned UTM capability and policy rejection tests | Confirm every advertised mode and required exception on the frozen candidate |
 | V6 Work and data | Browser IDE opened and saved a file. Local tests cover container and repair workflows. | Complete native restart, rebuild, named-volume retention, and repair journey |
 | V7 Reconciliation and deletion | Lost provider replies, capacity, exact inventory, retention of reservations, and verified deletion tests | Full persisted-step restart matrix and native lifecycle evidence |

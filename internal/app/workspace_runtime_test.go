@@ -1,10 +1,22 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"testing"
@@ -14,7 +26,9 @@ import (
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/operation"
+	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/provider/fake"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/release"
@@ -22,8 +36,8 @@ import (
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
-// TestWorkspaceRuntimeRunsMaintenance proves that a campaign persisted before
-// service startup advances through both workers without manual step execution.
+// TestWorkspaceRuntimeRunsMaintenance drives a persisted campaign through the
+// real listeners and both workers with an enrolled guest client.
 func TestWorkspaceRuntimeRunsMaintenance(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Second)
 	defer cancel()
@@ -37,6 +51,7 @@ func TestWorkspaceRuntimeRunsMaintenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	const installation = "99999999-0000-4000-8000-000000000001"
+	const workspaceID = "99999999-0000-4000-8000-000000000003"
 	for _, query := range []string{
 		`INSERT INTO installations(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,
 			active_release,min_guest_release,created_at,updated_at,version)
@@ -53,6 +68,10 @@ func TestWorkspaceRuntimeRunsMaintenance(t *testing.T) {
 			provider_instance_id,created_at,updated_at,version)
 			VALUES('99999999-0000-4000-8000-000000000003','99999999-0000-4000-8000-000000000001','owner','template',1,'artifact','https://github.com/example/project','devcontainer.json',
 			2,1024,40,'{"mode":"shared"}','running','running',1,'owned','vm','now','now',1)`,
+		`INSERT INTO guest_registrations(workspace_id,generation,state)
+			VALUES('99999999-0000-4000-8000-000000000003',1,'eligible')`,
+		`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,created_at,version)
+			VALUES('fixture-provision','99999999-0000-4000-8000-000000000003','provision',1,'owner','fixture-enrollment','running','now',1)`,
 	} {
 		if _, err := db.ExecContext(ctx, query); err != nil {
 			t.Fatal(err)
@@ -77,14 +96,23 @@ func TestWorkspaceRuntimeRunsMaintenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	client := maintenanceGuestClient(t, db, ca, provider.WorkspaceRef{InstallationID: installation, WorkspaceID: workspaceID,
+		Generation: 1, OwnershipMarker: "owned", InstanceID: "vm"})
+	binary := []byte("signed runtime fixture")
+	metadata := release.GuestUpdateMetadata{Release: "fixture", Protocol: "1", Size: int64(len(binary)), Digest: sha256.Sum256(binary)}
+	public, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := release.GuestUpdate{Metadata: metadata, Binary: binary, Signature: ed25519.Sign(private, metadata.SignedBytes())}
 	state := &ControllerState{DB: db, GuestCA: ca, Installation: ActiveInstallation{InstallationID: installation,
 		Settings: config.InstallationSettings{ManagementOrigin: "https://management.test", IDEHostPattern: "{workspace}.ide.test",
 			PreviewHostPattern: "{service}--{workspace}.preview.test"}}}
 	const bind = "127.0.0.1:0"
 	runtime, err := ListenWorkspaceRuntime(state, GuestListenerConfig{EnrollmentAddress: bind, PollAddress: bind, TunnelAddress: bind, PublicHost: "127.0.0.1",
 		Tunnels: &proxy.Tunnels{Registry: &proxy.Registry{}}, GuestUpdates: func(context.Context, string) (release.GuestUpdate, error) {
-			return release.GuestUpdate{}, release.ErrGuestUpdateUnavailable
-		}}, web.GuestCompatibility{Protocol: "1", CurrentRelease: "fixture"}, journal, fake.New(), dir, time.Now)
+			return artifact, nil
+		}}, web.GuestCompatibility{Protocol: "1", CurrentRelease: "fixture", PreviousRelease: "previous"}, journal, fake.New(), dir, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,22 +127,114 @@ func TestWorkspaceRuntimeRunsMaintenance(t *testing.T) {
 	}()
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
-	for {
-		var stage bool
-		err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM maintenance_targets t JOIN operations o ON o.id=t.operation_id
-			WHERE t.campaign_id=$1 AND o.current_step='maintenance_stage' AND o.status='waiting')`, campaign.ID).Scan(&stage)
+	poll := func(releaseID string, receipt *guest.OperationReport, version int64) *guest.PollOperation {
+		t.Helper()
+		input := map[string]any{"guestRelease": releaseID, "protocolVersion": "1"}
+		if receipt != nil {
+			input["operationReport"], input["lastOperationId"], input["lastOperationVersion"] = receipt, receipt.ID, version
+		}
+		raw, err := json.Marshal(input)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if stage {
+		response, err := client.Post(runtime.listeners.PollURL, "application/json", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(response.Body)
+			t.Fatalf("guest poll returned %d: %s", response.StatusCode, body)
+		}
+		var result struct{ Operation *guest.PollOperation }
+		if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		return result.Operation
+	}
+	waitCommand := func(command string, receipt *guest.OperationReport, version int64) *guest.PollOperation {
+		t.Helper()
+		for {
+			if op := poll("previous", receipt, version); op != nil {
+				if op.Command != command {
+					t.Fatalf("guest command = %q, want %q", op.Command, command)
+				}
+				return op
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatalf("campaign never dispatched %s", command)
+			case <-ticker.C:
+			}
+		}
+	}
+	stage := waitCommand("stage-guest-update", nil, 0)
+	pollURL, err := url.Parse(runtime.listeners.PollURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pollURL.Path = guest.UpdateDownloadPath
+	response, err := client.Get(pollURL.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	download, readErr := io.ReadAll(response.Body)
+	response.Body.Close()
+	signature, sigErr := base64.StdEncoding.DecodeString(response.Header.Get("X-ShiftBox-Guest-Signature"))
+	if response.StatusCode != http.StatusOK || readErr != nil || !bytes.Equal(download, binary) ||
+		sigErr != nil || !ed25519.Verify(public, metadata.SignedBytes(), signature) {
+		t.Fatalf("assigned update download = %d/%q (%v), want signed release", response.StatusCode, download, readErr)
+	}
+	receipt := &guest.OperationReport{ID: stage.ID, Generation: 1, Status: "succeeded", Step: "update.stage", Attempt: 1}
+	receipt.Evidence.UpdateDigest = hex.EncodeToString(metadata.Digest[:])
+	activate := waitCommand("activate-guest-update", receipt, stage.Version)
+	receipt.Step = "update.activate"
+	if op := poll("fixture", receipt, activate.Version); op != nil {
+		t.Errorf("guest activation returned unexpected command %q", op.Command)
+	}
+	for {
+		op, err := journal.Get(ctx, campaign.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if op.Status == "succeeded" {
 			break
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatal("persisted maintenance target never reached staging")
+			t.Fatal("persisted maintenance campaign never completed")
 		case <-ticker.C:
 		}
 	}
+}
+
+func maintenanceGuestClient(t *testing.T, db *sql.DB, ca *guest.Authority, ref provider.WorkspaceRef) *http.Client {
+	t.Helper()
+	ctx, now := t.Context(), time.Now()
+	enrollment := guest.NewEnrollment(db, ca)
+	grant, err := enrollment.Mint(ctx, "fixture-provision", provider.Inventory{
+		Ref: ref, InstanceID: ref.InstanceID, ObservedAt: now, Power: provider.Stopped}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, err := x509.CreateCertificateRequest(nil, &x509.CertificateRequest{}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := enrollment.Enroll(ctx, grant, csr, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE operations SET status='succeeded' WHERE id='fixture-provision'"); err != nil {
+		t.Fatal(err)
+	}
+	transport := &http.Transport{TLSClientConfig: guest.ClientTLS(tls.Certificate{Certificate: [][]byte{raw}, PrivateKey: key}, ca, "127.0.0.1")}
+	t.Cleanup(transport.CloseIdleConnections)
+	return &http.Client{Transport: transport, Timeout: 2 * time.Second}
 }
 
 // TestWorkspaceRuntimeClosesListenersOnWorkerFailure verifies that failure of
