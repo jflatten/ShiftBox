@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -27,19 +28,25 @@ import (
 )
 
 // TestSetupCertificateUpload verifies the profile gate, failed validation rollback,
-// encrypted key storage, and idempotent completion through the loopback API.
+// and durable profile, certificate, and activation state through the loopback API.
 func TestSetupCertificateUpload(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	now := time.Now().UTC()
 	origin := "https://127.0.0.1:8443"
 	seed := database.BootstrapSeed{ID: uuid.NewString(), Organization: "ShiftBox", Origin: origin,
 		IDEPattern: "{workspace}.ide.test", PreviewPattern: "{service}--{workspace}.preview.test",
 		Release: "development", MinGuestRelease: "development", Now: now}
-	db, id, err := database.OpenBootstrap(ctx, filepath.Join(t.TempDir(), "bootstrap.db"), seed)
-	if err != nil {
-		t.Fatal(err)
+	path := filepath.Join(t.TempDir(), "bootstrap.db")
+	open := func() *sql.DB {
+		t.Helper()
+		db, _, err := database.OpenBootstrap(ctx, path, seed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return db
 	}
-	defer db.Close()
+	db, id := open(), seed.ID
 	cipher, err := cryptostore.New(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
@@ -87,26 +94,41 @@ func TestSetupCertificateUpload(t *testing.T) {
 		"privateKeyPem":       privatePEM, "managementOrigin": "https://management.test",
 		"ideHostPattern": seed.IDEPattern, "previewHostPattern": seed.PreviewPattern,
 	}
-	setup := SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, CertificateRoots: roots,
-		Now: func() time.Time { return now }, NewID: uuid.NewString, Journal: operation.NewJournal(db, time.Now, uuid.NewString)}
 	validationCalls := 0
-	setup.Platform = func(_ context.Context, actor, current, previous string) error {
+	platform := func(_ context.Context, actor, current, previous string) error {
 		validationCalls++
 		if actor != owner || current != "development" || previous != "development" {
 			t.Errorf("platform validation authority = %q/%q/%q, want bootstrap owner and development releases", actor, current, previous)
 		}
 		return nil
 	}
-	mux := http.NewServeMux()
-	mux.Handle("PUT /profile", setup.profileHandler(database.PreflightPostgresSetup))
-	mux.Handle("PUT /certificate", setup.certificateHandler())
-	mux.Handle("POST /activate", setup.activationHandler())
-	mux.Handle("PUT /capacity", setup.capacityHandler())
-	mux.Handle("POST /platform", setup.platformHandler())
-	mux.HandleFunc("GET /status", setup.status)
-	handler, err := ProtectBootstrap(origin, mux)
-	if err != nil {
-		t.Fatal(err)
+	var setup SetupHTTP
+	var handler http.Handler
+	attach := func() {
+		t.Helper()
+		setup = SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, CertificateRoots: roots, Platform: platform,
+			Now: func() time.Time { return now }, NewID: uuid.NewString, Journal: operation.NewJournal(db, time.Now, uuid.NewString)}
+		mux := http.NewServeMux()
+		mux.Handle("PUT /profile", setup.profileHandler(database.PreflightPostgresSetup))
+		mux.Handle("PUT /certificate", setup.certificateHandler())
+		mux.Handle("POST /activate", setup.activationHandler())
+		mux.Handle("PUT /capacity", setup.capacityHandler())
+		mux.Handle("POST /platform", setup.platformHandler())
+		mux.HandleFunc("GET /status", setup.status)
+		var err error
+		handler, err = ProtectBootstrap(origin, mux)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	attach()
+	restart := func() {
+		t.Helper()
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		db = open()
+		attach()
 	}
 	request := func(path, key string, body any, want int) string {
 		t.Helper()
@@ -164,14 +186,32 @@ func TestSetupCertificateUpload(t *testing.T) {
 	request("/platform", "", nil, 409)
 	request("/certificate", "setup-cert-upload-001", input, 409)
 	request("/profile", "setup-profile-select-1", map[string]string{"profile": "sqlite"}, 202)
+	restart()
 	input["privateKeyPem"] = "malformed private key"
 	request("/certificate", "setup-cert-upload-001", input, 400)
 	input["privateKeyPem"] = privatePEM
+	// Fail after certificate storage is staged but before its operation can
+	// commit. The reopened database must still accept the original upload.
+	if _, err := db.Exec(`CREATE TRIGGER prevent_certificate_operation BEFORE INSERT ON operations
+		WHEN NEW.request_key='setup-cert-upload-001'
+		BEGIN SELECT RAISE(ABORT, 'fixture journal failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	request("/certificate", "setup-cert-upload-001", input, 500)
+	restart()
+	var generation, certificateCount int
+	if err := db.QueryRow(`SELECT config_generation,(SELECT COUNT(*) FROM browser_certificates)
+		FROM installations WHERE id=$1`, id).Scan(&generation, &certificateCount); err != nil || generation != 0 || certificateCount != 0 {
+		t.Fatalf("interrupted upload left generation %d and %d certificates (%v), want zero for both", generation, certificateCount, err)
+	}
+	if _, err := db.Exec("DROP TRIGGER prevent_certificate_operation"); err != nil {
+		t.Fatal(err)
+	}
 	first := request("/certificate", "setup-cert-upload-001", input, 202)
+	restart()
 	if retry := request("/certificate", "setup-cert-upload-001", input, 202); first != retry {
 		t.Fatal("certificate replay changed operation")
 	}
-	var generation int
 	var state, encrypted string
 	if err := db.QueryRow("SELECT state,config_generation FROM installations").Scan(&state, &generation); err != nil {
 		t.Fatal(err)
@@ -200,6 +240,7 @@ func TestSetupCertificateUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	request("/capacity", "", budget, 204)
+	restart()
 	checkStatus("activation", true, 1)
 	request("/capacity", "", budget, 412)
 	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
@@ -216,6 +257,7 @@ func TestSetupCertificateUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	request("/activate", "setup-activate-0001", nil, 500)
+	restart()
 	var recorded int
 	if err := db.QueryRow(`SELECT state,(SELECT COUNT(*) FROM operations WHERE request_key='setup-activate-0001')
 		FROM installations WHERE id=$1`, id).Scan(&state, &recorded); err != nil || state != "configuring" || recorded != 0 {
@@ -226,6 +268,20 @@ func TestSetupCertificateUpload(t *testing.T) {
 	}
 	request("/activate", "setup-activate-0001", nil, 202)
 	request("/activate", "setup-activate-0001", nil, 401)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if bootstrap, _, err := database.OpenBootstrap(ctx, path, seed); !errors.Is(err, database.ErrBootstrapUnavailable) {
+		if bootstrap != nil {
+			_ = bootstrap.Close()
+		}
+		t.Fatalf("OpenBootstrap after activation = %v, want bootstrap unavailable", err)
+	}
+	db, err = database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
 	var revoked string
 	if err := db.QueryRow(`SELECT i.state, s.revocation_reason FROM installations i CROSS JOIN sessions s
 		WHERE i.id=$1 AND s.id=$2 AND s.revoked_at IS NOT NULL`, id, session.ID).Scan(&state, &revoked); err != nil ||

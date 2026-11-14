@@ -1024,6 +1024,11 @@ This checkpoint does not itself change the goal status.
 - The setup test verifies the profile gate, validation failure followed by
   retry, operation replay, and encrypted storage. CLI, app, config, web and
   contract race suites, formatting and vet passed.
+- T120 reopens the setup database before and after profile and certificate
+  commits. An interrupted PostgreSQL probe saves no credentials or operation.
+  A failed certificate journal write rolls back the uploaded certificate and
+  configuration generation. After SQLite activation, a new process refuses
+  bootstrap and the previous bootstrap session remains revoked.
 - Composition uses system certificate roots. Provider selection, full
   installation activation and production HTTPS listener wiring remain open.
 

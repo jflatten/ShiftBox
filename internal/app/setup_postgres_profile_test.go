@@ -22,20 +22,27 @@ const profileAppURI = "postgres://app:fixture-application-password@db.test/shift
 const profileDexURI = "postgres://dex:fixture-identity-password@db.test/shiftbox?sslmode=verify-full"
 
 // TestPostgresProfileSelection verifies authentication before database probes,
-// redacted errors, durable replay, and the gate between the two data profiles.
+// redacted errors, restart before and after commit, and the data profile gate.
 func TestPostgresProfileSelection(t *testing.T) {
 	ctx := t.Context()
 	now := time.Now()
 	clock := func() time.Time { return now }
 	const origin = "https://127.0.0.1:8443"
-	db, id, err := database.OpenBootstrap(ctx, filepath.Join(t.TempDir(), "bootstrap.db"), database.BootstrapSeed{
+	path := filepath.Join(t.TempDir(), "bootstrap.db")
+	seed := database.BootstrapSeed{
 		ID: uuid.NewString(), Organization: "ShiftBox", Origin: origin, IDEPattern: "{workspace}.ide.test",
 		PreviewPattern: "{service}--{workspace}.preview.test", Release: "test", MinGuestRelease: "test", Now: now,
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	defer db.Close()
+	open := func() *sql.DB {
+		t.Helper()
+		db, _, err := database.OpenBootstrap(ctx, path, seed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return db
+	}
+	db, id := open(), seed.ID
 	cipher, err := cryptostore.New(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
@@ -58,10 +65,8 @@ func TestPostgresProfileSelection(t *testing.T) {
 	}
 	var probes int
 	refuse := true
-	setup := SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Now: clock,
-		Journal: operation.NewJournal(db, clock, uuid.NewString)}
-	setup.Postgres = &PostgresProfileSetup{DexURI: profileDexURI}
-	handler, err := ProtectBootstrap(origin, setup.profileHandler(func(_ context.Context, target database.PostgresSetupTarget) error {
+	var interrupt context.CancelFunc
+	preflight := func(_ context.Context, target database.PostgresSetupTarget) error {
 		probes++
 		if target.ApplicationURI != profileAppURI || target.DexURI != profileDexURI {
 			t.Error("preflight did not receive the scoped credentials")
@@ -69,14 +74,35 @@ func TestPostgresProfileSelection(t *testing.T) {
 		if refuse {
 			return errors.New("fixture-application-password")
 		}
+		if interrupt != nil {
+			interrupt()
+		}
 		return nil
-	}))
-	if err != nil {
-		t.Fatal(err)
 	}
-	request := func(payload, key, csrf string, want int) string {
+	var setup SetupHTTP
+	var handler http.Handler
+	attach := func() {
 		t.Helper()
-		r := httptest.NewRequest(http.MethodPut, origin+"/api/v1/setup/data-profile", strings.NewReader(payload))
+		setup = SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Now: clock,
+			Journal: operation.NewJournal(db, clock, uuid.NewString), Postgres: &PostgresProfileSetup{DexURI: profileDexURI}}
+		var err error
+		handler, err = ProtectBootstrap(origin, setup.profileHandler(preflight))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	attach()
+	restart := func() {
+		t.Helper()
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		db = open()
+		attach()
+	}
+	send := func(ctx context.Context, payload, key, csrf string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequestWithContext(ctx, http.MethodPut, origin+"/api/v1/setup/data-profile", strings.NewReader(payload))
 		r.RemoteAddr = "127.0.0.1:61400"
 		r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
 		r.Header.Set("Origin", origin)
@@ -84,6 +110,11 @@ func TestPostgresProfileSelection(t *testing.T) {
 		r.Header.Set("Idempotency-Key", key)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
+		return w
+	}
+	request := func(payload, key, csrf string, want int) string {
+		t.Helper()
+		w := send(ctx, payload, key, csrf)
 		if w.Code != want || strings.Contains(w.Body.String(), "fixture-application-password") || strings.Contains(w.Body.String(), "fixture-identity-password") {
 			t.Fatalf("profile status = %d, want %d with protected credentials", w.Code, want)
 		}
@@ -101,13 +132,32 @@ func TestPostgresProfileSelection(t *testing.T) {
 		t.Fatalf("failed probe changed pending profile, error %v", err)
 	}
 	refuse = false
+	// The first controller stops after a successful probe, before the
+	// transaction can persist either the credentials or the operation.
+	probeContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	interrupt = cancel
+	interrupted := send(probeContext, payload, key, csrf)
+	interrupt = nil
+	if interrupted.Code == http.StatusAccepted || probes != 2 {
+		t.Fatalf("interrupted selection status = %d after %d probes, want an uncommitted successful probe", interrupted.Code, probes)
+	}
+	restart()
+	if _, err := setup.readPendingPostgres(ctx, db); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("pending profile after interrupted probe = %v, want no row", err)
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM operations WHERE request_key=$1", key).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("operations after interrupted probe = %d (%v), want zero", count, err)
+	}
 	first := request(payload, key, csrf, 202)
+	restart()
 	again := request(payload, key, csrf, 202)
-	if first != again || probes != 2 {
+	if first != again || probes != 3 {
 		t.Fatalf("profile replay changed response or called preflight again, probes = %d", probes)
 	}
 	request(strings.Replace(payload, "fixture-application-password", "other-password", 1), key, csrf, 409)
-	if probes != 2 {
+	if probes != 3 {
 		t.Fatal("conflicting replay triggered a database probe")
 	}
 	var raw string
