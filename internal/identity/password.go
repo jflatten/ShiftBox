@@ -81,3 +81,37 @@ func NewTemporaryPassword() (string, []byte, error) {
 	}
 	return password, hash, nil
 }
+
+// PasswordVerified checks the current credential over the authenticated Dex API.
+func (a PasswordAdmin) PasswordVerified(ctx context.Context, email, password string) (bool, error) {
+	client, ok := a.Client.(interface {
+		VerifyPassword(context.Context, *api.VerifyPasswordReq, ...grpc.CallOption) (*api.VerifyPasswordResp, error)
+	})
+	if !ok {
+		return false, ErrPasswordAdministration
+	}
+	result, err := client.VerifyPassword(ctx, &api.VerifyPasswordReq{Email: email, Password: password})
+	if err != nil || result == nil || result.NotFound {
+		return false, ErrPasswordAdministration
+	}
+	return result.Verified, nil
+}
+
+// ReplacePassword stores a bcrypt hash in Dex for the existing local account.
+func (a PasswordAdmin) ReplacePassword(ctx context.Context, email, password string) error {
+	client, ok := a.Client.(interface {
+		UpdatePassword(context.Context, *api.UpdatePasswordReq, ...grpc.CallOption) (*api.UpdatePasswordResp, error)
+	})
+	if !ok {
+		return ErrPasswordAdministration
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return ErrPasswordAdministration
+	}
+	result, err := client.UpdatePassword(ctx, &api.UpdatePasswordReq{Email: email, NewHash: hash})
+	if err != nil || result == nil || result.NotFound {
+		return ErrPasswordAdministration
+	}
+	return nil
+}

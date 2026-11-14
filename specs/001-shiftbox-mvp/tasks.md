@@ -982,3 +982,20 @@ This checkpoint does not itself change the goal status.
   package run, then passed three isolated runs and a full identity rerun.
 - Completing the password change, serving the setup UI and activating an
   installation remain open.
+
+### Required first password change
+
+- The loopback setup listener now handles the contracted password change with
+  the bootstrap session, exact Origin, and session-bound CSRF token. Dex verifies
+  the current password and receives a bcrypt hash for the replacement over
+  its private mTLS administration API.
+- Successful completion clears the password-change flag and revokes the
+  owner's existing sessions in one transaction. Signing in with the new
+  password grants the bootstrap setup permissions.
+- If Dex stores the replacement before the controller commits the flag and
+  revocations, the initial password and the exact replacement can reconcile
+  the same change. The native CLI test injects that controller write failure and
+  verifies retry, session revocation, and fresh Dex sign-in. It also checks
+  wrong-origin and incorrect-password rejection.
+- CLI, app, identity, web, and contract race suites, formatting, and vet pass.
+  The remaining setup endpoints, form, and activation still need wiring.

@@ -41,7 +41,11 @@ func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 	if setup.Login != nil {
 		mux.HandleFunc("GET /auth/login", setup.startLogin)
 		mux.HandleFunc("GET /auth/callback", setup.finishLogin)
-		mux.Handle("/api/v1/session", setup.sessionHandler())
+		sessions := setup.sessionHandler()
+		mux.Handle("/api/v1/session", sessions)
+		if passwords, ok := setup.Admin.(setupPasswords); ok {
+			mux.Handle("PUT /api/v1/session/password", setup.passwordHandler(sessions, passwords))
+		}
 	}
 	guarded, err := ProtectBootstrap(setup.Origin, mux)
 	if err != nil {

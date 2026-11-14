@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"html"
@@ -154,6 +156,93 @@ func (w *stopOnSetupURL) probe(origin string) error {
 		!bytes.Contains(body, []byte(`"mustChangePassword":true`)) ||
 		bytes.Contains(body, []byte("setup.mutate")) {
 		return fmt.Errorf("Dex login did not produce a password-gated bootstrap session (status %d)", browser.StatusCode)
+	}
+	var session struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	if err := json.Unmarshal(body, &session); err != nil {
+		return err
+	}
+	current := strings.TrimSpace(w.password.String())
+	replacement := "integration-new-password-2026"
+	changePassword := func(current, requestOrigin string, want int) error {
+		payload, err := json.Marshal(map[string]string{"currentPassword": current, "newPassword": replacement})
+		if err != nil {
+			return err
+		}
+		req, err := http.NewRequest(http.MethodPut, origin+"/api/v1/session/password", bytes.NewReader(payload))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", requestOrigin)
+		req.Header.Set("X-CSRF-Token", session.CSRFToken)
+		result, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		result.Body.Close()
+		if result.StatusCode != want {
+			return fmt.Errorf("password change status = %d, want %d", result.StatusCode, want)
+		}
+		return nil
+	}
+	if err := changePassword(current, "https://other.example", http.StatusForbidden); err != nil {
+		return err
+	}
+	if err := changePassword("wrong-current-password", origin, http.StatusForbidden); err != nil {
+		return err
+	}
+
+	// Inject a controller write failure after Dex accepts the replacement.
+	db, err := sql.Open("sqlite", filepath.Join(w.dir, "bootstrap.db"))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER interrupt_password_change BEFORE UPDATE OF must_change_password ON users
+		BEGIN SELECT RAISE(ABORT, 'test interruption'); END`); err != nil {
+		return err
+	}
+	if err := changePassword(current, origin, http.StatusInternalServerError); err != nil {
+		return err
+	}
+	if _, err := db.Exec("DROP TRIGGER interrupt_password_change"); err != nil {
+		return err
+	}
+	if err := changePassword(current, origin, http.StatusNoContent); err != nil {
+		return err
+	}
+	result, err := client.Get(origin + "/api/v1/session")
+	if err != nil {
+		return err
+	}
+	result.Body.Close()
+	if result.StatusCode != http.StatusUnauthorized {
+		return fmt.Errorf("old setup session status = %d, want 401", result.StatusCode)
+	}
+	browser, err = client.Get(origin + "/auth/login")
+	if err != nil {
+		return err
+	}
+	browser, err = submitDexForm(client, browser, url.Values{"login": {"owner@example.test"}, "password": {replacement}})
+	if err != nil {
+		return err
+	}
+	if strings.HasSuffix(browser.Request.URL.Path, "/approval") {
+		browser, err = submitDexForm(client, browser, url.Values{"approval": {"approve"}})
+		if err != nil {
+			return err
+		}
+	}
+	defer browser.Body.Close()
+	body, err = io.ReadAll(browser.Body)
+	if err != nil {
+		return err
+	}
+	if browser.StatusCode != http.StatusOK || !bytes.Contains(body, []byte(`"mustChangePassword":false`)) ||
+		!bytes.Contains(body, []byte(`"setup.mutate"`)) {
+		return fmt.Errorf("fresh sign-in did not unlock setup")
 	}
 	return nil
 }
