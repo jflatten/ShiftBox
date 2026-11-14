@@ -137,6 +137,7 @@ func (launch LaunchIntent) valid(now time.Time) bool {
 		launch.TemplateID != "" && launch.TemplateRevision > 0 && launch.ArtifactID != "" && launch.OwnershipMarker != "" &&
 		len(launch.RequestKey) >= 16 && len(launch.RequestKey) <= 128 && launch.Allocation.positive() &&
 		(launch.RetentionSeconds == nil || *launch.RetentionSeconds > 0) &&
+		(launch.RepositoryRef == nil || template.ValidRepositoryRef(*launch.RepositoryRef)) &&
 		template.ValidSource(launch.RepositoryURL, launch.DevcontainerPath) &&
 		json.Unmarshal([]byte(launch.NetworkPolicyJSON), &network) == nil && len(network) != 0
 }

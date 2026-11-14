@@ -41,7 +41,8 @@ func ResolveLaunchRevision(ctx context.Context, tx *sql.Tx, id string, revision 
 	if err != nil {
 		return LaunchRevision{}, err
 	}
-	if !ValidSource(result.RepositoryURL, result.DevcontainerPath) || json.Unmarshal([]byte(names), &result.SecretNames) != nil || result.SecretNames == nil {
+	if !ValidSource(result.RepositoryURL, result.DevcontainerPath) || !ValidRepositoryRef(result.RepositoryRef) ||
+		json.Unmarshal([]byte(names), &result.SecretNames) != nil || result.SecretNames == nil {
 		return LaunchRevision{}, errors.New("invalid stored template revision")
 	}
 	return result, nil
@@ -58,5 +59,52 @@ func ValidSource(repository, devcontainer string) bool {
 	if len(parts) != 2 || !fs.ValidPath(strings.Join(parts, "/")) || strings.ContainsAny(repo.Path, "\\ \r\n\t") {
 		return false
 	}
-	return devcontainer != "." && fs.ValidPath(devcontainer) && !strings.Contains(devcontainer, "\\")
+	return devcontainer != "." && fs.ValidPath(devcontainer) && !strings.ContainsAny(devcontainer, "\\\x00")
+}
+
+// ValidRepositoryRef accepts refs supported by the guest checkout.
+func ValidRepositoryRef(ref string) bool {
+	if ref == "" {
+		return true
+	}
+	name := strings.TrimPrefix(strings.TrimPrefix(ref, "refs/heads/"), "refs/tags/")
+	return name != "" && len(ref) <= 255 && !strings.HasPrefix(name, "-") &&
+		!strings.ContainsAny(name, " \r\n\t\x00:~^?*[\\") &&
+		!strings.Contains(name, "..") && !strings.Contains(name, "@{") &&
+		(name != ref || !strings.HasPrefix(name, "refs/"))
+}
+
+// List reads a page of templates visible to the caller and their current revisions.
+func List(ctx context.Context, tx *sql.Tx, actor string, admin bool, state, cursor string) ([]View, *string, error) {
+	const limit = 50
+	rows, err := tx.QueryContext(ctx, `SELECT t.id,t.owner_user_id,t.name,t.state,t.current_revision,t.version,
+		r.repository_url,COALESCE(r.repository_ref,''),r.devcontainer_path,r.resource_profile_id,
+		r.platform_artifact_id,COALESCE(r.network_policy_id,''),r.secret_names_json
+		FROM project_templates t JOIN template_revisions r ON r.template_id=t.id AND r.revision=t.current_revision
+		WHERE t.id>$1 AND t.state=$2 AND ($3 OR (t.state='active' AND (t.owner_user_id=$4 OR EXISTS (
+		  SELECT 1 FROM template_grants g WHERE g.template_id=t.id AND g.user_id=$4 AND g.can_launch=1 AND g.revoked_at IS NULL
+		))))
+		ORDER BY t.id LIMIT $5`, cursor, state, admin, actor, limit+1)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	items := make([]View, 0, limit)
+	for rows.Next() {
+		if len(items) == limit {
+			return items, &items[limit-1].ID, nil
+		}
+		var view View
+		var names string
+		err := rows.Scan(&view.ID, &view.OwnerID, &view.Name, &view.State, &view.CurrentRevision, &view.Version,
+			&view.RepositoryURL, &view.RepositoryRef, &view.DevcontainerPath, &view.ProfileID, &view.ArtifactID, &view.NetworkPolicyID, &names)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := json.Unmarshal([]byte(names), &view.SecretNames); err != nil {
+			return nil, nil, err
+		}
+		items = append(items, view)
+	}
+	return items, nil, rows.Err()
 }

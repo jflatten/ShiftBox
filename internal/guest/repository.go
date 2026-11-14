@@ -37,7 +37,7 @@ type repositoryPreparation struct {
 
 func (r repositoryPreparation) prepare(ctx context.Context, source repositorySource) (repositoryEvidence, error) {
 	if !filepath.IsAbs(r.project) || !template.ValidSource(source.URL, source.Config) || !validDevContainerPath(source.Config) ||
-		len(source.URL) > 2048 || len(source.Config) > 2048 || !validRepositoryRef(source.Ref) {
+		len(source.URL) > 2048 || len(source.Config) > 2048 || !template.ValidRepositoryRef(source.Ref) {
 		return repositoryEvidence{}, errors.New("invalid repository preparation input")
 	}
 	if _, err := os.Lstat(r.project); err == nil {
@@ -154,17 +154,6 @@ func (r repositoryPreparation) checkout(ctx context.Context, dir, token, ref str
 	}
 	_, err := r.git(ctx, dir, "", "switch", "--detach", "--", "refs/tags/"+tag)
 	return err
-}
-
-func validRepositoryRef(ref string) bool {
-	if ref == "" {
-		return true
-	}
-	name := strings.TrimPrefix(strings.TrimPrefix(ref, "refs/heads/"), "refs/tags/")
-	return name != "" && len(ref) <= 255 && !strings.HasPrefix(name, "-") &&
-		!strings.ContainsAny(name, " \r\n\t\x00:~^?*[\\") &&
-		!strings.Contains(name, "..") && !strings.Contains(name, "@{") &&
-		(name != ref || !strings.HasPrefix(name, "refs/"))
 }
 
 func (r repositoryPreparation) git(ctx context.Context, dir, token string, args ...string) ([]byte, error) {
