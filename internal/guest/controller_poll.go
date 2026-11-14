@@ -43,6 +43,7 @@ type pollArguments struct {
 	RepositoryRef  string   `json:"repositoryRef"`
 	Devcontainer   string   `json:"devcontainerPath"`
 	RetainedMounts []string `json:"retainedMounts"`
+	ProductRelease string   `json:"productRelease,omitempty"`
 }
 
 // AuthenticatePoll verifies the TLS identity for the reusable polling
@@ -113,6 +114,9 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 }
 
 func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*PollOperation, error) {
+	if update, err := nextGuestUpdateStage(ctx, tx, contact); err != nil || update != nil {
+		return update, err
+	}
 	dispatch := PollOperation{}
 	var step string
 	switch contact.DesiredState {
@@ -201,6 +205,9 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 	}
 	shutdown := report.Step == "workload.shutdown"
 	repair := report.Step == "repair.enter"
+	if report.Step == "update.stage" {
+		return acceptGuestUpdateStage(ctx, tx, contact, input)
+	}
 	if report.Evidence.UpdateDigest != "" {
 		return ErrGuestReportConflict
 	}

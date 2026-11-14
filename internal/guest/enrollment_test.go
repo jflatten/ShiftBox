@@ -193,7 +193,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	// Download authority follows the current registration and the exact
 	// workspace generation's active staging step.
 	t.Run("maintenance download authority", func(t *testing.T) {
-		const campaign, target = "fixture-update-campaign", "fixture-update-target"
+		const campaign, target = "fixture-update-campaign", "99999999-0000-4000-8000-000000000002"
 		if _, err := enrollment.UpdateRelease(ctx, leaf, now); !errors.Is(err, guest.ErrGuestUnauthorized) {
 			t.Errorf("UpdateRelease without an assigned operation = %v, want denial", err)
 		}
@@ -202,8 +202,9 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 				"UPDATE installations SET active_release='release' WHERE id='00000000-0000-4000-8000-000000000001'",
 				"DELETE FROM maintenance_targets WHERE campaign_id='fixture-update-campaign'",
 				"DELETE FROM maintenance_campaigns WHERE operation_id='fixture-update-campaign'",
-				"DELETE FROM operation_steps WHERE operation_id='fixture-update-target'",
-				"DELETE FROM operations WHERE id IN ('fixture-update-campaign','fixture-update-target')",
+				"DELETE FROM guest_dispatches WHERE operation_id='99999999-0000-4000-8000-000000000002'",
+				"DELETE FROM operation_steps WHERE operation_id='99999999-0000-4000-8000-000000000002'",
+				"DELETE FROM operations WHERE id IN ('fixture-update-campaign','99999999-0000-4000-8000-000000000002')",
 			} {
 				if _, err := db.Exec(query); err != nil {
 					t.Error(err)
@@ -214,13 +215,13 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 			"UPDATE installations SET active_release='test' WHERE id='00000000-0000-4000-8000-000000000001'",
 			`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,version,originating_action) VALUES
 			('fixture-update-campaign',NULL,'update',1,'owner','campaign-fixture','waiting','update_guests','now',1,'maintenance.manage'),
-			('fixture-update-target','work','update',1,'controller','target-fixture','waiting','maintenance_stage','now',1,'maintenance.update_guest')`,
+			('99999999-0000-4000-8000-000000000002','work','update',1,'controller','target-fixture','waiting','maintenance_stage','now',1,'maintenance.update_guest')`,
 			`INSERT INTO operation_steps(operation_id,step_index,step_key,label,status)
-			VALUES('fixture-update-target',0,'maintenance_stage','Stage update','active')`,
+			VALUES('99999999-0000-4000-8000-000000000002',0,'maintenance_stage','Stage update','active')`,
 			`INSERT INTO maintenance_campaigns(operation_id,installation_id,release_id,deadline,created_by,created_at,state)
 			SELECT 'fixture-update-campaign',id,'release','now','owner','now','active' FROM installations`,
 			`INSERT INTO maintenance_targets(campaign_id,workspace_id,generation,prior_desired_state,prior_observed_state,operation_id,state,updated_at)
-			VALUES('fixture-update-campaign','work',1,'running','running','fixture-update-target','waiting_safe','now')`,
+			VALUES('fixture-update-campaign','work',1,'running','running','99999999-0000-4000-8000-000000000002','waiting_safe','now')`,
 		} {
 			if _, err := db.Exec(query); err != nil {
 				t.Fatal(err)
@@ -228,6 +229,23 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		}
 		if got, err := enrollment.UpdateRelease(ctx, leaf, now); err != nil || got != "test" {
 			t.Errorf("UpdateRelease during staging = %q, %v, want assigned release", got, err)
+		}
+		input := guest.PollReport{GuestRelease: "test", ProtocolVersion: "1"}
+		_, dispatch, err := enrollment.Exchange(ctx, leaf, now, input)
+		if err != nil || dispatch == nil || dispatch.ID != target || dispatch.Command != "stage-guest-update" || dispatch.Arguments.ProductRelease != "test" {
+			t.Fatalf("maintenance dispatch = %+v (%v), want assigned staging command", dispatch, err)
+		}
+		receipt := &guest.OperationReport{ID: target, Generation: 1, Status: "succeeded", Step: "update.stage", Attempt: 1}
+		receipt.Evidence.UpdateDigest = strings.Repeat("a", 64)
+		input.LastOperationID, input.Version, input.Operation = target, dispatch.Version, receipt
+		for range 2 {
+			if _, next, err := enrollment.Exchange(ctx, leaf, now, input); err != nil || next != nil {
+				t.Fatalf("staging receipt = %+v (%v), want successful idempotent receipt", next, err)
+			}
+		}
+		receipt.Evidence.UpdateDigest = strings.Repeat("b", 64)
+		if _, _, err := enrollment.Exchange(ctx, leaf, now, input); !errors.Is(err, guest.ErrGuestReportConflict) {
+			t.Errorf("changed staging receipt = %v, want conflict", err)
 		}
 		if _, err := db.Exec(`UPDATE operations SET current_step='maintenance_activate' WHERE id=$1`, target); err != nil {
 			t.Fatal(err)

@@ -1713,8 +1713,10 @@ This checkpoint does not itself change the goal status.
   bytes. The guest downloader derives its endpoint from the poll origin,
   rejects redirects, and stages verified downloads by digest. The guest poll
   loop now handles the staging command and journals the digest for replay after
-  restart. Production key provisioning, controller dispatch and receipt,
-  activation, and prior-state restoration remain open under T095.
+  restart. The controller dispatches staging only for the active workspace
+  generation and persists its receipt. Identical receipt replays succeed and
+  changed receipts are rejected. Production key provisioning, activation,
+  and prior-state restoration remain open under T095.
 
 ### Migration preflight CLI
 
