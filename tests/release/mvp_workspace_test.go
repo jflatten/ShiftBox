@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -95,9 +96,44 @@ func TestMVPWorkspaceJournal(t *testing.T) {
 		"workspace.repair/succeeded/verify_repair/succeeded",
 		"workspace.repair/succeeded/verify_ide/succeeded",
 	}
-	if got := strings.Join(steps, "\n"); got != strings.Join(want, "\n") {
+	if !matchesWorkspaceJourney(steps, want, os.Getenv("SHIFTBOX_MVP_RESUME_ACTIVE") == "1") {
+		got := strings.Join(steps, "\n")
 		t.Errorf("workspace lifecycle checks =\n%s\nwant\n%s", got, strings.Join(want, "\n"))
 	}
+}
+
+// TestMatchesWorkspaceJourney checks resumed fixtures retain the ordered
+// lifecycle evidence despite older retries and reject an unfinished repair.
+func TestMatchesWorkspaceJourney(t *testing.T) {
+	want := []string{"launch", "stop", "start", "rebuild", "failed rebuild", "repair", "retry"}
+	resumed := []string{"launch", "stop", "start", "stop", "start", "rebuild", "rebuild", "failed rebuild", "repair", "retry"}
+	if matchesWorkspaceJourney(resumed, want, false) {
+		t.Error("fresh journal accepted earlier attempts")
+	}
+	if !matchesWorkspaceJourney(resumed, want, true) {
+		t.Error("resumed journal rejected ordered lifecycle evidence")
+	}
+	if matchesWorkspaceJourney(resumed[:len(resumed)-1], want, true) ||
+		matchesWorkspaceJourney(append(resumed, "failed rebuild"), want, true) ||
+		matchesWorkspaceJourney([]string{"launch", "stop", "start", "rebuild", "repair", "failed rebuild", "retry"}, want, true) {
+		t.Error("resumed journal accepted missing, superseded, or out-of-order repair evidence")
+	}
+}
+
+func matchesWorkspaceJourney(steps, want []string, resumed bool) bool {
+	if !resumed || len(want) == 0 {
+		return slices.Equal(steps, want)
+	}
+	if len(steps) < len(want) || steps[len(steps)-1] != want[len(want)-1] {
+		return false
+	}
+	index := 0
+	for _, step := range steps[:len(steps)-1] {
+		if index < len(want)-1 && step == want[index] {
+			index++
+		}
+	}
+	return index == len(want)-1
 }
 
 func readMVPRelease(t *testing.T) release.MigrationRelease {

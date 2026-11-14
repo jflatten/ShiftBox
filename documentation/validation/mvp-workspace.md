@@ -42,8 +42,20 @@ second tab to wait for the saved contents before stopping the VM. A resumed
 Chrome run confirmed the marker survived both stop/start and rebuild. The
 next rebuild unexpectedly succeeded after the editor was used to break the
 configuration. The test now verifies the broken and restored configuration
-in a second tab before issuing either action. Repair and the Go journal check
-remain pending.
+in a second tab before issuing either action.
+
+The focused repair browser run passed in 6m 48s on the same retained VM and
+SQLite fixture. The verified invalid configuration failed at the required
+setup step. Chrome opened the separate repair origin, read the retained
+marker, restored and verified the configuration, then exited repair and
+retried setup. The regular IDE reopened with the same marker. On this same
+database, `TestMVPWorkspaceJournal` passed with `-race` in resumed mode,
+requiring the ordered lifecycle evidence and a successful final repair retry.
+
+T061 still needs the complete journey on a single frozen candidate. The
+retained stop/start, rebuild, and focused repair used the rebuilt controller
+and an existing development image. The release manifest describes the
+earlier candidate.
 
 Run the browser spec with `SHIFTBOX_MVP_FIXTURE` pointing at a fresh local
 fixture and with the same valid certificate trust available to Chrome and the
@@ -62,6 +74,9 @@ to rerun the browser IDE and lifecycle checks without creating a second VM.
 After Chrome completes, point `SHIFTBOX_TEST_MVP_DATABASE` at the same
 disposable SQLite database and run
 `go test ./tests/release -run '^TestMVPWorkspaceJournal$' -count=1 -v`.
+Use `SHIFTBOX_MVP_RESUME_ACTIVE=1` for the journal check when a resumed run
+has prior lifecycle attempts in its journal. A fresh run checks the exact
+sequence.
 The Go test checks the authenticated enrollment and records for the workspace
 launch, stop, start, rebuild, expected broken configuration, repair, and retry.
 Chrome exercises file retention through the browser IDE.

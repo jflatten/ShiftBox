@@ -2789,6 +2789,10 @@ This checkpoint does not itself change the goal status.
   at all three exit-and-retry steps. After the lease expires, it consumes
   the persisted receipts and verifies that the VM identity and owned disks
   remain the same. The provider and guest evidence are simulated.
+- T061 verified retained marker contents after native stop/start and rebuild,
+  then passed the focused Chrome repair and retry journey on the same VM.
+  The Go workspace journal check passed with the race detector in resumed
+  mode. The complete journey on one frozen candidate remains open.
 
 ### Writable project checkout
 
