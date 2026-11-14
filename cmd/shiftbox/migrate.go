@@ -65,9 +65,20 @@ func runMigrate(ctx context.Context, args []string, out, status io.Writer) error
 		return failure(7, "migration.installation_unverified", "Verify the active database, installation key, and HTTPS certificates.")
 	}
 	defer state.Close()
+	report, err := assessControllerMigration(ctx, cfg, state, manifest, migrationCapabilities(ctx, cfg, state))
+	if err != nil {
+		return failure(5, "migration.guest_inventory_unavailable", "Read the retained workspace inventory before continuing.")
+	}
+	if !report.Ready {
+		return migrationOutput(out, status, *asJSON, &report, web.Problem{Code: "migration.blocked", Title: "Migration preflight is blocked."}, 7)
+	}
+	return migrationOutput(out, status, *asJSON, &report, web.Problem{}, 0)
+}
+
+func migrationCapabilities(ctx context.Context, cfg config.Config, state *app.ControllerState) provider.Capabilities {
 	caps := provider.Capabilities{}
-	runtime := *cfg.Runtime
-	if checkControllerRuntime(runtime) == nil {
+	if cfg.Runtime != nil && checkControllerRuntime(*cfg.Runtime) == nil {
+		runtime := *cfg.Runtime
 		catalog := release.NewCatalog(release.NewStore(state.DB), filepath.Join(cfg.InstallationDir, "platform-artifacts"))
 		storage, statErr := os.Stat(runtime.UTMStorage)
 		machines, providerErr := utm.NewProvider(catalog, filepath.Join(cfg.InstallationDir, "vm-staging"), runtime.UTMStorage,
@@ -76,6 +87,10 @@ func runMigrate(ctx context.Context, args []string, out, status io.Writer) error
 			caps, _ = machines.Capabilities(ctx)
 		}
 	}
+	return caps
+}
+
+func assessControllerMigration(ctx context.Context, cfg config.Config, state *app.ControllerState, manifest release.MigrationRelease, caps provider.Capabilities) (release.MigrationReport, error) {
 	now := time.Now()
 	evidence := release.MigrationEvidence{
 		// A prepared archive is insufficient. The backup service must supply
@@ -85,15 +100,11 @@ func runMigrate(ctx context.Context, args []string, out, status io.Writer) error
 		StorageWritable: migrationStorageWritable(cfg.InstallationDir),
 		ToolsCompatible: migrationDexMatches(cfg.Runtime.DexBinary, manifest.Dex) && migrationBackupTools(ctx, state, cfg.DataProfile),
 	}
-	evidence, err = state.MigrationEvidence(ctx, evidence, guestProtocol, now)
+	evidence, err := state.MigrationEvidence(ctx, evidence, guestProtocol, now)
 	if err != nil {
-		return failure(5, "migration.guest_inventory_unavailable", "Read the retained workspace inventory before continuing.")
+		return release.MigrationReport{}, err
 	}
-	report := release.AssessMigration(manifest.ReleaseID, evidence, now)
-	if !report.Ready {
-		return migrationOutput(out, status, *asJSON, &report, web.Problem{Code: "migration.blocked", Title: "Migration preflight is blocked."}, 7)
-	}
-	return migrationOutput(out, status, *asJSON, &report, web.Problem{}, 0)
+	return release.AssessMigration(manifest.ReleaseID, evidence, now), nil
 }
 
 func migrationBackupTools(ctx context.Context, state *app.ControllerState, profile string) bool {

@@ -5,8 +5,50 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"regexp"
 	"time"
 )
+
+var migrationReleaseID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
+
+// ValidMigrationReleaseID reports whether an ID names one local release folder.
+func ValidMigrationReleaseID(id string) bool { return migrationReleaseID.MatchString(id) }
+
+// ReadLocalMigrationRelease reads a pinned release from a private local catalog.
+func ReadLocalMigrationRelease(root, id string) (MigrationRelease, error) {
+	unavailable := errors.New("local pinned release manifest is unavailable")
+	if !filepath.IsAbs(root) || !ValidMigrationReleaseID(id) {
+		return MigrationRelease{}, unavailable
+	}
+	folder := filepath.Join(root, id)
+	for _, path := range []string{root, folder} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+			return MigrationRelease{}, unavailable
+		}
+	}
+	path := filepath.Join(folder, "release.json")
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+		return MigrationRelease{}, unavailable
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return MigrationRelease{}, unavailable
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return MigrationRelease{}, unavailable
+	}
+	manifest, err := ReadMigrationRelease(file)
+	if err != nil || manifest.ReleaseID != id {
+		return MigrationRelease{}, unavailable
+	}
+	return manifest, nil
+}
 
 // MigrationRelease identifies the pinned inputs for a proposed controller release.
 type MigrationRelease struct {

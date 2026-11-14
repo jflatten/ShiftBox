@@ -26,7 +26,7 @@ import (
 
 const guestProtocol = "1"
 
-func serveActiveController(ctx context.Context, cfg config.Config, state *app.ControllerState) error {
+func serveActiveController(ctx context.Context, cfg config.Config, state *app.ControllerState, releasesDir string) error {
 	if cfg.Runtime == nil {
 		return errors.New("serve requires a runtime configuration for HTTPS, guest listeners, and UTM")
 	}
@@ -120,6 +120,16 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		})
 	importRoute := imports.Handler()
 	services.Handlers[importRoute.Route.OperationID] = importRoute
+	preflightRoute, preflightWorker := web.MigrationPreflightRoute(state.DB, journal, origin, active.InstallationID, time.Now,
+		func(ctx context.Context, id string) (release.MigrationReport, error) {
+			manifest, err := release.ReadLocalMigrationRelease(releasesDir, id)
+			if err != nil {
+				return release.MigrationReport{}, err
+			}
+			current, _ := machines.Capabilities(ctx)
+			return assessControllerMigration(ctx, cfg, state, manifest, current)
+		})
+	services.Handlers[preflightRoute.Route.OperationID] = preflightRoute
 	api, err := web.NewActiveManagementRouter(services.Session, services.Handlers, services.GitHubCallback)
 	if err != nil {
 		return err
@@ -143,7 +153,9 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	defer workspaces.Close()
 	err = app.ServeController(ctx, dexDone, browser.Serve, workspaces.Serve, func(ctx context.Context) error {
 		return app.RunHistoryRetention(ctx, state.DB, cfg)
-	}, imports.Run)
+	}, imports.Run, func(ctx context.Context) error {
+		return preflightWorker.Run(ctx, time.Second)
+	})
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return nil
 	}

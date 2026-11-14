@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"os"
+	"path/filepath"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jflatten/ShiftBox/internal/app"
@@ -21,7 +22,11 @@ func runServe(ctx context.Context, args []string) error {
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *path == "" {
 		return errServeUsage
 	}
-	cfg, err := config.Load(*path)
+	configPath, err := filepath.Abs(*path)
+	if err != nil {
+		return errServeUsage
+	}
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
 	}
@@ -45,5 +50,5 @@ func runServe(ctx context.Context, args []string) error {
 		return err
 	}
 	defer state.Close()
-	return serveActiveController(ctx, cfg, state)
+	return serveActiveController(ctx, cfg, state, filepath.Join(filepath.Dir(configPath), "releases"))
 }

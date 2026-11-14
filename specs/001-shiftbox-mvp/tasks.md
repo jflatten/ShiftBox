@@ -1693,8 +1693,18 @@ This checkpoint does not itself change the goal status.
   UTM capability checks, and the pinned Dex binary digest. PostgreSQL
   dump and restore tools must match the application server major.
 - Unit tests cover manifest rejection and blocked preflight output.
-  The installed backup verifier, identity-store privileges, management
-  endpoint and irreversible migration acceptance remain open.
+  The installed backup verifier, identity-store privileges, and
+  irreversible migration acceptance remain open.
+
+### Migration preflight management route
+
+- T097 and T099 share the CLI migration checks with the administrator API.
+  Place the pinned manifest at `releases/<releaseId>/release.json`
+  beside the configuration passed to `shiftbox serve`, with private
+  directories and file permissions. Admission persists the release ID
+  for retries, and the worker reports blockers on the operation.
+- Verified backup evidence and live irreversible-migration acceptance
+  remain open under T097. Preflight does not apply migrations.
 
 ### Backup and recovery schema
 
