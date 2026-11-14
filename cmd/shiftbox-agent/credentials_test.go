@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jflatten/ShiftBox/internal/guest"
@@ -36,5 +37,39 @@ func TestSecretCommandExit(t *testing.T) {
 				t.Fatalf("secret command = %d, stdout %q and stderr %q, want %d", code, &stdout, &stderr, tc.code)
 			}
 		})
+	}
+}
+
+// TestGitCredentialHelper checks Git protocol output, rejects foreign hosts,
+// and verifies that store and erase never read or persist a credential.
+func TestGitCredentialHelper(t *testing.T) {
+	const input = "protocol=https\nhost=github.com\npath=owner/project.git\n\n"
+	for _, tc := range []struct {
+		action, input string
+		wantCall      bool
+	}{
+		{"get", input, true},
+		{"get", "protocol=https\nhost=elsewhere.test\npath=owner/project.git\n\n", false},
+		{"get", "protocol=https\nhost=github.com\n\n", false},
+		{"store", input, false},
+		{"erase", input, false},
+	} {
+		var out, diagnostics bytes.Buffer
+		called := false
+		code := gitCredentialCommand(t.Context(), []string{"git", "credential", tc.action},
+			strings.NewReader(tc.input), &out, &diagnostics, func(_ context.Context, repo string) (string, error) {
+				called = true
+				if repo != "https://github.com/owner/project.git" {
+					t.Errorf("helper requested %q, want the HTTPS repository", repo)
+				}
+				return "fixture-token", nil
+			})
+		want := ""
+		if tc.wantCall {
+			want = "username=x-access-token\npassword=fixture-token\n\n"
+		}
+		if code != 0 || called != tc.wantCall || out.String() != want || diagnostics.Len() != 0 {
+			t.Errorf("helper %s: code %d, called %t, output %q, want 0, %t, %q", tc.action, code, called, out.String(), tc.wantCall, want)
+		}
 	}
 }

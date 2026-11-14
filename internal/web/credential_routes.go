@@ -15,7 +15,7 @@ import (
 )
 
 // GuestGitTokenHandler supplies the current owner token over verified guest TLS.
-// Inputs cannot specify the workspace, owner, or repository.
+// The optional expected repository only narrows the registered authority.
 func GuestGitTokenHandler(
 	authenticate func(context.Context, *x509.Certificate, time.Time) (guest.Contact, error),
 	resolve func(context.Context, string, string) (string, error),
@@ -51,6 +51,11 @@ func GuestGitTokenHandler(
 		}
 		if err != nil {
 			WriteProblem(w, requestID, err)
+			return
+		}
+		expected := r.Header.Values(guest.GitRepositoryHeader)
+		if len(expected) > 1 || len(expected) == 1 && !guest.SameGitRepository(expected[0], authority.Repository) {
+			WriteProblem(w, requestID, Problem{Status: 403, Code: "git.repository_denied", Title: "Git credential access is denied for this repository"})
 			return
 		}
 		token, err := resolve(ctx, authority.OwnerID, authority.Repository)

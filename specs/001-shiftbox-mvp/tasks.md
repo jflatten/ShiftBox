@@ -1770,3 +1770,15 @@ This checkpoint does not itself change the goal status.
   Linux amd64 build and local socket, CLI, and Dev Container invocation
   tests passed. A rebuilt UTM image and live container check remain open.
 - The standalone Git credential-helper command remains open under T075.
+
+### Workspace Git credential helper
+
+- The guest command implements Git's credential protocol over the agent
+  socket. For HTTPS GitHub requests it sends the expected repository, which
+  the controller compares with the workspace's recorded repository before
+  resolving the current owner token. Store and erase do not persist tokens.
+- Tests verify credential-only output, rejected repository context,
+  reconnect-required handling and controller outage. A real Git invocation
+  confirmed helper dispatch with `credential.useHttpPath=true`. The Linux
+  guest binary builds. Live GitHub authorization and the rebuilt UTM
+  container path remain unverified.

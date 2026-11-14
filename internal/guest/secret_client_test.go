@@ -18,6 +18,16 @@ func TestLocalSecretRead(t *testing.T) {
 			t.Errorf("secret request method = %s, want POST", r.Method)
 		}
 		switch r.URL.Path {
+		case GitAccessTokenPath:
+			switch r.Header.Get(GitRepositoryHeader) {
+			case "https://github.com/example/project":
+				_, _ = w.Write([]byte(`{"accessToken":"owner-token-fixture"}`))
+			case "https://github.com/example/reconnect":
+				w.WriteHeader(409)
+				_, _ = w.Write([]byte(`{"code":"git.reconnect_required"}`))
+			default:
+				w.WriteHeader(403)
+			}
 		case SecretResolvePrefix + "MISSING:resolve":
 			w.WriteHeader(404)
 			_, _ = w.Write([]byte(`{"code":"secret.not_found"}`))
@@ -45,6 +55,14 @@ func TestLocalSecretRead(t *testing.T) {
 	for name, want := range map[string]error{"MISSING": sql.ErrNoRows, "DENIED": ErrGuestUnauthorized} {
 		if value, err := ReadLocalSecret(ctx, path, name); !errors.Is(err, want) || value != "" {
 			t.Fatalf("local secret %s returned error %v, want %v and no value", name, err, want)
+		}
+	}
+	if token, err := ReadLocalGitToken(ctx, path, "https://github.com/example/project"); err != nil || token != "owner-token-fixture" {
+		t.Fatalf("local Git credential returned error %v, want owner token", err)
+	}
+	for repo, want := range map[string]error{"another": ErrGuestUnauthorized, "reconnect": ErrGitReconnect} {
+		if token, err := ReadLocalGitToken(ctx, path, "https://github.com/example/"+repo); !errors.Is(err, want) || token != "" {
+			t.Fatalf("local Git credential for %s = %v, want %v and no token", repo, err, want)
 		}
 	}
 	upstream.Close()

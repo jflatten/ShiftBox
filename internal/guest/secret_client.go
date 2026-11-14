@@ -65,6 +65,10 @@ func listenSecretSocket(ctx context.Context, path string, client *http.Client, p
 		BaseContext: func(net.Listener) context.Context { return socketCtx },
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
+			if r.URL.RequestURI() == "/git" && r.Method == http.MethodPost && r.ContentLength == 0 {
+				localGitToken(w, r, client, pollEndpoint)
+				return
+			}
 			name := strings.TrimPrefix(r.URL.Path, "/")
 			if r.Method != http.MethodPost || r.URL.RequestURI() != "/"+name || !secret.ValidName(name) || r.ContentLength != 0 {
 				w.WriteHeader(http.StatusBadRequest)
@@ -126,15 +130,30 @@ func ReadLocalSecret(ctx context.Context, socket, name string) (string, error) {
 	if !secret.ValidName(name) {
 		return "", secret.ErrInvalidKey
 	}
+	return readLocalCredential(ctx, socket, "/"+name, name, "")
+}
+
+// ReadLocalGitToken requests the owner token for the workspace repository.
+func ReadLocalGitToken(ctx context.Context, socket, repository string) (string, error) {
+	if !ValidGitRepository(repository) {
+		return "", ErrGuestUnauthorized
+	}
+	return readLocalCredential(ctx, socket, "/git", "git", repository)
+}
+
+func readLocalCredential(ctx context.Context, socket, path, name, repository string) (string, error) {
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	}}
 	defer transport.CloseIdleConnections()
 	client := http.Client{Transport: transport, Timeout: 20 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://shiftbox.local/"+name, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://shiftbox.local"+path, nil)
 	if err != nil {
 		return "", err
+	}
+	if repository != "" {
+		req.Header.Set(GitRepositoryHeader, repository)
 	}
 	reply, err := client.Do(req)
 	if err != nil {
@@ -148,8 +167,30 @@ func ReadLocalSecret(ctx context.Context, socket, name string) (string, error) {
 		return "", sql.ErrNoRows
 	case http.StatusForbidden:
 		return "", ErrGuestUnauthorized
+	case http.StatusConflict:
+		return "", ErrGitReconnect
 	default:
 		return "", errors.New("workspace secret service is unavailable")
+	}
+}
+
+func localGitToken(w http.ResponseWriter, r *http.Request, client *http.Client, pollEndpoint string) {
+	headers := r.Header.Values(GitRepositoryHeader)
+	if len(headers) != 1 || !ValidGitRepository(headers[0]) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	token, err := requestGitToken(r.Context(), client, pollEndpoint, headers[0])
+	switch {
+	case errors.Is(err, ErrGuestUnauthorized):
+		w.WriteHeader(http.StatusForbidden)
+	case errors.Is(err, ErrGitReconnect):
+		w.WriteHeader(http.StatusConflict)
+	case err != nil:
+		w.WriteHeader(http.StatusServiceUnavailable)
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(secretReply{Name: "git", Value: &token})
 	}
 }
 

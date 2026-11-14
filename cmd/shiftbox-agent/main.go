@@ -24,6 +24,15 @@ var (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if len(os.Args) > 1 && os.Args[1] == "git" {
+		code := gitCredentialCommand(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, func(ctx context.Context, repository string) (string, error) {
+			return guest.ReadLocalGitToken(ctx, guest.SecretSocketPath, repository)
+		})
+		if code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "secrets" {
 		code := secretCommand(ctx, os.Args[1:], os.Stdout, os.Stderr, func(ctx context.Context, name string) (string, error) {
 			return guest.ReadLocalSecret(ctx, guest.SecretSocketPath, name)

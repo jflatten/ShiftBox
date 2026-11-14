@@ -394,6 +394,19 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		}
 		mode("connected")
 		request(`{"ownerId":"other","repositoryUrl":"https://github.com/example/other"}`, 400)
+		req, err := http.NewRequest(http.MethodPost, server.URL+gitPath, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-ShiftBox-Git-Repository", "https://github.com/another/repo")
+		response, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != 403 {
+			t.Fatalf("token with mismatched repository context = %d, want 403", response.StatusCode)
+		}
 		body := request("", 200)
 		var got map[string]string
 		if err := json.Unmarshal([]byte(body), &got); err != nil || len(got) != 1 || got["accessToken"] != "fixture-user-access-token" {
