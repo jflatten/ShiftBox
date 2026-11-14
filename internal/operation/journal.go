@@ -192,3 +192,10 @@ func (j *Journal) Events(ctx context.Context, id string, after int64) ([]Event, 
 	}
 	return events, rows.Err()
 }
+
+// LatestEventID provides the durable replay boundary without assuming event IDs equal versions.
+func (j *Journal) LatestEventID(ctx context.Context, id string) (int64, error) {
+	var latest int64
+	err := j.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(event_id),0) FROM operation_events WHERE operation_id=$1`, id).Scan(&latest)
+	return latest, err
+}
