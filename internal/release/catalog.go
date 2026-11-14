@@ -19,6 +19,8 @@ import (
 // ErrInvalidArtifact indicates that a candidate cannot be admitted to the catalog.
 var ErrInvalidArtifact = errors.New("invalid platform artifact")
 
+const maxManifestBytes = 1 << 20
+
 // Artifact describes the checked manifest and the relative path to its UTM bundle.
 type Artifact struct {
 	Manifest       ArtifactManifest
@@ -83,16 +85,9 @@ func StageArtifact(ctx context.Context, directory string, input io.Reader, stage
 }
 
 func checkArtifact(ctx context.Context, directory string, input io.Reader, destination string) (Artifact, error) {
-	const maxManifestBytes = 1 << 20
-	raw, err := io.ReadAll(io.LimitReader(input, maxManifestBytes+1))
-	if err != nil || len(raw) > maxManifestBytes {
-		return Artifact{}, fmt.Errorf("%w: cannot read manifest", ErrInvalidArtifact)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	var manifest ArtifactManifest
-	if err := decoder.Decode(&manifest); err != nil || decoder.Decode(new(any)) != io.EOF {
-		return Artifact{}, fmt.Errorf("%w: malformed manifest", ErrInvalidArtifact)
+	raw, manifest, err := readArtifactManifest(input)
+	if err != nil {
+		return Artifact{}, err
 	}
 
 	bundle, resources, err := manifestInventory(manifest)
@@ -140,6 +135,20 @@ func checkArtifact(ctx context.Context, directory string, input io.Reader, desti
 		bundle = destination
 	}
 	return Artifact{Manifest: manifest, ManifestSHA256: hex.EncodeToString(sum[:]), Bundle: bundle}, nil
+}
+
+func readArtifactManifest(input io.Reader) ([]byte, ArtifactManifest, error) {
+	raw, err := io.ReadAll(io.LimitReader(input, maxManifestBytes+1))
+	if err != nil || len(raw) > maxManifestBytes {
+		return nil, ArtifactManifest{}, fmt.Errorf("%w: cannot read manifest", ErrInvalidArtifact)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var manifest ArtifactManifest
+	if err := decoder.Decode(&manifest); err != nil || decoder.Decode(new(any)) != io.EOF {
+		return nil, ArtifactManifest{}, fmt.Errorf("%w: malformed manifest", ErrInvalidArtifact)
+	}
+	return raw, manifest, nil
 }
 
 func manifestInventory(manifest ArtifactManifest) (string, map[string]string, error) {

@@ -1180,3 +1180,15 @@ This checkpoint does not itself change the goal status.
   digest, incompatible defaults, and published metadata mutation.
 - The catalog still needs managed artifact publication, provider and guest
   boot validation, and connection to the administrator import operation.
+
+### Managed platform catalog files
+
+- Catalog import stages and verifies a separate copy, records the validating
+  release, then publishes the files under the exact manifest digest. Retrying
+  the same import can complete an interrupted publication.
+- Workspace staging is gated on availability and rechecks the pinned
+  manifest and every bundle file. Tests cover reopening without the original
+  import source and reject changes to the managed manifest or disk.
+- The validation entry point checks managed content around a boot check and
+  keeps uncertain outcomes in validating state. A real provider and guest
+  boot check and the administrator import operation still need wiring.
