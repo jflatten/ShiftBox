@@ -1,12 +1,12 @@
 GO ?= go
 NPM ?= npm
 
-.PHONY: fmt fmt-check vet test race integration ui-test ui-build browser release check
+.PHONY: fmt fmt-check vet test race integration ui-test ui-build build browser release check
 fmt:
-	gofmt -w cmd internal tests
+	gofmt -w cmd internal tests ui/export.go
 
 fmt-check:
-	@test -z "$$(gofmt -l cmd internal tests)"
+	@test -z "$$(gofmt -l cmd internal tests ui/export.go)"
 
 vet:
 	$(GO) vet ./...
@@ -26,6 +26,9 @@ ui-test:
 
 ui-build:
 	$(NPM) --prefix ui run build
+
+build: ui-build
+	$(GO) build -tags=shiftbox_ui -o bin/shiftbox ./cmd/shiftbox
 
 browser:
 	$(NPM) --prefix ui run test:e2e

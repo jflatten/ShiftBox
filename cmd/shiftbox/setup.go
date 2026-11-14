@@ -56,6 +56,10 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	if err != nil {
 		return err
 	}
+	assets, err := browserAssets()
+	if err != nil {
+		return err
+	}
 	lock, err := lockSetup(*dir)
 	if err != nil {
 		return err
@@ -107,7 +111,7 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 			return nil, err
 		}
 		dexDone, closeDex = done, cleanup
-		setup = app.SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Admin: admin, Login: login, CertificateRoots: roots, Postgres: postgres,
+		setup = app.SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Admin: admin, Login: login, BrowserAssets: assets, CertificateRoots: roots, Postgres: postgres,
 			Journal: operation.NewJournal(db, time.Now, uuid.NewString), Now: time.Now, NewID: uuid.NewString}
 		setup = setup.WithPostgresTransfer(func(ctx context.Context, storage identity.DexPostgres, email, userID string) error {
 			target, _, _, cleanup, err := startSetupDex(ctx, *dir, *dex, origin, cert, &storage)

@@ -1665,3 +1665,14 @@ This checkpoint does not itself change the goal status.
   missing the operation authority column and SQLite fixtures missing
   foundation records were rejected before controller startup. The check
   leaves database repair to the reviewed recovery workflow.
+
+### Embedded browser assets
+
+- `make build` builds the Next.js static export and embeds it into the
+  ShiftBox controller binary. CI builds the tagged binary and verifies
+  the generated home page and a script referenced by it.
+- The local setup listener serves the embedded export through its existing
+  loopback HTTPS guard. A live run with the pinned Dex binary served the
+  home page, JavaScript, and setup status API from the same origin.
+- The dedicated setup flow and active controller composition remain open
+  under T058 and T060.

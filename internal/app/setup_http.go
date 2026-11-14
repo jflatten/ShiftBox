@@ -26,6 +26,7 @@ type SetupHTTP struct {
 	Cipher           *cryptostore.Store
 	Admin            PasswordAdministrator
 	Login            *SetupLogin
+	BrowserAssets    http.Handler
 	CertificateRoots *x509.CertPool
 	Postgres         *PostgresProfileSetup
 	transferPostgres PostgresCredentialTransfer
@@ -41,6 +42,9 @@ func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 		return nil, ErrSetupConflict
 	}
 	mux := http.NewServeMux()
+	if setup.BrowserAssets != nil {
+		mux.Handle("/", setup.BrowserAssets)
+	}
 	mux.HandleFunc("GET /api/v1/setup/status", setup.status)
 	mux.HandleFunc("POST /api/v1/setup/administrator", setup.administrator)
 	if setup.Login != nil {
