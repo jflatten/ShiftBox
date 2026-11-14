@@ -78,5 +78,11 @@ as administrator. The controller was rebuilt with the embedded browser
 export and the `mvp-rc1` release ID. Its SHA-256 was
 `49e2d06a105e07e5f2441312bc740cb931648d154faa1bc364809e388e24f0b8`.
 
+The `mvp-rc2` controller and guest image repeated the protected setup.
+Chrome finished in 50.6 seconds. The old bootstrap browser session was
+rejected, the old SQLite configuration failed on startup, and a fresh
+Chrome session signed in as administrator on PostgreSQL. The [release
+tracker](mvp-v1-v14.md) records the controller and guest digests.
+
 T125 remains open for the outstanding scenarios in sections 3–10. The
 [release tracker](mvp-v1-v14.md) records the remaining live checks.
