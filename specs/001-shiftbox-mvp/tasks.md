@@ -999,3 +999,16 @@ This checkpoint does not itself change the goal status.
   wrong-origin and incorrect-password rejection.
 - CLI, app, identity, web, and contract race suites, formatting, and vet pass.
   The remaining setup endpoints, form, and activation still need wiring.
+
+### Authenticated SQLite profile selection
+
+- The setup profile endpoint admits only the local bootstrap owner after the
+  required password change. It checks the session, Origin and CSRF in the same
+  admission transaction that records the selected SQLite profile.
+- Selection commits the configuring state and completed journal operation
+  together. A retry returns the same operation, and setup status advances to
+  the certificate step.
+- Native Dex coverage verifies the password gate, wrong-Origin rejection,
+  idempotent operation replay, and the next setup step. CLI, app, operation, web,
+  and contract race suites pass, as do formatting and vet.
+- PostgreSQL preflight and profile activation remain pending under T044.

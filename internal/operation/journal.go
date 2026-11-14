@@ -204,3 +204,33 @@ func (j *Journal) LatestEventID(ctx context.Context, id string) (int64, error) {
 	err := j.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(event_id),0) FROM operation_events WHERE operation_id=$1`, id).Scan(&latest)
 	return latest, err
 }
+
+// RecordLocalStepInTx records a one-step setup operation whose effect is entirely
+// in the caller's transaction. A retry returns the original committed evidence.
+func (j *Journal) RecordLocalStepInTx(ctx context.Context, tx *sql.Tx, request Request, evidence string) (Operation, error) {
+	if request.Type != "setup" || len(request.Steps) != 1 || evidence == "" || len(evidence) > 4096 {
+		return Operation{}, ErrConflict
+	}
+	op, err := j.CreateInTx(ctx, tx, request)
+	if err != nil {
+		return Operation{}, err
+	}
+	if op.Type != request.Type || op.OriginatingAction != request.OriginatingAction ||
+		len(op.Steps) != 1 || op.Steps[0].Key != request.Steps[0].Key {
+		return Operation{}, ErrConflict
+	}
+	if op.Status == "succeeded" && op.Steps[0].Status == "succeeded" && op.Steps[0].Detail == evidence {
+		return op, nil
+	}
+	if op.Status != "pending" || op.Steps[0].Status != "pending" {
+		return Operation{}, ErrConflict
+	}
+	now := j.now().UTC()
+	op.Status = "succeeded"
+	op.StartedAt, op.FinishedAt = &now, &now
+	op.Steps[0].Status, op.Steps[0].Detail = "succeeded", evidence
+	if err := saveOperation(ctx, tx, &op, evidence, now); err != nil {
+		return Operation{}, err
+	}
+	return op, nil
+}

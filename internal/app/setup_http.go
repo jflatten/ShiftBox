@@ -43,6 +43,7 @@ func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 		mux.HandleFunc("GET /auth/callback", setup.finishLogin)
 		sessions := setup.sessionHandler()
 		mux.Handle("/api/v1/session", sessions)
+		mux.Handle("PUT /api/v1/setup/data-profile", setup.profileHandler())
 		if passwords, ok := setup.Admin.(setupPasswords); ok {
 			mux.Handle("PUT /api/v1/session/password", setup.passwordHandler(sessions, passwords))
 		}
@@ -58,7 +59,12 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 	var state string
 	var userID sql.NullString
 	var ready, change sql.NullBool
-	err := s.DB.QueryRowContext(r.Context(), `SELECT i.state,b.user_id,b.credential_ready,u.must_change_password FROM installations i LEFT JOIN bootstrap_administrator b ON b.installation_id=i.id LEFT JOIN users u ON u.id=b.user_id WHERE i.id=$1`, s.InstallationID).Scan(&state, &userID, &ready, &change)
+	var profileSelected bool
+	err := s.DB.QueryRowContext(r.Context(), `SELECT i.state,b.user_id,b.credential_ready,u.must_change_password, EXISTS (
+		SELECT 1 FROM operations o JOIN operation_steps step ON step.operation_id=o.id
+		WHERE o.requested_by=b.user_id AND o.type='setup' AND o.status='succeeded'
+		AND step.step_key=$2 AND step.status='succeeded'
+	) FROM installations i LEFT JOIN bootstrap_administrator b ON b.installation_id=i.id LEFT JOIN users u ON u.id=b.user_id WHERE i.id=$1`, s.InstallationID, profileStep).Scan(&state, &userID, &ready, &change, &profileSelected)
 	if err != nil {
 		setupProblem(w, r, err)
 		return
@@ -73,7 +79,12 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 				available = append(available, "password")
 			} else {
 				completed = append(completed, "password")
-				available = append(available, "data_profile")
+				if profileSelected {
+					completed = append(completed, "data_profile")
+					available = append(available, "certificate")
+				} else {
+					available = append(available, "data_profile")
+				}
 			}
 		}
 	}

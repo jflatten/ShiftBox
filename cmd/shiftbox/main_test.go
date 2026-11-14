@@ -163,6 +163,28 @@ func (w *stopOnSetupURL) probe(origin string) error {
 	if err := json.Unmarshal(body, &session); err != nil {
 		return err
 	}
+	selectProfile := func(originHeader string, want int) ([]byte, error) {
+		req, err := http.NewRequest(http.MethodPut, origin+"/api/v1/setup/data-profile", strings.NewReader(`{"profile":"sqlite"}`))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", originHeader)
+		req.Header.Set("X-CSRF-Token", session.CSRFToken)
+		req.Header.Set("Idempotency-Key", "choose-local-sqlite-001")
+		res, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer res.Body.Close()
+		if res.StatusCode != want {
+			return nil, fmt.Errorf("setup profile status = %d, want %d", res.StatusCode, want)
+		}
+		return io.ReadAll(res.Body)
+	}
+	if _, err := selectProfile(origin, http.StatusForbidden); err != nil {
+		return err
+	}
 	current := strings.TrimSpace(w.password.String())
 	replacement := "integration-new-password-2026"
 	changePassword := func(current, requestOrigin string, want int) error {
@@ -244,6 +266,37 @@ func (w *stopOnSetupURL) probe(origin string) error {
 		!bytes.Contains(body, []byte(`"setup.mutate"`)) {
 		return fmt.Errorf("fresh sign-in did not unlock setup")
 	}
+	if err := json.Unmarshal(body, &session); err != nil {
+		return err
+	}
+	if _, err := selectProfile("https://other.example", http.StatusForbidden); err != nil {
+		return err
+	}
+	first, err := selectProfile(origin, http.StatusAccepted)
+	if err != nil {
+		return err
+	}
+	second, err := selectProfile(origin, http.StatusAccepted)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(first, second) || !bytes.Contains(first, []byte(`"status":"succeeded"`)) {
+		return fmt.Errorf("SQLite profile did not return the same completed operation on retry")
+	}
+	result, err = client.Get(origin + "/api/v1/setup/status")
+	if err != nil {
+		return err
+	}
+	defer result.Body.Close()
+	body, err = io.ReadAll(result.Body)
+	if err != nil {
+		return err
+	}
+	if !bytes.Contains(body, []byte(`"availableSteps":["certificate"]`)) ||
+		!bytes.Contains(body, []byte(`"state":"configuring"`)) {
+		return fmt.Errorf("setup status did not advance to certificate configuration")
+	}
+
 	return nil
 }
 
