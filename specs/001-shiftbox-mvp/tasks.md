@@ -782,3 +782,17 @@ This checkpoint does not itself change the goal status.
   tests-first setup/CLI and provider flows. Concrete endpoint loaders, protected
   bootstrap, listener composition, UTM provisioning and end-to-end journeys are
   still later tasks, not working behavior claimed by this checkpoint.
+
+### Protected setup request boundary
+
+- Began T030 with test-first setup API boundary cases, then added the shared
+  T043 request guard. Only direct loopback HTTPS requests to the exact configured
+  literal-IP host/port reach inner setup handlers. Remote peers, rebound hosts,
+  wrong ports, plaintext requests, and malformed peer addresses fail closed.
+- Origin configuration rejects public/wildcard addresses, DNS names, paths,
+  empty query/fragment markers, and invalid/noncanonical ports. Forwarding
+  headers cannot substitute for the actual peer or request authority.
+- App/web/contract race tests, formatting, and vet pass. The listener still needs
+  an explicit loopback bind; password issuance/change, resumable setup state,
+  setup sessions, activation and the CLI remain unfinished. T030/T043 are not
+  marked complete by this boundary alone.
