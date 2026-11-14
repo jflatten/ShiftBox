@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -134,5 +135,155 @@ func TestCaptureCheckpointDoesNotAcquireWithoutFence(t *testing.T) {
 	err := captureCheckpoint(t.Context(), pause, capture)
 	if !errors.Is(err, drainErr) || called {
 		t.Errorf("captureCheckpoint with an undrained write = %v, capture called %t, want drain error and no capture", err, called)
+	}
+}
+
+// TestStageSQLiteCheckpoint checks that both stores and the fixed protected
+// inputs are staged independently of later management writes.
+func TestStageSQLiteCheckpoint(t *testing.T) {
+	ctx := t.Context()
+	installation, stage := t.TempDir(), checkpointStage(t)
+	appDB := checkpointDatabase(t, filepath.Join(installation, "active.db"), "application")
+	dexPath := filepath.Join(installation, "dex #profile.db")
+	checkpointDexDatabase(t, dexPath)
+	input := checkpointInputs(t, installation)
+	sources, err := StageSQLiteCheckpoint(ctx, stage, appDB, dexPath, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 5 {
+		t.Fatalf("got %d checkpoint entries, want 5", len(sources))
+	}
+	for name, want := range map[string]string{"application.db": "application", "dex.db": "identity"} {
+		snapshot, err := sql.Open("sqlite", sources[name])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got string
+		err = snapshot.QueryRowContext(ctx, "SELECT name FROM profile").Scan(&got)
+		snapshot.Close()
+		if err != nil || got != want {
+			t.Errorf("snapshot %s = %q, %v; want %q", name, got, err, want)
+		}
+	}
+	if err := os.WriteFile(input.Configuration, []byte("edited"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"configuration.json", "installation.key", "guest-ca.json"} {
+		path := sources[name]
+		content, err := os.ReadFile(path)
+		if err != nil || string(content) != name || filepath.Dir(path) != stage {
+			t.Fatalf("protected snapshot %s = %q, %v", name, content, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0600 {
+			t.Fatalf("protected snapshot %s is not private (%v)", name, err)
+		}
+	}
+}
+
+// TestStageSQLiteCheckpointRejectsMissingIdentity ensures a misconfigured Dex
+// path never creates a new database or yields checkpoint evidence.
+func TestStageSQLiteCheckpointRejectsMissingIdentity(t *testing.T) {
+	installation := t.TempDir()
+	db := checkpointDatabase(t, filepath.Join(installation, "active.db"), "application")
+	dexPath := filepath.Join(installation, "missing.db")
+	sources, err := StageSQLiteCheckpoint(t.Context(), checkpointStage(t), db, dexPath, checkpointInputs(t, installation))
+	if err == nil || len(sources) > 0 {
+		t.Fatalf("staged checkpoint with missing Dex: %v", err)
+	}
+	if _, err := os.Lstat(dexPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing identity was created or couldn't be checked: %v", err)
+	}
+}
+
+// TestStageSQLiteCheckpointRejectsUnprotectedInput ensures outside files and
+// openly readable keys cannot enter the protected archive.
+func TestStageSQLiteCheckpointRejectsUnprotectedInput(t *testing.T) {
+	installation := t.TempDir()
+	db := checkpointDatabase(t, filepath.Join(installation, "active.db"), "application")
+	dexPath := filepath.Join(installation, "dex.db")
+	checkpointDexDatabase(t, dexPath)
+	input := checkpointInputs(t, installation)
+	if err := os.Chmod(input.InstallationKey, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if sources, err := StageSQLiteCheckpoint(t.Context(), checkpointStage(t), db, dexPath, input); err == nil || len(sources) > 0 {
+		t.Fatalf("staged checkpoint with a public key file: %v", err)
+	}
+	if err := os.Remove(input.InstallationKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(input.GuestCA, input.InstallationKey); err != nil {
+		t.Fatal(err)
+	}
+	if sources, err := StageSQLiteCheckpoint(t.Context(), checkpointStage(t), db, dexPath, input); err == nil || len(sources) > 0 {
+		t.Fatalf("staged checkpoint with a symlink as a protected file: %v", err)
+	}
+}
+
+func checkpointDatabase(t *testing.T, path, label string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.ExecContext(t.Context(), "CREATE TABLE profile (name TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(t.Context(), "INSERT INTO profile VALUES ($1)", label); err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func checkpointInputs(t *testing.T, dir string) ProtectedInputs {
+	t.Helper()
+	for _, name := range []string{"configuration.json", "installation.key", "guest-ca.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return ProtectedInputs{
+		Configuration:   filepath.Join(dir, "configuration.json"),
+		InstallationKey: filepath.Join(dir, "installation.key"),
+		GuestCA:         filepath.Join(dir, "guest-ca.json"),
+	}
+}
+
+func checkpointStage(t *testing.T) string {
+	t.Helper()
+	stage := t.TempDir()
+	if err := os.Chmod(stage, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return stage
+}
+
+// TestStageSQLiteCheckpointRejectsUninitializedIdentity checks that an
+// unrelated, valid SQLite database cannot stand in for the Dex store.
+func TestStageSQLiteCheckpointRejectsUninitializedIdentity(t *testing.T) {
+	installation := t.TempDir()
+	db := checkpointDatabase(t, filepath.Join(installation, "active.db"), "application")
+	dexPath := filepath.Join(installation, "dex.db")
+	checkpointDatabase(t, dexPath, "unrelated")
+	sources, err := StageSQLiteCheckpoint(t.Context(), checkpointStage(t), db, dexPath, checkpointInputs(t, installation))
+	if err == nil || len(sources) > 0 {
+		t.Fatalf("staged checkpoint with an uninitialized Dex database: %v", err)
+	}
+}
+
+func checkpointDexDatabase(t *testing.T, path string) {
+	t.Helper()
+	db := checkpointDatabase(t, path, "identity")
+	for _, sql := range []string{
+		"CREATE TABLE migrations (num INTEGER NOT NULL, at TEXT NOT NULL)",
+		"INSERT INTO migrations VALUES (1, 'now')",
+		"CREATE TABLE password (email TEXT, user_id TEXT, hash BLOB)",
+	} {
+		if _, err := db.ExecContext(t.Context(), sql); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

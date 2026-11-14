@@ -1717,6 +1717,10 @@ This checkpoint does not itself change the goal status.
   cancellation, and acquisition failure. The SQLite checkpoint test
   uses a real WAL database and verifies that the snapshot includes
   committed changes and excludes later writes.
+- T110 stages application and Dex SQLite snapshots with independent
+  copies of the configuration, installation key, and guest CA. The
+  capture requires private staging and rejects missing or uninitialized
+  Dex stores, symlinked protected inputs, and files with public permissions.
 - T104 and T110 stay open for live controller and Dex coordination,
   PostgreSQL checkpoint acquisition, and uninterrupted workspace
   computation evidence.
