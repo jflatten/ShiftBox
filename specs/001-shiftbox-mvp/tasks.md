@@ -1576,3 +1576,14 @@ This checkpoint does not itself change the goal status.
   transfer callback and seeded provider readiness records. Native Dex
   transfer has its own integration coverage. Provider setup and the
   complete product startup remain open.
+
+### Infrastructure capacity routes
+
+- Added the reviewed administrator routes for budget updates and resource
+  profile creation. Writes use the authorization transaction, budget
+  changes check the current version, and profile resources use verified
+  provider bounds.
+- Contract coverage exercises denied members, CSRF, first-budget creation,
+  stale budget updates, over-limit profiles, and duplicate profile names.
+  The management router still needs to mount the handlers. Provider
+  validation and capacity configuration in local setup remain open.
