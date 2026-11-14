@@ -500,3 +500,16 @@ This checkpoint does not itself change the goal status.
 - Targeted contract tests, formatting, and Go vet pass. The catalog is metadata,
   not authorization enforcement. Contextual resolution and guarded registration
   remain unfinished; T013/T014/T025 are still unchecked.
+
+### Foundation authority constraints
+
+- Tightened both initial foundation schemas to require canonical SHA-256 hex
+  session/CSRF digests and enumerated grant actions matching their resource type.
+- Test-first raw-SQL failure cases pass against SQLite and real PostgreSQL, using
+  connection-local copies of the shipped definitions to avoid resetting existing
+  PostgreSQL fixture state. Valid session and administrator-grant inserts pass.
+- Full Go race suite passes with PostgreSQL/Dex fixtures enabled; formatting and
+  vet pass. This completes only part of T018/T023. Initial migration edits affect
+  newly created schemas; the existing development database was not upgraded or
+  represented as upgraded. Installation/configuration activation constraints and
+  remaining foundation authorization work are still pending.

@@ -68,10 +68,10 @@ CREATE TABLE identity_bindings (
 );
 CREATE TABLE sessions (
  id TEXT PRIMARY KEY,
- token_digest TEXT NOT NULL UNIQUE,
+ token_digest TEXT NOT NULL UNIQUE CHECK (token_digest ~ '^[0-9a-f]{64}$'),
  user_id TEXT NOT NULL REFERENCES users(id),
  mode TEXT NOT NULL CHECK (mode IN ('bootstrap_restricted','password_change','normal','recovery_review')),
- csrf_digest TEXT NOT NULL,
+ csrf_digest TEXT NOT NULL CHECK (csrf_digest ~ '^[0-9a-f]{64}$'),
  authenticated_at TEXT NOT NULL,
  external_authorized_at TEXT,
  expires_at TEXT NOT NULL,
@@ -83,7 +83,10 @@ CREATE TABLE resource_grants (
  subject_user_id TEXT NOT NULL REFERENCES users(id),
  resource_type TEXT NOT NULL CHECK (resource_type IN ('workspace','template')),
  resource_id TEXT NOT NULL,
- action TEXT NOT NULL,
+ action TEXT NOT NULL CHECK (
+  (resource_type = 'workspace' AND action IN ('workspace.view','workspace.start','workspace.stop','workspace.rebuild','workspace.repair','workspace.delete','workspace.update','workspace.update_policy','workspace.connect_owner','workspace.connect_admin'))
+  OR (resource_type = 'template' AND action IN ('template.view','template.edit','template.create_revision','template.share','template.archive'))
+ ),
  granted_by TEXT NOT NULL REFERENCES users(id),
  granted_at TEXT NOT NULL,
  revoked_at TEXT
