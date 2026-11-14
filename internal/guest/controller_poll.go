@@ -44,6 +44,12 @@ type pollArguments struct {
 	RetainedMounts []string `json:"retainedMounts"`
 }
 
+// AuthenticatePoll verifies the TLS identity for the reusable polling
+// connection, including authorized graceful shutdown during deletion.
+func (e *Enrollment) AuthenticatePoll(ctx context.Context, leaf *x509.Certificate, now time.Time) (Contact, error) {
+	return e.authenticate(ctx, e.db, leaf, now, true)
+}
+
 // Exchange rechecks the current leaf and reconciles one report and dispatch
 // in the same transaction. The payload never selects a workspace.
 func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now time.Time, report PollReport) (Contact, *PollOperation, error) {

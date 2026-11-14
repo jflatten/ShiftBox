@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"net"
 	"net/http"
@@ -59,8 +60,35 @@ func tunnelProxy(open openTunnelStream, workspace string, generation int64, serv
 				http.Error(w, "Workspace service unavailable", http.StatusBadGateway)
 			},
 		}
+		if protocol == "websocket" {
+			upgrade := &cancelableUpgrade{ResponseWriter: w, ctx: r.Context()}
+			defer func() {
+				if upgrade.stop != nil {
+					upgrade.stop()
+				}
+			}()
+			w = upgrade
+		}
 		forward.ServeHTTP(w, r)
 	})
+}
+
+// cancelableUpgrade closes the browser socket when authority for a hijacked
+// connection ends. A normal HTTP write deadline cannot reach that socket.
+type cancelableUpgrade struct {
+	http.ResponseWriter
+	ctx  context.Context
+	stop func() bool
+}
+
+func (w *cancelableUpgrade) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *cancelableUpgrade) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	if err == nil {
+		w.stop = context.AfterFunc(w.ctx, func() { _ = conn.Close() })
+	}
+	return conn, rw, err
 }
 
 func tunnelTransport(open openTunnelStream, workspace string, generation int64, header StreamHeader) *http.Transport {

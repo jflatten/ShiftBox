@@ -97,8 +97,14 @@ func TestDisableClosesBrowserAndTunnelConnections(t *testing.T) {
 	t.Cleanup(managementServer.Close)
 	active := make(chan (<-chan struct{}), 3)
 	forward := func(w http.ResponseWriter, r *http.Request, workspace string, generation int64, service, requestID string) {
-		active <- r.Context().Done()
+		finished := make(chan struct{})
+		active <- finished
+		defer close(finished)
 		fixture.tunnels.Forward(w, r, workspace, generation, service, requestID)
+		// Model final transport cleanup scheduled after request cancellation.
+		if r.Context().Err() != nil {
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
 	serviceServer := httptest.NewTLSServer(web.ServiceProxyHandler(fixture.db, hosts, fixture.tunnels.Registry, now, forward))
 	t.Cleanup(serviceServer.Close)
@@ -171,7 +177,7 @@ func TestDisableClosesBrowserAndTunnelConnections(t *testing.T) {
 		select {
 		case <-stream.done:
 		default:
-			t.Errorf("%s proxy request was still authorized when disable returned success", stream.name)
+			t.Errorf("%s proxy forwarder was still running when disable returned success", stream.name)
 		}
 	}
 	var result struct {

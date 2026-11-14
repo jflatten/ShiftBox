@@ -94,6 +94,9 @@ func (s serviceProxy) serve(w http.ResponseWriter, r *http.Request) {
 	// active request lifetime. Logout closes the request through the registry.
 	active, cancel := context.WithTimeout(ctx, deadline.Sub(s.now()))
 	defer cancel()
+	done := make(chan struct{})
+	defer close(done)
+	control := http.NewResponseController(w)
 	unregister, err := s.registry.Register(proxy.Scope{UserID: authority.UserID, SessionID: authority.SessionID,
 		WorkspaceID: workspace, GrantID: authority.ResourceGrantID, Service: service, IDE: service == "ide" || service == "repair"}, func() error {
 		current, currentDeadline, err := lookup(active)
@@ -101,7 +104,21 @@ func (s serviceProxy) serve(w http.ResponseWriter, r *http.Request) {
 			return proxy.ErrOriginGrant
 		}
 		return err
-	}, func() error { cancel(); return nil })
+	}, func() error {
+		cancel()
+		// A slow browser write must not prevent revocation from unwinding
+		// the forwarder. For an upgraded connection, cancellation closes
+		// the upstream and the reverse proxy closes its hijacked transport.
+		_ = control.SetWriteDeadline(time.Now())
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-done:
+			return nil
+		case <-timer.C:
+			return errors.New("service proxy connection closure pending")
+		}
+	})
 	if err != nil {
 		writeServiceDenial(w, r, err)
 		return

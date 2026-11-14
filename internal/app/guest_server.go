@@ -86,6 +86,9 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		_ = enroll.network.Close()
 		return nil, err
 	}
+	if config.Tunnels != nil {
+		trackGuestPollConnections(poll.server)
+	}
 	listeners := &GuestListeners{
 		EnrollURL: guestURL(config.PublicHost, enroll.network, "/internal/v1/enroll"),
 		PollURL:   guestURL(config.PublicHost, poll.network, "/internal/v1/guest/poll"),
@@ -118,6 +121,11 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 	}
 	exchange := func(ctx context.Context, leaf *x509.Certificate, stamp time.Time, report guest.PollReport) (guest.Contact, *guest.PollOperation, error) {
 		if config.Tunnels != nil {
+			if err := registerGuestPollConnection(ctx, config.Tunnels.Registry, func() (guest.Contact, error) {
+				return enrollment.AuthenticatePoll(ctx, leaf, stamp)
+			}); err != nil {
+				return guest.Contact{}, nil, err
+			}
 			report.IDEConnected = config.Tunnels.Registry.HasIDEConnection
 		}
 		return enrollment.Exchange(ctx, leaf, stamp, report)

@@ -2924,3 +2924,11 @@ This checkpoint does not itself change the goal status.
   another grant or power request. The UTM adapter drive-inventory checks,
   recovery integration tests, and affected race suites passed. Live UTM
   acceptance remains pending under the release gates.
+
+### Offboarding connection closure
+
+- T081 added local TLS integration coverage for management SSE, IDE,
+  preview, WebSocket, poll, and the guest tunnel, plus the durable stop.
+  T092 now closes registered poll transports and waits for browser
+  forwarding to finish before offboarding returns success. The remaining
+  revocation paths still need end-to-end verification.
