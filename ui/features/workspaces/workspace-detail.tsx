@@ -22,7 +22,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<unknown>();
   const request = useRef<{ action: 'start' | 'stop'; version: number; key: string }>(undefined);
-  const currentOperation = data?.currentOperationId ?? operationId;
+  const displayedOperation = data?.currentOperationId ?? (operationBusy ? operationId : data?.lastFailedOperationId ?? operationId);
   const action = data?.desiredState === 'running' && data.observedState === 'running' ? 'stop' :
     data?.desiredState === 'stopped' && data.observedState === 'stopped' ? 'start' : undefined;
 
@@ -94,7 +94,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
               {action === 'start' ? 'Start workspace' : 'Stop workspace'}
             </Button>
           ) : null}
-          {currentOperation ? <WorkspaceProgress key={currentOperation} workspaceId={id} operationId={currentOperation} onFinished={setOperationBusy} /> : null}
+          {displayedOperation ? <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation} onFinished={setOperationBusy} /> : null}
         </Stack>
       ) : null}
     </>

@@ -71,11 +71,26 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time) (Aut
 			if err != nil {
 				return nil, err
 			}
+			var lastFailedID *string
+			if view.CurrentOperationID == nil {
+				// A later successful workflow supersedes an older failure.
+				err := tx.QueryRowContext(ctx, `SELECT CASE WHEN status='failed' THEN id END
+					FROM operations WHERE workspace_id=$1 AND generation=$2
+					ORDER BY created_at DESC,id DESC LIMIT 1`, view.ID, view.Generation).Scan(&lastFailedID)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return nil, err
+				}
+			}
 			// Expose the current entry decision without issuing a grant.
 			response := struct {
 				workspaceView
-				CanOpenIDE bool `json:"canOpenIde"`
-			}{view, auth.Authorize(principal, entry.Action, entry.Resource, entry.Grants, now()).Allowed}
+				CanOpenIDE            bool    `json:"canOpenIde"`
+				LastFailedOperationID *string `json:"lastFailedOperationId"`
+			}{
+				workspaceView:         view,
+				CanOpenIDE:            auth.Authorize(principal, entry.Action, entry.Resource, entry.Grants, now()).Allowed,
+				LastFailedOperationID: lastFailedID,
+			}
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(view.Version, 10)))
 				w.Header().Set("Content-Type", "application/json")

@@ -1820,3 +1820,11 @@ This checkpoint does not itself change the goal status.
   release comes from the immutable artifact referenced by the workspace.
 - Go web and contract race tests, 31 UI tests and the production build
   passed. Rebuild remains open pending verification of retained data.
+
+### Workspace failure after reload
+
+- Workspace detail identifies the latest failed workflow in the current
+  generation when no operation is active. The Stepper renders the saved
+  failure and its detail after a reload. A newer workflow supersedes it.
+- Go contract and web race tests, 31 UI tests, and the production build
+  passed. Recovery actions and operation history remain open.

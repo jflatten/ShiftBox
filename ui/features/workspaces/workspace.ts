@@ -7,6 +7,7 @@ export interface Workspace {
   desiredState: string;
   observedState: string;
   currentOperationId: string | null;
+  lastFailedOperationId?: string | null;
   canOpenIde?: boolean;
   lastActivityAt: string | null;
   retentionDeadline: string | null;

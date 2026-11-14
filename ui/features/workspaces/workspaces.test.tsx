@@ -31,10 +31,13 @@ function json(payload: unknown) {
 test('shows the saved workspace state and workflow', async () => {
   globalThis.fetch = jest.fn(async (input) => {
     if (input === '/api/v1/session') return json(session);
-    if (input === '/api/v1/workspaces/workspace-one') return json(workspace);
+    if (input === '/api/v1/workspaces/workspace-one') return json({
+      ...workspace, currentOperationId: null, lastFailedOperationId: 'operation-one',
+    });
     if (input === '/api/v1/operations/operation-one') return json({
       id: 'operation-one', version: 3, status: 'failed', currentStep: 'start',
-      steps: [{ key: 'start', index: 0, label: 'Start workspace', status: 'failed' }],
+      steps: [{ key: 'start', index: 0, label: 'Start workspace', status: 'failed',
+        detail: 'The guest could not prepare the repository.' }],
     });
     throw new Error('unexpected request');
   });
@@ -46,6 +49,7 @@ test('shows the saved workspace state and workflow', async () => {
   expect(screen.getByText('Last activity').nextElementSibling?.firstElementChild).toHaveAttribute('datetime', workspace.lastActivityAt);
   expect(screen.getByText('Retention deadline').nextElementSibling?.firstElementChild).toHaveAttribute('datetime', workspace.retentionDeadline);
   expect(await screen.findByText('Failed — Start workspace')).toBeVisible();
+  expect(screen.getByText('The guest could not prepare the repository.')).toBeVisible();
   expect(screen.getByText(/Stop and start preserve/)).toBeVisible();
 });
 

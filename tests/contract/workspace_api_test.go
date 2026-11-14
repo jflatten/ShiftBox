@@ -188,6 +188,47 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	if err := streamResponse.Body.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// After a terminal failure the workspace has no active operation, but
+	// a fresh detail read must still identify the failed workflow.
+	if _, err := db.Exec(`UPDATE operations SET status='failed' WHERE id=$1`, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	checkOperationReferences := func(current, failed string) {
+		t.Helper()
+		response := lookup(workspacePath)
+		var refs struct {
+			CurrentOperationID    string `json:"currentOperationId"`
+			LastFailedOperationID string `json:"lastFailedOperationId"`
+		}
+		err := json.Unmarshal(response.Body.Bytes(), &refs)
+		if response.Code != 200 || err != nil || refs.CurrentOperationID != current || refs.LastFailedOperationID != failed {
+			t.Fatalf("workspace detail operation references = %d %+v (%v), want active %q and failed %q", response.Code, refs, err, current, failed)
+		}
+	}
+	checkOperationReferences("", op.ID)
+	now = now.Add(time.Minute)
+	var generation int64
+	if err := db.QueryRow("SELECT generation FROM workspaces WHERE id=$1", *op.WorkspaceID).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	later, err := journal.Create(ctx, operation.Request{Actor: "member", Key: "newer-attempt-operation", Type: "start",
+		OriginatingAction: "workspace.start", WorkspaceID: op.WorkspaceID, Generation: generation,
+		Steps: []operation.Step{{Key: "start", Label: "Start workspace"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkOperationReferences(later.ID, "")
+	laterClaim, err := journal.Claim(ctx, later.ID, "fixture-worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.StartStep(ctx, laterClaim, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.CompleteStep(ctx, laterClaim, 0, "Verified"); err != nil {
+		t.Fatal(err)
+	}
+	checkOperationReferences("", "")
 	// Another member with a valid session cannot use an operation ID to
 	// discover a workspace or subscribe to its progress.
 	if _, err := db.Exec("UPDATE users SET role='member' WHERE id='owner'"); err != nil {
