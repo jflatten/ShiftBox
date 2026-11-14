@@ -440,3 +440,17 @@ This checkpoint does not itself change the goal status.
 - T016/T029 remain unchecked: SSE gap/refetch tests and wiring, branded shell,
   query provider, and actual Next/browser runtime verification remain unfinished.
   No runnable page has been added yet; component tests are not browser evidence.
+
+### Workflow event revalidation
+
+- Added a native EventSource subscription and TanStack Query operation hook.
+  Every operation/step event invalidates the exact operation query, so sequence
+  gaps refresh authoritative state without replaying partial event snapshots.
+  Disconnect/reconnect also revalidates; heartbeat events do not trigger reads.
+- Terminal operations close the stream. Explicit revocation cancels reads and
+  removes the cached operation; denied refreshes hide cached progress and stop
+  listening. Fetches use cancellation, same-origin credentials, and no-store.
+- Nine UI tests across three suites and TypeScript validation pass. Tests include
+  gap refetch, terminal closure, lost authorization, cache removal, and cleanup.
+- Application-level provider/page wiring and real browser/SSE verification remain
+  pending. T016/T029 are not marked complete based on isolated hook tests.
