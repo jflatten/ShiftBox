@@ -39,3 +39,26 @@ BEFORE UPDATE OF id, release_id, architecture, platform_version, guest_release, 
  imported_by, imported_at, state ON platform_artifacts
 FOR EACH ROW WHEN (OLD.state = 'available')
 EXECUTE FUNCTION reject_available_platform_artifact_update();
+
+CREATE TABLE resource_profiles (
+ id TEXT NOT NULL PRIMARY KEY,
+ -- Unique, non-empty name
+ name TEXT NOT NULL UNIQUE CHECK (length(trim(name)) > 0),
+ -- Positive values inside provider capability bounds
+ cpu_count BIGINT NOT NULL CHECK (cpu_count > 0),
+ memory_mib BIGINT NOT NULL CHECK (memory_mib > 0),
+ disk_mib BIGINT NOT NULL CHECK (disk_mib > 0),
+ enabled INTEGER NOT NULL CHECK (enabled IN (0,1)),
+ version BIGINT NOT NULL CHECK (version > 0)
+);
+
+CREATE TABLE capacity_budgets (
+ installation_id TEXT NOT NULL PRIMARY KEY REFERENCES installations(id),
+ -- Positive configured totals
+ cpu_limit BIGINT NOT NULL CHECK (cpu_limit > 0),
+ memory_mib_limit BIGINT NOT NULL CHECK (memory_mib_limit > 0),
+ disk_mib_limit BIGINT NOT NULL CHECK (disk_mib_limit > 0),
+ updated_by TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ version BIGINT NOT NULL CHECK (version > 0)
+);

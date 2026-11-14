@@ -1192,3 +1192,14 @@ This checkpoint does not itself change the goal status.
 - The validation entry point checks managed content around a boot check and
   keeps uncertain outcomes in validating state. A real provider and guest
   boot check and the administrator import operation still need wiring.
+
+### Workspace capacity configuration
+
+- Added resource profiles and versioned capacity budgets to the in-progress
+  workspace migration. The workspace store validates profile sizes against
+  provider limits before writing and rejects stale budget updates.
+- Admission checks report the first exceeded resource and count only new
+  CPU and memory on restart when the workspace retains its disk reservation.
+- Capacity, catalog, and migration race tests passed on SQLite and disposable
+  TLS PostgreSQL. Durable reservations and lifecycle integration remain
+  pending.
