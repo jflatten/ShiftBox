@@ -30,11 +30,18 @@ async function fixture(page: Page, respond: Fixture, workflow?: ReturnType<typeo
   });
 }
 
+// macOS WebKit uses Option+Tab for full page navigation with the default
+// keyboard settings. Exercise the browser shortcut without changing settings.
+async function tabForward(page: Page) {
+  const browser = page.context().browser()?.browserType().name();
+  await page.keyboard.press(browser === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab');
+}
+
 async function tabTo(page: Page, control: Locator) {
   await expect(control).toBeVisible();
   for (let i = 0; i < 40; i++) {
     if (await control.evaluate(element => element === document.activeElement)) return;
-    await page.keyboard.press('Tab');
+    await tabForward(page);
   }
   await expect(control).toBeFocused();
 }
@@ -69,9 +76,9 @@ async function checkWorkflow(page: Page, labels: [string, string, string], scope
   await expect(scope.getByText('Earlier step evidence.')).toBeVisible();
   await expect(scope.getByText('Current step evidence.')).toBeVisible();
   await expect(current).toHaveAttribute('aria-current', 'step');
-  await page.keyboard.press('Tab');
+  await tabForward(page);
   await expect(current).toBeFocused();
-  await page.keyboard.press('Tab');
+  await tabForward(page);
   await expect(pending).not.toBeFocused();
 }
 
@@ -88,7 +95,7 @@ test('setup keyboard path and current stage', async ({ page }) => {
   await page.goto('/setup/');
   await expect(page.getByRole('button', { name: 'Administrator', exact: true })).toHaveAttribute('aria-current', 'step');
   const email = page.getByRole('textbox', { name: 'Administrator email' });
-  await page.keyboard.press('Tab');
+  await tabForward(page);
   await expect(email).toBeFocused();
   const create = page.getByRole('button', { name: 'Create administrator' });
   await activate(page, create);
@@ -323,6 +330,7 @@ test('offboarding and administrator password reset', async ({ page }) => {
   const disable = page.getByRole('dialog');
   await expect(disable.getByRole('button', { name: 'Cancel' })).toBeFocused();
   await activate(page, disable.getByRole('button', { name: 'Confirm disable' }));
+  await expect(disable.getByRole('status').filter({ hasText: 'Sign-in sessions and tracked connections closed.' })).toBeFocused();
   await checkWorkflow(page, labels, disable);
 });
 

@@ -4,7 +4,9 @@ T119 tracks the keyboard and focus portions of FR-058, SC-010, and V14. The brow
 
 ## Results from November 14, 2026
 
-The production Next.js 16.4.6 build and TypeScript check passed. All 17 Playwright 1.65.1 checks passed on macOS with installed Google Chrome 157.0.8103.51 and a 390 × 844 viewport. The Playwright-managed Chromium binary was unavailable. Firefox and WebKit are pending.
+The production Next.js 16.4.6 build and TypeScript check passed. All 17 keyboard checks passed in each of Chrome 157.0.8103.51, Playwright Firefox 159.0, and Playwright WebKit 27.2 on macOS with a 390 × 844 viewport.
+
+The first WebKit run skipped buttons with plain Tab. On macOS, the WebKit tests now use Option+Tab to reach page controls with the browser's default keyboard settings. With that correction, the offboarding test exposed a focus loss after the Confirm disable button disappeared. The dialog now focuses the completion message once it appears. Keyboard users can then inspect the workspace stop progress. [Safari keyboard shortcuts](https://support.apple.com/guide/safari/keyboard-shortcuts-and-gestures-cpsh003/mac)
 
 | Workflow | Keyboard and focus evidence |
 | --- | --- |
@@ -32,7 +34,7 @@ In a separate Chrome tab connected to an isolated loopback fixture, I stepped th
 - In Infrastructure, an empty certificate submission moved focus to Certificate chain and showed both missing-file errors. Enter on View progress exposed the active campaign step while leaving focus on the trigger.
 - In People, opening Reset password and Disable account focused Cancel. Dismissing either with Escape initially sent focus to the document. After the fix, the browser regression confirmed focus returns to both original triggers.
 
-The manual session covers shared workspace progress, setup and backup/restore validation, the two handoff flows, three dialog entry/exit paths, and Infrastructure entry. Individual workspace action starts, the subsequent setup submissions, native file selection, People submission, backup/restore submission, and recovery review and activation have automated evidence only. The exact-stack controller, screen-reader speech output, Firefox, and WebKit are pending.
+The manual session covers shared workspace progress, setup and backup/restore validation, the two handoff flows, three dialog entry/exit paths, and Infrastructure entry. Individual workspace action starts, the subsequent setup submissions, native file selection, People submission, backup/restore submission, and recovery review and activation have automated evidence only. The exact-stack controller and screen-reader speech output are pending.
 
 ## Reproduce
 

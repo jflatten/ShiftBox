@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Anchor, Button, Group, Modal, Stack, Text, Title } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
@@ -21,6 +21,7 @@ export function Offboarding({ person, csrfToken, onClose, refresh }: {
   const [stops, setStops] = useState<StopOperation[]>();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>();
+  const focusCompletion = useCallback((node: HTMLParagraphElement | null) => { node?.focus(); }, []);
   const stale = error instanceof APIProblemError && error.problem.status === 412;
   const closurePending = error instanceof APIProblemError && error.problem.code === 'user.connection_closure_pending';
   const workspaces = useQuery<{ id: string; observedState: string }[]>({
@@ -89,7 +90,7 @@ export function Offboarding({ person, csrfToken, onClose, refresh }: {
           </>
         ) : (
           <>
-            <Text role="status">Sign-in sessions and tracked connections closed.</Text>
+            <Text role="status" tabIndex={-1} ref={focusCompletion}>Sign-in sessions and tracked connections closed.</Text>
             {stops.length ? stops.map(stop => <StopProgress key={stop.operationId} stop={stop} />) :
               <Text>No workspace stops were needed.</Text>}
           </>
