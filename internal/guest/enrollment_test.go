@@ -440,6 +440,15 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		t.Fatalf("persisted waitFor report = (%q, %q, %v), want running with container evidence", status, storedContainer, err)
 	}
 	done := makeReport("7", "1", "succeeded", "devcontainer.lifecycle", containerID)
+	if _, err := db.Exec(`UPDATE operation_steps SET status='succeeded' WHERE operation_id=$1 AND step_key='configure'`, configureID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE operations SET current_step='verify_ide' WHERE id=$1`, configureID); err != nil {
+		t.Fatal(err)
+	}
+	if code, response := pollResponse(runningReport); code != 200 || !bytes.Contains([]byte(response), []byte(`"command":"ensure-development-container"`)) {
+		t.Fatalf("poll while verifying IDE = %d %s, want the existing dispatch for later hooks", code, response)
+	}
 	for range 2 {
 		if code, body := pollResponse(done); code != 200 || !bytes.Contains([]byte(body), []byte(`"operation":null`)) {
 			t.Fatalf("terminal report or replay = %d %s, want no new dispatch", code, body)

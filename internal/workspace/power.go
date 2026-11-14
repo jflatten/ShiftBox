@@ -19,11 +19,12 @@ type PowerExecutor struct {
 	store    *Store
 	provider provider.Provider
 	now      func() time.Time
+	probeIDE IDEProbe
 }
 
 // NewPowerExecutor binds retained workspace power operations to the current provider.
-func NewPowerExecutor(store *Store, machines provider.Provider, now func() time.Time) *PowerExecutor {
-	return &PowerExecutor{store: store, provider: machines, now: now}
+func NewPowerExecutor(store *Store, machines provider.Provider, now func() time.Time, probe IDEProbe) *PowerExecutor {
+	return &PowerExecutor{store: store, provider: machines, now: now, probeIDE: probe}
 }
 
 // Observe inspects the exact VM before any new provider action is attempted.
@@ -49,11 +50,18 @@ func (e *PowerExecutor) Observe(ctx context.Context, op operation.Operation, ste
 		evidence, err := e.shutdownEvidence(ctx, op)
 		return evidence, err == nil, err
 	}
-	if step.Key == "configure" {
+	if step.Key == "configure" || step.Key == "finish_setup" {
 		if got.Power != provider.Running {
 			return "", false, provider.ErrOutcomeUnknown
 		}
-		evidence, err := configurationEvidence(ctx, e.store.db, op.ID)
+		evidence, err := configurationEvidence(ctx, e.store.db, op, step)
+		return evidence, err == nil, err
+	}
+	if step.Key == "verify_ide" {
+		if got.Power != provider.Running {
+			return "", false, provider.ErrOutcomeUnknown
+		}
+		evidence, err := verifyIDE(ctx, e.store.db, op, e.probeIDE)
 		return evidence, err == nil, err
 	}
 	if (got.Power == provider.Running) != (op.Type == "start") {
@@ -72,8 +80,11 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 	if step.Key == "shutdown" {
 		return e.shutdownEvidence(ctx, op)
 	}
-	if step.Key == "configure" {
-		return configurationEvidence(ctx, e.store.db, op.ID)
+	if step.Key == "configure" || step.Key == "finish_setup" {
+		return configurationEvidence(ctx, e.store.db, op, step)
+	}
+	if step.Key == "verify_ide" {
+		return verifyIDE(ctx, e.store.db, op, e.probeIDE)
 	}
 	var got provider.Inventory
 	if op.Type == "start" {
@@ -91,7 +102,7 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 	if (op.Type != "start" && op.Type != "stop") || op.OriginatingAction != "workspace."+op.Type ||
 		op.WorkspaceID == nil || op.StartedAt == nil || op.Status != "running" || step.Status != "active" ||
 		(step.Key != op.Type && !(op.Type == "stop" && step.Key == "shutdown") &&
-			!(op.Type == "start" && step.Key == "configure")) {
+			!(op.Type == "start" && (step.Key == "configure" || step.Key == "verify_ide" || step.Key == "finish_setup"))) {
 		return provider.CreateRequest{}, provider.ErrInvalidState
 	}
 	req := provider.CreateRequest{OperationID: op.ID, Ref: provider.WorkspaceRef{WorkspaceID: *op.WorkspaceID, Generation: op.Generation}}

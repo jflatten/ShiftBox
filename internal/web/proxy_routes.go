@@ -261,8 +261,13 @@ func serviceWorkspace(ctx context.Context, tx *sql.Tx, workspace, service string
 	err := tx.QueryRowContext(ctx, `SELECT w.owner_user_id,w.generation,
 		(w.desired_state='running' AND w.observed_state='running' AND i.state='active'
 		AND owner.membership_state='active' AND ($2<>'ide' OR EXISTS (
-		 SELECT 1 FROM operations o JOIN operation_steps s ON s.operation_id=o.id
-		 WHERE o.workspace_id=w.id AND o.generation=w.generation AND s.step_key='verify_ide' AND s.status='succeeded'
+		 SELECT 1 FROM operation_steps s
+		 WHERE s.step_key='verify_ide' AND s.status='succeeded' AND s.operation_id=(
+		  SELECT o.id FROM operations o
+		  WHERE o.workspace_id=w.id AND o.generation=w.generation
+		    AND o.originating_action IN ('workspace.launch','workspace.start','workspace.rebuild')
+		  ORDER BY o.created_at DESC,o.id DESC LIMIT 1
+		 )
 		)))
 		FROM workspaces w JOIN installations i ON i.id=w.installation_id JOIN users owner ON owner.id=w.owner_user_id
 		WHERE w.id=$1`, workspace, service).Scan(&resource.OwnerID, &generation, &resource.Eligible)

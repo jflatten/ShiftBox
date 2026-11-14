@@ -119,7 +119,7 @@ func TestUTMGuestEnrollment(t *testing.T) {
 	ref := provider.WorkspaceRef{InstallationID: id, WorkspaceID: workspaceID, Generation: 1, OwnershipMarker: marker}
 	t.Cleanup(func() { cleanupEnrollmentVM(t, machines, ref) })
 	worker := operation.Worker{Journal: journal, Name: "release-fixture", LeaseDuration: 4 * time.Minute,
-		Executor: workspace.NewLaunchExecutor(store, machines, enrollment, dir, listeners.EnrollURL, listeners.PollURL, time.Now)}
+		Executor: workspace.NewLaunchExecutor(store, machines, enrollment, dir, listeners.EnrollURL, listeners.PollURL, time.Now, nil)}
 	if err := worker.RunOnce(ctx, op.ID); err != nil {
 		t.Fatalf("provision %s: %v", workspaceID, err)
 	}

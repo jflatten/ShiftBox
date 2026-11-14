@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,25 @@ func TestGuestTunnelHTTP(t *testing.T) {
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Received-Path", r.URL.Path)
 		w.Header().Set("X-Received-Cookie", r.Header.Get("Cookie"))
+		if r.URL.Path == "/" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			switch r.Host {
+			case "starting.ide.test":
+				_, _ = w.Write([]byte("<p>Starting workspace</p>"))
+				return
+			case "redirect.ide.test":
+				http.Redirect(w, r, "https://workspace.ide.test/", http.StatusFound)
+				return
+			case "oversized.ide.test":
+				_, _ = w.Write([]byte(`<meta id="vscode-workbench-web-configuration" data-settings="{}">` +
+					strings.Repeat(" ", 512<<10)))
+				return
+			case "truncated.ide.test":
+				w.Header().Set("Content-Length", "1024")
+			}
+			_, _ = w.Write([]byte(`<meta id="vscode-workbench-web-configuration" data-settings="{}">`))
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer local.Close()
@@ -108,6 +128,17 @@ func TestGuestTunnelHTTP(t *testing.T) {
 		response.Header().Get("X-Received-Cookie") != "app=fixture" {
 		t.Errorf("HTTP through Yamux returned status %d and headers %v, want 204, exact path, and application cookie",
 			response.Code, response.Header())
+	}
+	if err := tunnels.ProbeIDE(ctx, "workspace", 4, "workspace.ide.test"); err != nil {
+		t.Errorf("ProbeIDE(authenticated IDE service) = %v, want success", err)
+	}
+	if err := tunnels.ProbeIDE(ctx, "workspace", 5, "workspace.ide.test"); err == nil {
+		t.Error("ProbeIDE(stale generation) = nil, want denial")
+	}
+	for _, host := range []string{"starting.ide.test", "redirect.ide.test", "oversized.ide.test", "truncated.ide.test"} {
+		if err := tunnels.ProbeIDE(ctx, "workspace", 4, host); err == nil {
+			t.Errorf("ProbeIDE(%s) = nil, want invalid workbench response", host)
+		}
 	}
 	for _, attempt := range []struct {
 		key        string

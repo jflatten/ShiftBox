@@ -14,12 +14,14 @@ import (
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
 // TestWorkspaceEntryGrantAdmission checks the exact destination and that a
-// member may mint a grant for their own running workspace only.
+// member may mint a grant for their own running workspace only. IDE grants
+// require readiness evidence from the most recent boot.
 func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 	ctx := t.Context()
 	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "entry.db")})
@@ -68,6 +70,39 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 	request(workspace, "preview-8080", "invalid", 403)
 	request(other, "preview-8080", csrf, 403)
 	request(workspace, "ide", csrf, 403)
+	bootTime := now.Add(-time.Hour)
+	journal := operation.NewJournal(db, func() time.Time { return bootTime }, func() string { return bootTime.Format(time.RFC3339) })
+	recordBoot := func(action, kind, key string) operation.Operation {
+		t.Helper()
+		id := workspace
+		op, err := journal.Create(ctx, operation.Request{Actor: "member", Key: key, Type: kind,
+			OriginatingAction: action, WorkspaceID: &id, Generation: 1,
+			Steps: []operation.Step{{Key: "verify_ide", Label: "Verify IDE"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return op
+	}
+	verifyBoot := func(op operation.Operation) {
+		t.Helper()
+		claim, err := journal.Claim(ctx, op.ID, "fixture", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := journal.StartStep(ctx, claim, 0); err != nil {
+			t.Fatal(err)
+		}
+		if err := journal.CompleteStep(ctx, claim, 0, "Verified"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	verifyBoot(recordBoot("workspace.launch", "provision", "provision-fixture"))
+	request(workspace, "ide", csrf, 201)
+	bootTime = now
+	restart := recordBoot("workspace.start", "start", "workspace-restart")
+	request(workspace, "ide", csrf, 403)
+	verifyBoot(restart)
+	request(workspace, "ide", csrf, 201)
 	result := request(workspace, "preview-8080", csrf, 201)
 	var grant struct {
 		ExchangeURL string    `json:"exchangeUrl"`

@@ -16,6 +16,7 @@ import (
 
 // TestLaunchWorkerWaitsForGuestContact verifies that a lost boot reply cannot
 // trigger another media delivery or let a VM skip authenticated enrollment.
+// It also checks that IDE readiness and later setup hooks are tracked separately.
 func TestLaunchWorkerWaitsForGuestContact(t *testing.T) {
 	ctx := context.Background()
 	db := openWorkspaceDatabase(t, "sqlite")
@@ -49,9 +50,20 @@ func TestLaunchWorkerWaitsForGuestContact(t *testing.T) {
 	machines := &enrollmentFixtureProvider{Provider: fake.New()}
 	enrollment := &stubEnrollment{}
 	mediaRoot := t.TempDir()
+	var probeCalls int
+	probe := func(_ context.Context, workspace string, generation int64) error {
+		probeCalls++
+		if workspace != "enroll-workspace" || generation != 1 {
+			t.Errorf("IDE probe got workspace %q generation %d, want enrolled workspace generation 1", workspace, generation)
+		}
+		if probeCalls == 1 {
+			return errors.New("IDE still starting")
+		}
+		return nil
+	}
 	newWorker := func() *operation.Worker {
 		return &operation.Worker{Journal: journal, Name: "test", LeaseDuration: time.Minute,
-			Executor: NewLaunchExecutor(store, machines, enrollment, mediaRoot, "https://internal.test/internal/v1/enroll", "https://internal.test:8443/internal/v1/guest/poll", time.Now)}
+			Executor: NewLaunchExecutor(store, machines, enrollment, mediaRoot, "https://internal.test/internal/v1/enroll", "https://internal.test:8443/internal/v1/guest/poll", time.Now, probe)}
 	}
 	worker := newWorker()
 	if err := worker.RunOnce(ctx, op.ID); err != nil {
@@ -102,18 +114,38 @@ func TestLaunchWorkerWaitsForGuestContact(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,container_id) VALUES($1,1,'running',$2)`, op.ID, container); err != nil {
 		t.Fatal(err)
 	}
+	if err := worker.RunOnce(ctx, op.ID); err != nil {
+		t.Fatalf("configure at waitFor = %v, want success while later hooks run", err)
+	}
+	op, err = journal.Get(ctx, op.ID)
+	if err != nil || op.Steps[2].Status != "succeeded" || op.Steps[3].Status != "pending" {
+		t.Fatalf("configuration completion = %+v, %v, want configured with browser IDE verification pending", op, err)
+	}
+	if probeCalls != 0 {
+		t.Fatal("IDE was probed before the verification step")
+	}
+	if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, errIDEProbePending) {
+		t.Fatalf("IDE startup while service unavailable = %v, want retryable", err)
+	}
+	if err := worker.RunOnce(ctx, op.ID); err != nil {
+		t.Fatalf("verify active IDE = %v, want success", err)
+	}
+	op, err = journal.Get(ctx, op.ID)
+	if err != nil || op.Status != "waiting" || op.Steps[3].Status != "succeeded" || probeCalls != 2 {
+		t.Fatalf("IDE verification = %+v, %v, probe calls %d, want IDE ready with hooks pending", op, err, probeCalls)
+	}
 	if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, errGuestConfigurationPending) {
-		t.Fatalf("configure at waitFor = %v, want pending remaining hooks", err)
+		t.Fatalf("finish hooks with only waitFor evidence = %v, want pending", err)
 	}
 	if _, err := db.Exec(`UPDATE guest_dispatches SET status='succeeded' WHERE operation_id=$1`, op.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := worker.RunOnce(ctx, op.ID); err != nil {
-		t.Fatalf("configure with guest success = %v, want nil", err)
+		t.Fatalf("observe completed hooks = %v, want success", err)
 	}
 	op, err = journal.Get(ctx, op.ID)
-	if err != nil || op.Steps[2].Status != "succeeded" || op.Steps[3].Status != "pending" {
-		t.Fatalf("configuration completion = %+v, %v, want configured with browser IDE verification pending", op, err)
+	if err != nil || op.Status != "succeeded" {
+		t.Fatalf("operation after remaining hooks = %+v, %v, want succeeded", op, err)
 	}
 }
 
@@ -137,7 +169,7 @@ func TestLaunchWorkerRecordsGuestFailure(t *testing.T) {
 		VALUES($1,1,'failed','guest.required_setup_failed')`, op.ID); err != nil {
 		t.Fatal(err)
 	}
-	executor := NewLaunchExecutor(NewStore(db), fake.New(), nil, "", "", "", time.Now)
+	executor := NewLaunchExecutor(NewStore(db), fake.New(), nil, "", "", "", time.Now, nil)
 	worker := &operation.Worker{Journal: journal, Name: "test", LeaseDuration: time.Minute, Executor: executor}
 	if err := worker.RunOnce(ctx, op.ID); err != nil {
 		t.Fatalf("run with terminal guest result = %v, want a recorded failure", err)

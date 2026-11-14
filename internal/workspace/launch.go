@@ -81,6 +81,7 @@ func AdmitLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, la
 			{Key: "enroll", Label: "Enroll the guest"},
 			{Key: "configure", Label: "Configure the development container"},
 			{Key: "verify_ide", Label: "Verify the browser IDE"},
+			{Key: "finish_setup", Label: "Finish remaining setup hooks"},
 		},
 	})
 	if err != nil {

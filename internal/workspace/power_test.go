@@ -15,7 +15,8 @@ import (
 )
 
 // TestPowerWorkerReconcilesLostReplies checks that a restart observes the VM
-// before retrying, releases only compute after stop, and waits for fresh guest contact after start.
+// before retrying, releases only compute after stop, and waits for fresh guest
+// contact and a working browser IDE after start.
 func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	ctx := t.Context()
 	db := openWorkspaceDatabase(t, "sqlite")
@@ -85,10 +86,20 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 		}
 		return op
 	}
+	var ideAvailable bool
+	probe := func(_ context.Context, workspace string, generation int64) error {
+		if workspace != id || generation != 1 {
+			t.Errorf("IDE probe scope = %s/%d, want %s/1", workspace, generation, id)
+		}
+		if !ideAvailable {
+			return errors.New("tunnel unavailable")
+		}
+		return nil
+	}
 	run := func(op operation.Operation, want error) {
 		t.Helper()
 		worker := operation.Worker{Journal: journal, Name: "test", LeaseDuration: time.Minute,
-			Executor: NewPowerExecutor(store, machines, time.Now)}
+			Executor: NewPowerExecutor(store, machines, time.Now, probe)}
 		if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, want) {
 			t.Fatalf("run %s = %v, want %v", op.Type, err, want)
 		}
@@ -131,7 +142,14 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	checkState(start, "running", "waiting")
 	run(start, errGuestConfigurationPending)
 	checkState(start, "running", "waiting")
-	exec("INSERT INTO guest_dispatches(operation_id,dispatch_version,status) VALUES($1,1,'succeeded')", start.ID)
+	exec("INSERT INTO guest_dispatches(operation_id,dispatch_version,status,container_id) VALUES($1,1,'succeeded','container')", start.ID)
+	run(start, nil)
+	checkState(start, "running", "waiting")
+	run(start, errIDEProbePending)
+	checkState(start, "running", "waiting")
+	ideAvailable = true
+	run(start, nil)
+	checkState(start, "running", "waiting")
 	run(start, nil)
 	checkState(start, "running", "succeeded")
 	if machines.starts != 1 || machines.stops != 1 {

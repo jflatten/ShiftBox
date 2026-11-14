@@ -84,7 +84,10 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 		      OR $3='configure' AND o.type='start' AND o.originating_action='workspace.start')
 		      AND EXISTS(SELECT 1 FROM users actor WHERE actor.id=o.requested_by AND actor.membership_state='active'
 		        AND (actor.id=w.owner_user_id OR actor.role='administrator'))))
-		  AND o.current_step=$3 AND s.status='active' AND o.status IN ('running','waiting')
+		  AND o.status IN ('running','waiting')
+		  AND ((o.current_step=$3 AND s.status='active')
+		    OR ($3='configure' AND o.current_step IN ('verify_ide','finish_setup')
+		        AND s.status='succeeded' AND g.status='running'))
 		  AND (g.status IS NULL OR g.status IN ('pending','running')) LIMIT 2`, contact.WorkspaceID, contact.Generation, step, contact.DesiredState)
 	if err != nil {
 		return nil, err
@@ -152,8 +155,10 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 	if shutdown {
 		expectedStep, expectedDesired = "shutdown", "stopped"
 	}
+	inStage := step == expectedStep ||
+		!shutdown && status == "running" && (step == "verify_ide" || step == "finish_setup")
 	if status == "failed" || status == "succeeded" || workflow != "running" && workflow != "waiting" ||
-		step != expectedStep || contact.DesiredState != expectedDesired ||
+		!inStage || contact.DesiredState != expectedDesired ||
 		status == "running" && container != report.Evidence.ContainerID {
 		return ErrGuestReportConflict
 	}

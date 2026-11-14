@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/operation"
@@ -27,18 +28,23 @@ type LaunchExecutor struct {
 	enrollment                        EnrollmentDelivery
 	mediaRoot, endpoint, pollEndpoint string
 	now                               func() time.Time
+	probeIDE                          IDEProbe
 }
 
 // NewLaunchExecutor binds launch workflow steps to the provider and enrollment service.
 func NewLaunchExecutor(store *Store, machines provider.Provider, enrollment EnrollmentDelivery,
-	mediaRoot, endpoint, pollEndpoint string, now func() time.Time) *LaunchExecutor {
+	mediaRoot, endpoint, pollEndpoint string, now func() time.Time, probe IDEProbe) *LaunchExecutor {
 	return &LaunchExecutor{provision: NewProvisionExecutor(store, machines), enrollment: enrollment,
-		mediaRoot: mediaRoot, endpoint: endpoint, pollEndpoint: pollEndpoint, now: now}
+		mediaRoot: mediaRoot, endpoint: endpoint, pollEndpoint: pollEndpoint, now: now, probeIDE: probe}
 }
 
 func (e *LaunchExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
-	if step.Key == "configure" {
-		evidence, err := configurationEvidence(ctx, e.provision.store.db, op.ID)
+	if step.Key == "verify_ide" {
+		evidence, err := verifyIDE(ctx, e.provision.store.db, op, e.probeIDE)
+		return evidence, err == nil, err
+	}
+	if step.Key == "configure" || step.Key == "finish_setup" {
+		evidence, err := configurationEvidence(ctx, e.provision.store.db, op, step)
 		return evidence, err == nil, err
 	}
 	if step.Key != "enroll" {
@@ -60,8 +66,11 @@ func (e *LaunchExecutor) Observe(ctx context.Context, op operation.Operation, st
 }
 
 func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
-	if step.Key == "configure" {
-		return configurationEvidence(ctx, e.provision.store.db, op.ID)
+	if step.Key == "verify_ide" {
+		return verifyIDE(ctx, e.provision.store.db, op, e.probeIDE)
+	}
+	if step.Key == "configure" || step.Key == "finish_setup" {
+		return configurationEvidence(ctx, e.provision.store.db, op, step)
 	}
 	if step.Key != "enroll" {
 		return e.provision.Apply(ctx, op, step)
@@ -102,15 +111,22 @@ func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step
 	return e.confirmContact(ctx, req)
 }
 
-func configurationEvidence(ctx context.Context, db *sql.DB, operationID string) (string, error) {
-	var status, problem string
-	err := db.QueryRowContext(ctx, `SELECT status,problem FROM guest_dispatches WHERE operation_id=$1`, operationID).
-		Scan(&status, &problem)
+func configurationEvidence(ctx context.Context, db *sql.DB, op operation.Operation, step operation.Step) (string, error) {
+	var status, problem, container string
+	err := db.QueryRowContext(ctx, `SELECT status,problem,container_id FROM guest_dispatches WHERE operation_id=$1`, op.ID).
+		Scan(&status, &problem, &container)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", errGuestConfigurationPending
 	}
 	if err != nil {
 		return "", err
+	}
+	// Workflows created before finish_setup must still wait for the terminal
+	// guest report during configure.
+	if step.Key == "configure" && container != "" && slices.ContainsFunc(op.Steps, func(s operation.Step) bool {
+		return s.Key == "finish_setup"
+	}) {
+		return "The guest reports that the Dev Container reached its declared connection gate.", nil
 	}
 	switch status {
 	case "succeeded":

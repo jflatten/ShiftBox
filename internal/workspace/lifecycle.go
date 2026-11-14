@@ -105,7 +105,11 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 	case "stop":
 		steps = append([]operation.Step{{Key: "shutdown", Label: "Stop workspace workloads"}}, steps...)
 	case "start":
-		steps = append(steps, operation.Step{Key: "configure", Label: "Start the development container"})
+		steps = append(steps,
+			operation.Step{Key: "configure", Label: "Start the development container"},
+			operation.Step{Key: "verify_ide", Label: "Verify the browser IDE"},
+			operation.Step{Key: "finish_setup", Label: "Finish remaining setup hooks"},
+		)
 	}
 	return journal.CreateInTx(ctx, tx, operation.Request{
 		Actor: intent.ActorID, Key: intent.RequestKey, Type: intent.Action, OriginatingAction: "workspace." + intent.Action,

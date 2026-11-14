@@ -11,6 +11,8 @@ import (
 
 type openTunnelStream func(context.Context, string, int64, StreamHeader) (net.Conn, error)
 
+const tunnelHTTPHost = "guest.invalid"
+
 // Forward serves one already-authorized request through the named guest service.
 // The caller obtains workspace, generation and service from the browser grant.
 func (t *Tunnels) Forward(w http.ResponseWriter, r *http.Request, workspace string, generation int64, service, requestID string) {
@@ -37,15 +39,7 @@ func tunnelProxy(open openTunnelStream, workspace string, generation int64, serv
 			protocol = "websocket"
 		}
 		header := StreamHeader{ServiceKey: service, RequestID: requestID, Protocol: protocol}
-		transport := &http.Transport{
-			DisableKeepAlives:      true,
-			DisableCompression:     true,
-			ResponseHeaderTimeout:  30 * time.Second,
-			MaxResponseHeaderBytes: 64 << 10,
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return open(ctx, workspace, generation, header)
-			},
-		}
+		transport := tunnelTransport(open, workspace, generation, header)
 		defer transport.CloseIdleConnections()
 		forward := httputil.ReverseProxy{
 			Transport: transport,
@@ -53,7 +47,7 @@ func tunnelProxy(open openTunnelStream, workspace string, generation int64, serv
 				Sanitize(req.Out)
 				req.Out.Trailer = nil
 				req.Out.URL.Scheme = "http"
-				req.Out.URL.Host = "guest.invalid"
+				req.Out.URL.Host = tunnelHTTPHost
 				req.Out.URL.User = nil
 				if protocol == "websocket" {
 					req.Out.Header.Set("Connection", "Upgrade")
@@ -67,6 +61,18 @@ func tunnelProxy(open openTunnelStream, workspace string, generation int64, serv
 		}
 		forward.ServeHTTP(w, r)
 	})
+}
+
+func tunnelTransport(open openTunnelStream, workspace string, generation int64, header StreamHeader) *http.Transport {
+	return &http.Transport{
+		DisableKeepAlives:      true,
+		DisableCompression:     true,
+		ResponseHeaderTimeout:  30 * time.Second,
+		MaxResponseHeaderBytes: 64 << 10,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return open(ctx, workspace, generation, header)
+		},
+	}
 }
 
 func hasConnectionUpgrade(headers http.Header) bool {
