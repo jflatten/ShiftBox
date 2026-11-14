@@ -16,10 +16,11 @@ const retainedWorkspace = {
 };
 
 test.describe('operations with a fixture controller', () => {
-  // Safe-boundary waiting and rollback are server-driven. The browser never
-  // sends a force request when maintenance is blocked.
+  // Worker retries leave the waiting label and icon stable. A rollback still
+  // appears immediately, and the browser sends no force request.
   test('maintenance shows waiting and a recoverable rollback', async ({ page }) => {
     let rolledBack = false;
+    let workerClaimed = false;
     let operationReads = 0;
     const writes: string[] = [];
     await page.route('**/api/v1/**', route => {
@@ -41,7 +42,7 @@ test.describe('operations with a fixture controller', () => {
       if (pathname.endsWith(`/operations/${operationId}`)) {
         operationReads++;
         return route.fulfill({ json: {
-          id: operationId, status: rolledBack ? 'failed' : 'waiting', currentStep: 'update_guests', version: rolledBack ? 2 : 1,
+          id: operationId, status: rolledBack ? 'failed' : workerClaimed ? 'running' : 'waiting', currentStep: 'update_guests', version: operationReads,
           steps: [{ key: 'update_guests', index: 0, label: 'Update retained workspaces',
             status: rolledBack ? 'failed' : 'active',
             detail: rolledBack ? 'Review the failed workspace updates before advancing the controller release.'
@@ -53,7 +54,25 @@ test.describe('operations with a fixture controller', () => {
     await page.goto('/infrastructure/');
     await page.getByRole('button', { name: 'View progress' }).click();
     await expect(page.getByText('Waiting for safe workspace updates to finish.')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Update retained workspaces: In progress' })).toHaveAttribute('aria-current', 'step');
+    const waiting = page.getByText('Waiting — Update retained workspaces', { exact: true });
+    const activeStep = page.getByRole('button', { name: 'Update retained workspaces: In progress' });
+    await expect(waiting).toBeVisible();
+    await expect(activeStep).toHaveAttribute('aria-current', 'step');
+    const announcements = await waiting.evaluateHandle(element => {
+      const changes: string[] = [];
+      const observer = new MutationObserver(() => changes.push(element.textContent ?? ''));
+      observer.observe(element, { subtree: true, childList: true, characterData: true });
+      return { changes, observer };
+    });
+    for (const claimed of [true, false, true]) {
+      const refreshed = page.waitForResponse(response => response.url().endsWith(`/operations/${operationId}`));
+      workerClaimed = claimed;
+      expect((await (await refreshed).json()).status).toBe(claimed ? 'running' : 'waiting');
+    }
+    await expect(waiting).toBeVisible();
+    await expect(activeStep.locator('.mantine-Stepper-stepLoader')).toHaveCount(0);
+    expect(await announcements.evaluate(({ changes, observer }) => { observer.disconnect(); return changes; })).toEqual([]);
+    await announcements.dispose();
     await expect.poll(() => operationReads).toBeGreaterThanOrEqual(2);
     rolledBack = true;
     await expect(page.getByRole('button', { name: 'Update retained workspaces: Failed' })).toBeVisible();

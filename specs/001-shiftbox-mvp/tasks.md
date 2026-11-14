@@ -1702,6 +1702,10 @@ This checkpoint does not itself change the goal status.
   deadline on the retained workspace and excludes deletions already
   committed when the campaign is scheduled. T101 lists and schedules
   campaigns from Infrastructure and follows the server operation.
+  The shared Stepper keeps the waiting text and icon stable while the worker
+  briefly reclaims the same active step. A regression test reproduced the
+  flash, and all 89 UI unit tests and six Chrome operations cases passed
+  with the fix.
   Due-campaign preparation now creates one durable operation for each
   eligible workspace generation after existing lifecycle work settles. It
   records the latest desired state and reuses the same operation after a

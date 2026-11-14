@@ -42,6 +42,33 @@ test('renders durable failure history and server updates', () => {
   expect(screen.getByRole('alert')).toHaveTextContent('Guest did not respond');
 });
 
+// The worker can reclaim a waiting step on every retry while its wait reason
+// stays in the journal. Only an actual workflow change should replace it.
+test('keeps a waiting step stable across worker retries', () => {
+  const waiting: WorkflowOperation = { ...operation, status: 'waiting' };
+  const { rerender } = render(view(waiting));
+  const status = screen.getByRole('status');
+  const step = screen.getByRole('button', { name: 'Start machine: In progress' });
+  const icon = step.querySelector('[data-progress]')!;
+  const waitingIcon = icon.innerHTML;
+  expect(status).toHaveTextContent('Waiting — Start machine');
+
+  for (const update of ['running', 'waiting', 'running'] as const) {
+    rerender(view({ ...waiting, status: update }));
+    expect(status).toHaveTextContent('Waiting — Start machine');
+    expect(icon.innerHTML).toBe(waitingIcon);
+    expect(screen.getByText('Waiting for the guest.')).toBeVisible();
+  }
+
+  rerender(view({ ...operation, currentStep: 'ide', steps: operation.steps.map(step => {
+    if (step.key === 'boot') return { ...step, status: 'succeeded' };
+    if (step.key === 'ide') return { ...step, status: 'active' };
+    return step;
+  }) }));
+  expect(status).toHaveTextContent('In progress — Open IDE');
+  expect(screen.getByRole('button', { name: 'Open IDE: In progress' })).toHaveAttribute('aria-current', 'step');
+});
+
 // Completion comes from durable state, and skipped work must never be described as completed work.
 test('distinguishes skipped steps from successful completion', () => {
   render(view({ ...operation, status: 'succeeded', currentStep: null, steps: operation.steps.map(step => ({ ...step, status: step.key === 'boot' ? 'skipped' : 'succeeded' })) }));

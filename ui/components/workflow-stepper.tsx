@@ -30,11 +30,16 @@ export function WorkflowStepper({ operation }: { operation: WorkflowOperation })
   const active = operation.status === 'succeeded' ? steps.length : current >= 0 ? current : unfinished >= 0 ? unfinished : steps.length;
   const selected = inspected?.operationId === operation.id ? steps.find(step => step.key === inspected.key && step.status !== 'pending') : undefined;
   const currentDetail = steps[active]?.detail;
+  // A worker briefly claims an active step as running on each retry. The
+  // persisted wait reason remains until the step advances or finishes.
+  const status = operation.status === 'running' && steps[active]?.status === 'active' && currentDetail
+    ? 'waiting'
+    : operation.status;
 
   return (
     <Stack gap="md">
       <Text role="status" aria-live="polite" aria-atomic="true">
-        {operationLabels[operation.status]}{steps[active] ? ` — ${steps[active].label}` : ''}
+        {operationLabels[status]}{steps[active] ? ` — ${steps[active].label}` : ''}
       </Text>
       <Stepper active={active} allowNextStepsSelect={false} orientation="vertical" onStepClick={index => {
         const step = steps[index];
@@ -49,7 +54,7 @@ export function WorkflowStepper({ operation }: { operation: WorkflowOperation })
             aria-current={index === active ? 'step' : undefined}
             disabled={step.status === 'pending'}
             allowStepSelect={step.status !== 'pending'}
-            loading={step.status === 'active' && operation.status === 'running'}
+            loading={step.status === 'active' && status === 'running'}
             color={step.status === 'failed' ? 'red' : undefined}
             completedIcon={step.status === 'skipped' ? '–' : step.status === 'failed' ? '!' : undefined}
           />
