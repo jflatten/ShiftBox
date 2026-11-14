@@ -4,8 +4,9 @@ T124 remains open. `development-repair` has native stop/start, rebuild, and
 repair evidence. The newer `mvp-rc1` build has completed native image
 validation, protected setup, fresh administrator sign-in, and a verified
 prelaunch management backup. The workspace run completed GitHub consent,
-private checkout, and initial browser IDE verification. Its retained-file
-lifecycle checks are in progress.
+private checkout, initial browser IDE verification, and the retained-file
+journey through stop/start, rebuild, repair, and retry. The strict controller
+journal check passed on the same installation.
 See [MVP workspace validation](mvp-workspace.md) for both sets of results.
 Run the release gates against one frozen candidate and record its component
 versions and hashes in `platform/manifests/release.json` before marking a
@@ -18,7 +19,7 @@ gate passed.
 | V3 Certificates | Rotation, expired-leaf rejection, and local TLS revocation tests | Native clock, long-offline, and CA failure cases on the pinned stack |
 | V4 Compatibility | Current and previous guest admission, successful migration preflight with an enrolled `mvp-rc1` UTM workspace, and native signed rollback that restored the stopped guest and blocked the migration gate | Verify successful signed replacement on that native path and confirm the guest gate clears |
 | V5 Networking | Pinned UTM capability and policy rejection tests | Confirm every advertised mode and required exception on the frozen candidate |
-| V6 Work and data | Native browser checks verified a saved file after stop/start, rebuild, repair and retry. Local Dev Container fixtures verified named-volume retention. | Repeat the integrated journey and retained-data checks on the frozen candidate |
+| V6 Work and data | The frozen candidate's native Chrome and Go checks verified saved-file retention through stop/start, rebuild, repair and retry. Local Dev Container fixtures verified named-volume retention. | Complete the retained home and named-volume checks on the frozen candidate |
 | V7 Reconciliation and deletion | Lost provider replies, capacity, exact inventory, retention of reservations, and verified deletion tests | Full persisted-step restart matrix and native lifecycle evidence |
 | V8 Retention and maintenance | Activity, outage grace, stale intent, and authorized provider deletion tests | Verify maintenance deadlines, safe activation, and prior-state restoration |
 | V9 Identity and bootstrap | Native SQLite setup and Dex login. Local PostgreSQL and upstream authorization tests. | Repeat locked setup, scoped production setup, and offboarding on the frozen candidate |

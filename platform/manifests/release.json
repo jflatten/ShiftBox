@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "releaseId": "development-repair",
+  "releaseId": "mvp-rc1",
   "protocolVersion": "1",
   "controller": {
-    "version": "4c3cb9507b6edc377a7195a21bf5354fa145e0cd",
-    "sha256": "926eaa6aaa6b77986761aaf915f1f980afc0345bdd275b3e324fad1524b7ebb1"
+    "version": "fae90de2076cc5db32535020119931c796af6ac0",
+    "sha256": "2dd15a0cf9e5b87d4a8ab68d6ed990092741e0bb880b20fa4a9aad230ed21b60"
   },
   "dex": {
-    "version": "v0.0.0-20261021142137-75eb19238e10",
+    "version": "v2.46.1",
     "sha256": "9c8253c3f1cea663e75747fdac8e6fa5d0920c7a5b6af6664c29902306c03a21",
     "source": "https://github.com/dexidp/dex"
   },
@@ -27,9 +27,9 @@
     "source": "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20260716/ubuntu-24.04-minimal-cloudimg-amd64.img"
   },
   "guest": {
-    "version": "development-repair",
-    "sha256": "8d08c8ef8af5eec5e4b0b1523f1ce0f558e18806392bd53b20df0220774f8b44",
-    "source": "https://github.com/jflatten/ShiftBox/tree/18b411551e220a5ebc3accc9cbc2f73bd264ff9f"
+    "version": "mvp-rc1",
+    "sha256": "83a113a2417d8838237e1b0fefc42b499b7dbca6836c515d8530390519c27b23",
+    "source": "https://github.com/jflatten/ShiftBox/tree/fae90de2076cc5db32535020119931c796af6ac0"
   },
   "ide": {
     "version": "4.145.2",

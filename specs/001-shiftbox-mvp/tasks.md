@@ -124,7 +124,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T059 [US1] Implement template creation plus workspace launch/detail/lifecycle/repair screens with Mantine controls and server-derived WorkflowStepper state in `ui/features/templates/template-form.tsx`, `ui/features/workspaces/launch-flow.tsx`, `ui/features/workspaces/workspace-detail.tsx`, and `ui/app/workspaces/page.tsx`
   - Named resource profile and platform image choices are implemented and verified in the production export with Chrome, Firefox, and WebKit fixtures. The native workspace journey remains pending.
 - [X] T060 [US1] Wire static UI embedding and controller/agent CLI composition so `shiftbox serve`, `shiftbox setup`, and `shiftbox-agent serve` satisfy their contracts in `internal/web/static.go`, `cmd/shiftbox/main.go`, and `cmd/shiftbox-agent/main.go`
-- [ ] T061 [US1] Add and run the exact-stack Go acceptance test together with the T039 Playwright journey, then record separate test results and pinned release evidence without broadening supported versions in `tests/release/mvp_workspace_test.go`, `documentation/validation/mvp-workspace.md`, and `platform/manifests/release.json`
+- [X] T061 [US1] Add and run the exact-stack Go acceptance test together with the T039 Playwright journey, then record separate test results and pinned release evidence without broadening supported versions in `tests/release/mvp_workspace_test.go`, `documentation/validation/mvp-workspace.md`, and `platform/manifests/release.json`
 
 **Checkpoint**: User Story 1 is a demonstrable MVP slice and must pass independently before later stories are required.
 
@@ -2802,7 +2802,10 @@ This checkpoint does not itself change the goal status.
 - T061 verified retained marker contents after native stop/start and rebuild,
   then passed the focused Chrome repair and retry journey on the same VM.
   The Go workspace journal check passed with the race detector in resumed
-  mode. The complete journey on one frozen candidate remains open.
+  mode. The November 14 run then passed the complete 24.1-minute Chrome
+  workspace journey on `mvp-rc1` after the protected setup handoff. The
+  strict Go journal passed with the race detector against the same SQLite
+  installation. The pinned versions and digests are in the release manifest.
 - T059's template form uses named profile and image choices. The production
   export and all 87 UI unit tests passed. The native Chrome runs exercised
   workspace launch progress, detail, stop/start, rebuild, and repair with

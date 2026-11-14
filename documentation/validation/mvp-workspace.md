@@ -52,10 +52,9 @@ retried setup. The regular IDE reopened with the same marker. On this same
 database, `TestMVPWorkspaceJournal` passed with `-race` in resumed mode,
 requiring the ordered lifecycle evidence and a successful final repair retry.
 
-T061 still needs the complete journey on a single frozen candidate. The
-retained stop/start, rebuild, and focused repair used the rebuilt controller
-and an existing development image. The release manifest describes the
-earlier candidate.
+The retained stop/start, rebuild, and focused repair above used the rebuilt
+development controller and its existing image. The frozen candidate below
+repeated the journey on one installation.
 
 ## November 14 frozen candidate setup
 
@@ -75,9 +74,16 @@ against the same binary and installation. The workspace run resumed at this
 handoff and reached GitHub sign-in for the fixture App. The November 14
 retry completed authorization, created a workspace, and recorded an
 authenticated poll from the candidate's native UTM guest. The private
-checkout, initial browser IDE verification, and remaining setup hooks
-passed. The retained-file lifecycle checks were still running at this
-observation.
+checkout, initial browser IDE verification, and remaining setup hooks passed.
+
+| Exact-stack check on `mvp-rc1` | Result |
+| --- | --- |
+| T039 Playwright workspace journey, Chrome 157.0.8103.51 | Passed in 24.1 minutes after the protected setup handoff. Verified operation-stream reconnect, IDE gating and entry, saved marker after stop/start and rebuild, expected setup failure, separate repair origin, and marker retention after repair and retry. |
+| `TestMVPWorkspaceJournal` and `TestMVPReleaseManifest` | Passed with `-race` against the same active SQLite installation and the frozen manifest. The strict journal check verified one fresh workspace and the exact lifecycle sequence, including the expected failed rebuild. |
+
+The [release manifest](../../platform/manifests/release.json) records the
+controller and guest digests and the existing Dex, UTM, Packer fork, Ubuntu,
+and code-server pins. The active SQLite installation was at schema 27.
 
 The running candidate created and verified an encrypted management backup
 before the workspace launch. The check-only `migrate preflight` command
