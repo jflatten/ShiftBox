@@ -2,10 +2,13 @@ package workspace
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
+	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
 )
 
@@ -17,6 +20,7 @@ var (
 )
 
 const maintenanceTime = "2006-01-02T15:04:05.000000000Z"
+const maintenanceTargetAction = "maintenance.update_guest"
 
 // MaintenanceCampaign is the public campaign status and journal reference.
 type MaintenanceCampaign struct {
@@ -121,6 +125,104 @@ func ScheduleMaintenance(ctx context.Context, tx *sql.Tx, journal *operation.Jou
 		WHERE installation_id=$2 AND desired_state<>'deleted' AND observed_state<>'deleted' AND deletion_commit_at IS NULL`,
 		op.ID, installation, created)
 	return op, err
+}
+
+// PrepareMaintenanceTargets journals only due targets with no unsettled
+// lifecycle work. It shares the admission lock with lifecycle and retention
+// so the target owns the workspace before any worker can act on it.
+func (s *Store) PrepareMaintenanceTargets(ctx context.Context, journal *operation.Journal, installation, campaign string, now time.Time) error {
+	return database.Transaction(ctx, s.db, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, "UPDATE installations SET version=version WHERE id=$1 AND state='active'", installation)
+		if err := capacityWrite(result, err); err != nil {
+			return err
+		}
+		stamp := now.UTC().Format(maintenanceTime)
+		result, err = tx.ExecContext(ctx, `UPDATE maintenance_campaigns SET state='active'
+			WHERE operation_id=$1 AND installation_id=$2 AND deadline<=$3 AND state IN ('scheduled','active')`, campaign, installation, stamp)
+		if err := capacityWrite(result, err); err != nil {
+			if errors.Is(err, ErrCapacityConflict) {
+				return nil
+			}
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE maintenance_targets SET state='completed',updated_at=$2
+			WHERE campaign_id=$1 AND operation_id IS NULL AND state IN ('pending','waiting_safe')
+			AND EXISTS (SELECT 1 FROM workspaces w WHERE w.id=maintenance_targets.workspace_id
+			AND (w.observed_state='deleted' OR w.deletion_commit_at IS NOT NULL))`, campaign, stamp)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE maintenance_targets SET state='waiting_safe',updated_at=$2
+			WHERE campaign_id=$1 AND state='pending'`, campaign, stamp)
+		if err != nil {
+			return err
+		}
+		targets, err := readyMaintenanceTargets(ctx, tx, campaign, installation)
+		if err != nil {
+			return err
+		}
+		for _, target := range targets {
+			if err := prepareMaintenanceTarget(ctx, tx, journal, campaign, target, stamp); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+type maintenanceTarget struct {
+	id, desired, observed string
+	generation            int64
+}
+
+func readyMaintenanceTargets(ctx context.Context, tx *sql.Tx, campaign, installation string) ([]maintenanceTarget, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT w.id,w.desired_state,w.observed_state,w.generation
+		FROM maintenance_targets t JOIN workspaces w ON w.id=t.workspace_id AND w.generation=t.generation
+		JOIN users u ON u.id=w.owner_user_id
+		WHERE t.campaign_id=$1 AND w.installation_id=$2 AND t.state='waiting_safe' AND t.operation_id IS NULL
+		AND w.provider_instance_id IS NOT NULL AND w.deletion_commit_at IS NULL AND u.membership_state='active'
+		AND w.desired_state=w.observed_state AND w.desired_state IN ('running','stopped')
+		AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
+		AND o.status IN ('pending','running','waiting')) ORDER BY w.id`, campaign, installation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var targets []maintenanceTarget
+	for rows.Next() {
+		var target maintenanceTarget
+		if err := rows.Scan(&target.id, &target.desired, &target.observed, &target.generation); err != nil {
+			return nil, err
+		}
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
+}
+
+func prepareMaintenanceTarget(ctx context.Context, tx *sql.Tx, journal *operation.Journal, campaign string, target maintenanceTarget, stamp string) error {
+	steps := []operation.Step{
+		{Key: "maintenance_stage", Label: "Stage the signed guest update"},
+		{Key: "maintenance_activate", Label: "Activate the guest update safely"},
+		{Key: "maintenance_verify", Label: "Verify the updated guest"},
+	}
+	if target.desired == "stopped" {
+		steps = append([]operation.Step{{Key: "maintenance_boot", Label: "Start workspace management services"}}, steps...)
+		steps = append(steps, operation.Step{Key: "maintenance_restore", Label: "Return workspace to stopped"})
+	}
+	key := fmt.Sprintf("maintenance:%x", sha256.Sum256(fmt.Appendf(nil, "%q/%q/%d", campaign, target.id, target.generation)))
+	op, err := journal.CreateInTx(ctx, tx, operation.Request{Actor: "controller", Key: key, Type: "update",
+		OriginatingAction: maintenanceTargetAction, WorkspaceID: &target.id, Generation: target.generation, Steps: steps})
+	if err != nil {
+		return err
+	}
+	if op.WorkspaceID == nil || *op.WorkspaceID != target.id || op.Generation != target.generation || op.OriginatingAction != maintenanceTargetAction {
+		return operation.ErrConflict
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE maintenance_targets
+		SET operation_id=$1,prior_desired_state=$2,prior_observed_state=$3,updated_at=$4
+		WHERE campaign_id=$5 AND workspace_id=$6 AND generation=$7 AND operation_id IS NULL`,
+		op.ID, target.desired, target.observed, stamp, campaign, target.id, target.generation)
+	return capacityWrite(result, err)
 }
 
 // ListMaintenance returns current and historical campaigns newest first.

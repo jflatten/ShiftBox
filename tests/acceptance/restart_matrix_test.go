@@ -23,8 +23,8 @@ import (
 )
 
 // TestRestartPreservesMaintenanceSchedule reopens the controller database
-// during the warning period and after the deadline. Scheduling replay must
-// preserve the same target generation and reserved disk.
+// during the warning period, after the deadline, and after preparing work.
+// Replay must preserve the same target operation and reserved disk.
 func TestRestartPreservesMaintenanceSchedule(t *testing.T) {
 	ctx, now := t.Context(), time.Now().UTC()
 	deadline := now.Add(time.Hour)
@@ -70,7 +70,8 @@ func TestRestartPreservesMaintenanceSchedule(t *testing.T) {
 		return op
 	}
 	first := schedule(db)
-	for _, elapsed := range []time.Duration{30 * time.Minute, 31 * time.Minute} {
+	var targetOperation string
+	for _, elapsed := range []time.Duration{30 * time.Minute, 31 * time.Minute, time.Second} {
 		if err := db.Close(); err != nil {
 			t.Fatal(err)
 		}
@@ -80,11 +81,28 @@ func TestRestartPreservesMaintenanceSchedule(t *testing.T) {
 		if replay.ID != first.ID || replay.Status != "pending" {
 			t.Fatalf("scheduled replay = %s/%s, want %s/pending", replay.ID, replay.Status, first.ID)
 		}
+		journal := operation.NewJournal(db, clock, uuid.NewString)
+		if err := workspace.NewStore(db).PrepareMaintenanceTargets(ctx, journal, ref.InstallationID, first.ID, now); err != nil {
+			t.Fatal(err)
+		}
 		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
 			warning, err := workspace.ReadWorkspaceMaintenance(ctx, tx, ref.WorkspaceID, ref.Generation)
-			if err != nil || warning == nil || warning.State != "pending" || !warning.Deadline.Equal(deadline) {
-				t.Fatalf("workspace warning after restart = %+v (%v), want pending with original deadline", warning, err)
+			if err != nil || warning == nil || !warning.Deadline.Equal(deadline) {
+				t.Fatalf("workspace warning after restart = %+v (%v), want original deadline", warning, err)
 			}
+			if now.Before(deadline) {
+				if warning.OperationID != nil || warning.State != "pending" {
+					t.Fatalf("workspace before deadline = %+v, want pending without a target operation", warning)
+				}
+				return nil
+			}
+			if warning.OperationID == nil || warning.State != "waiting_safe" {
+				t.Fatalf("workspace after deadline = %+v, want a durable operation waiting to start", warning)
+			}
+			if targetOperation != "" && *warning.OperationID != targetOperation {
+				t.Errorf("maintenance target after restart = %s, want %s", *warning.OperationID, targetOperation)
+			}
+			targetOperation = *warning.OperationID
 			return nil
 		}); err != nil {
 			t.Fatal(err)

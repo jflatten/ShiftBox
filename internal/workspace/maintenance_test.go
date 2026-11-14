@@ -148,6 +148,88 @@ func TestScheduleMaintenanceSkipsCommittedDeletion(t *testing.T) {
 	}
 }
 
+// TestPrepareMaintenanceTargets waits for the deadline and existing lifecycle
+// work, then records one generation-bound operation with the latest power intent.
+func TestPrepareMaintenanceTargets(t *testing.T) {
+	db, journal, now := maintenanceFixture(t, "retained", "deleting")
+	maintenanceExec(t, db, `UPDATE workspaces SET observed_state='running',provider_instance_id=id`)
+	deadline := now.Add(time.Hour)
+	campaign, err := scheduleMaintenanceFixture(t, db, journal, "reservation-release", deadline, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepare := func(at time.Time) {
+		t.Helper()
+		if err := NewStore(db).PrepareMaintenanceTargets(t.Context(), journal, testInstallation, campaign.ID, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := func(id string) (string, string, sql.NullString) {
+		t.Helper()
+		var state, desired string
+		var op sql.NullString
+		err := db.QueryRow(`SELECT state,prior_desired_state,operation_id FROM maintenance_targets
+			WHERE campaign_id=$1 AND workspace_id=$2`, campaign.ID, id).Scan(&state, &desired, &op)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state, desired, op
+	}
+	prepare(deadline.Add(-time.Nanosecond))
+	if state, _, op := target("retained"); state != "pending" || op.Valid {
+		t.Errorf("target before deadline = %s/%v, want pending without an operation", state, op)
+	}
+	workspaceID := "retained"
+	busy, err := journal.Create(t.Context(), operation.Request{Actor: "reservation-owner", Key: "existing-power-operation", Type: "stop",
+		WorkspaceID: &workspaceID, Generation: 1, Steps: []operation.Step{{Key: "stop", Label: "Stop workspace"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		maintenanceExec(t, db, `DELETE FROM maintenance_targets WHERE campaign_id=$1`, campaign.ID)
+		maintenanceExec(t, db, `DELETE FROM operation_events WHERE operation_id IN (SELECT id FROM operations WHERE workspace_id IS NOT NULL)`)
+		maintenanceExec(t, db, `DELETE FROM operation_steps WHERE operation_id IN (SELECT id FROM operations WHERE workspace_id IS NOT NULL)`)
+		maintenanceExec(t, db, `DELETE FROM operations WHERE workspace_id IS NOT NULL`)
+	})
+	maintenanceExec(t, db, `UPDATE workspaces SET desired_state='deleted',deletion_commit_at=$1 WHERE id='deleting'`, testStamp)
+	prepare(deadline)
+	if state, _, op := target("retained"); state != "waiting_safe" || op.Valid {
+		t.Errorf("busy target at deadline = %s/%v, want waiting without an operation", state, op)
+	}
+	if state, _, op := target("deleting"); state != "completed" || op.Valid {
+		t.Errorf("committed deletion at deadline = %s/%v, want retired without an operation", state, op)
+	}
+	maintenanceExec(t, db, `UPDATE operations SET status='succeeded' WHERE id=$1`, busy.ID)
+	maintenanceExec(t, db, `UPDATE workspaces SET desired_state='stopped',observed_state='stopped' WHERE id='retained'`)
+	prepare(deadline.Add(time.Second))
+	state, desired, op := target("retained")
+	if state != "waiting_safe" || desired != "stopped" || !op.Valid {
+		t.Fatalf("ready target = %s/%s/%v, want a stopped target with one operation", state, desired, op)
+	}
+	prepare(deadline.Add(2 * time.Second))
+	if _, _, replay := target("retained"); replay != op {
+		t.Errorf("replayed maintenance target = %v, want %v", replay, op)
+	}
+	got, err := journal.Get(t.Context(), op.String)
+	if err != nil || got.WorkspaceID == nil || *got.WorkspaceID != workspaceID || got.Generation != 1 || got.Status != "pending" {
+		t.Fatalf("target operation = %+v (%v), want one pending operation for generation 1", got, err)
+	}
+	var steps []string
+	for _, step := range got.Steps {
+		steps = append(steps, step.Key)
+	}
+	if diff := cmp.Diff([]string{"maintenance_boot", "maintenance_stage", "maintenance_activate", "maintenance_verify", "maintenance_restore"}, steps); diff != "" {
+		t.Errorf("stopped workspace steps (-want +got):\n%s", diff)
+	}
+	if err := database.Transaction(t.Context(), db, func(tx *sql.Tx) error {
+		_, err := AdmitPower(t.Context(), tx, journal, PowerIntent{WorkspaceID: workspaceID, ActorID: "reservation-owner",
+			RequestKey: "later-power-operation", Action: "start", Version: 1}, deadline)
+		return err
+	}); !errors.Is(err, ErrOperationInProgress) {
+		t.Errorf("AdmitPower during pending maintenance = %v, want an operation conflict", err)
+	}
+}
+
 func maintenanceFixture(t *testing.T, ids ...string) (*sql.DB, *operation.Journal, time.Time) {
 	t.Helper()
 	db := openWorkspaceDatabase(t, "sqlite")

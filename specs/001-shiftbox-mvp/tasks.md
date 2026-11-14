@@ -1687,6 +1687,10 @@ This checkpoint does not itself change the goal status.
   deadline on the retained workspace and excludes deletions already
   committed when the campaign is scheduled. T101 lists and schedules
   campaigns from Infrastructure and follows the server operation.
+  Due-campaign preparation now creates one durable operation for each
+  eligible workspace generation after existing lifecycle work settles. It
+  records the latest desired state, skips committed deletions, and reuses
+  the same operation after a restart.
   Guest staging now verifies the release and protocol, Ed25519 signature,
   binary size, and SHA-256 digest before replacing a private staged file.
   Verification tests use disposable keys. Production key provisioning,
