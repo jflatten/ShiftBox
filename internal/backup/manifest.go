@@ -14,6 +14,7 @@ type ArchiveMetadata struct {
 	Release        string `json:"release"`
 	Profile        string `json:"profile"`
 	Schema         int64  `json:"schema"`
+	HostID         string `json:"hostId,omitempty"`
 }
 
 type manifest struct {

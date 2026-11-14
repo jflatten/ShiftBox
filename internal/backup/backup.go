@@ -183,54 +183,59 @@ func openCheckpoint(path string) (*os.File, error) {
 // VerifyArchive authenticates the entire age stream and matches each regular
 // entry against the canonical manifest without extracting plaintext to disk.
 func VerifyArchive(ctx context.Context, input io.Reader, password string) (ArchiveEvidence, error) {
+	evidence, _, err := verifyArchive(ctx, input, password)
+	return evidence, err
+}
+
+func verifyArchive(ctx context.Context, input io.Reader, password string) (ArchiveEvidence, manifest, error) {
 	identity, err := age.NewScryptIdentity(password)
 	if err != nil {
-		return ArchiveEvidence{}, errArchiveInvalid
+		return ArchiveEvidence{}, manifest{}, errArchiveInvalid
 	}
 	sum := sha256.New()
 	count := &archiveBytes{}
 	plaintext, err := age.Decrypt(io.TeeReader(contextReader{ctx, input}, io.MultiWriter(sum, count)), identity)
 	if err != nil {
-		return ArchiveEvidence{}, errArchiveInvalid
+		return ArchiveEvidence{}, manifest{}, errArchiveInvalid
 	}
 	reader := tar.NewReader(plaintext)
 	const maxManifest = 64 << 10
 	header, err := reader.Next()
 	if err != nil || header.Typeflag != tar.TypeReg || header.Name != manifestName || header.Size <= 0 || header.Size > maxManifest {
-		return ArchiveEvidence{}, errArchiveInvalid
+		return ArchiveEvidence{}, manifest{}, errArchiveInvalid
 	}
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return ArchiveEvidence{}, errArchiveInvalid
+		return ArchiveEvidence{}, manifest{}, errArchiveInvalid
 	}
 	var doc manifest
 	if err := json.Unmarshal(data, &doc); err != nil || !doc.valid() {
-		return ArchiveEvidence{}, errArchiveInvalid
+		return ArchiveEvidence{}, manifest{}, errArchiveInvalid
 	}
 	canonical, err := json.Marshal(doc)
 	if err != nil || !bytes.Equal(data, canonical) {
-		return ArchiveEvidence{}, errArchiveInvalid
+		return ArchiveEvidence{}, manifest{}, errArchiveInvalid
 	}
 	for _, item := range doc.Files {
 		header, err := reader.Next()
 		if err != nil || header.Typeflag != tar.TypeReg || header.Name != item.Name || header.Size != item.Size {
-			return ArchiveEvidence{}, errArchiveInvalid
+			return ArchiveEvidence{}, manifest{}, errArchiveInvalid
 		}
 		hash := sha256.New()
 		n, err := io.Copy(hash, reader)
 		if err != nil || n != item.Size || hex.EncodeToString(hash.Sum(nil)) != item.Digest {
-			return ArchiveEvidence{}, errArchiveInvalid
+			return ArchiveEvidence{}, manifest{}, errArchiveInvalid
 		}
 	}
 	if _, err := reader.Next(); err != io.EOF {
-		return ArchiveEvidence{}, errArchiveInvalid
+		return ArchiveEvidence{}, manifest{}, errArchiveInvalid
 	}
 	// Force authentication of the encrypted stream terminator after tar EOF.
 	if n, err := io.Copy(io.Discard, plaintext); err != nil || n != 0 {
-		return ArchiveEvidence{}, errArchiveInvalid
+		return ArchiveEvidence{}, manifest{}, errArchiveInvalid
 	}
 	return ArchiveEvidence{Metadata: doc.Metadata, ManifestDigest: digestBytes(data),
-		ArchiveDigest: hex.EncodeToString(sum.Sum(nil)), Size: count.n}, nil
+		ArchiveDigest: hex.EncodeToString(sum.Sum(nil)), Size: count.n}, doc, nil
 }
 
 func digestBytes(data []byte) string {

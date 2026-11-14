@@ -16,7 +16,6 @@ import (
 	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/config"
-	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
@@ -134,12 +133,11 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		})
 	services.Handlers[preflightRoute.Route.OperationID] = preflightRoute
 	preflightWorker.EnterActivity = checkpoint.Enter
-	schema, err := database.Version(ctx, state.DB, cfg.DataProfile)
+	metadata, err := state.BackupMetadata(ctx)
 	if err != nil {
 		return err
 	}
-	backups := backup.NewService(state.DB, journal, backup.ArchiveMetadata{InstallationID: active.InstallationID,
-		Release: active.ActiveRelease, Profile: cfg.DataProfile, Schema: schema})
+	backups := backup.NewService(state.DB, journal, metadata)
 	if err := backups.InterruptIncomplete(ctx); err != nil {
 		return err
 	}

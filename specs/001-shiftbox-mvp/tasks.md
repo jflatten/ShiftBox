@@ -213,7 +213,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 ### Tests first
 
 - [ ] T104 [P] [US4] Write failing backup tests proving management writes pause only while application/Dex checkpoints are acquired, resume before archive assembly/encryption and after checkpoint failure, workspace computation remains uninterrupted, and the canonical age-encrypted verified archive explicitly excludes VM disks in `internal/backup/backup_test.go`
-- [ ] T105 [P] [US4] Write failing restore validation tests for wrong password, truncation, digest mismatch, incompatible release/schema, mismatched key, wrong host, non-empty/unowned target, and zero mutation before validation in `internal/backup/restore_test.go`
+- [X] T105 [P] [US4] Write failing restore validation tests for wrong password, truncation, digest mismatch, incompatible release/schema, mismatched key, wrong host, non-empty/unowned target, and zero mutation before validation in `internal/backup/restore_test.go`
 - [ ] T106 [P] [US4] Write failing recovery tests for invalidated sessions/origin/enrollment grants/OAuth state, provider inventory matches/conflicts, gated workspace entry/destructive actions, identity/authorization review, and explicit activation in `internal/backup/recovery_test.go`
 - [ ] T107 [P] [US4] Write failing backup/restore API and CLI contract tests for password handling, stable JSON/exit codes, operation steps, validation IDs, separate activation, and no protected data in diagnostics in `tests/contract/backup_restore_test.go`
 - [ ] T108 [P] [US4] Write failing UI and Playwright tests for backup scope copy, cleared password state, ordered Stepper, validation findings, recovery gating, invalidated authority, provider conflicts, and keyboard focus in `ui/features/recovery/recovery.test.tsx` and `ui/tests/e2e/backup-recovery.spec.ts`
@@ -1752,6 +1752,17 @@ This checkpoint does not itself change the goal status.
 - T104 and T110 remain open for live workspace computation evidence.
   The restore-validation and recovery-activation routes remain open
   under T113.
+
+### Restore validation
+
+- T105 exercises full archive and digest checks, release and schema
+  compatibility, the original Mac binding, and matching installation
+  keys. The PostgreSQL fixture verifies that validation accepts empty
+  separately owned schemas and preserves rows in a rejected occupied
+  target. SQLite target checks reject existing files and sidecars.
+- T111 adds read-only validation and binds new production archives
+  to the current Mac. Durable validation IDs and restore activation
+  remain open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.

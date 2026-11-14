@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/backup"
-	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/release"
 )
 
@@ -17,14 +16,11 @@ func (s *ControllerState) MigrationEvidence(ctx context.Context, evidence releas
 		return release.MigrationEvidence{}, err
 	}
 	evidence.Guests = guests
-	active := s.Installation
-	schema, err := database.Version(ctx, s.DB, active.Settings.DataProfile)
+	metadata, err := s.BackupMetadata(ctx)
 	if err != nil {
 		return release.MigrationEvidence{}, err
 	}
-	evidence.VerifiedBackup, err = backup.HasCompletedBackup(ctx, s.DB, backup.ArchiveMetadata{
-		InstallationID: active.InstallationID, Release: active.ActiveRelease, Profile: active.Settings.DataProfile, Schema: schema,
-	})
+	evidence.VerifiedBackup, err = backup.HasCompletedBackup(ctx, s.DB, metadata)
 	if err != nil {
 		return release.MigrationEvidence{}, err
 	}
