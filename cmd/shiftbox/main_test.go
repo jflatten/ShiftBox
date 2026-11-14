@@ -172,6 +172,10 @@ func (w *stopOnSetupURL) probe(origin string) error {
 			return err
 		}
 	}
+	browser, err = readSetupSession(client, origin, browser)
+	if err != nil {
+		return err
+	}
 	defer browser.Body.Close()
 	body, err := io.ReadAll(browser.Body)
 	if err != nil {
@@ -287,6 +291,10 @@ func (w *stopOnSetupURL) probe(origin string) error {
 			return err
 		}
 	}
+	browser, err = readSetupSession(client, origin, browser)
+	if err != nil {
+		return err
+	}
 	defer browser.Body.Close()
 	body, err = io.ReadAll(browser.Body)
 	if err != nil {
@@ -355,6 +363,21 @@ func (w *stopOnSetupURL) probe(origin string) error {
 }
 
 // submitDexForm drives the pinned Dex HTML login and approval forms.
+func readSetupSession(client *http.Client, origin string, response *http.Response) (*http.Response, error) {
+	if response.Request.URL.Path == "/api/v1/session" {
+		return response, nil
+	}
+	defer response.Body.Close()
+	if response.Request.URL.Path != "/setup/" || response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("setup callback returned status %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil || !bytes.Contains(body, []byte("Local setup")) {
+		return nil, fmt.Errorf("setup callback did not serve the embedded setup page")
+	}
+	return client.Get(origin + "/api/v1/session")
+}
+
 func submitDexForm(client *http.Client, response *http.Response, fields url.Values) (*http.Response, error) {
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)

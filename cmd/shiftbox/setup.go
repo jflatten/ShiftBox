@@ -138,7 +138,11 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(ctx) }()
-	if _, err := fmt.Fprintf(status, "Local setup: %s\nVerify the setup certificate SHA-256 fingerprint: %x\nSign in: %s/auth/login\n", server.Origin, sha256.Sum256(cert.Certificate[0]), server.Origin); err != nil {
+	destination := "/auth/login"
+	if assets != nil {
+		destination = "/setup/"
+	}
+	if _, err := fmt.Fprintf(status, "Local setup: %s\nVerify the setup certificate SHA-256 fingerprint: %x\nOpen: %s%s\n", server.Origin, sha256.Sum256(cert.Certificate[0]), server.Origin, destination); err != nil {
 		stop()
 		<-served
 		return errors.New("cannot write local setup status")

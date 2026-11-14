@@ -1676,3 +1676,14 @@ This checkpoint does not itself change the goal status.
   home page, JavaScript, and setup status API from the same origin.
 - The dedicated setup flow and active controller composition remain open
   under T058 and T060.
+
+### Local setup credentials UI
+
+- The embedded setup page uses the server's setup status for its Mantine
+  Stepper and supports one-time password acknowledgement and required
+  password replacement. Dex returns to the setup page after sign-in.
+- UI tests cover first-invalid focus, password acknowledgement, removal
+  of credentials from the form, and the fresh sign-in prompt. The tagged
+  Go test and a live Chrome run passed against pinned Dex and loopback TLS.
+- The database, certificate, provider and activation screens remain open
+  under T058.
