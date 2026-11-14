@@ -57,6 +57,24 @@ retained stop/start, rebuild, and focused repair used the rebuilt controller
 and an existing development image. The release manifest describes the
 earlier candidate.
 
+## November 14 frozen candidate setup
+
+Built the `mvp-rc1` controller and guest agent from
+`fae90de2076cc5db32535020119931c796af6ac0`. Packer 1.14.2 built and
+sealed the image using UTM 5.0.8. The artifact manifest SHA-256 is
+`2252ec7cd73f4bd6d1af89365e9bee6734af443924281c6fe46d685cd285844b`.
+The controller SHA-256 is
+`2dd15a0cf9e5b87d4a8ab68d6ed990092741e0bb880b20fa4a9aad230ed21b60`.
+The local candidate manifest passed the Go parser check with the original
+Dex `v2.46.1`, UTM, Packer fork, Ubuntu and code-server pins.
+
+Chrome completed protected setup with the approved loopback certificate,
+rotated the fixture password, and activated SQLite after the native image
+boot check. A separate Chrome context verified fresh administrator sign-in
+against the same binary and installation. The workspace run resumed at this
+handoff and reached GitHub sign-in for the fixture App. The candidate's
+workspace and journal checks are still pending.
+
 Run the browser spec with `SHIFTBOX_MVP_FIXTURE` pointing at a fresh local
 fixture and with the same valid certificate trust available to Chrome and the
 test runner. With Node 26, `NODE_USE_SYSTEM_CA=1` lets the test runner use
