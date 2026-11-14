@@ -1534,3 +1534,16 @@ This checkpoint does not itself change the goal status.
   tests verify scoped staging, failed-transaction rollback, and no copying
   of unrelated protected records. The setup HTTP workflow and authority
   switch still need wiring.
+
+### PostgreSQL authority switch
+
+- A staged target records the activation intent before bootstrap retirement.
+  The source transaction blocks local setup and revokes its sessions, then
+  the target commits activation. A receipt on the source binds retries to
+  the same target operation.
+- A failure-injection test closes and reopens both stores after a target
+  commit failure, verifies that ordinary local setup cannot reopen the
+  source, and resumes the original activation. Live PostgreSQL tests cover
+  readiness validation, replay, and selection by the runtime DB opener.
+- Protected setup still needs to orchestrate profile selection, Dex
+  transfer, cutover, and restart recovery from the command and HTTP routes.

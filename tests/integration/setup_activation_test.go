@@ -2,8 +2,12 @@ package integration_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
 	"database/sql"
+	"encoding/pem"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -11,11 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/auth"
+	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/operation"
 	_ "modernc.org/sqlite"
 )
 
@@ -98,6 +105,46 @@ func TestPostgresSetupPreflight(t *testing.T) {
 
 }
 
+const activationCertificateID = "a45c934c-20c5-4046-abb8-41fee8f59a91"
+
+func configureActivationCertificate(t *testing.T, db *sql.DB, cipher *cryptostore.Store, seed database.BootstrapSeed, now time.Time) *x509.CertPool {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+		DNSNames:    []string{"management.test", "*.ide.test", "*.preview.test"},
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(chain) {
+		t.Fatal("failed to trust fixture certificate")
+	}
+	ctx := t.Context()
+	err = database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		_, err := config.ActivateBrowserCertificate(ctx, tx,
+			config.Activation{InstallationID: seed.ID, ActorID: "owner", ActivatedAt: now},
+			config.InstallationSettings{OrganizationName: seed.Organization, DataProfile: "sqlite", ManagementOrigin: seed.Origin,
+				IDEHostPattern: seed.IDEPattern, PreviewHostPattern: seed.PreviewPattern, ExternalAuthIntervalSeconds: 14400},
+			config.BrowserCertificateInput{ID: activationCertificateID, ChainPEM: chain,
+				KeyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})}, cipher, roots)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return roots
+}
+
 // TestStagePostgresSetup copies only the initial account and current TLS
 // configuration, and keeps the destination inactive and free of old sessions.
 func TestStagePostgresSetup(t *testing.T) {
@@ -134,17 +181,15 @@ func TestStagePostgresSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer src.Close()
-	// Placeholder ciphertext is sufficient to verify byte-for-byte transfer.
+	// Stage only the selected setup state, including a real browser certificate
+	// that the authority switch can verify before retiring the bootstrap store.
 	for _, statement := range []string{
 		`INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
 		VALUES ('owner','owner@example.test','administrator','active','local','local_setup','time','time',2)`,
 		`INSERT INTO bootstrap_administrator(installation_id,user_id,password_hash,credential_ready,delivered_at,created_at)
 		SELECT id,'owner','old-temporary-hash',1,'time','time' FROM installations`,
-		`UPDATE installations SET state='configuring',config_generation=1`,
-		`INSERT INTO protected_values VALUES ('tls','fixture ciphertext'),('unrelated','not setup state')`,
-		`INSERT INTO browser_certificates VALUES ('tls','fixture chain','tls','time','time','fingerprint','active')`,
-		`INSERT INTO activated_configurations SELECT id,1,
-		'{"browserCertificateId":"tls","dataProfile":"sqlite"}','owner','time',NULL FROM installations`,
+		`UPDATE installations SET state='configuring'`,
+		`INSERT INTO protected_values VALUES ('unrelated','not setup state')`,
 	} {
 		if _, err := src.ExecContext(ctx, statement); err != nil {
 			t.Fatal(err)
@@ -159,6 +204,11 @@ func TestStagePostgresSetup(t *testing.T) {
 	}
 	cipher, err := cryptostore.New(make([]byte, 32))
 	if err != nil {
+		t.Fatal(err)
+	}
+	browserRoots := configureActivationCertificate(t, src, cipher, seed, now)
+	var sourceCiphertext string
+	if err := src.QueryRowContext(ctx, "SELECT value_json FROM protected_values WHERE id=$1", activationCertificateID).Scan(&sourceCiphertext); err != nil {
 		t.Fatal(err)
 	}
 	credentials := app.PostgresSetupCredentials{ApplicationURI: appURI, DexURI: dexURI, CAFile: os.Getenv("SHIFTBOX_TEST_SETUP_CA")}
@@ -189,7 +239,7 @@ func TestStagePostgresSetup(t *testing.T) {
 		t.Fatal("incorrect staged configuration")
 	}
 	var ciphertext string
-	if err := dst.QueryRowContext(ctx, "SELECT value_json FROM protected_values WHERE id='tls'").Scan(&ciphertext); err != nil || ciphertext != "fixture ciphertext" {
+	if err := dst.QueryRowContext(ctx, "SELECT value_json FROM protected_values WHERE id=$1", activationCertificateID).Scan(&ciphertext); err != nil || ciphertext != sourceCiphertext {
 		t.Fatal("TLS ciphertext changed")
 	}
 	for _, table := range []string{"sessions", "bootstrap_administrator"} {
@@ -211,5 +261,59 @@ func TestStagePostgresSetup(t *testing.T) {
 	}
 	if _, err := app.StagePostgresSetup(ctx, src, dst, id, credentials, cipher, now); err == nil {
 		t.Fatal("staging overwrote conflicting destination")
+	}
+	if _, err := dst.ExecContext(ctx, "UPDATE users SET primary_email='owner@example.test'"); err != nil {
+		t.Fatal(err)
+	}
+	clock := func() time.Time { return now }
+	setup := app.SetupHTTP{DB: src, InstallationID: id, Cipher: cipher, CertificateRoots: browserRoots,
+		Journal: operation.NewJournal(src, clock, uuid.NewString), Now: clock, NewID: uuid.NewString}
+	const key = "postgres-activation-fixture"
+	if _, err := setup.ActivatePostgres(ctx, dst, "owner", key); err == nil {
+		t.Fatal("activation accepted target before artifact and capacity validation")
+	}
+	if err := src.QueryRowContext(ctx, "SELECT state FROM installations").Scan(&state); err != nil || state != "configuring" {
+		t.Fatalf("readiness failure changed source state to %s, error %v", state, err)
+	}
+	if _, err := dst.ExecContext(ctx, `INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,
+		owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state,is_default)
+		VALUES('fixture','fixture','amd64','test','development','1','[]','{}','{}','{}',repeat('a',64),'fixture.utm','owner','now','available',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dst.ExecContext(ctx, `INSERT INTO capacity_budgets(installation_id,cpu_limit,memory_mib_limit,disk_mib_limit,updated_by,updated_at,version)
+		VALUES($1,4,4096,10240,'owner','now',1)`, id); err != nil {
+		t.Fatal(err)
+	}
+	first, err := setup.ActivatePostgres(ctx, dst, "owner", key)
+	if err != nil || first.Status != "succeeded" {
+		t.Fatalf("activation = %s, %v, want succeeded", first.Status, err)
+	}
+	again, err := setup.ActivatePostgres(ctx, dst, "owner", key)
+	if err != nil || again.ID != first.ID {
+		t.Fatalf("activation replay = %s, %v, want %s", again.ID, err, first.ID)
+	}
+	if err := dst.QueryRowContext(ctx, "SELECT state FROM installations").Scan(&state); err != nil || state != "active" {
+		t.Fatalf("target state = %s, %v, want active", state, err)
+	}
+	runtimeURI, err := url.Parse(appURI)
+	if err != nil {
+		t.Fatal("invalid fixture connection URI")
+	}
+	query := runtimeURI.Query()
+	query.Set("sslrootcert", credentials.CAFile)
+	runtimeURI.RawQuery = query.Encode()
+	runtimeDB, active, err := app.OpenActiveDatabase(ctx, config.Config{InstallationDir: t.TempDir(), DataProfile: "postgres",
+		PostgresURI: runtimeURI.String(), ManagementOrigin: seed.Origin, ExternalAuthIntervalSeconds: 14400})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeDB.Close()
+	if active.InstallationID != id || active.Settings.DataProfile != "postgres" {
+		t.Fatal("runtime selected a different installation or data profile")
+	}
+	var revoked string
+	if err := src.QueryRowContext(ctx, `SELECT i.state,s.revocation_reason FROM installations i CROSS JOIN sessions s
+		WHERE s.id=$1 AND s.revoked_at IS NOT NULL`, session.ID).Scan(&state, &revoked); err != nil || state != "blocked" || revoked != "setup_activated" {
+		t.Fatalf("source state = %s / %s, %v, want blocked and revoked", state, revoked, err)
 	}
 }
