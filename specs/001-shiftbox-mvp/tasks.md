@@ -1779,6 +1779,12 @@ This checkpoint does not itself change the goal status.
   to retry against an occupied target. Replacement configuration,
   command integration, cross-schema failure recovery, and the full
   recovery review remain open.
+- T112 records ordered identity, provider, and authorization/retention
+  decisions. Provider ownership conflicts block approval, and activation
+  requires fresh matching evidence and a current administrator. Approval
+  commits review history and reopens the installation with fresh sign-in.
+  Recovery session issuance, operational route wiring, and live recovery
+  acceptance remain open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
