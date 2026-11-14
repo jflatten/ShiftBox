@@ -32,6 +32,7 @@ test.describe('operations with a fixture controller', () => {
       if (pathname.endsWith('/infrastructure')) return route.fulfill({ json: {
         provider: { name: 'UTM', version: 'fixture', architecture: 'amd64' }, capacity: resources, version: 1, conditions: [],
       } });
+      if (pathname.endsWith('/workspaces')) return route.fulfill({ json: { items: [] } });
       if (pathname.endsWith('/maintenance')) return route.fulfill({ json: [{
         id: operationId, operationId, releaseId: 'fixture-release', deadline: '2099-01-01T12:00:00Z',
         state: rolledBack ? 'blocked' : 'active',

@@ -33,6 +33,7 @@ test('keeps certificate and maintenance forms distinct after status loads', asyn
     if (input === '/api/v1/session') return json({ ...session, permissions: [...session.permissions, 'maintenance.manage'] });
     if (input === '/api/v1/admin/infrastructure') return json(status);
     if (input === '/api/v1/admin/maintenance') return json([]);
+    if (input === '/api/v1/workspaces') return json({ items: [] });
     throw new Error('unexpected request');
   });
   try {

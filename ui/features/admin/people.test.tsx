@@ -171,7 +171,7 @@ test('confirms offboarding and shows a failed workspace stop', async () => {
     if (input === '/api/v1/session') return json({ ...session, permissions: ['user.list', 'user.disable'] });
     if (input === '/api/v1/admin/users') return json([disabled ? { ...account, membershipState: 'disabled' } : account]);
     if (input === '/api/v1/workspaces?owner=target') return json({ items: [
-      { id: 'workspace-one', observedState: 'running', currentOperationId: null },
+      { id: 'workspace-one', name: 'Documentation', observedState: 'running', currentOperationId: null },
     ], nextCursor: null });
     if (input === '/api/v1/admin/users/target' && init?.method === 'PATCH') {
       disabled = true;
@@ -189,11 +189,12 @@ test('confirms offboarding and shows a failed workspace stop', async () => {
   render(<Providers><People /></Providers>);
   await user.click(await screen.findByRole('button', { name: 'Disable account' }));
   const dialog = screen.getByRole('dialog');
-  expect(await within(dialog).findByText('workspace-one')).toBeVisible();
+  expect(await within(dialog).findByText('Documentation')).toBeVisible();
   expect(within(dialog).getByText(/files are preserved/)).toBeVisible();
   expect(fetch.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
   await user.click(within(dialog).getByRole('button', { name: 'Confirm disable' }));
   expect(await within(dialog).findByText('Provider refused the stop.')).toBeVisible();
+  expect(within(dialog).getByRole('link', { name: 'Documentation' })).toHaveAttribute('href', '/workspaces/?id=workspace-one');
   expect(within(dialog).getByText('Sign-in sessions and tracked connections closed.')).toBeVisible();
   expect(fetch).toHaveBeenCalledWith('/api/v1/admin/users/target', expect.objectContaining({
     method: 'PATCH', body: '{"membershipState":"disabled"}',

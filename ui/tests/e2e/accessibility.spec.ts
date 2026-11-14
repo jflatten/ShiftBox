@@ -279,6 +279,7 @@ test('maintenance and certificate progress', async ({ page }) => {
   const certificateLabels: [string, string, string] = ['Validate certificate', 'Install certificate', 'Verify certificate'];
   await fixture(page, (route, path) => {
     if (path.endsWith('/session')) return route.fulfill({ json: admin(['infrastructure.view', 'infrastructure.manage', 'maintenance.manage']) });
+    if (path.endsWith('/workspaces')) return route.fulfill({ json: { items: [] } });
     if (path.endsWith('/infrastructure')) return route.fulfill({ json: {
       provider: { name: 'UTM', version: 'fixture', architecture: 'amd64' }, capacity: resources, version: 1, conditions: [],
     } });

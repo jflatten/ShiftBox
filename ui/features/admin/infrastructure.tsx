@@ -55,7 +55,7 @@ export function Infrastructure() {
         </>
       ) : null}
       {allowed && current.permissions.includes('maintenance.manage') ? (
-        <Maintenance key={`maintenance:${current.user.id}`} csrfToken={current.csrfToken} />
+        <Maintenance key={`maintenance:${current.user.id}`} userId={current.user.id} csrfToken={current.csrfToken} capacity={data?.capacity} />
       ) : null}
       {allowed && current.organizationSecretScopeId && current.permissions.includes('secret.manage_organization') ? (
         <Secrets key={current.user.id + current.organizationSecretScopeId} scope="organization" scopeID={current.organizationSecretScopeId}

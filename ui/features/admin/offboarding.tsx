@@ -12,6 +12,16 @@ interface StopOperation {
   operationId: string;
 }
 
+interface OwnedWorkspace {
+  id: string;
+  name?: string;
+  observedState: string;
+}
+
+function workspaceLabel(workspace?: OwnedWorkspace) {
+  return workspace?.name && workspace.name !== workspace.id ? workspace.name : 'Unnamed workspace';
+}
+
 export function Offboarding({ person, csrfToken, onClose, refresh }: {
   person: { id: string; primaryEmail: string; version: number };
   csrfToken: string;
@@ -24,11 +34,11 @@ export function Offboarding({ person, csrfToken, onClose, refresh }: {
   const focusCompletion = useCallback((node: HTMLParagraphElement | null) => { node?.focus(); }, []);
   const stale = error instanceof APIProblemError && error.problem.status === 412;
   const closurePending = error instanceof APIProblemError && error.problem.code === 'user.connection_closure_pending';
-  const workspaces = useQuery<{ id: string; observedState: string }[]>({
+  const workspaces = useQuery<OwnedWorkspace[]>({
     queryKey: ['offboarding-workspaces', person.id, person.version],
     enabled: stops === undefined,
     queryFn: async ({ signal }) => {
-      const items: { id: string; observedState: string }[] = [];
+      const items: OwnedWorkspace[] = [];
       let cursor: string | null = null;
       do {
         const params = new URLSearchParams({ owner: person.id });
@@ -84,14 +94,15 @@ export function Offboarding({ person, csrfToken, onClose, refresh }: {
             {workspaces.data?.length ? <Stack gap="xs">
               <Title order={3}>Owned workspaces</Title>
               {workspaces.data.map(workspace => <Text size="sm" key={workspace.id}>
-                <Text component="span">{workspace.id}</Text> · {workspaceState(workspace.observedState)}
+                <Text component="span">{workspaceLabel(workspace)}</Text> · {workspaceState(workspace.observedState)}
               </Text>)}
             </Stack> : null}
           </>
         ) : (
           <>
             <Text role="status" tabIndex={-1} ref={focusCompletion}>Sign-in sessions and tracked connections closed.</Text>
-            {stops.length ? stops.map(stop => <StopProgress key={stop.operationId} stop={stop} />) :
+            {stops.length ? stops.map(stop => <StopProgress key={stop.operationId} stop={stop}
+              name={workspaceLabel(workspaces.data?.find(workspace => workspace.id === stop.workspaceId))} />) :
               <Text>No workspace stops were needed.</Text>}
           </>
         )}
@@ -106,11 +117,11 @@ export function Offboarding({ person, csrfToken, onClose, refresh }: {
   );
 }
 
-function StopProgress({ stop }: { stop: StopOperation }) {
+function StopProgress({ stop, name }: { stop: StopOperation; name: string }) {
   const operation = useOperation(stop.operationId);
   return (
     <Stack gap="xs">
-      <Anchor href={`/workspaces/?id=${encodeURIComponent(stop.workspaceId)}`}>{stop.workspaceId}</Anchor>
+      <Anchor href={`/workspaces/?id=${encodeURIComponent(stop.workspaceId)}`}>{name}</Anchor>
       {operation.isPending ? <Text role="status">Loading stop progress…</Text> : null}
       {operation.accessDenied ? <Text role="alert">Workspace stop progress is unavailable.</Text> : null}
       {operation.isError && !operation.accessDenied ? <APIProblemView error={operation.error} /> : null}
