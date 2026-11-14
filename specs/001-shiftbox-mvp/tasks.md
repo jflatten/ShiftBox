@@ -90,7 +90,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T034 [P] [US1] Write failing guest protocol tests for mTLS-derived identity, N/N−1 compatibility, poll replay, operation fencing, enrollment replay/alternate-key denial, and readiness evidence in `tests/contract/guest_protocol_test.go`
 - [ ] T035 [P] [US1] Write failing workspace-domain tests for pinned launch snapshots, capacity reservation timing, desired/observed separation, owner privacy, lifecycle transitions, repair automation suppression, and retained-data contracts in `internal/workspace/service_test.go`
 - [ ] T036 [P] [US1] Write failing workspace API tests for `/workspaces`, lifecycle actions, operation lookup/events, conditional versions, idempotency, capacity problems, and short-lived entry grants in `tests/contract/workspace_api_test.go`
-- [ ] T037 [P] [US1] Write failing guest executor tests for persisted operation attempts, repository preparation, prebuilt-image and Dockerfile/build-definition Dev Containers, declared features, lifecycle-hook ordering/failure, separate declared `waitFor` and proxy readiness, rebuild retention checks, and repair without project automation in `internal/guest/executor_test.go`
+- [X] T037 [P] [US1] Write failing guest executor tests for persisted operation attempts, repository preparation, prebuilt-image and Dockerfile/build-definition Dev Containers, declared features, lifecycle-hook ordering/failure, separate declared `waitFor` and proxy readiness, rebuild retention checks, and repair without project automation in `internal/guest/executor_test.go`
 - [ ] T038 [P] [US1] Write failing UI tests for setup forms, first-invalid focus, launch review, capacity refusal, server-driven progress, desired/observed state, retained-data copy, and repair explanation in `ui/features/setup/setup.test.tsx` and `ui/features/workspaces/workspaces.test.tsx`
 - [ ] T039 [P] [US1] Write failing Playwright MVP journey for keyboard-only setup, launch through SSE reconnect, delayed IDE readiness, file persistence across stop/start/rebuild, and repair access in `ui/tests/e2e/mvp-workspace.spec.ts`
 
@@ -2520,3 +2520,11 @@ This checkpoint does not itself change the goal status.
 - Guest, authenticated polling, API, worker, and UI tests cover the
   combined action. A release artifact and full UTM browser journey
   remain to be exercised under T039 and T061.
+
+### Guest executor coverage
+
+- T037 adds executable tests with the pinned Dev Container CLI for a
+  prebuilt image, a Dockerfile, a local Feature, and required hook failure.
+  Tests reopen the operation journal to verify the `waitFor` milestone
+  precedes the later hook. The fixtures passed against the Debian and
+  amd64 Ubuntu images under the Go race detector.

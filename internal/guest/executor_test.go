@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestGuestShutdownReplay checks that a lost acknowledgement does not send
@@ -566,5 +569,173 @@ func TestDevContainerLaterHookFailure(t *testing.T) {
 	}
 	if err := runtime.finishSetup(t.Context(), evidence); err == nil {
 		t.Error("finishSetup(required hooks passed, later hook failed) = nil, want an error")
+	}
+}
+
+// TestGuestExecutorWithDevContainerCLI exercises a real prebuilt image and
+// Dockerfile, installs a local Feature, and measures which hooks ran at waitFor.
+// Run it with SHIFTBOX_TEST_DEVCONTAINER_CLI set to the pinned CLI executable
+// and SHIFTBOX_TEST_DEVCONTAINER_IMAGE set to a preloaded glibc Linux image.
+func TestGuestExecutorWithDevContainerCLI(t *testing.T) {
+	cli := os.Getenv("SHIFTBOX_TEST_DEVCONTAINER_CLI")
+	if cli == "" {
+		t.Skip("set SHIFTBOX_TEST_DEVCONTAINER_CLI to enable the disposable Docker fixture")
+	}
+	image := os.Getenv("SHIFTBOX_TEST_DEVCONTAINER_IMAGE")
+	if !filepath.IsAbs(cli) || image == "" || strings.ContainsAny(image, " \t\r\n") {
+		t.Fatal("set an absolute CLI path and a preloaded Docker image")
+	}
+	docker, err := exec.LookPath("docker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cliVersion, err := exec.CommandContext(t.Context(), cli, "--version").Output()
+	if err != nil || strings.TrimSpace(string(cliVersion)) != "0.90.0" {
+		t.Fatalf("Dev Container CLI version = %q, %v, want 0.90.0", cliVersion, err)
+	}
+	if err := exec.CommandContext(t.Context(), docker, "image", "inspect", "--", image).Run(); err != nil {
+		t.Fatalf("inspect preloaded image %q: %v", image, err)
+	}
+
+	for _, fixture := range []struct {
+		name    string
+		build   bool
+		badHook bool
+	}{
+		{name: "prebuilt-image"},
+		{name: "dockerfile", build: true},
+		{name: "required-hook-failure", badHook: true},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+			defer cancel()
+			state := t.TempDir()
+			project := filepath.Join(state, "project")
+			configDir := filepath.Join(project, ".devcontainer")
+			featureDir := filepath.Join(configDir, "local-feature")
+			if err := os.MkdirAll(featureDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			write := func(path, content string, mode os.FileMode) {
+				t.Helper()
+				if err := os.WriteFile(path, []byte(content), mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(filepath.Join(featureDir, "devcontainer-feature.json"), `{"id":"local-feature","version":"1.0.0","name":"Fixture"}`, 0600)
+			write(filepath.Join(featureDir, "install.sh"), "#!/bin/sh\nset -eu\ntouch /usr/local/share/shiftbox-feature-installed\n", 0700)
+			checkFeature := "test -e /usr/local/share/shiftbox-feature-installed"
+			config := map[string]any{
+				"image": image, "features": map[string]any{"./local-feature": map[string]any{}},
+				"waitFor": "postCreateCommand", "initializeCommand": "echo initialized > lifecycle",
+				"updateContentCommand": "echo updated >> lifecycle",
+				"postCreateCommand":    "echo required >> lifecycle", "postStartCommand": "echo later >> lifecycle",
+				"postAttachCommand": "echo attached >> lifecycle",
+			}
+			if fixture.build {
+				delete(config, "image")
+				config["build"] = map[string]string{"dockerfile": "Dockerfile"}
+				write(filepath.Join(configDir, "Dockerfile"), "FROM "+image+"\nRUN touch /usr/local/share/shiftbox-dockerfile\n", 0600)
+				checkFeature += " && test -e /usr/local/share/shiftbox-dockerfile"
+			}
+			config["onCreateCommand"] = checkFeature + " && echo created >> lifecycle"
+			if fixture.badHook {
+				config["postCreateCommand"] = "echo required >> lifecycle && false"
+			}
+			encoded, err := json.Marshal(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			write(filepath.Join(configDir, "devcontainer.json"), string(encoded), 0600)
+
+			// Isolate Docker objects from workspace agents and parallel test runs.
+			label := "shiftbox.executor-fixture=" + filepath.Base(state) + "-" + filepath.Base(filepath.Dir(state))
+			t.Cleanup(func() {
+				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 15*time.Second)
+				defer cancel()
+				ids, err := exec.CommandContext(cleanupCtx, docker, "ps", "-aq", "--filter", "label="+label).Output()
+				if err == nil && len(strings.Fields(string(ids))) != 0 {
+					err = exec.CommandContext(cleanupCtx, docker, append([]string{"rm", "--force"}, strings.Fields(string(ids))...)...).Run()
+				}
+				if err != nil {
+					t.Errorf("remove Docker fixture %q: %v", label, err)
+				}
+			})
+			journalPath := filepath.Join(state, "operation.json")
+			journal, err := loadLocalJournal(journalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dispatch := ensureDispatch()
+			dispatch.Config = ".devcontainer/devcontainer.json"
+			dispatch.Repository = "https://github.com/example/fixture.git"
+			// Native Git checkout and authorization are covered in repository_test.go.
+			// Seed the receipt so the real executor uses its production split between
+			// bringing up the container and running the remote lifecycle commands.
+			receipt := repositoryReceipt(project)
+			if err := os.Mkdir(filepath.Dir(receipt), 0700); err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := json.Marshal(repositoryEvidence{
+				repositorySource: repositorySource{URL: dispatch.Repository, Config: dispatch.Config},
+				Path:             project,
+				Commit:           strings.Repeat("a", 40),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			write(receipt, string(prepared), 0600)
+			runtime := devContainer{
+				workspace:       project,
+				config:          dispatch.Config,
+				repository:      &repositoryPreparation{project: project},
+				setProjectOwner: func(context.Context, string, int, int) error { return nil },
+				run: func(ctx context.Context, executable string, args ...string) ([]byte, error) {
+					if executable == "/usr/bin/docker" {
+						return runDevContainerCLI(ctx, docker, args...)
+					}
+					if executable != devContainerCLI {
+						t.Fatalf("executor invoked %q, want Docker or the pinned Dev Container CLI", executable)
+					}
+					args = slices.Clone(args)
+					dockerArg, labelArg := slices.Index(args, "--docker-path"), slices.Index(args, "--id-label")
+					if dockerArg < 0 || labelArg < 0 || dockerArg+1 == len(args) || labelArg+1 == len(args) {
+						t.Fatalf("Dev Container CLI arguments = %q, want an explicit Docker path and workspace label", args)
+					}
+					args[dockerArg+1], args[labelArg+1] = docker, label
+					return runDevContainerCLI(ctx, cli, args...)
+				},
+			}
+			checkHooks := func(want string) {
+				t.Helper()
+				got, err := os.ReadFile(filepath.Join(project, "lifecycle"))
+				if err != nil || string(got) != want {
+					t.Errorf("lifecycle file = %q, %v, want %q", got, err, want)
+				}
+			}
+			const requiredHooks = "initialized\ncreated\nupdated\nrequired\n"
+			report, err := journal.ensureDevelopment(ctx, dispatch, runtime)
+			if fixture.badHook {
+				if err != nil || report.Status != "failed" || report.Problem != problemRequired || report.Evidence.WaitForReached {
+					t.Errorf("ensureDevelopment(required hook failure) = %+v, %v, want bounded failure without waitFor", report, err)
+				}
+				checkHooks(requiredHooks)
+				return
+			}
+			if err != nil || report.Status != "running" || !report.Evidence.WaitForReached || journal.state.Operation.Connection.WaitFor != "postCreateCommand" {
+				t.Fatalf("ensureDevelopment(first dispatch) = %+v, %v, want waitFor evidence", report, err)
+			}
+			checkHooks(requiredHooks)
+
+			journal, err = loadLocalJournal(journalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resumed, err := journal.ensureDevelopment(ctx, dispatch, runtime)
+			if err != nil || resumed.Status != "succeeded" || resumed.Attempt != 1 || resumed.Evidence != report.Evidence {
+				t.Errorf("ensureDevelopment(after restart) = %+v, %v, want success in the same attempt and container", resumed, err)
+			}
+			checkHooks(requiredHooks + "later\n")
+		})
 	}
 }
