@@ -796,3 +796,19 @@ This checkpoint does not itself change the goal status.
   an explicit loopback bind; password issuance/change, resumable setup state,
   setup sessions, activation and the CLI remain unfinished. T030/T043 are not
   marked complete by this boundary alone.
+
+### Resumable Dex credential creation prerequisite
+
+- Added the official Dex administration API pinned to the same source revision as
+  the verified Dex executable. The adapter uses CreatePassword and checks an
+  existing email's stable user ID; it never updates a password during a bootstrap
+  retry. A different identity at that email is a conflict, never an automatic merge.
+- Added 32-byte random temporary-password generation and bcrypt hashing. The
+  adapter accepts hashes only and redacts transport/API failures. Tests prove
+  retry preserves a changed credential, identity collisions fail, and generated
+  passwords are independent and verify against their hashes.
+- Identity/auth/app/contract race suites pass with the pinned Dex fixture enabled;
+  formatting and vet pass. Password adapter behavior is currently unit-tested
+  against the API boundary; live authenticated gRPC administration, durable
+  issuance/delivery state, forced change, and one-time output remain pending.
+  T030/T043 remain incomplete.
