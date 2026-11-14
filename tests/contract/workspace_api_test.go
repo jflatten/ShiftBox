@@ -109,6 +109,9 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/operations/{operationId}", &detail)
 	mux.Handle("GET /api/v1/operations/{operationId}/events", &stream)
+	listWorkspace, getWorkspace := web.WorkspaceReadHandlers(db, origin, clock)
+	mux.Handle("GET /api/v1/workspaces", &listWorkspace)
+	mux.Handle("GET /api/v1/workspaces/{workspaceId}", &getWorkspace)
 	path := "/api/v1/operations/" + op.ID
 	lookup := func(path string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -122,6 +125,27 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	check(response, 200, "")
 	if response.Body.String() != accepted.Body.String() {
 		t.Error("operation detail differs from launch response")
+	}
+	workspacePath := "/api/v1/workspaces/" + *op.WorkspaceID
+	response = lookup(workspacePath)
+	check(response, 200, "")
+	var view struct {
+		OwnerID            string `json:"ownerId"`
+		DesiredState       string `json:"desiredState"`
+		ObservedState      string `json:"observedState"`
+		CurrentOperationID string `json:"currentOperationId"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil ||
+		view.OwnerID != "member" || view.DesiredState != "running" || view.ObservedState != "unknown" ||
+		view.CurrentOperationID != op.ID || response.Header().Get("ETag") != `"1"` {
+		t.Fatalf("workspace view = %+v, %v, want member-owned pending launch", view, err)
+	}
+	check(lookup("/api/v1/workspaces?state=running"), 200, "")
+	if response := lookup("/api/v1/workspaces?state=running"); response.Body.String() != "{\"items\":[],\"nextCursor\":null}\n" {
+		t.Errorf("observed running filter included an unprovisioned workspace: %s", response.Body)
+	}
+	if response := lookup("/api/v1/workspaces?state=unknown"); !strings.Contains(response.Body.String(), *op.WorkspaceID) {
+		t.Errorf("owner list omitted workspace: %s", response.Body)
 	}
 	claim, err := journal.Claim(ctx, op.ID, "fixture-worker", time.Minute)
 	if err != nil {
@@ -174,6 +198,24 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	token = otherToken
+	check(lookup(workspacePath), 404, "workspace.not_found")
+	if response := lookup("/api/v1/workspaces"); response.Code != 200 || strings.Contains(response.Body.String(), *op.WorkspaceID) {
+		t.Errorf("other member saw a foreign workspace: %d %s", response.Code, response.Body)
+	}
+	check(lookup("/api/v1/workspaces?cursor=invalid"), 400, "request.invalid_filter")
+	if _, err := db.Exec("UPDATE users SET role='administrator' WHERE id='owner'"); err != nil {
+		t.Fatal(err)
+	}
+	check(lookup(workspacePath), 200, "")
+	if response := lookup("/api/v1/workspaces"); response.Code != 200 || !strings.Contains(response.Body.String(), *op.WorkspaceID) {
+		t.Errorf("administrator list omitted workspace: %d %s", response.Code, response.Body)
+	}
+	if response := lookup("/api/v1/workspaces?cursor=" + *op.WorkspaceID); response.Body.String() != "{\"items\":[],\"nextCursor\":null}\n" {
+		t.Errorf("cursor replayed the previous item: %d %s", response.Code, response.Body)
+	}
+	if _, err := db.Exec("UPDATE users SET role='member' WHERE id='owner'"); err != nil {
+		t.Fatal(err)
+	}
 	check(lookup(path), 404, "operation.not_found")
 	check(lookup(path+"/events"), 404, "operation.not_found")
 	check(lookup("/api/v1/operations/"+uuid.NewString()), 404, "operation.not_found")

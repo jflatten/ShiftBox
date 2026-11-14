@@ -1473,3 +1473,14 @@ This checkpoint does not itself change the goal status.
   revocation registry and rechecks current session and scope.
 - Web, operation and HTTP contract race tests passed. The production
   management router and workspace UI still need to mount these routes.
+
+### Workspace management read endpoints
+
+- Added owner-scoped workspace listing and detail, with administrator
+  visibility, observed-state filtering, cursor pagination, and a version
+  ETag for detail reads.
+- The launch API test verifies the current operation and separate requested
+  and observed states after launch. Member privacy and administrator reads
+  are tested alongside operation replay and the contract suite.
+- Controller startup composition and the workspace UI still need to mount
+  and consume these endpoints.
