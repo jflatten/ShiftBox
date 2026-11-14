@@ -246,7 +246,7 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 		AND outcome='allowed' AND actor_id='owner' AND resource_id=$1`, workspace).Scan(&audited); err != nil || audited != 1 {
 		t.Fatalf("administrator entry audit count = %d (%v), want one before redemption", audited, err)
 	}
-	adminCookies := send("GET", adminGrant.ExchangeURL, "", nil, 303).Result().Cookies()
+	adminCookies := send("GET", adminGrant.ExchangeURL, "", nil, 200).Result().Cookies()
 	if len(adminCookies) != 1 {
 		t.Fatal("administrator entry did not issue a service cookie")
 	}
@@ -258,12 +258,13 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 	send("GET", repairGrant.ExchangeURL, "", nil, 403)
 	sibling := strings.Replace(serviceOrigin, "preview-8080", "preview-9000", 1)
 	send("GET", sibling+destination.RequestURI(), "", nil, 403)
-	redeemed := send("GET", grant.ExchangeURL, "", nil, 303)
+	redeemed := send("GET", grant.ExchangeURL, "", nil, 200)
 	cookies := redeemed.Result().Cookies()
 	if len(cookies) != 1 || cookies[0].Domain != "" || cookies[0].Path != "/" || !cookies[0].Secure ||
-		!cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode || redeemed.Header().Get("Location") != "/" ||
-		redeemed.Header().Get("Referrer-Policy") != "no-referrer" {
-		t.Fatal("redemption did not produce a host-only cookie and a clean redirect")
+		!cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode || redeemed.Header().Get("Location") != "" ||
+		redeemed.Header().Get("Referrer-Policy") != "no-referrer" || !strings.Contains(redeemed.Body.String(), `location.replace("/")`) ||
+		strings.Contains(redeemed.Body.String(), destination.RawQuery) {
+		t.Fatal("redemption did not produce a host-only cookie and clean same-origin navigation")
 	}
 	send("GET", grant.ExchangeURL, "", nil, 403)
 	send("GET", serviceOrigin+"/", "", nil, 403)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -18,6 +19,8 @@ import (
 // ServiceEntryPath exchanges an origin grant before starting a workspace session.
 const ServiceEntryPath = "/_shiftbox/entry"
 const serviceCookie = "__Host-shiftbox_origin"
+
+const serviceEntryDocument = `<!doctype html><meta charset="utf-8"><title>Open workspace</title><script>location.replace("/")</script><a href="/">Open workspace</a>`
 
 // ServiceProxyHandler serves configured IDE, preview, and repair origins. Forward
 // receives requests whose service credential and current authority were checked.
@@ -138,8 +141,11 @@ func (s serviceProxy) exchange(w http.ResponseWriter, r *http.Request, workspace
 	}
 	http.SetCookie(w, &http.Cookie{Name: serviceCookie, Value: exchange.Cookie, Path: "/", Expires: deadline,
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
-	w.Header().Set("Location", "/")
-	w.WriteHeader(http.StatusSeeOther)
+	// Commit the entry document on the service origin before navigating. A
+	// server redirect would carry the management origin's cross-site context.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'sha256-1tDPdeWNjdqUkS5UOsNLzR7O2uYYppPG16kqscmrgtQ='; frame-ancestors 'none'; base-uri 'none'")
+	_, _ = io.WriteString(w, serviceEntryDocument)
 }
 
 func authorizeService(ctx context.Context, tx *sql.Tx, authority proxy.OriginAuthority, resource auth.Resource, now time.Time) (time.Time, error) {
