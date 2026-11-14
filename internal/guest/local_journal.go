@@ -33,7 +33,7 @@ func (d guestDispatch) valid() bool {
 	if err != nil || id == uuid.Nil || id.String() != d.ID || d.Generation < 1 || d.Version < 1 {
 		return false
 	}
-	if d.Command == stageGuestUpdateCommand {
+	if d.Command == stageGuestUpdateCommand || d.Command == activateGuestUpdateCommand {
 		return d.Config == "" && d.Repository == "" && d.Ref == "" && release.ValidMigrationReleaseID(d.ProductRelease)
 	}
 	if d.ProductRelease != "" {
@@ -174,6 +174,11 @@ func (s localJournalState) valid() bool {
 	}
 	hasConnection := dockerContainerID.MatchString(op.Connection.ID) && validWaitFor(op.Connection.WaitFor)
 	noConnection := op.Connection == (containerConnection{})
+	if op.Command == activateGuestUpdateCommand {
+		return noConnection && validStagedUpdateDigest(op.UpdateDigest) &&
+			(op.Phase == localSucceeded && op.Problem == "" ||
+				op.Phase == localFailed && op.Problem == problemGuestUpdateRollback)
+	}
 	if op.Command == stageGuestUpdateCommand {
 		if !noConnection {
 			return false

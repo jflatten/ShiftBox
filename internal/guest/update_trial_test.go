@@ -1,11 +1,101 @@
 package guest
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"path/filepath"
 	"testing"
 )
+
+// TestActivateStagedGuestUpdate follows the staged operation across a
+// supervisor restart and acknowledges success only after trial confirmation.
+func TestActivateStagedGuestUpdate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "operation.json")
+	journal, err := loadLocalJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte("staged fixture"))
+	dispatch := guestDispatch{ID: "99999999-0000-4000-8000-000000000001", Generation: 1, Version: 2,
+		Command: stageGuestUpdateCommand, ProductRelease: "candidate"}
+	if err := journal.stageUpdate(t.Context(), dispatch, func(context.Context, string) ([sha256.Size]byte, error) {
+		return digest, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	activate := dispatch
+	activate.Command = "activate-guest-update"
+	other := activate
+	other.ProductRelease = "other"
+	if err := journal.activateUpdate(other); !errors.Is(err, errGuestDispatchConflict) {
+		t.Errorf("activation of a different release = %v, want conflict", err)
+	}
+	if err := journal.activateUpdate(activate); !errors.Is(err, errGuestUpdateRestart) {
+		t.Fatalf("first activation = %v, want supervised restart", err)
+	}
+	trialPath := filepath.Join(dir, "update-trial.json")
+	boot, err := nextGuestUpdateBinary(trialPath)
+	if err != nil || boot.Digest != digest {
+		t.Fatalf("trial boot = %+v (%v), want staged digest", boot, err)
+	}
+	journal, err = loadLocalJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.activateUpdate(activate); err != nil {
+		t.Fatal(err)
+	}
+	if report := journal.report(); report.Step != "update.stage" {
+		t.Errorf("unconfirmed trial report = %+v, want staging receipt only", report)
+	}
+	if err := confirmGuestUpdateTrial(trialPath, boot); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.activateUpdate(activate); err != nil {
+		t.Fatal(err)
+	}
+	if report := journal.report(); report.Step != "update.activate" || report.Status != "succeeded" {
+		t.Errorf("confirmed trial report = %+v, want successful activation", report)
+	}
+}
+
+// TestActivateStagedGuestUpdateReportsRollback checks that redelivery records
+// the failed trial and does not start another one.
+func TestActivateStagedGuestUpdateReportsRollback(t *testing.T) {
+	dir := t.TempDir()
+	journal, err := loadLocalJournal(filepath.Join(dir, "operation.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte("failed candidate"))
+	dispatch := guestDispatch{ID: "99999999-0000-4000-8000-000000000001", Generation: 1, Version: 2,
+		Command: stageGuestUpdateCommand, ProductRelease: "candidate"}
+	if err := journal.stageUpdate(t.Context(), dispatch, func(context.Context, string) ([sha256.Size]byte, error) {
+		return digest, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dispatch.Command = activateGuestUpdateCommand
+	if err := journal.activateUpdate(dispatch); !errors.Is(err, errGuestUpdateRestart) {
+		t.Fatalf("first activation = %v, want supervised restart", err)
+	}
+	trial := filepath.Join(dir, "update-trial.json")
+	for range 2 {
+		if _, err := nextGuestUpdateBinary(trial); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		if err := journal.activateUpdate(dispatch); err != nil {
+			t.Fatal(err)
+		}
+		if report := journal.report(); report.Step != "update.activate" || report.Status != "failed" || report.Problem != problemGuestUpdateRollback {
+			t.Errorf("rolled-back trial report = %+v, want rollback evidence", report)
+		}
+	}
+}
 
 // TestGuestUpdateTrialRollback verifies that an interrupted trial falls back
 // on the next supervisor start and cannot be retried by repeating the request.

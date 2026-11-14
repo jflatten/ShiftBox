@@ -151,14 +151,18 @@ func applyGuestPoll(ctx context.Context, journal *localJournal, runtime devConta
 	if err := decodeAgentJSON(bytes.NewReader(raw), &dispatch); err != nil {
 		return errors.New("invalid guest operation dispatch")
 	}
-	if dispatch.Command == stageGuestUpdateCommand {
+	if dispatch.Command == stageGuestUpdateCommand || dispatch.Command == activateGuestUpdateCommand {
 		if dispatch.Type != "update" || desiredState != "running" && desiredState != "stopped" ||
 			dispatch.Arguments.RepositoryURL != "" || dispatch.Arguments.RepositoryRef != "" ||
 			dispatch.Arguments.Devcontainer != "" || len(dispatch.Arguments.RetainedMounts) != 0 {
 			return errors.New("invalid guest update dispatch")
 		}
-		return journal.stageUpdate(ctx, guestDispatch{ID: dispatch.ID, Version: dispatch.Version, Generation: generation,
-			Command: dispatch.Command, ProductRelease: dispatch.Arguments.ProductRelease}, journal.downloadUpdate)
+		bound := guestDispatch{ID: dispatch.ID, Version: dispatch.Version, Generation: generation,
+			Command: dispatch.Command, ProductRelease: dispatch.Arguments.ProductRelease}
+		if bound.Command == activateGuestUpdateCommand {
+			return journal.activateUpdate(bound)
+		}
+		return journal.stageUpdate(ctx, bound, journal.downloadUpdate)
 	}
 	if dispatch.Arguments.ProductRelease != "" {
 		return errors.New("unexpected guest update release")

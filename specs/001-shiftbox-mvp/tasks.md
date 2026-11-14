@@ -1718,8 +1718,10 @@ This checkpoint does not itself change the goal status.
   changed receipts are rejected. The image build now installs a supplied
   Ed25519 publisher public key in the guest's fixed trust path. The offline
   signing command matches the pinned manifest before publishing a detached
-  signature. Native signed-update validation, activation, and prior-state
-  restoration remain open under T095.
+  signature. Guest activation now starts a supervisor trial only for the
+  staged operation and release, then reports confirmation or rollback on
+  redelivery. Controller activation dispatch and receipt, native signed-update
+  validation, and prior-state restoration remain open under T095.
 
 ### Migration preflight CLI
 

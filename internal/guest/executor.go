@@ -44,6 +44,9 @@ func (j *localJournal) report() OperationReport {
 	case stageGuestUpdateCommand:
 		report.Step = "update.stage"
 		report.Evidence.UpdateDigest = op.UpdateDigest
+	case activateGuestUpdateCommand:
+		report.Step = "update.activate"
+		report.Evidence.UpdateDigest = op.UpdateDigest
 	case "shutdown-for-stop":
 		report.Step = "workload.shutdown"
 	case enterRepairCommand:
