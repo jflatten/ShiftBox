@@ -1779,6 +1779,10 @@ This checkpoint does not itself change the goal status.
   T120 reopens the controller database after staging and activation receipt
   writes with an outstanding worker lease. Both confirmed activation and
   rollback settle the same persisted target and campaign after restart.
+  Verification waits for the assigned release and protocol even after the
+  supervisor trial succeeds. The campaign worker also resumes across
+  restart after committing completed or blocked state and before finishing
+  its journal step.
   The restart suite also interrupts a management boot and graceful shutdown
   after each provider effect. The replacement worker honors the outstanding
   lease, requires fresh guest contact after boot, and verifies stopped power

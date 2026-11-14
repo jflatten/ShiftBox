@@ -210,8 +210,8 @@ func (p *interruptedMaintenanceProvider) Stop(ctx context.Context, req provider.
 	return inventory, err
 }
 
-// TestRestartResumesMaintenanceReceipts interrupts the controller after each
-// fixture receipt is persisted and before the worker completes its step.
+// TestRestartResumesMaintenanceReceipts interrupts the controller after fixture
+// receipts and after the campaign settles, before recording step completion.
 func TestRestartResumesMaintenanceReceipts(t *testing.T) {
 	for _, activation := range []string{"succeeded", "failed"} {
 		t.Run(activation, func(t *testing.T) {
@@ -266,25 +266,41 @@ func TestRestartResumesMaintenanceReceipts(t *testing.T) {
 			load := func(context.Context, string) (release.GuestUpdate, error) {
 				return release.GuestUpdate{Metadata: metadata}, nil
 			}
-			interrupt := func(index int, persistReceipt func()) {
+			restart := func() {
 				t.Helper()
-				const lease = time.Minute
-				claim, err := journal.Claim(ctx, target, "interrupted-controller", lease)
+				if err := db.Close(); err != nil {
+					t.Fatal(err)
+				}
+				db = open()
+				journal = operation.NewJournal(db, clock, uuid.NewString)
+				store = workspace.NewStore(db)
+			}
+			const lease = time.Minute
+			startStep := func(id string, index int) operation.Operation {
+				t.Helper()
+				claim, err := journal.Claim(ctx, id, "interrupted-controller", lease)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if err := journal.StartStep(ctx, claim, index); err != nil {
 					t.Fatal(err)
 				}
-				persistReceipt()
-				if err := db.Close(); err != nil {
+				op, err := journal.Get(ctx, id)
+				if err != nil {
 					t.Fatal(err)
 				}
+				return op
+			}
+			update := func() error {
+				return store.MaintenanceUpdateWorker(journal, ref.InstallationID, "1", load).RunOnce(ctx, target)
+			}
+			interrupt := func(index int, persistReceipt func()) {
+				t.Helper()
+				startStep(target, index)
+				persistReceipt()
+				restart()
 				now = now.Add(lease + time.Second)
-				db = open()
-				journal = operation.NewJournal(db, clock, uuid.NewString)
-				store = workspace.NewStore(db)
-				if err := store.MaintenanceUpdateWorker(journal, ref.InstallationID, "1", load).RunOnce(ctx, target); err != nil {
+				if err := update(); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -298,18 +314,48 @@ func TestRestartResumesMaintenanceReceipts(t *testing.T) {
 			}
 			interrupt(1, func() {
 				exec("UPDATE guest_dispatches SET activation_status=$1 WHERE operation_id=$2", activation, target)
-				if activation == "succeeded" {
-					exec("UPDATE workspaces SET guest_release='fixture',protocol_version='1' WHERE id=$1", ref.WorkspaceID)
-				}
 			})
 			if activation == "succeeded" {
-				if err := store.MaintenanceUpdateWorker(journal, ref.InstallationID, "1", load).RunOnce(ctx, target); err != nil {
-					t.Fatal(err)
+				restart()
+				err := update()
+				if _, ok := errors.AsType[*operation.StepWaiting](err); !ok {
+					t.Fatalf("verification without the assigned guest release = %v, want waiting", err)
 				}
+				err = store.MaintenanceCampaignWorker(journal, ref.InstallationID, clock).RunOnce(ctx, campaign.ID)
+				if _, ok := errors.AsType[*operation.StepWaiting](err); !ok {
+					t.Fatalf("campaign with unverified target = %v, want waiting", err)
+				}
+				interrupt(2, func() {
+					exec("UPDATE workspaces SET guest_release='fixture',protocol_version='1' WHERE id=$1", ref.WorkspaceID)
+				})
 			}
+			wantCampaign := "blocked"
+			if activation == "succeeded" {
+				wantCampaign = "completed"
+			}
+			pending := startStep(campaign.ID, 0)
+			campaignWorker := store.MaintenanceCampaignWorker(journal, ref.InstallationID, clock)
+			// The executor commits the campaign state separately from the
+			// worker's journal completion. Simulate losing the controller here.
+			evidence, err := campaignWorker.Executor.Apply(ctx, pending, pending.Steps[0])
+			if _, failed := errors.AsType[*operation.StepFailure](err); activation == "failed" && !failed ||
+				activation == "succeeded" && (err != nil || evidence == "") {
+				t.Fatalf("campaign settlement = %q (%v), want %s", evidence, err, wantCampaign)
+			}
+			restart()
+			var state string
+			if err := db.QueryRowContext(ctx, "SELECT state FROM maintenance_campaigns WHERE operation_id=$1", campaign.ID).Scan(&state); err != nil || state != wantCampaign {
+				t.Fatalf("campaign state after restart = %s (%v), want %s", state, err, wantCampaign)
+			}
+			stillPending, err := journal.Get(ctx, campaign.ID)
+			if err != nil || stillPending.Status != "running" || stillPending.Steps[0].Status != "active" {
+				t.Fatalf("campaign journal after settlement = %+v (%v), want unfinished step", stillPending, err)
+			}
+			now = now.Add(lease + time.Second)
 			if err := store.MaintenanceCampaignWorker(journal, ref.InstallationID, clock).RunOnce(ctx, campaign.ID); err != nil {
 				t.Fatal(err)
 			}
+			restart()
 			for _, id := range []string{target, campaign.ID} {
 				op, err := journal.Get(ctx, id)
 				if err != nil || op.Status != activation {
