@@ -16,8 +16,23 @@ import (
 func (s *Store) MaintenanceUpdateWorker(journal *operation.Journal, installation, protocol string,
 	load func(context.Context, string) (release.GuestUpdate, error),
 ) *operation.Worker {
+	return maintenanceTargetWorker(journal, maintenanceUpdateExecutor{store: s, installation: installation, protocol: protocol, load: load})
+}
+
+func maintenanceTargetWorker(journal *operation.Journal, executor maintenanceUpdateExecutor) *operation.Worker {
 	return &operation.Worker{Journal: journal, Name: "maintenance-update", LeaseDuration: time.Minute,
-		Actions: []string{maintenanceTargetAction}, Executor: maintenanceUpdateExecutor{store: s, installation: installation, protocol: protocol, load: load}}
+		Actions: []string{maintenanceTargetAction}, Executor: executor}
+}
+
+// MaintenanceWorkers binds the campaign and target workers to the same
+// enrollment and provider used for ordinary workspace starts.
+func (s *Store) MaintenanceWorkers(journal *operation.Journal, installation, protocol string,
+	load func(context.Context, string) (release.GuestUpdate, error), launch *LaunchExecutor,
+) (*operation.Worker, *operation.Worker) {
+	campaign := s.MaintenanceCampaignWorker(journal, installation, launch.now)
+	target := maintenanceTargetWorker(journal, maintenanceUpdateExecutor{store: s, installation: installation, protocol: protocol,
+		load: load, power: &maintenancePower{machines: launch.provision.provider, now: launch.now, recovery: launch}})
+	return campaign, target
 }
 
 type maintenanceUpdateExecutor struct {

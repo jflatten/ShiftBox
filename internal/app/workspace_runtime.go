@@ -16,9 +16,10 @@ import (
 
 // WorkspaceRuntime owns the guest listeners and durable workspace worker.
 type WorkspaceRuntime struct {
-	listeners *GuestListeners
-	worker    *operation.Worker
-	retention *workspaceRetentionSchedule
+	listeners   *GuestListeners
+	worker      *operation.Worker
+	retention   *workspaceRetentionSchedule
+	maintenance []*operation.Worker
 }
 
 // ListenWorkspaceRuntime binds guest endpoints before constructing the worker
@@ -58,17 +59,24 @@ func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfi
 		}
 		return listeners.Tunnels.ProbeRepair(ctx, id, generation, host)
 	})
-	worker := workspace.NewWorker(journal,
-		workspace.NewLaunchExecutor(store, machines, enrollment, mediaRoot, endpoints.EnrollURL, endpoints.PollURL, now, probe),
-		power)
+	launch := workspace.NewLaunchExecutor(store, machines, enrollment, mediaRoot, endpoints.EnrollURL, endpoints.PollURL, now, probe)
+	worker := workspace.NewWorker(journal, launch, power)
+	var maintenance []*operation.Worker
+	if listeners.GuestUpdates != nil {
+		campaign, targets := store.MaintenanceWorkers(journal, state.Installation.InstallationID, compatibility.Protocol, listeners.GuestUpdates, launch)
+		maintenance = []*operation.Worker{campaign, targets}
+	}
 	retention := newWorkspaceRetention(state, store, machines, journal, listeners.Tunnels.Registry, now)
 	if listeners.Checkpoint != nil {
 		worker.EnterActivity = listeners.Checkpoint.Enter
+		for _, worker := range maintenance {
+			worker.EnterActivity = listeners.Checkpoint.Enter
+		}
 		if retention != nil {
 			retention.checkpoint = listeners.Checkpoint
 		}
 	}
-	return &WorkspaceRuntime{listeners: endpoints, worker: worker, retention: retention}, nil
+	return &WorkspaceRuntime{listeners: endpoints, worker: worker, retention: retention, maintenance: maintenance}, nil
 }
 
 // Serve runs workspace reconciliation, guest communication and configured
@@ -76,10 +84,13 @@ func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfi
 func (r *WorkspaceRuntime) Serve(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	done := make(chan error, 3)
-	count := 2
+	done := make(chan error, 3+len(r.maintenance))
+	count := 2 + len(r.maintenance)
 	go func() { done <- r.listeners.Serve(ctx) }()
 	go func() { done <- r.worker.Run(ctx, time.Second) }()
+	for _, worker := range r.maintenance {
+		go func() { done <- worker.Run(ctx, time.Second) }()
+	}
 	if r.retention != nil {
 		count++
 		go func() { done <- r.retention.run(ctx) }()

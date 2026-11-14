@@ -1693,8 +1693,9 @@ This checkpoint does not itself change the goal status.
   restart. An already targeted workspace with deletion underway waits for
   verified removal without creating an update operation.
   The campaign worker waits until the deadline and aggregates the target
-  operation outcomes. A failed target blocks campaign completion. Controller
-  startup will run the campaign worker when the target executor is wired.
+  operation outcomes. A failed target blocks campaign completion. The
+  controller starts both workers beside the guest listeners and coordinates
+  their writes with the backup checkpoint.
   Guest staging now verifies the release and protocol, Ed25519 signature,
   binary size, and SHA-256 digest before replacing a private staged file.
   Verification tests use disposable keys. The durable trial record selects
@@ -1733,8 +1734,9 @@ This checkpoint does not itself change the goal status.
   settling the target as failed. When configured with the enrollment
   service, maintenance can deliver recovery media for an expired guest
   registration while keeping desired state stopped. The boot step waits
-  for fresh authenticated contact before clearing the media. Production
-  worker wiring and native signed-update validation remain open under T095.
+  for fresh authenticated contact before clearing the media. The runtime
+  test verifies that a persisted campaign advances into guest staging
+  after startup. Native signed-update validation remains open under T095.
 
 ### Migration preflight CLI
 
