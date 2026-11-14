@@ -91,7 +91,7 @@ func TestReplaceBrowserCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller := &ControllerState{DB: db, BrowserTLS: initial, Installation: ActiveInstallation{InstallationID: id, Generation: 1, Settings: settings},
-		browserCipher: cipher, browserRoots: roots}
+		cipher: cipher, browserRoots: roots}
 	server, err := ListenBrowser("127.0.0.1:0", controller, http.NotFoundHandler(), &proxy.Tunnels{Registry: &proxy.Registry{}}, clock)
 	if err != nil {
 		t.Fatal(err)

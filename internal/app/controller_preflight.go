@@ -26,7 +26,7 @@ type ControllerState struct {
 	GuestCA            *guest.Authority
 	DexPostgres        *identity.DexPostgres
 	Secrets            *secret.Service
-	browserCipher      *cryptostore.Store
+	cipher             *cryptostore.Store
 	browserRoots       *x509.CertPool
 	browserReplacement atomic.Pointer[servedBrowserCertificate]
 }
@@ -80,7 +80,7 @@ func loadControllerState(ctx context.Context, db *sql.DB, active ActiveInstallat
 		return nil, errors.New("cannot validate the active browser certificate")
 	}
 	state := &ControllerState{DB: db, Installation: active, BrowserTLS: browser, GuestCA: authority,
-		Secrets: secret.NewService(cipher), browserCipher: cipher, browserRoots: roots}
+		Secrets: secret.NewService(cipher), cipher: cipher, browserRoots: roots}
 	if active.Settings.DataProfile == "postgres" {
 		state.DexPostgres, err = loadPostgresDexStorage(ctx, db, active.InstallationID, cfg.PostgresURI, cipher)
 		if err != nil {

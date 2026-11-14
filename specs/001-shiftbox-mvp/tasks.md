@@ -2071,3 +2071,15 @@ This checkpoint does not itself change the goal status.
 - All 50 UI tests and the production build passed. Chrome verified first-login
   keyboard validation and the sign-in prompt using fixture responses. Account
   creation and production startup remain open.
+
+### Administrator-created local accounts
+
+- The active management API creates local accounts with an explicit role
+  and a required first-login password change. It reserves the identity and
+  an encrypted temporary credential before contacting Dex. A retry uses
+  that reservation, and the membership and audit transaction consumes it
+  before returning the password once.
+- Go vet and relevant race tests passed. The creation fixture verified
+  interrupted Dex writes and one-time delivery. Migration parity passed
+  on SQLite and PostgreSQL. The People form and credential recovery remain
+  open under T070 and T077.

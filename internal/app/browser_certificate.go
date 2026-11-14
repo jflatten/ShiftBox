@@ -69,7 +69,7 @@ func (s *ControllerState) browserCertificateHandler(journal *operation.Journal, 
 			case !errors.Is(err, sql.ErrNoRows):
 				return nil, err
 			}
-			if s.browserCipher == nil || s.browserRoots == nil {
+			if s.cipher == nil || s.browserRoots == nil {
 				return nil, web.Problem{Status: 503, Code: "infrastructure.certificate_unavailable", Title: "Certificate storage or trust is unavailable"}
 			}
 			settings := config.InstallationSettings{}
@@ -87,14 +87,14 @@ func (s *ControllerState) browserCertificateHandler(journal *operation.Journal, 
 			certificateID := uuid.NewString()
 			generation, err := config.ActivateBrowserCertificate(ctx, tx, activation, settings, config.BrowserCertificateInput{
 				ID: certificateID, ChainPEM: []byte(input.Chain), KeyPEM: privateKey,
-			}, s.browserCipher, s.browserRoots)
+			}, s.cipher, s.browserRoots)
 			if errors.Is(err, config.ErrInvalidBrowserCertificate) {
 				return nil, web.Problem{Status: 400, Code: "infrastructure.invalid_certificate", Title: "Provide a trusted certificate and matching key for the service names"}
 			}
 			if err != nil {
 				return nil, err
 			}
-			pair, err := config.LoadBrowserCertificate(ctx, tx, activation.InstallationID, certificateID, s.browserCipher, s.browserRoots, activation.ActivatedAt)
+			pair, err := config.LoadBrowserCertificate(ctx, tx, activation.InstallationID, certificateID, s.cipher, s.browserRoots, activation.ActivatedAt)
 			if err != nil {
 				return nil, err
 			}
