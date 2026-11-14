@@ -1215,3 +1215,15 @@ This checkpoint does not itself change the goal status.
 - SQLite and TLS PostgreSQL race tests cover competing starts, transaction
   rollback, retained disk, stale observations, and partial deletion.
   The workspace launch API and provider reconciliation still need wiring.
+
+### Atomic workspace launch admission
+
+- The workspace launch transaction now pins authorized launch inputs,
+  reserves capacity, and writes the provision operation and its ordered
+  steps together. Desired running state starts with unknown observed state.
+- Launch retries read the original actor-scoped intent, including the
+  original retention choice even if retention changed after launch. SQLite
+  and PostgreSQL tests verify replay and rollback on capacity refusal.
+- Template authority and profile resolution still need to be connected to
+  the HTTP launch endpoint. The provider and guest must execute and verify
+  the recorded workflow before it can report readiness.

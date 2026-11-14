@@ -75,6 +75,9 @@ CREATE TABLE workspaces (
  memory_mib BIGINT NOT NULL CHECK (memory_mib > 0),
  disk_mib BIGINT NOT NULL CHECK (disk_mib > 0),
  network_policy_snapshot_json TEXT NOT NULL,
+ secret_names_json TEXT NOT NULL DEFAULT '[]',
+ retention_seconds BIGINT CHECK (retention_seconds > 0),
+ launch_retention_seconds BIGINT CHECK (launch_retention_seconds > 0),
  -- `stopped`, `running`, or `deleted`
  desired_state TEXT NOT NULL CHECK (desired_state IN ('stopped','running','deleted')),
  -- `unknown`, `provisioning`, `stopped`, `starting`, `running`, `unreachable`, `stopping`, `deleting`, `deleted`, or `failed`
@@ -118,7 +121,7 @@ CREATE TABLE reservations (
 -- +goose StatementBegin
 CREATE TRIGGER immutable_workspace_launch
 BEFORE UPDATE OF installation_id, owner_user_id, template_id, template_revision, platform_artifact_id,
- repository_url, repository_ref, devcontainer_path, cpu_count, memory_mib, disk_mib, network_policy_snapshot_json
+ repository_url, repository_ref, devcontainer_path, cpu_count, memory_mib, disk_mib, network_policy_snapshot_json, secret_names_json, launch_retention_seconds
 ON workspaces
 BEGIN
  SELECT RAISE(ABORT, 'workspace launch fields are immutable');

@@ -79,6 +79,9 @@ CREATE TABLE workspaces (
  memory_mib BIGINT NOT NULL CHECK (memory_mib > 0),
  disk_mib BIGINT NOT NULL CHECK (disk_mib > 0),
  network_policy_snapshot_json TEXT NOT NULL,
+ secret_names_json TEXT NOT NULL DEFAULT '[]',
+ retention_seconds BIGINT CHECK (retention_seconds > 0),
+ launch_retention_seconds BIGINT CHECK (launch_retention_seconds > 0),
  -- `stopped`, `running`, or `deleted`
  desired_state TEXT NOT NULL CHECK (desired_state IN ('stopped','running','deleted')),
  -- `unknown`, `provisioning`, `stopped`, `starting`, `running`, `unreachable`, `stopping`, `deleting`, `deleted`, or `failed`
@@ -129,7 +132,7 @@ $$;
 -- +goose StatementEnd
 CREATE TRIGGER immutable_workspace_launch
 BEFORE UPDATE OF installation_id, owner_user_id, template_id, template_revision, platform_artifact_id,
- repository_url, repository_ref, devcontainer_path, cpu_count, memory_mib, disk_mib, network_policy_snapshot_json
+ repository_url, repository_ref, devcontainer_path, cpu_count, memory_mib, disk_mib, network_policy_snapshot_json, secret_names_json, launch_retention_seconds
 ON workspaces FOR EACH ROW EXECUTE FUNCTION reject_workspace_snapshot_update();
 CREATE TRIGGER terminal_workspace_desired_state BEFORE UPDATE OF desired_state ON workspaces
 FOR EACH ROW WHEN (OLD.desired_state = 'deleted' AND NEW.desired_state <> OLD.desired_state)
