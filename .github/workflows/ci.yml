@@ -29,6 +29,7 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - run: npm --prefix ui ci
+      - run: go test -tags openapi ./tests/contract -run '^TestOpenAPITypesMatchContract$' -count=1
       - run: make ui-test build
       - run: go test -tags shiftbox_ui ./cmd/shiftbox -run '^TestEmbeddedBrowserAssets$'
   # Browser, database and UTM journeys need configured fixtures. Their Make
