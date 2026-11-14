@@ -28,7 +28,8 @@ export function Workspaces({ workspaceId, ownerId, launch = false }: {
           {session.isPending ? <Text role="status">Checking your session…</Text> : null}
           {session.data === null ? <SignInChoices /> : null}
         </>
-      ) : launch ? <LaunchFlow csrfToken={current.csrfToken} />
+      ) : launch ? <LaunchFlow key={current.user.id} csrfToken={current.csrfToken} userID={current.user.id}
+        admin={current.role === 'administrator'} />
         : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken} />
           : <WorkspaceList key={ownerId} ownerId={ownerId} />}
     </ShiftBoxShell>

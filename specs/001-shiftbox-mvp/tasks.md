@@ -2297,3 +2297,18 @@ This checkpoint does not itself change the goal status.
   verified both authorization handoffs and the disconnect confirmation
   against local fixture responses. T077 remains open for template and
   secret controls.
+
+### Template revisions, launch grants, and archive controls
+
+- T077 adds template creation, immutable revisions, launch-grant
+  acknowledgement and revocation, archival, and the administrator-only
+  archive filter and restore action. The revision form uses the current
+  template fields and the version the user reviewed. Creating a template
+  uses resource and artifact IDs, and sharing uses a user ID.
+- Template list responses include current grant membership only for
+  owners and administrators. The UI keeps cached lists scoped to the
+  signed-in user, role, and archive filter.
+- Race-enabled template and contract tests, UI tests, and the embedded
+  build passed. Chrome verified keyboard sharing through the warning and
+  confirmation with local API fixtures. T067 and T077 remain open for the
+  secret controls and tests.

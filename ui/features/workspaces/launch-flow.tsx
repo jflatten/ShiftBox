@@ -11,7 +11,7 @@ interface AcceptedLaunch {
   workspaceId: string;
 }
 
-export function LaunchFlow({ csrfToken }: { csrfToken: string }) {
+export function LaunchFlow({ csrfToken, userID, admin }: { csrfToken: string; userID: string; admin: boolean }) {
   const [cursors, setCursors] = useState<string[]>([]);
   const [selected, setSelected] = useState('');
   const [review, setReview] = useState<TemplateRevision>();
@@ -20,7 +20,7 @@ export function LaunchFlow({ csrfToken }: { csrfToken: string }) {
   const [submitting, setSubmitting] = useState(false);
   const requestKeys = useRef(new Map<string, string>());
   const cursor = cursors.at(-1);
-  const templates = useTemplates(cursor, !accepted);
+  const templates = useTemplates(cursor, !accepted, false, userID, admin);
   const data = templates.isError ? undefined : templates.data;
   const chosen = data?.items.find(item => templateKey(item) === selected);
 

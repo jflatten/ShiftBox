@@ -87,9 +87,11 @@ func List(ctx context.Context, tx *sql.Tx, actor string, admin bool, state, curs
 	}
 	defer rows.Close()
 	items := make([]View, 0, limit)
+	var next *string
 	for rows.Next() {
 		if len(items) == limit {
-			return items, &items[limit-1].ID, nil
+			next = &items[limit-1].ID
+			break
 		}
 		view, err := scanView(rows)
 		if err != nil {
@@ -97,5 +99,39 @@ func List(ctx context.Context, tx *sql.Tx, actor string, admin bool, state, curs
 		}
 		items = append(items, view)
 	}
-	return items, nil, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, err
+	}
+	for i := range items {
+		if !admin && items[i].OwnerID != actor {
+			continue
+		}
+		items[i].LaunchGrants, err = launchGrants(ctx, tx, items[i].ID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return items, next, nil
+}
+
+func launchGrants(ctx context.Context, tx *sql.Tx, id string) ([]LaunchGrantView, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT g.user_id,u.primary_email FROM template_grants g
+		JOIN users u ON u.id=g.user_id WHERE g.template_id=$1 AND g.revoked_at IS NULL
+		ORDER BY u.primary_email,g.user_id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var grants []LaunchGrantView
+	for rows.Next() {
+		var grant LaunchGrantView
+		if err := rows.Scan(&grant.UserID, &grant.Email); err != nil {
+			return nil, err
+		}
+		grants = append(grants, grant)
+	}
+	return grants, rows.Err()
 }

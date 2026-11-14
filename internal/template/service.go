@@ -38,11 +38,18 @@ type Input struct {
 // View represents the current immutable revision and mutable template identity.
 type View struct {
 	Input
-	ID              string `json:"id"`
-	OwnerID         string `json:"ownerId"`
-	State           string `json:"state"`
-	CurrentRevision int64  `json:"currentRevision"`
-	Version         int64  `json:"version"`
+	ID              string            `json:"id"`
+	OwnerID         string            `json:"ownerId"`
+	State           string            `json:"state"`
+	CurrentRevision int64             `json:"currentRevision"`
+	Version         int64             `json:"version"`
+	LaunchGrants    []LaunchGrantView `json:"launchGrants,omitempty"`
+}
+
+// LaunchGrantView identifies a current grantee to an authorized template manager.
+type LaunchGrantView struct {
+	UserID string `json:"userId"`
+	Email  string `json:"email"`
 }
 
 // SaveIntent identifies a creation or revision admitted in an authority transaction.

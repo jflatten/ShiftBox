@@ -190,6 +190,14 @@ func TestTemplateAPI(t *testing.T) {
 		return token
 	}
 	granteeToken := signIn(grantee)
+	ownerList := request("GET", "", "", "", "", 200).Body.String()
+	if !strings.Contains(ownerList, "grantee@example.test") || !strings.Contains(ownerList, grantee) {
+		t.Fatal("template owner could not see the active launch grant")
+	}
+	granteeList := send(granteeToken, "GET", "", "", "", "", 200).Body.String()
+	if strings.Contains(granteeList, "launchGrants") || strings.Contains(granteeList, "grantee@example.test") {
+		t.Fatal("launch-only access exposed grant membership")
+	}
 	visible := func(sessionToken, filter string, want bool) {
 		t.Helper()
 		list := send(sessionToken, "GET", filter, "", "", "", 200)
