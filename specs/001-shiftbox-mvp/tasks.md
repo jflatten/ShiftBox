@@ -225,7 +225,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T111 [US4] Implement whole-archive validation, compatibility/key/host/target ownership checks, empty replacement activation, and no merge/overwrite behavior proven by T105 in `internal/backup/validate.go` and `internal/backup/restore.go`
 - [ ] T112 [US4] Implement recovery-mode gate, stale-authority invalidation, identity review, provider reconciliation, workspace conflict decisions, authorization/retention review, and explicit normal-service activation proven by T106 in `internal/backup/recovery.go` and `internal/auth/recovery_gate.go`
 - [X] T113 [US4] Implement backup, restore-validation, and recovery-activation OpenAPI handlers with durable Operation steps in `internal/web/backup_routes.go` and `internal/web/recovery_routes.go`
-- [ ] T114 [US4] Implement `shiftbox backup`, `shiftbox restore validate`, and `shiftbox restore activate` with TTY/stdin password handling, human/JSON output, and stable exits proven by T107 in `cmd/shiftbox/backup.go` and `cmd/shiftbox/restore.go`
+- [X] T114 [US4] Implement `shiftbox backup`, `shiftbox restore validate`, and `shiftbox restore activate` with TTY/stdin password handling, human/JSON output, and stable exits proven by T107 in `cmd/shiftbox/backup.go` and `cmd/shiftbox/restore.go`
 - [ ] T115 [US4] Implement Mantine Backup & Recovery forms, scope warnings, cleared password fields, operation Stepper, validation findings, and gated recovery review in `ui/features/recovery/backup.tsx`, `ui/features/recovery/restore.tsx`, `ui/features/recovery/review.tsx`, and `ui/app/recovery/page.tsx`
 - [ ] T116 [US4] Add and run the Go recovery acceptance test together with the T108 Playwright journey, then record separate recovery evidence without workspace-disk claims in `tests/acceptance/backup_recovery_test.go` and `documentation/validation/backup-recovery.md`
 
@@ -1823,7 +1823,8 @@ This checkpoint does not itself change the goal status.
   confirmation and waits for durable archive verification. T107 passed
   race-enabled API and CLI contract tests for passphrase handling, durable
   steps, stable JSON and exit codes, validation IDs, and explicit
-  activation. Cross-schema failure recovery remains open.
+  activation. PostgreSQL cross-schema failure recovery remains open
+  under T111.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
