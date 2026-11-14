@@ -705,3 +705,20 @@ This checkpoint does not itself change the goal status.
 - Foundation remains at 25 complete tasks. T013 contextual action selection,
   T018 certificate activation, and dependent T023/T025 completion evidence still
   require work; later user-story endpoint implementations are not claimed.
+
+### Workspace contextual action selection
+
+- Added lifecycle and entry action selection from controller-loaded workspace,
+  template, grant, and failed-operation records. Retry requires a failed operation
+  bound to the same workspace and preserves its lifecycle, launch, or connection
+  permission; installation operations cannot enter the workspace retry path.
+- Provision retries also require workspace ownership or administrator role,
+  preventing shared-template launch permission from controlling another owner's
+  existing failed workspace. Entry selection retains owner and grant context for
+  the existing policy and durable audit checks.
+- Test-first checks cover ordinary lifecycle mapping, cross-workspace/nonfailed
+  retries, shared-template isolation, unsupported actions, and owner/admin entry
+  selection. Web/auth/contract race suites, formatting, and vet pass.
+- Concrete endpoint loaders must still bind these inputs to database records in
+  the authorization transaction. Other contextual routes and certificate
+  activation remain outstanding; no additional task is marked complete.
