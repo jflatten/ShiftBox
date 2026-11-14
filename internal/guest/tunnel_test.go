@@ -17,6 +17,94 @@ import (
 	"github.com/jflatten/ShiftBox/internal/proxy"
 )
 
+// TestGuestTunnelExpiry verifies an established tunnel closes its streams at
+// the authentication deadline, even when the guest stays connected.
+func TestGuestTunnelExpiry(t *testing.T) {
+	now := time.Now()
+	caPEM, keyPEM, key, issuer := authorityFixture(t)
+	ca, err := guest.LoadCA(caPEM, keyPEM, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", guest.ServerTLS(leafFixture(t, key, issuer, false), ca))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upstream.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	tunnels := &proxy.Tunnels{Registry: &proxy.Registry{}}
+	controllerDone := make(chan error, 1)
+	guestDone := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			deadline := time.Now().Add(time.Second)
+			err = tunnels.Serve(ctx, conn.(*tls.Conn), "1", func(context.Context, *x509.Certificate) (proxy.TunnelAuthority, error) {
+				return proxy.TunnelAuthority{WorkspaceID: "workspace", OwnerID: "owner", Generation: 1, ExpiresAt: deadline}, nil
+			})
+		}
+		controllerDone <- err
+	}()
+	client := guest.ClientTLS(leafFixture(t, key, issuer, true), ca, "controller.test")
+	go func() {
+		guestDone <- guest.ServeTunnel(ctx, listener.Addr().String(), client, "1", 1,
+			[]proxy.TunnelService{{Key: "ide", Target: upstream.Addr().String(), Protocols: []string{"websocket"}}})
+	}()
+	open := func() (net.Conn, error) {
+		return tunnels.Open(ctx, "workspace", 1, proxy.StreamHeader{ServiceKey: "ide", RequestID: "fixture", Protocol: "websocket"})
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	var active net.Conn
+	for {
+		stream, err := open()
+		if err == nil {
+			active = stream
+			break
+		}
+		select {
+		case err := <-controllerDone:
+			t.Fatalf("controller exited before the tunnel was usable: %v", err)
+		case <-ctx.Done():
+			t.Fatal("tunnel never became available")
+		case <-ticker.C:
+		}
+	}
+	defer active.Close()
+	select {
+	case err := <-controllerDone:
+		if err == nil || !strings.Contains(err.Error(), "identity expired") {
+			t.Fatalf("controller tunnel closed with %v, want identity expiry", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("controller did not close the expired tunnel")
+	}
+	select {
+	case <-guestDone:
+	case <-ctx.Done():
+		t.Fatal("guest connection remained open after its authentication expired")
+	}
+	if err := active.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	_, err = active.Read(make([]byte, 1))
+	if err == nil {
+		t.Error("active stream remained readable after expiry")
+	} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+		t.Error("active stream remained open after expiry")
+	}
+	if stream, err := open(); err == nil {
+		stream.Close()
+		t.Error("expired authentication permitted a WebSocket stream")
+	}
+}
+
 // TestGuestTunnelHTTP authenticates a guest over TLS, routes separate streams
 // by service key, and closes the session when its registration is revoked.
 func TestGuestTunnelHTTP(t *testing.T) {
