@@ -1510,3 +1510,15 @@ This checkpoint does not itself change the goal status.
   also passed.
 - The controller command still needs production Dex and management router
   composition. Active password changes and upstream identity stay open.
+
+### Managed Dex for the controller
+
+- Added a stable management-origin Dex issuer and a browser proxy limited
+  to the login flow. Discovery, token exchange, signing keys, and
+  administration use the privately authenticated loopback listeners.
+- Native Dex race tests sign in with retained credentials using both SQLite
+  and PostgreSQL identity storage. They verify that the browser login form
+  uses the management origin and that browser requests cannot reach
+  private identity endpoints. PostgreSQL startup leaves SQLite absent.
+- Production startup still needs to load scoped PostgreSQL credentials
+  from protected configuration and mount the browser and management routes.

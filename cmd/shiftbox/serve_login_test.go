@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,10 +18,28 @@ import (
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// TestControllerDexRequiresRetainedSQLite checks that active startup never
+// creates a new identity store when the installation's Dex database is missing.
+func TestControllerDexRequiresRetainedSQLite(t *testing.T) {
+	dir := t.TempDir()
+	_, _, _, _, cleanup, err := startControllerDex(t.Context(), dir, "", "https://management.test", nil)
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil {
+		t.Fatal("controller Dex accepted an absent SQLite identity database")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("identity startup left %d files, error %v, want an empty directory", len(entries), err)
+	}
+}
 
 // TestActiveLoginUsesCurrentMembership drives native Dex and shows that a
 // verified password creates a session only for a current active local member.
@@ -47,6 +66,20 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 	const uuidOwner = "bf505ecf-2954-4504-8c88-581a09b37c05"
 	const email = "operator@example.test"
 	const password = "disposable-fixture-password"
+	var postgres *identity.DexPostgres
+	if fixture := os.Getenv("SHIFTBOX_TEST_SETUP_DEX_URI"); fixture != "" {
+		u, err := url.Parse(fixture)
+		if err != nil || u.User == nil {
+			t.Fatal("invalid PostgreSQL identity fixture")
+		}
+		port, err := strconv.ParseUint(u.Port(), 10, 16)
+		if err != nil {
+			t.Fatal("invalid PostgreSQL identity fixture port")
+		}
+		secret, _ := u.User.Password()
+		postgres = &identity.DexPostgres{Host: u.Hostname(), Port: uint16(port), Database: strings.TrimPrefix(u.Path, "/"),
+			User: u.User.Username(), Password: secret, CAFile: os.Getenv("SHIFTBOX_TEST_SETUP_CA")}
+	}
 	exec := func(query string, args ...any) {
 		t.Helper()
 		if _, err := db.ExecContext(ctx, query, args...); err != nil {
@@ -59,26 +92,32 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 			'{service}--{workspace}.preview.test','release','release','now','now',1)`, installation)
 	exec(`INSERT INTO users(id,primary_email,role,membership_state,credential_mode,must_change_password,created_by,created_at,updated_at,version)
 		VALUES($1,$2,'administrator','active','local',0,'setup','now','now',1)`, uuidOwner, email)
+	bootstrapAdmin, _, _, closeBootstrap, err := startSetupDex(ctx, dir, binary, "https://127.0.0.1:9999", cert, postgres)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err == nil {
+		err = bootstrapAdmin.Ensure(ctx, email, uuidOwner, hash)
+	}
+	closeBootstrap()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var stopDex func()
 	server, err := app.ListenBootstrap("127.0.0.1:0", cert, func(origin string) (http.Handler, error) {
-		admin, login, _, cleanup, err := startSetupDex(ctx, dir, binary, origin, cert, nil)
+		_, login, dexWeb, _, cleanup, err := startControllerDex(ctx, dir, binary, origin, postgres)
 		if err != nil {
 			return nil, err
 		}
 		stopDex = cleanup
-		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-		if err != nil {
-			return nil, err
-		}
-		if err := admin.Ensure(ctx, email, uuidOwner, hash); err != nil {
-			return nil, err
-		}
 		signIn, err := app.NewActiveLoginHandler(db, installation, login, time.Now, uuid.NewString)
 		if err != nil {
 			return nil, err
 		}
 		mux := http.NewServeMux()
 		mux.Handle("/auth/", signIn)
+		mux.Handle("/dex/", dexWeb)
 		mux.Handle("GET /{$}", web.NewSessionHandler(db, origin, &proxy.Registry{}, time.Now))
 		return mux, nil
 	})
@@ -114,6 +153,16 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		t.Fatalf("login on wrong host returned %d with %d cookies, want 421 with no cookies",
 			response.StatusCode, len(response.Cookies()))
 	}
+	for _, path := range []string{"/dex/token", "/dex/keys", "/dex/healthz"} {
+		response, err := client.Get(server.Origin + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatalf("browser request to %s returned %d, want 404", path, response.StatusCode)
+		}
+	}
 	signIn := func(wantStatus int, wantMode string) {
 		t.Helper()
 		jar, err := cookiejar.New(nil)
@@ -132,6 +181,9 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		response, err := client.Get(server.Origin + "/auth/login")
 		if err != nil {
 			t.Fatal(err)
+		}
+		if response.Request.URL.Host != probe.URL.Host || !strings.HasPrefix(response.Request.URL.Path, "/dex/") {
+			t.Fatalf("Dex form served from %s%s, want management origin /dex/", response.Request.URL.Host, response.Request.URL.Path)
 		}
 		response, err = submitDexForm(client, response, url.Values{"login": {email}, "password": {password}})
 		if err != nil {
@@ -163,5 +215,10 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 	var total int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions").Scan(&total); err != nil || total != 2 {
 		t.Fatalf("session count = %d, %v, want only two sessions", total, err)
+	}
+	if postgres != nil {
+		if _, err := os.Lstat(filepath.Join(dir, "dex.db")); !os.IsNotExist(err) {
+			t.Fatal("PostgreSQL identity startup did not leave the local fallback absent")
+		}
 	}
 }
