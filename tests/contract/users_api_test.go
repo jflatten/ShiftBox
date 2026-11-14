@@ -56,6 +56,8 @@ func TestDisableMembershipCommitsStops(t *testing.T) {
 		generation,ownership_marker,provider_instance_id,created_at,updated_at,version)
 		SELECT $1,id,$2,'template',1,'artifact','https://github.com/example/repo','devcontainer.json',1,512,40,'{"mode":"shared"}',
 		'running','running',1,'owned','machine','now','now',1 FROM installations`, workspaceID, target)
+	exec(`INSERT INTO origin_grants(id,token_digest,user_id,session_id,workspace_id,generation,service_key,origin,permission_basis,expires_at)
+		VALUES('browser-grant','fixture',$1,$2,$3,1,'ide','https://workspace.ide.test','workspace.connect_owner','later')`, target, session.ID, workspaceID)
 	journal := operation.NewJournal(db, func() time.Time { return now }, uuid.NewString)
 	pending, err := journal.Create(ctx, operation.Request{Actor: target, Key: uuid.NewString(), Type: "start", OriginatingAction: "workspace.start",
 		WorkspaceID: &workspaceID, Generation: 1, Steps: []operation.Step{{Key: "start", Label: "Start workspace"}}})
@@ -67,13 +69,15 @@ func TestDisableMembershipCommitsStops(t *testing.T) {
 	for _, scope := range []proxy.Scope{{UserID: target, SessionID: session.ID}, {UserID: "owner", WorkspaceID: workspaceID}} {
 		_, err := registry.Register(scope, func() error { return nil }, func() error {
 			var desired, observed string
-			var stops, revoked int
+			var stops, revoked, revokedGrants int
 			err := db.QueryRowContext(ctx, `SELECT desired_state,observed_state,
 				(SELECT count(*) FROM operations WHERE workspace_id=$1 AND originating_action='user.disable' AND status='pending'),
-				(SELECT count(*) FROM sessions WHERE id=$2 AND revoked_at IS NOT NULL) FROM workspaces WHERE id=$1`,
-				workspaceID, session.ID).Scan(&desired, &observed, &stops, &revoked)
-			if err != nil || desired != "stopped" || observed != "running" || stops != 1 || revoked != 1 {
-				t.Errorf("closure sees desired=%s observed=%s stops=%d revoked=%d (%v), want stopped/running/1/1", desired, observed, stops, revoked, err)
+				(SELECT count(*) FROM sessions WHERE id=$2 AND revoked_at IS NOT NULL),
+				(SELECT count(*) FROM origin_grants WHERE id='browser-grant' AND revoked_at IS NOT NULL) FROM workspaces WHERE id=$1`,
+				workspaceID, session.ID).Scan(&desired, &observed, &stops, &revoked, &revokedGrants)
+			if err != nil || desired != "stopped" || observed != "running" || stops != 1 || revoked != 1 || revokedGrants != 1 {
+				t.Errorf("closure sees desired=%s observed=%s stops=%d revoked sessions=%d grants=%d (%v), want stopped/running/1/1/1",
+					desired, observed, stops, revoked, revokedGrants, err)
 			}
 			closed++
 			return err

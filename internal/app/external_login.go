@@ -48,7 +48,7 @@ func (f externalLogin) begin(w http.ResponseWriter, connector identity.Connector
 	now := f.now().Truncate(time.Second)
 	expires := now.Add(externalAttemptMaxAge)
 	value := strings.Join([]string{
-		verifier, connector.ID, loginBinding("issuer", connector.Issuer), sessionID, strconv.FormatInt(now.Unix(), 10),
+		verifier, connector.BrokerID(), loginBinding("issuer", connector.Issuer), sessionID, strconv.FormatInt(now.Unix(), 10),
 	}, ":")
 	value += ":" + f.signAttempt(value)
 	http.SetCookie(w, &http.Cookie{Name: externalAttemptCookie, Value: value, Path: "/", HttpOnly: true,
@@ -57,7 +57,7 @@ func (f externalLogin) begin(w http.ResponseWriter, connector identity.Connector
 	cfg.Scopes = append(append([]string(nil), cfg.Scopes...), "email", "profile")
 	location := cfg.AuthCodeURL(externalStatePrefix+loginBinding("state", value),
 		oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", loginBinding("nonce", value)),
-		oauth2.SetAuthURLParam("connector_id", connector.ID), oauth2.SetAuthURLParam("prompt", "login"))
+		oauth2.SetAuthURLParam("connector_id", connector.BrokerID()), oauth2.SetAuthURLParam("prompt", "login"))
 	return location, expires
 }
 
@@ -120,7 +120,7 @@ func (f externalLogin) finish(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	connector, err := f.connector(ctx)
-	if err != nil || connector.ID != attempt.connectorID || loginBinding("issuer", connector.Issuer) != attempt.issuerBinding {
+	if err != nil || connector.BrokerID() != attempt.connectorID || loginBinding("issuer", connector.Issuer) != attempt.issuerBinding {
 		externalSignInError(w, r, identity.ErrInvalidIdentity)
 		return
 	}

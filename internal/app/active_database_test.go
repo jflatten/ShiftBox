@@ -56,6 +56,17 @@ func TestOpenActiveDatabaseRequiresActivation(t *testing.T) {
 	if active.ActiveRelease != "test" || active.MinimumGuestRelease != "test" {
 		t.Errorf("activation releases = %q/%q, want both from the active database", active.ActiveRelease, active.MinimumGuestRelease)
 	}
+	// The committed interval can be updated through external identity
+	// configuration without requiring a rewrite of the startup file.
+	cfg.ExternalAuthIntervalSeconds = 3600
+	reopened, active, err := OpenActiveDatabase(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened.Close()
+	if active.Settings.ExternalAuthIntervalSeconds != 14400 {
+		t.Fatal("startup did not use the committed authorization interval")
+	}
 	// Startup must reject a schema with gaps even if the highest version
 	// still matches the binary's migration set.
 	if _, err := db.Exec("DELETE FROM goose_db_version WHERE version_id=2"); err != nil {

@@ -86,7 +86,10 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		return err
 	}
 	defer stopDex()
-	signIn, err := app.NewActiveLoginHandler(state.DB, active.InstallationID, login, time.Now, uuid.NewString)
+	signIn, reauthorize, err := app.NewActiveIdentityHandlers(state.DB, active.InstallationID, login, tunnels.Registry,
+		func(ctx context.Context) (identity.ConnectorIdentity, error) {
+			return app.CurrentExternalConnector(ctx, state.DB)
+		}, time.Now, uuid.NewString)
 	if err != nil {
 		return err
 	}
@@ -95,6 +98,14 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if err != nil {
 		return err
 	}
+	connectors, ok := passwords.Client.(identity.ExternalConnectorAPI)
+	if !ok {
+		return errors.New("managed Dex connector administration is unavailable")
+	}
+	configureExternal := app.ExternalConfigurationHandler(state.DB, origin, tunnels.Registry,
+		identity.ExternalConnectorAdmin{Client: connectors}, time.Now)
+	services.Handlers[reauthorize.Route.OperationID] = reauthorize
+	services.Handlers[configureExternal.Route.OperationID] = configureExternal
 	api, err := web.NewActiveManagementRouter(services.Session, services.Handlers, services.GitHubCallback)
 	if err != nil {
 		return err

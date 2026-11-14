@@ -76,7 +76,13 @@ func replaceActivePassword(ctx context.Context, db *sql.DB, store *auth.Store, r
 		if err != nil {
 			return err
 		}
-		return store.RevokeUserSessions(ctx, tx, user.ID, now(), "password_change")
+		stamp := now()
+		if err := store.RevokeUserSessions(ctx, tx, user.ID, stamp, "password_change"); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, "UPDATE origin_grants SET revoked_at=$1 WHERE user_id=$2 AND revoked_at IS NULL",
+			stamp.UTC().Format(time.RFC3339Nano), user.ID)
+		return err
 	})
 	if err != nil {
 		return err

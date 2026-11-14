@@ -137,7 +137,8 @@ func startDex(ctx context.Context, dir, binary, origin string, server tls.Certif
 	cleanup = append(cleanup, transport.CloseIdleConnections)
 	process := identity.DexProcess{BinaryPath: binary, ConfigPath: configPath,
 		HealthURL: "http://" + cfg.TelemetryAddress + "/healthz/ready",
-		Client:    &http.Client{Transport: transport, Timeout: time.Second}, PollInterval: 50 * time.Millisecond}
+		Client:    &http.Client{Transport: transport, Timeout: time.Second}, PollInterval: 50 * time.Millisecond,
+		ManageExternalConnectors: managementIssuer}
 	dexCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {

@@ -130,6 +130,11 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, re
 				if err := store.RevokeUserSessions(ctx, tx, id, stamp, reason); err != nil {
 					return nil, err
 				}
+				if _, err := tx.ExecContext(ctx, `UPDATE origin_grants SET revoked_at=$1 WHERE revoked_at IS NULL AND
+					(user_id=$2 OR workspace_id IN (SELECT id FROM workspaces WHERE owner_user_id=$2))`,
+					stamp.UTC().Format(time.RFC3339Nano), id); err != nil {
+					return nil, err
+				}
 				// Retire outstanding enrollment offers before closing live
 				// connections. Historical consumed grants are kept for audit.
 				if _, err := tx.ExecContext(ctx, `UPDATE enrollment_grants SET state='invalidated'

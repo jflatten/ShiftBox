@@ -75,7 +75,7 @@ func readActiveInstallation(ctx context.Context, db *sql.DB, cfg config.Config) 
 	}
 	stored.BrowserCertificateID = active.Settings.BrowserCertificateID
 	if stored != active.Settings || stored.DataProfile != cfg.DataProfile ||
-		stored.ManagementOrigin != cfg.ManagementOrigin || stored.ExternalAuthIntervalSeconds != cfg.ExternalAuthIntervalSeconds {
+		stored.ManagementOrigin != cfg.ManagementOrigin {
 		return ActiveInstallation{}, ErrActiveDatabase
 	}
 	if _, err := config.NewServiceHosts(stored.ManagementOrigin, stored.IDEHostPattern, stored.PreviewHostPattern); err != nil {

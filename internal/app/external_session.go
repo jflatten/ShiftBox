@@ -38,6 +38,9 @@ func issueExternalSession(
 		if err := lockExternalSessionWrite(ctx, tx); err != nil {
 			return err
 		}
+		if err := checkVerifiedConnector(ctx, tx, verified); err != nil {
+			return err
+		}
 		var interval int64
 		if err := tx.QueryRowContext(ctx, "SELECT external_auth_interval_seconds FROM installations WHERE id=$1 AND state='active'", installation).Scan(&interval); err != nil {
 			return err
@@ -88,6 +91,9 @@ func reauthorizeExternalSession(
 		if err := lockExternalSessionWrite(ctx, tx); err != nil {
 			return err
 		}
+		if err := checkVerifiedConnector(ctx, tx, verified); err != nil {
+			return err
+		}
 		principal, err := store.PrincipalForSession(ctx, tx, sessionID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return identity.ErrInvalidIdentity
@@ -135,6 +141,22 @@ func reauthorizeExternalSession(
 func lockExternalSessionWrite(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, "UPDATE installations SET version=version WHERE singleton=1")
 	return err
+}
+
+// checkVerifiedConnector fences a callback that crossed a connector change.
+func checkVerifiedConnector(ctx context.Context, tx *sql.Tx, verified identity.VerifiedIdentity) error {
+	var active bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM external_connector c
+		JOIN installations i ON c.installation_id=i.id WHERE i.singleton=1
+		AND c.issuer=$1 AND c.connector_id=$2 AND c.dex_id=$3)`,
+		verified.Issuer, verified.ConnectorID, verified.DexConnectorID).Scan(&active)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return identity.ErrInvalidIdentity
+	}
+	return nil
 }
 
 func saveExternalSession(ctx context.Context, tx *sql.Tx, store *auth.Store, userID, sessionID string, authorizedAt, now time.Time) (auth.Session, string, error) {

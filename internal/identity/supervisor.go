@@ -29,15 +29,16 @@ var (
 // DexProcess owns one native identity child and its health lifecycle. Configure
 // its fields before Run; Healthy is safe for concurrent controller status reads.
 type DexProcess struct {
-	BinaryPath      string
-	ConfigPath      string
-	HealthURL       string
-	Client          *http.Client
-	PollInterval    time.Duration
-	StartupTimeout  time.Duration
-	ShutdownTimeout time.Duration
-	healthy         atomic.Bool
-	running         atomic.Bool
+	BinaryPath               string
+	ConfigPath               string
+	HealthURL                string
+	Client                   *http.Client
+	PollInterval             time.Duration
+	StartupTimeout           time.Duration
+	ShutdownTimeout          time.Duration
+	ManageExternalConnectors bool
+	healthy                  atomic.Bool
+	running                  atomic.Bool
 }
 
 // Healthy is true only after the running process has passed readiness checks.
@@ -86,6 +87,9 @@ func (p *DexProcess) Run(ctx context.Context) error {
 	childCtx, stop := context.WithCancel(ctx)
 	command := exec.CommandContext(childCtx, p.BinaryPath, "serve", p.ConfigPath)
 	command.Env = []string{}
+	if p.ManageExternalConnectors {
+		command.Env = append(command.Env, "DEX_API_CONNECTORS_CRUD=true")
+	}
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard // Child diagnostics can contain identity or database secrets.
 	command.Cancel = func() error { return command.Process.Signal(syscall.SIGTERM) }

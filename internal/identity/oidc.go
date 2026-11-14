@@ -20,17 +20,27 @@ var ErrInvalidIdentity = errors.New("identity verification failed")
 type ConnectorIdentity struct {
 	ID     string
 	Issuer string
+	DexID  string
+}
+
+// BrokerID is the concrete Dex connector for this stable identity namespace.
+func (c ConnectorIdentity) BrokerID() string {
+	if c.DexID != "" {
+		return c.DexID
+	}
+	return c.ID
 }
 
 // VerifiedIdentity carries a stable upstream binding plus non-authoritative profile fields.
 type VerifiedIdentity struct {
-	Issuer        string
-	Subject       string
-	ConnectorID   string
-	Email         string
-	EmailVerified bool
-	Name          string
-	AuthorizedAt  time.Time
+	Issuer         string
+	Subject        string
+	ConnectorID    string
+	Email          string
+	EmailVerified  bool
+	Name           string
+	AuthorizedAt   time.Time
+	DexConnectorID string
 }
 
 // OIDC verifies the product-managed Dex provider without bypassing TLS or JWT checks.
@@ -92,14 +102,14 @@ func (p *OIDC) Verify(ctx context.Context, rawToken, expectedNonce string, conne
 	if err := token.Claims(&claims); err != nil {
 		return VerifiedIdentity{}, ErrInvalidIdentity
 	}
-	if claims.Federated.ConnectorID != connector.ID || claims.Federated.UserID == "" {
+	if claims.Federated.ConnectorID != connector.BrokerID() || claims.Federated.UserID == "" {
 		return VerifiedIdentity{}, ErrInvalidIdentity
 	}
 	if (len(token.Audience) > 1 || claims.AuthorizedParty != "") && claims.AuthorizedParty != p.clientID {
 		return VerifiedIdentity{}, ErrInvalidIdentity
 	}
 	verified := VerifiedIdentity{Issuer: connector.Issuer, Subject: claims.Federated.UserID, ConnectorID: connector.ID,
-		Email: claims.Email, EmailVerified: claims.EmailVerified, Name: claims.Name}
+		Email: claims.Email, EmailVerified: claims.EmailVerified, Name: claims.Name, DexConnectorID: connector.DexID}
 	if claims.AuthTime > 0 {
 		verified.AuthorizedAt = time.Unix(claims.AuthTime, 0).UTC()
 	}

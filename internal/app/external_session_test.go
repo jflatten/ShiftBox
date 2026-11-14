@@ -44,7 +44,11 @@ func TestExternalMembershipAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	subject := identity.VerifiedIdentity{Issuer: "https://upstream.test", Subject: "stable",
-		ConnectorID: "company", Email: "same@example.test", EmailVerified: true, AuthorizedAt: now}
+		ConnectorID: "company", Email: "same@example.test", EmailVerified: true, AuthorizedAt: now, DexConnectorID: "broker"}
+	if _, err := db.ExecContext(ctx, "INSERT INTO external_connector(installation_id,issuer,connector_id,dex_id) VALUES($1,$2,$3,$4)",
+		installation, subject.Issuer, subject.ConnectorID, subject.DexConnectorID); err != nil {
+		t.Fatal(err)
+	}
 	issue := func() (auth.Session, string, error) {
 		t.Helper()
 		return issueExternalSession(ctx, db, installation, subject, now, uuid.NewString)
@@ -89,6 +93,15 @@ func TestExternalMembershipAdmission(t *testing.T) {
 	handler.ServeHTTP(response, req)
 	if response.Code != 200 || len(response.Result().Cookies()) != 1 {
 		t.Fatalf("external reauthorization with CSRF = %d, want 200 and one attempt", response.Code)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE external_connector SET dex_id='replacement' WHERE installation_id=$1", installation); err != nil {
+		t.Fatal(err)
+	}
+	if _, token, err := issue(); !errors.Is(err, identity.ErrInvalidIdentity) || token != "" {
+		t.Fatal("a callback for the retired Dex connector issued a session")
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE external_connector SET dex_id=$1 WHERE installation_id=$2", subject.DexConnectorID, installation); err != nil {
+		t.Fatal(err)
 	}
 	// Renewal of a session must use the same upstream binding and
 	// replace the session before its open connections can be retired.

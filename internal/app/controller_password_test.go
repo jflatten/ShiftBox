@@ -115,12 +115,20 @@ func TestControllerPasswordChange(t *testing.T) {
 	}
 	signIn()
 	token := signIn()
+	if _, err := db.ExecContext(ctx, `INSERT INTO origin_grants(id,token_digest,user_id,session_id,workspace_id,generation,service_key,origin,permission_basis,expires_at)
+		VALUES('password-grant','password-fixture',$1,'old-session','workspace',1,'ide','https://workspace.ide.test','workspace.connect_owner','later')`, user.ID); err != nil {
+		t.Fatal(err)
+	}
 	send(token, passwords.current, false, 403)
 	if passwords.verifyCalls != 0 {
 		t.Fatal("request without CSRF reached Dex")
 	}
 	send(token, "wrong-current", true, 403)
 	send(token, passwords.current, true, 503)
+	var grantRevoked bool
+	if err := db.QueryRowContext(ctx, "SELECT revoked_at IS NOT NULL FROM origin_grants WHERE id='password-grant'").Scan(&grantRevoked); err != nil || !grantRevoked {
+		t.Fatalf("password change grant revoked = %t (%v), want true", grantRevoked, err)
+	}
 	send(token, passwords.current, true, 401)
 	var forced bool
 	if err := db.QueryRowContext(ctx, "SELECT must_change_password FROM users WHERE id=$1", user.ID).Scan(&forced); err != nil || !forced {
