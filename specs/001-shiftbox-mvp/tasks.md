@@ -924,3 +924,18 @@ This checkpoint does not itself change the goal status.
   App/contract race suites, formatting and vet pass.
 - Listener/CLI composition and explicit local trust presentation remain pending;
   this helper is not a production TLS fallback or a claim of runnable setup.
+
+### Real loopback bootstrap TLS listener
+
+- Added a listener owner that accepts only explicit loopback IP binds, supports
+  an OS-selected port, and builds handlers with the actual canonical HTTPS origin.
+  It serves TLS 1.3 only and has no plaintext or public-interface fallback.
+- Added cancellation-driven graceful shutdown with a bounded grace period and
+  joined shutdown goroutine. Close also releases a reserved, not-yet-served
+  listener. Raw HTTP server diagnostics are not emitted to process output.
+- Real network tests verify trusted TLS requests, rejected rebound Host, rejected
+  TLS 1.2/plaintext, public-bind refusal and clean cancellation. App/contract race
+  suites, formatting and vet pass; test listeners are closed afterward.
+- CLI/bootstrap installation composition and local trust presentation remain
+  unfinished, as do explicit reset, sign-in/password change and remaining setup
+  UI/endpoints. No additional task is marked complete.
