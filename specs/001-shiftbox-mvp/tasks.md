@@ -147,7 +147,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 
 ### Models and implementation
 
-- [ ] T069 [US2] Add sharing/secret/Git/audit migrations in `migrations/sqlite/00004_sharing.sql` and `migrations/postgres/00004_sharing.sql`, preserving these verbatim constraints: TemplateGrant `(template_id, user_id)` is a "Unique active grant pair" and records `project_secret_warning_ack_at`; SecretValue `scope_type` is "`user`, `template`, or `organization` only", `name` is a "Normalized non-empty key; unique within active scope", `is_explicit_empty` "Distinguishes empty override from absence", and values never appear in audit/read models; GitAuthorization has "One record per user and app registration", provider "`github.com` in MVP", state "`connected`, `refreshing`, `reconnect_required`, or `revoked`", and `refresh_generation` fences concurrent results; AuditEvent metadata is "Redacted bounded context; schema rejects known secret fields"
+- [X] T069 [US2] Add sharing/secret/Git/audit migrations in `migrations/sqlite/00004_sharing.sql` and `migrations/postgres/00004_sharing.sql`, preserving these verbatim constraints: TemplateGrant `(template_id, user_id)` is a "Unique active grant pair" and records `project_secret_warning_ack_at`; SecretValue `scope_type` is "`user`, `template`, or `organization` only", `name` is a "Normalized non-empty key; unique within active scope", `is_explicit_empty` "Distinguishes empty override from absence", and values never appear in audit/read models; GitAuthorization has "One record per user and app registration", provider "`github.com` in MVP", state "`connected`, `refreshing`, `reconnect_required`, or `revoked`", and `refresh_generation` fences concurrent results; AuditEvent metadata is "Redacted bounded context; schema rejects known secret fields"
 - [X] T070 [US2] Implement administrator local-user creation, self password change, external connector configuration, external identity approval by stable binding, actual upstream reauthorization within the configured positive interval (initially four hours, never token-refresh-only), role/membership updates, protected local recovery of an existing administrator, and transactional session/grant revocation proven by T062 in `internal/identity/users.go`, `internal/identity/password.go`, `internal/identity/external.go`, `internal/identity/recovery.go`, and `internal/auth/membership.go`
 - [X] T071 [US2] Implement append-only security audit writes and configurable retention that never removes current authority, operations, maintenance, or workspace provenance in `internal/audit/store.go` and `internal/audit/service.go`
 - [X] T072 [US2] Implement immutable template revisions, launch grants with required project-secret acknowledgement, current-state launch authorization, revocation, archival, and administrator archive filtering proven by T063 in `internal/template/sharing.go` and `internal/template/archive.go`
@@ -2942,3 +2942,11 @@ This checkpoint does not itself change the goal status.
   shutdown step, and verified provider deletion retires the registration
   alongside reservation release. Race-enabled contract, worker, and TLS
   integration suites passed.
+
+### Sharing persistence and Git refresh fencing
+
+- T069 uses the existing dual-profile template, secret, and audit tables.
+  Migration 00024 adds the GitHub-only provider constraint and a durable
+  refresh generation. An older refresh response cannot complete a newer
+  claim after revoke and reconnect. SQLite and PostgreSQL passed the refresh,
+  audit schema, template, secret API, and migration checks.

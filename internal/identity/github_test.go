@@ -300,6 +300,52 @@ func TestGitHubRefreshCannotUndoRevoke(t *testing.T) {
 	}
 }
 
+// TestGitHubRefreshGenerationFencesReconnectedAuthorization checks that an old
+// provider response cannot complete a new refresh after revoke and reconnect.
+func TestGitHubRefreshGenerationFencesReconnectedAuthorization(t *testing.T) {
+	store, db, now := gitHubFixture(t)
+	ctx := t.Context()
+	initial := githubTokenFixture(now, "initial")
+	if err := store.connect(ctx, "owner", "42", initial, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE github_authorizations SET provider='example.test'"); err == nil {
+		t.Error("Git authorization schema accepted a provider other than github.com")
+	}
+	claim := func() int64 {
+		t.Helper()
+		current, err := store.load(ctx, "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.claimRefresh(ctx, "owner", current.Version, now); err != nil {
+			t.Fatal(err)
+		}
+		var generation int64
+		if err := db.QueryRowContext(ctx, "SELECT refresh_generation FROM github_authorizations WHERE user_id='owner'").Scan(&generation); err != nil {
+			t.Fatal(err)
+		}
+		return generation
+	}
+	first := claim()
+	if err := store.revoke(ctx, "owner", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.connect(ctx, "owner", "42", initial, now); err != nil {
+		t.Fatal(err)
+	}
+	second := claim()
+	if second <= first || first <= 0 {
+		t.Fatalf("refresh generations %d then %d, want increasing positive generations", first, second)
+	}
+	if err := store.finishRefresh(ctx, "owner", first, "connected", initial, now); !errors.Is(err, ErrGitHubReconnect) {
+		t.Errorf("finishRefresh(stale generation) = %v, want reconnect", err)
+	}
+	if err := store.finishRefresh(ctx, "owner", second, "connected", initial, now); err != nil {
+		t.Errorf("finishRefresh(current generation) = %v, want success", err)
+	}
+}
+
 // TestGitHubPermanentRefreshFailure persists reconnect-required across
 // service reconstruction and discards the unusable token pair.
 func TestGitHubPermanentRefreshFailure(t *testing.T) {

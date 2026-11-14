@@ -152,7 +152,7 @@ func (g *githubService) current(ctx context.Context, owner string) (githubAuthor
 		if now.Before(auth.UpdatedAt.Add(githubRefreshTimeout)) {
 			return githubAuthorization{}, errors.New("GitHub refresh is already in progress")
 		}
-		err := g.store.finishRefresh(ctx, owner, auth.Version, "reconnect_required", githubTokens{}, now)
+		err := g.store.finishRefresh(ctx, owner, auth.RefreshGeneration, "reconnect_required", githubTokens{}, now)
 		return githubAuthorization{}, errors.Join(ErrGitHubReconnect, err)
 	default:
 		return githubAuthorization{}, ErrGitHubReconnect
@@ -161,7 +161,7 @@ func (g *githubService) current(ctx context.Context, owner string) (githubAuthor
 	if err := g.store.claimRefresh(ctx, owner, auth.Version, now); err != nil {
 		return githubAuthorization{}, err
 	}
-	version := auth.Version + 1
+	generation := auth.RefreshGeneration + 1
 	pair, err := g.rotate(ctx, auth.Tokens, now)
 	// Even when the upstream request times out, record its outcome under a
 	// bounded independent context so a restart sees the current state.
@@ -175,13 +175,13 @@ func (g *githubService) current(ctx context.Context, owner string) (githubAuthor
 	case err != nil:
 		pair = auth.Tokens
 	}
-	if writeErr := g.store.finishRefresh(commitCtx, owner, version, state, pair, g.now()); writeErr != nil {
+	if writeErr := g.store.finishRefresh(commitCtx, owner, generation, state, pair, g.now()); writeErr != nil {
 		return githubAuthorization{}, writeErr
 	}
 	if err != nil {
 		return githubAuthorization{}, err
 	}
-	return githubAuthorization{State: state, Version: version + 1, Tokens: pair}, nil
+	return githubAuthorization{State: state, Version: auth.Version + 2, RefreshGeneration: generation, Tokens: pair}, nil
 }
 
 func (g *githubService) rotate(ctx context.Context, previous githubTokens, now time.Time) (githubTokens, error) {

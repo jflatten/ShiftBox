@@ -17,10 +17,11 @@ type githubStore struct {
 }
 
 type githubAuthorization struct {
-	State     string
-	Version   int64
-	UpdatedAt time.Time
-	Tokens    githubTokens
+	State             string
+	Version           int64
+	RefreshGeneration int64
+	UpdatedAt         time.Time
+	Tokens            githubTokens
 }
 
 type githubTokens struct {
@@ -61,10 +62,10 @@ func (s githubStore) load(ctx context.Context, owner string) (githubAuthorizatio
 	var auth githubAuthorization
 	var value cryptostore.Value
 	var stamp string
-	err := s.db.QueryRowContext(ctx, `SELECT a.state,a.version,a.updated_at,a.nonce,a.ciphertext
+	err := s.db.QueryRowContext(ctx, `SELECT a.state,a.version,a.refresh_generation,a.updated_at,a.nonce,a.ciphertext
 		FROM github_authorizations a JOIN users u ON u.id=a.user_id
 		WHERE a.user_id=$1 AND a.app_id=$2 AND u.membership_state='active'`, owner, s.appID).
-		Scan(&auth.State, &auth.Version, &stamp, &value.Nonce, &value.Ciphertext)
+		Scan(&auth.State, &auth.Version, &auth.RefreshGeneration, &stamp, &value.Nonce, &value.Ciphertext)
 	if errors.Is(err, sql.ErrNoRows) {
 		return githubAuthorization{}, ErrGitHubReconnect
 	}
@@ -89,14 +90,14 @@ func (s githubStore) load(ctx context.Context, owner string) (githubAuthorizatio
 }
 
 func (s githubStore) claimRefresh(ctx context.Context, owner string, version int64, now time.Time) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE github_authorizations SET state='refreshing',version=version+1,updated_at=$1
+	result, err := s.db.ExecContext(ctx, `UPDATE github_authorizations SET state='refreshing',refresh_generation=refresh_generation+1,version=version+1,updated_at=$1
 		WHERE user_id=$2 AND app_id=$3 AND version=$4 AND state='connected'
 		  AND EXISTS(SELECT 1 FROM users WHERE id=$2 AND membership_state='active')`,
 		gitHubTimestamp(now), owner, s.appID, version)
 	return githubWrite(result, err, ErrGitHubReconnect)
 }
 
-func (s githubStore) finishRefresh(ctx context.Context, owner string, version int64, state string, tokens githubTokens, now time.Time) error {
+func (s githubStore) finishRefresh(ctx context.Context, owner string, generation int64, state string, tokens githubTokens, now time.Time) error {
 	value := cryptostore.Value{Nonce: []byte{}, Ciphertext: []byte{}}
 	if state == "connected" {
 		var err error
@@ -107,9 +108,9 @@ func (s githubStore) finishRefresh(ctx context.Context, owner string, version in
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE github_authorizations SET state=$1,nonce=$2,ciphertext=$3,
 		access_expires_at=$4,refresh_expires_at=$5,updated_at=$6,version=version+1
-		WHERE user_id=$7 AND app_id=$8 AND version=$9 AND state='refreshing'`,
+		WHERE user_id=$7 AND app_id=$8 AND refresh_generation=$9 AND state='refreshing'`,
 		state, value.Nonce, value.Ciphertext, gitHubTimestamp(tokens.AccessExpiresAt), gitHubTimestamp(tokens.RefreshExpiresAt),
-		gitHubTimestamp(now), owner, s.appID, version)
+		gitHubTimestamp(now), owner, s.appID, generation)
 	return githubWrite(result, err, ErrGitHubReconnect)
 }
 
