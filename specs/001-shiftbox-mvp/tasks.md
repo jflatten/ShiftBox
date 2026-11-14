@@ -1025,3 +1025,14 @@ This checkpoint does not itself change the goal status.
   contract race suites, formatting and vet passed.
 - Composition uses system certificate roots. Provider selection, full
   installation activation and production HTTPS listener wiring remain open.
+
+### PostgreSQL setup target preflight
+
+- Added production-target preflight for operator-provisioned, empty ShiftBox and
+  Dex schemas. Fresh TLS connections verify hostnames and check the scoped roles,
+  database-side search paths, ownership, privileges, and schema contents.
+- A throwaway PostgreSQL database with two scoped login roles passed the race
+  integration test. The test rejected bad trust, shared roles, URI overrides,
+  and an occupied schema. The database and roles were removed afterward.
+- T031/T044 remain open for API credential collection, optional provisioning,
+  migration and owner transfer, and the durable activation switch.
