@@ -70,3 +70,27 @@ func TestPackerGuestToolchain(t *testing.T) {
 		}
 	}
 }
+
+// TestPackerBrowserIDE requires a checksum-pinned IDE, preserved notices,
+// and a sealed export whose manifest identifies the packaged component.
+func TestPackerBrowserIDE(t *testing.T) {
+	root := filepath.Join("..", "..", "platform", "packer")
+	for file, expected := range map[string][]string{
+		"code-server.env":      {"CODE_SERVER_VERSION=4.145.2", "2f6db6c3e8b733dd6b3aeee83532e148b2bae2e392353ba85452d03572348962"},
+		"install-toolchain.sh": {"code-server-$CODE_SERVER_VERSION-linux-amd64.tar.gz", "ThirdPartyNotices", "code-server --version"},
+		"shiftbox.pkr.hcl":     {"code-server.env", "/tmp/shiftbox-code-server.env"},
+		"seal-image.sh":        {"/tmp/shiftbox-code-server.env"},
+		"build-image.sh":       {"go run ./platform/packer/manifest", "manifest.json", "CODE_SERVER_SHA256"},
+	} {
+		raw, err := os.ReadFile(filepath.Join(root, file))
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		for _, marker := range expected {
+			if !strings.Contains(string(raw), marker) {
+				t.Errorf("%s missing browser IDE build marker %q", file, marker)
+			}
+		}
+	}
+}

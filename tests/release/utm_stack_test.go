@@ -3,14 +3,11 @@
 package release_test
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -49,7 +46,15 @@ func TestUTMGuestEnrollment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	owner := uuid.NewString()
-	const guestRelease = "development"
+	manifest, err := os.ReadFile(filepath.Join(filepath.Dir(bundle), "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata release.ArtifactManifest
+	if err := json.Unmarshal(manifest, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	guestRelease := metadata.Guest.Version
 	dir := t.TempDir()
 	db, id, err := database.OpenBootstrap(ctx, filepath.Join(dir, "fixture.db"), database.BootstrapSeed{
 		ID: uuid.NewString(), Organization: "Fixture", Origin: "https://management.test",
@@ -66,13 +71,15 @@ func TestUTMGuestEnrollment(t *testing.T) {
 	catalogStore := release.NewStore(db)
 	catalog := release.NewCatalog(catalogStore, filepath.Join(dir, "catalog"))
 	artifactID, workspaceID, marker := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	manifest := enrollmentFixtureManifest(t, bundle, guestRelease)
-	artifact, err := catalog.Import(ctx, artifactID, owner, time.Now(), filepath.Dir(bundle), strings.NewReader(manifest))
+	artifact, err := catalog.Import(ctx, artifactID, owner, time.Now(), filepath.Dir(bundle), bytes.NewReader(manifest))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The fixture supplies an enrollment-only export. Mark it available in
-	// this isolated database solely to drive the existing launch path.
+	if artifact.Artifact.Bundle != filepath.Base(bundle) {
+		t.Fatalf("manifest describes %s, expected %s", artifact.Artifact.Bundle, filepath.Base(bundle))
+	}
+	// Make the candidate available only in this isolated database so the
+	// production launch path can boot it for validation.
 	if err := catalogStore.CompleteImport(ctx, artifactID, artifact.Artifact.ManifestSHA256, true); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +110,7 @@ func TestUTMGuestEnrollment(t *testing.T) {
 	state.Installation.Settings.PreviewHostPattern = "{service}--{workspace}.preview.test"
 	runtime, err := app.ListenWorkspaceRuntime(state, app.GuestListenerConfig{
 		EnrollmentAddress: bind, PollAddress: bind, TunnelAddress: bind, PublicHost: host, Tunnels: tunnels,
-	}, web.GuestCompatibility{Protocol: "1", CurrentRelease: guestRelease}, journal, machines, dir, time.Now)
+	}, web.GuestCompatibility{Protocol: metadata.ProtocolVersion, CurrentRelease: guestRelease}, journal, machines, dir, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,47 +279,4 @@ func cleanupEnrollmentVM(t *testing.T, machines *utm.Provider, ref provider.Work
 	if err != nil || result.Power != provider.Deleted {
 		t.Errorf("delete disposable VM %s: power %s, error %v", inventory.InstanceID, result.Power, err)
 	}
-}
-
-func enrollmentFixtureManifest(t *testing.T, bundle, guestRelease string) string {
-	t.Helper()
-	var resources []release.ArtifactResource
-	err := filepath.WalkDir(bundle, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		kind := "vm"
-		if filepath.Ext(path) == ".qcow2" {
-			kind = "disk"
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-		digest := sha256.New()
-		if _, err := io.Copy(digest, file); err != nil {
-			return err
-		}
-		relative, err := filepath.Rel(filepath.Dir(bundle), path)
-		if err != nil {
-			return err
-		}
-		resources = append(resources, release.ArtifactResource{Path: relative, Type: kind, SHA256: fmt.Sprintf("%x", digest.Sum(nil))})
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte("disposable enrollment test metadata")))
-	encoded, err := json.Marshal(release.ArtifactManifest{
-		SchemaVersion: 1, Architecture: "amd64", ReleaseID: "enrollment-fixture", PlatformVersion: "24.04", ProtocolVersion: "1",
-		Guest:      release.ArtifactComponent{Version: guestRelease, SHA256: digest},
-		IDE:        release.ArtifactComponent{Version: "fixture-only", SHA256: digest},
-		Provenance: release.ArtifactProvenance{Source: "local Packer enrollment fixture", Revision: "enrollment-fixture"}, Resources: resources,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(encoded)
 }

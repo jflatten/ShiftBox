@@ -126,7 +126,8 @@ func GuestPollHandler(compatibility GuestCompatibility,
 			return
 		}
 		stamp := now().UTC()
-		report := guest.PollReport{Version: input.LastOperationVersion, Operation: input.OperationReport}
+		report := guest.PollReport{GuestRelease: input.GuestRelease, ProtocolVersion: input.ProtocolVersion,
+			Version: input.LastOperationVersion, Operation: input.OperationReport}
 		if input.Activity != nil {
 			report.Activity = &workspace.CPUActivity{SampledAt: input.Activity.SampledAt, Percent: input.Activity.CPUPercent}
 		}

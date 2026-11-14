@@ -108,6 +108,11 @@ build {
     destination = "/tmp/shiftbox-install-toolchain"
   }
 
+  provisioner "file" {
+    source      = "${path.root}/code-server.env"
+    destination = "/tmp/shiftbox-code-server.env"
+  }
+
   provisioner "shell" {
     inline = [
       "cloud-init status --wait",

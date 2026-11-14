@@ -2342,3 +2342,34 @@ This checkpoint does not itself change the goal status.
   IDE or release boot evidence.
 - T033, T046 and T058 stay open for the licensed browser IDE selection,
   final image and native boot evidence, and setup import wiring.
+
+### Browser IDE packaging
+
+- T046 selects Coder code-server 4.145.2 for the VS Code Browser
+  experience. Packer pins the published Linux amd64 archive and SHA-256,
+  keeps its MIT license and third-party notices, and checks the installed
+  version. Builds record the IDE archive and guest digests in the manifest
+  alongside the final UTM export.
+- The release tests use that exact manifest for the disposable UTM clone.
+  Packer 1.14.2 and UTM 5.0.8 built the Ubuntu 24.04 Minimal amd64 image
+  and verified code-server 4.145.2 on the guest. The race-enabled clone
+  test authenticated in 45s and passed in 62.06s, including offboarding,
+  retained disk verification and disposable VM cleanup. The development
+  manifest SHA-256 is `56a64ae23b7926e255770229dab751057a057a019f02499869cc9d3c836febbe`.
+- The catalog publication and default-selection test passed on SQLite
+  and PostgreSQL. T046 stays open for production admission through setup.
+  The approved MVP source is a local import folder containing the UTM
+  bundle and its `manifest.json`.
+  T052 stays open for starting the IDE inside the project Dev Container
+  and verifying it through the ShiftBox proxy.
+
+### Retained guest release evidence
+
+- T097 records the release and protocol from the last accepted poll in
+  the authenticated workspace generation. The upgrade check lists retained
+  workspaces with missing or different versions, including stopped guests.
+  The enrollment test confirms that a previous release can still poll but
+  blocks advancement, an unsupported report leaves the last version intact,
+  and a current-release poll clears that version blocker.
+- T097 stays open for signed update and rollback evidence, the migration
+  command and its remaining preflight checks.

@@ -61,6 +61,16 @@ exec /usr/local/bin/node /usr/local/lib/shiftbox/devcontainer/devcontainer.js "$
 CLI
 chmod 0755 /usr/local/bin/devcontainer
 
+. /tmp/shiftbox-code-server.env
+ide_archive="code-server-$CODE_SERVER_VERSION-linux-amd64.tar.gz"
+download "$ide_archive" "$CODE_SERVER_SOURCE/releases/download/v$CODE_SERVER_VERSION/$ide_archive" "$CODE_SERVER_SHA256"
+install -d -m 0755 /usr/local/lib/shiftbox/code-server
+tar -xzf "$ide_archive" --no-same-owner --strip-components=1 -C /usr/local/lib/shiftbox/code-server
+test -s /usr/local/lib/shiftbox/code-server/LICENSE
+test -s /usr/local/lib/shiftbox/code-server/ThirdPartyNotices.txt
+ln -s /usr/local/lib/shiftbox/code-server/bin/code-server /usr/local/bin/code-server
+code-server --version | grep -F "$CODE_SERVER_VERSION"
+
 systemctl enable --now docker.service
 test "$(docker version --format '{{.Server.Version}}')" = 29.9.3
 test "$(docker version --format '{{.Client.Version}}')" = 29.9.3

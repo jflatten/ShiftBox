@@ -33,23 +33,22 @@ The build installs Docker Engine 29.9.3, containerd 2.4.2, and Buildx
 24.22.3 and Dev Container CLI 0.90.0 archives by SHA-256, then checks the
 running Docker service and installed tools before sealing the guest.
 
-The build output is a candidate bundle. Release admission requires the
-browser IDE, a manifest covering the final export,
-and verified boot, enrollment, and clone behavior through UTM.
+The build installs Coder code-server 4.145.2 from its checksum-pinned Linux
+amd64 release archive. The installed distribution retains its license and
+third-party notices.
 
-Once the release build has recorded the packaged guest and IDE versions and
-digests, generate the manifest from the prepared bundle. The build metadata
-uses the artifact schema fields except `resources`, which the tool derives
-from the final files.
+The build writes `manifest.json` beside `shiftbox.utm` in the `final`
+directory. The manifest records the guest and IDE versions and digests,
+source revision, and exported file digests. The manifest tool can also run
+against a prepared bundle and its build metadata.
 
 ```sh
 go run ./platform/packer/manifest /absolute/path/to/final/shiftbox.utm \
     < build-metadata.json > /absolute/path/to/final/manifest.json
 ```
 
-Keep the manifest beside the bundle. The tool hashes the exported files
-without modifying them. Boot and enrollment validation remain separate
-release checks.
+The tool hashes the exported files in place. Release validation uses the
+candidate bundle and its manifest for UTM clone, boot, and enrollment checks.
 
 To verify that a prepared development export can enroll, run the opt-in
 `utm_release` test with UTM 5.0.8 running. Set the guest host to a local IP

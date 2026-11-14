@@ -19,6 +19,8 @@ var ErrGuestReportConflict = errors.New("guest report conflicts with dispatched 
 // PollReport carries the last acknowledged dispatch and typed operation evidence.
 // The workspace and generation authority comes from the verified TLS leaf.
 type PollReport struct {
+	GuestRelease    string
+	ProtocolVersion string
 	LastOperationID string
 	Version         int64
 	Operation       *OperationReport
@@ -63,6 +65,17 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 		}
 		if err := acceptGuestReport(ctx, tx, contact, report); err != nil {
 			return err
+		}
+		// Keep the last accepted release even when a guest stops polling.
+		result, err := tx.ExecContext(ctx, `UPDATE workspaces SET guest_release=$1,protocol_version=$2
+			WHERE id=$3 AND generation=$4`, report.GuestRelease, report.ProtocolVersion, contact.WorkspaceID, contact.Generation)
+		if err != nil {
+			return err
+		}
+		if count, err := result.RowsAffected(); err != nil {
+			return err
+		} else if count != 1 {
+			return ErrGuestUnauthorized
 		}
 		if err := workspace.RecordActivity(ctx, tx, contact.WorkspaceID, contact.Generation, now,
 			workspace.ActivityPolicy{IDE: true, CPU: true, CPUThreshold: 5, Freshness: 90 * time.Second}, report.Activity, ideConnected); err != nil {

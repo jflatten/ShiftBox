@@ -30,6 +30,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/proxy"
+	"github.com/jflatten/ShiftBox/internal/release"
 	"github.com/jflatten/ShiftBox/internal/secret"
 	"github.com/jflatten/ShiftBox/internal/web"
 	_ "modernc.org/sqlite"
@@ -66,6 +67,14 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	INSERT INTO guest_registrations(workspace_id,generation,state) VALUES('work',1,'eligible');`)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A retained workspace without any accepted poll blocks advancement.
+	store := release.NewStore(db)
+	blockers, err := store.GuestUpgradeBlockers(ctx, install, "test", "1")
+	if err != nil || len(blockers) != 1 || blockers[0] != (release.GuestUpgradeBlocker{
+		WorkspaceID: "work", ObservedState: "stopped",
+	}) {
+		t.Errorf("guest upgrade blockers before enrollment = %+v, %v, want stopped guest without release evidence", blockers, err)
 	}
 	certPEM, keyPEM, issuerKey, issuer := authorityFixture(t)
 	now := time.Now().UTC()
@@ -433,6 +442,26 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	}
 	if code := poll(`{"protocolVersion":"1","guestRelease":"unsupported"}`); code != 409 {
 		t.Errorf("unsupported-release poll = %d, want 409", code)
+	}
+	// The stored compatibility evidence follows accepted polls even after a
+	// downgrade. A rejected version cannot replace the last accepted report.
+	var lastRelease, lastProtocol sql.NullString
+	if err := db.QueryRow(`SELECT guest_release,protocol_version FROM workspaces WHERE id='work'`).Scan(&lastRelease, &lastProtocol); err != nil ||
+		lastRelease.String != "previous" || lastProtocol.String != "1" {
+		t.Errorf("last accepted guest poll = %q/%q, %v, want previous/1", lastRelease.String, lastProtocol.String, err)
+	}
+	// A stopped guest can still block the next upgrade after rolling back.
+	blockers, err = store.GuestUpgradeBlockers(ctx, install, "test", "1")
+	if err != nil || len(blockers) != 1 || blockers[0] != (release.GuestUpgradeBlocker{
+		WorkspaceID: "work", ObservedState: "stopped", GuestRelease: "previous", ProtocolVersion: "1",
+	}) {
+		t.Errorf("guest upgrade blockers after rollback = %+v, %v, want stopped previous/1 guest", blockers, err)
+	}
+	if code := poll(hello); code != 200 {
+		t.Fatalf("current-release poll = %d, want 200", code)
+	}
+	if blockers, err := store.GuestUpgradeBlockers(ctx, install, "test", "1"); err != nil || len(blockers) != 0 {
+		t.Errorf("guest upgrade blockers after current poll = %+v, %v, want none", blockers, err)
 	}
 	const configureID = "99999999-0000-4000-8000-000000000001"
 	if _, err := db.Exec(`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,version,originating_action)

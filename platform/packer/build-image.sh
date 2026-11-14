@@ -13,6 +13,12 @@ esac
 recipe_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 root=$(CDPATH='' cd -- "$recipe_dir/../.." && pwd)
 cd "$root"
+. "$recipe_dir/code-server.env"
+revision=$(git rev-parse HEAD)
+# Mark a local validation build if its source differs from the recorded commit.
+if [ -n "$(git status --porcelain --untracked-files=normal -- cmd internal platform go.mod go.sum)" ]; then
+    revision="$revision-dirty"
+fi
 mkdir -p "$root/.cache/packer"
 build_dir=$(mktemp -d "$root/.cache/packer/build.XXXXXXXX")
 trap 'rm -f "$build_dir/ssh-key" "$build_dir/ssh-key.pub"' EXIT
@@ -28,4 +34,19 @@ packer build     -var "build_name=shiftbox-${build_dir##*/}"     -var "output_di
 mkdir "$build_dir/final"
 /usr/bin/osascript "$recipe_dir/prepare-export.applescript" \
     "$build_dir/export/shiftbox.utm" "$build_dir/final/shiftbox.utm"
-echo "Prepared bundle: $build_dir/final/shiftbox.utm"
+agent_sha=$(shasum -a 256 "$build_dir/shiftbox-agent" | cut -d ' ' -f 1)
+cat > "$build_dir/build-metadata.json" <<EOF
+{
+  "schemaVersion": 1,
+  "releaseId": "$1",
+  "architecture": "amd64",
+  "platformVersion": "24.04",
+  "protocolVersion": "1",
+  "guest": {"version": "$1", "sha256": "$agent_sha"},
+  "ide": {"version": "$CODE_SERVER_VERSION", "sha256": "$CODE_SERVER_SHA256", "source": "$CODE_SERVER_SOURCE"},
+  "provenance": {"source": "https://github.com/jflatten/ShiftBox", "revision": "$revision"}
+}
+EOF
+go run ./platform/packer/manifest "$build_dir/final/shiftbox.utm" < "$build_dir/build-metadata.json" > "$build_dir/manifest.json"
+mv "$build_dir/manifest.json" "$build_dir/final/manifest.json"
+echo "Prepared artifact: $build_dir/final"
