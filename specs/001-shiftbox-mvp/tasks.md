@@ -1986,3 +1986,12 @@ This checkpoint does not itself change the goal status.
   scoped to the signed-in user. Notices observe scheduled start and expiry.
 - Web, application, database and contract race tests passed. Persistent
   operational conditions, notice retention, and the browser view remain open.
+
+### Notices page
+
+- Members can mark notices read, dismiss them, and browse their own history.
+  Administrators can publish notices immediately or provide start and expiry
+  times. The page follows server pagination.
+- All 44 UI tests and the production build passed. Chrome verified the
+  member keyboard flow using fixture responses. Operational conditions and
+  automatic history retention remain open.
