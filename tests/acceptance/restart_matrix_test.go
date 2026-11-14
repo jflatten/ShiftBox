@@ -483,9 +483,9 @@ func TestRestartInterruptsRestoreValidation(t *testing.T) {
 	}
 }
 
-// TestRestartWorkspaceProvision loses the provider's creation reply, closes
-// the database, and verifies that a new worker adopts the exact existing VM.
-func TestRestartWorkspaceProvision(t *testing.T) {
+// TestRestartWorkspaceLaunch loses provider replies and reopens the controller
+// database across all launch steps, including while later hooks are pending.
+func TestRestartWorkspaceLaunch(t *testing.T) {
 	ctx, now := t.Context(), time.Now().UTC()
 	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "provision.db")}
 	open := func() *sql.DB {
@@ -505,63 +505,162 @@ func TestRestartWorkspaceProvision(t *testing.T) {
 		Generation: 1, OwnershipMarker: "fixture-owner"}
 	owner := uuid.NewString()
 	seedRecoveryRestart(t, db, ref, owner, now)
-	if _, err := db.ExecContext(ctx, `UPDATE workspaces SET provider_instance_id=NULL,desired_state='running',
-		observed_state='provisioning' WHERE id=$1`, ref.WorkspaceID); err != nil {
+	if _, err := db.ExecContext(ctx, "DELETE FROM workspaces WHERE id=$1", ref.WorkspaceID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO reservations(workspace_id,cpu_count,memory_mib,disk_mib,cpu_memory_state,disk_state,reserved_at)
-		VALUES($1,2,1024,40,'reserved','reserved',$2)`, ref.WorkspaceID, now.Format(time.RFC3339Nano)); err != nil {
+	store := workspace.NewStore(db)
+	allocation := workspace.Allocation{CPU: 2, MemoryMiB: 1024, DiskMiB: 40}
+	if err := store.SetCapacityBudget(ctx, ref.InstallationID, allocation, 0, owner, now); err != nil {
 		t.Fatal(err)
 	}
 	journal := operation.NewJournal(db, time.Now, uuid.NewString)
-	op, err := journal.Create(ctx, operation.Request{
-		Actor: owner, Key: "workspace-provision-restart", Type: "provision", OriginatingAction: "workspace.launch",
-		WorkspaceID: &ref.WorkspaceID, Generation: ref.Generation, Steps: []operation.Step{{Key: "provision", Label: "Provision workspace"}},
-	})
-	if err != nil {
+	var op operation.Operation
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		var err error
+		op, err = workspace.AdmitLaunch(ctx, tx, journal, workspace.LaunchIntent{
+			InstallationID: ref.InstallationID, WorkspaceID: ref.WorkspaceID, OwnerID: owner, Name: "Restart fixture",
+			TemplateID: "fixture-template", TemplateRevision: 1, ArtifactID: "fixture-image", RequestKey: "launch-restart-fixture",
+			RepositoryURL: "https://github.com/example/fixture", DevcontainerPath: "devcontainer.json",
+			Allocation: allocation, NetworkPolicyJSON: `{"mode":"nat"}`, OwnershipMarker: ref.OwnershipMarker,
+		}, now)
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
-	machines := &restartProvisionProvider{Provider: fake.New()}
-	newWorker := func(db *sql.DB, journal *operation.Journal) *operation.Worker {
-		launch := workspace.NewLaunchExecutor(workspace.NewStore(db), machines, nil, "", "", "", time.Now, nil)
+	machines := &restartLaunchProvider{Provider: fake.New()}
+	enrollment := &restartLaunchEnrollment{}
+	ideReady := false
+	ideUnavailable := errors.New("fixture IDE unavailable")
+	probe := func(_ context.Context, id string, generation int64) error {
+		if id != ref.WorkspaceID || generation != ref.Generation {
+			t.Fatalf("IDE probe scope = %s/%d, want %s/%d", id, generation, ref.WorkspaceID, ref.Generation)
+		}
+		if !ideReady {
+			return ideUnavailable
+		}
+		return nil
+	}
+	restart := func() *operation.Worker {
+		t.Helper()
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		db = open()
+		journal = operation.NewJournal(db, time.Now, uuid.NewString)
+		launch := workspace.NewLaunchExecutor(workspace.NewStore(db), machines, enrollment, "", "", "", time.Now, probe)
 		return workspace.NewWorker(journal, launch, nil)
 	}
-	machines.LoseReply("create")
-	if err := newWorker(db, journal).RunOnce(ctx, op.ID); !errors.Is(err, provider.ErrOutcomeUnknown) {
-		t.Fatalf("provision without reply returned %v, want uncertain outcome", err)
+	run := func(step string, want error) {
+		t.Helper()
+		worker := restart()
+		if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, want) {
+			t.Fatalf("RunOnce(%s) = %v, want %v", step, err, want)
+		}
 	}
+	machines.LoseReply("create")
+	run("provision without reply", provider.ErrOutcomeUnknown)
 	existing, err := machines.Inspect(ctx, ref)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
+	run("adopt provisioned VM", nil)
+	checkStep := func(index int, step, status, stepStatus string) {
+		t.Helper()
+		current, err := journal.Get(ctx, op.ID)
+		if err != nil || current.Status != status || len(current.Steps) <= index ||
+			current.Steps[index].Key != step || current.Steps[index].Status != stepStatus {
+			t.Fatalf("launch after %s = %s, steps %+v (%v), want %s with step %s", step, current.Status, current.Steps, err, status, stepStatus)
+		}
 	}
-	db = open()
-	journal = operation.NewJournal(db, time.Now, uuid.NewString)
-	if err := newWorker(db, journal).RunOnce(ctx, op.ID); err != nil {
-		t.Fatal(err)
-	}
-	done, err := journal.Get(ctx, op.ID)
-	if err != nil || done.Status != "succeeded" || machines.creates != 1 {
-		t.Errorf("provision after restart = %s, %d create requests (%v), want succeeded and one create", done.Status, machines.creates, err)
-	}
+	checkStep(0, "provision", "waiting", "succeeded")
 	var instance, registration string
 	if err := db.QueryRowContext(ctx, `SELECT w.provider_instance_id,g.state FROM workspaces w JOIN guest_registrations g
 		ON w.id=g.workspace_id AND w.generation=g.generation WHERE w.id=$1`, ref.WorkspaceID).Scan(&instance, &registration); err != nil ||
 		instance != existing.InstanceID || registration != "eligible" {
 		t.Errorf("provisioned instance = %q/%q (%v), want existing VM and eligible guest", instance, registration, err)
 	}
+	machines.LoseReply("start")
+	run("guest boot without reply", provider.ErrOutcomeUnknown)
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Reopen without an authenticated poll and verify the worker stays in
+	// enrollment. The fixture then supplies the receipt normally written by
+	// the enrollment and poll endpoints.
+	if err := restart().RunOnce(ctx, op.ID); err == nil {
+		t.Fatal("enrollment succeeded before authenticated guest contact")
+	}
+	checkStep(1, "enroll", "waiting", "active")
+	expiry := now.Add(time.Hour).Format(time.RFC3339Nano)
+	exec(`UPDATE guest_registrations SET state='active',public_key_fingerprint='fixture-key',
+		certificate_not_after=$1,last_authenticated_at=$2 WHERE workspace_id=$3`, expiry, now.Format(time.RFC3339Nano), ref.WorkspaceID)
+	exec(`INSERT INTO enrollment_grants(id,workspace_id,generation,operation_id,provider_instance_id,expires_at,state,key_proof,certificate_der)
+		VALUES($1,$2,$3,$4,$5,$6,'consumed','fixture-key','public')`,
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ref.WorkspaceID, ref.Generation, op.ID, existing.InstanceID, expiry)
+	run("verify enrollment", nil)
+	checkStep(1, "enroll", "waiting", "succeeded")
+	if err := restart().RunOnce(ctx, op.ID); err == nil {
+		t.Fatal("configuration succeeded before the connection-ready receipt")
+	}
+	checkStep(2, "configure", "waiting", "active")
+	exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,container_id)
+		VALUES($1,1,'running','fixture-container')`, op.ID)
+	run("consume connection-ready receipt", nil)
+	checkStep(2, "configure", "waiting", "succeeded")
+	run("probe unavailable IDE", ideUnavailable)
+	checkStep(3, "verify_ide", "waiting", "active")
+	ideReady = true
+	run("verify IDE", nil)
+	checkStep(3, "verify_ide", "waiting", "succeeded")
+	checkStep(4, "finish_setup", "waiting", "pending")
+	if err := restart().RunOnce(ctx, op.ID); err == nil {
+		t.Fatal("setup finished before the final guest receipt")
+	}
+	checkStep(4, "finish_setup", "waiting", "active")
+	exec("UPDATE guest_dispatches SET status='succeeded' WHERE operation_id=$1", op.ID)
+	run("finish setup hooks", nil)
+	run("completed launch replay", operation.ErrConflict)
+	checkStep(4, "finish_setup", "succeeded", "succeeded")
+	if machines.creates != 1 || machines.starts != 1 || enrollment.deliveries != 1 || enrollment.cleanups != 1 {
+		t.Errorf("launch effects = creates %d, starts %d, deliveries %d, cleanups %d, want one of each",
+			machines.creates, machines.starts, enrollment.deliveries, enrollment.cleanups)
+	}
 }
 
-type restartProvisionProvider struct {
+type restartLaunchProvider struct {
 	*fake.Provider
-	creates int
+	creates, starts int
 }
 
-func (p *restartProvisionProvider) Create(ctx context.Context, request provider.CreateRequest) (provider.Inventory, error) {
+func (p *restartLaunchProvider) Create(ctx context.Context, request provider.CreateRequest) (provider.Inventory, error) {
 	p.creates++
+	request.EnrollmentMedia = "/empty-fixture.iso"
 	return p.Provider.Create(ctx, request)
+}
+
+func (p *restartLaunchProvider) Start(ctx context.Context, request provider.StartRequest) (provider.Inventory, error) {
+	p.starts++
+	return p.Provider.Start(ctx, request)
+}
+
+type restartLaunchEnrollment struct {
+	deliveries, cleanups int
+}
+
+func (e *restartLaunchEnrollment) Deliver(ctx context.Context, op string, vm provider.Inventory, _ time.Time, _, _, _ string,
+	attach func(context.Context, provider.EnrollmentRequest) (provider.DeliveryResult, error)) (string, error) {
+	e.deliveries++
+	const media = "/fixture-enrollment.iso"
+	_, err := attach(ctx, provider.EnrollmentRequest{Ref: vm.Ref, OperationID: op, MediaPath: media, Eligible: true})
+	return media, err
+}
+
+func (e *restartLaunchEnrollment) CleanupDelivery(context.Context, string, provider.WorkspaceRef, string) error {
+	e.cleanups++
+	return nil
 }
 
 // TestRestartWorkspaceDeletion reopens the controller database after a

@@ -2735,6 +2735,11 @@ This checkpoint does not itself change the goal status.
   is `b6c2f15712a9b33c6fadd00ed6a8a339ae29e390f93373029675d9217d977818`.
 - T052 still needs the full UTM workspace
   journey, project and home retention on rebuild, and repair entry and exit.
+- T120 reopens the controller database at all five workspace launch
+  steps with a simulated provider and guest receipts. Lost create and boot
+  replies result in one VM and one enrollment delivery. The worker waits
+  for authenticated guest contact, the connection-ready receipt, a successful
+  IDE probe, and the separate final hook receipt.
 
 ### Writable project checkout
 
