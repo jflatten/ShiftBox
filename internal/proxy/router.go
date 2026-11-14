@@ -81,8 +81,10 @@ type cancelableUpgrade struct {
 	stop func() bool
 }
 
+// Unwrap lets the HTTP response controller reach the underlying writer.
 func (w *cancelableUpgrade) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
+// Hijack ties an upgraded connection to request cancellation so revocation can close it.
 func (w *cancelableUpgrade) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
 	if err == nil {

@@ -50,6 +50,7 @@ func (e workspaceExecutor) executor(op operation.Operation) operation.Executor {
 	return nil
 }
 
+// Observe dispatches the observation to the executor for the operation's original action.
 func (e workspaceExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
 	executor := e.executor(op)
 	if executor == nil {
@@ -59,6 +60,7 @@ func (e workspaceExecutor) Observe(ctx context.Context, op operation.Operation, 
 	return evidence, done, workspaceEffectError(op, err)
 }
 
+// Apply dispatches the admitted effect and classifies retryable provider failures.
 func (e workspaceExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
 	executor := e.executor(op)
 	if executor == nil {

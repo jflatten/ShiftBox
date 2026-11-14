@@ -22,4 +22,10 @@ The exact-stack workspace and sharing journeys remain pending. UTM reported
 the existing disposable VM as `starting` during the readiness check. The
 browser run used API fixtures and did not exercise UTM, live GitHub
 authorization, Firefox, or WebKit. The exported Go API and trust-code
-documentation review remains open under T126.
+documentation review found 73 missing comments across production packages
+and command wrappers. They now describe the provider observation contract,
+operation replay, enrollment, connection closure, and other interface
+behavior. The scoped documentation scan passed for `cmd`, `internal`,
+`migrations`, `platform`, and `ui/export.go`. Formatting and Go vet
+passed again after the comment changes. T126 remains open for the broader
+trust and reconciliation review and outstanding browser coverage.

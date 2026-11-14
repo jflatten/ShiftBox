@@ -93,6 +93,8 @@ func registerTunnel(session *yamux.Session, registration proxy.TunnelRegistratio
 	return nil
 }
 
+// serveTunnelStream takes the dial address from the guest's registered
+// services. The incoming stream can only name a service in this generation.
 func serveTunnelStream(ctx context.Context, stream *yamux.Stream, generation int64, allowlist *proxy.ServiceAllowlist, targets map[string]string) {
 	defer stream.Close()
 	_ = stream.SetReadDeadline(time.Now().Add(10 * time.Second))

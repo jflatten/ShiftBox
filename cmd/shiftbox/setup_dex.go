@@ -194,6 +194,7 @@ type dexBackchannel struct {
 	transport      http.RoundTripper
 }
 
+// RoundTrip routes requests within the configured issuer to the private Dex listener.
 func (d dexBackchannel) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.URL.Scheme != d.issuer.Scheme || r.URL.Host != d.issuer.Host ||
 		!strings.HasPrefix(r.URL.Path, d.issuer.Path+"/") {

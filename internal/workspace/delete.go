@@ -102,6 +102,7 @@ type deletionExecutor struct {
 	closeAccess func(string, bool) error
 }
 
+// Observe checks shutdown evidence and owned resources before replaying deletion.
 func (e deletionExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
 	req, shutdownAt, err := e.request(ctx, op, step)
 	if err != nil {
@@ -165,6 +166,7 @@ func (e deletionExecutor) Observe(ctx context.Context, op operation.Operation, s
 	return "", false, retentionWaiting(provider.ErrOutcomeUnknown)
 }
 
+// Apply rechecks deletion authority before stopping or removing the exact VM.
 func (e deletionExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
 	req, shutdownAt, err := e.request(ctx, op, step)
 	if err != nil {

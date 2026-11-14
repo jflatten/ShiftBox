@@ -23,6 +23,7 @@ type StepFailure struct {
 	CleanupStep string
 }
 
+// Error returns the public reason for a terminal step failure.
 func (f *StepFailure) Error() string { return f.Detail }
 
 // StepWaiting carries a public explanation for an effect that will be retried.
@@ -31,6 +32,7 @@ type StepWaiting struct {
 	Cause  error
 }
 
+// Error returns the public reason the reconciler is waiting to retry.
 func (w *StepWaiting) Error() string { return w.Detail }
 
 // Unwrap preserves the underlying cause for the controller.

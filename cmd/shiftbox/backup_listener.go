@@ -75,6 +75,7 @@ func listenLocalBackup(dir string, service *backup.Service,
 	return &localBackupListener{network: network, server: &http.Server{Handler: mux, ReadTimeout: 10 * time.Second, IdleTimeout: time.Minute}}, nil
 }
 
+// Serve handles backup requests over the private socket for the controller lifetime.
 func (s *localBackupListener) Serve(ctx context.Context) error {
 	lifetime, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -98,4 +99,5 @@ func (s *localBackupListener) Serve(ctx context.Context) error {
 	return err
 }
 
+// Close stops accepting requests on the private backup socket.
 func (s *localBackupListener) Close() { _ = s.network.Close() }

@@ -122,11 +122,13 @@ func (p *PlatformImport) worker() *operation.Worker {
 
 type platformImportExecutor struct{ *PlatformImport }
 
+// Observe defers reconciliation to the catalog import, which can verify a published copy.
 func (e platformImportExecutor) Observe(context.Context, operation.Operation, operation.Step) (string, bool, error) {
 	// Catalog validation checks immutable publication before replaying its boot check.
 	return "", false, nil
 }
 
+// Apply rechecks administrator authority before importing the recorded local bundle.
 func (e platformImportExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
 	if op.OriginatingAction != platformImportAction || step.Key != "import" {
 		return "", operation.ErrConflict

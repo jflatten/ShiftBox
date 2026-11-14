@@ -30,20 +30,24 @@ type Provider struct {
 
 var _ provider.Provider = (*Provider)(nil)
 
+// New initializes an empty simulated provider inventory.
 func New() *Provider { return &Provider{machines: make(map[key]*machine)} }
 
+// LoseReply hides the next successful result for the named fixture operation.
 func (p *Provider) LoseReply(method string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.lostReply = method
 }
 
+// FailDelete leaves owned resources behind on the next delete attempt.
 func (p *Provider) FailDelete() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.partialDelete = true
 }
 
+// SetUnavailable toggles provider outages independently of VM state.
 func (p *Provider) SetUnavailable(value bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -60,6 +64,7 @@ func (p *Provider) available(ctx context.Context) error {
 	return nil
 }
 
+// Capabilities reports the simulated provider's supported operations.
 func (p *Provider) Capabilities(ctx context.Context) (provider.Capabilities, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -92,6 +97,7 @@ func observe(m *machine) provider.Inventory {
 	return got
 }
 
+// Inspect returns the current inventory for the matching workspace generation.
 func (p *Provider) Inspect(ctx context.Context, ref provider.WorkspaceRef) (provider.Inventory, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -113,6 +119,7 @@ func (p *Provider) reply(method string, m *machine) (provider.Inventory, error) 
 	return observe(m), nil
 }
 
+// Create allocates a stopped VM or replays the original create operation.
 func (p *Provider) Create(ctx context.Context, req provider.CreateRequest) (provider.Inventory, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -175,6 +182,7 @@ func (p *Provider) mutate(ctx context.Context, ref provider.WorkspaceRef, operat
 	return p.reply(method, m)
 }
 
+// Start powers on the VM after any required enrollment attachment.
 func (p *Provider) Start(ctx context.Context, req provider.StartRequest) (provider.Inventory, error) {
 	return p.mutate(ctx, req.Ref, req.OperationID, "start", func(m *machine) error {
 		if req.NetworkMode != "" && req.NetworkMode != m.inventory.NetworkMode {
@@ -192,6 +200,7 @@ func (p *Provider) Start(ctx context.Context, req provider.StartRequest) (provid
 	})
 }
 
+// Stop powers off the VM while retaining its owned resources.
 func (p *Provider) Stop(ctx context.Context, req provider.StopRequest) (provider.Inventory, error) {
 	return p.mutate(ctx, req.Ref, req.OperationID, "stop", func(m *machine) error {
 		if m.inventory.Power != provider.Running && m.inventory.Power != provider.Stopped {
@@ -202,6 +211,7 @@ func (p *Provider) Stop(ctx context.Context, req provider.StopRequest) (provider
 	})
 }
 
+// Delete removes owned resources from the stopped VM and preserves shared files.
 func (p *Provider) Delete(ctx context.Context, req provider.DeleteRequest) (provider.Inventory, error) {
 	return p.mutate(ctx, req.Ref, req.OperationID, "delete", func(m *machine) error {
 		if m.inventory.Power == provider.Deleted {
@@ -225,6 +235,7 @@ func (p *Provider) Delete(ctx context.Context, req provider.DeleteRequest) (prov
 	})
 }
 
+// ApplyNetwork verifies the simulated network mode while the VM is stopped.
 func (p *Provider) ApplyNetwork(ctx context.Context, req provider.NetworkRequest) (provider.Inventory, error) {
 	return p.mutate(ctx, req.Ref, req.OperationID, "network", func(m *machine) error {
 		if req.Mode != "nat" {
@@ -238,6 +249,7 @@ func (p *Provider) ApplyNetwork(ctx context.Context, req provider.NetworkRequest
 	})
 }
 
+// DeliverEnrollment attaches the supplied image to the stopped VM's removable drive.
 func (p *Provider) DeliverEnrollment(ctx context.Context, req provider.EnrollmentRequest) (provider.DeliveryResult, error) {
 	inv, err := p.mutate(ctx, req.Ref, req.OperationID, "enrollment", func(m *machine) error {
 		if !req.Eligible || req.MediaPath == "" || m.inventory.Power != provider.Stopped {

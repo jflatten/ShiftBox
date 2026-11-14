@@ -2,28 +2,39 @@ package provider
 
 import "time"
 
+// PowerState is the provider-observed lifecycle state of the workspace VM.
 type PowerState string
 
 const (
-	Unknown  PowerState = "unknown"
-	Stopped  PowerState = "stopped"
+	// Unknown indicates that the provider could not establish the power state.
+	Unknown PowerState = "unknown"
+	// Stopped indicates that the VM is powered off and may retain its disk.
+	Stopped PowerState = "stopped"
+	// Starting indicates that the provider has observed a boot in progress.
 	Starting PowerState = "starting"
-	Running  PowerState = "running"
+	// Running indicates that the VM is powered on. Guest readiness is checked separately.
+	Running PowerState = "running"
+	// Stopping indicates that shutdown has begun and still needs verification.
 	Stopping PowerState = "stopping"
-	Deleted  PowerState = "deleted"
+	// Deleted indicates verified removal of the VM and its workspace-owned resources.
+	Deleted PowerState = "deleted"
 )
 
+// WorkspaceRef binds provider work to an installation, workspace generation,
+// and ownership marker. An observed instance ID identifies the specific VM.
 type WorkspaceRef struct {
 	InstallationID, WorkspaceID string
 	Generation                  int64
 	InstanceID, OwnershipMarker string
 }
 
+// Resources describes CPU count and memory and disk capacity in bytes.
 type Resources struct {
 	CPU                    int
 	MemoryBytes, DiskBytes int64
 }
 
+// Capabilities describes the adapter's validated actions and host resource bounds.
 type Capabilities struct {
 	Name, Version, Architecture, ExecutionMode, Evidence string
 	Create, Start, Stop, Delete                          bool
@@ -32,6 +43,8 @@ type Capabilities struct {
 	Minimum, Maximum                                     Resources
 }
 
+// OwnedResource describes one inventoried VM resource and its ownership.
+// Shared and immutable resources are excluded from workspace deletion.
 type OwnedResource struct {
 	ID, Type, OwnershipMarker string
 	Generation                int64
@@ -39,6 +52,8 @@ type OwnedResource struct {
 	HostBytes, GuestBytes     *int64
 }
 
+// Inventory records the provider evidence used to reconcile desired workspace
+// state and capacity. ObservedAt is the time of the provider check.
 type Inventory struct {
 	Ref                                             WorkspaceRef
 	InstanceID                                      string
@@ -50,6 +65,7 @@ type Inventory struct {
 	ObservedAt                                      time.Time
 }
 
+// CreateRequest identifies an admitted VM provision operation and pinned image.
 type CreateRequest struct {
 	Ref                                           WorkspaceRef
 	OperationID, ArtifactID, Release, NetworkMode string
@@ -57,6 +73,7 @@ type CreateRequest struct {
 	EnrollmentMedia                               string
 }
 
+// StartRequest identifies an authorized start of the exact retained VM.
 type StartRequest struct {
 	Ref                      WorkspaceRef
 	OperationID, NetworkMode string
@@ -65,28 +82,35 @@ type StartRequest struct {
 	EnrollmentMedia string
 }
 
+// StopRequest identifies a stop of the exact VM. ForceRetentionDelete applies
+// only to the authorized retention cleanup path after its graceful window.
 type StopRequest struct {
 	Ref                  WorkspaceRef
 	OperationID          string
 	ForceRetentionDelete bool
 }
 
+// DeleteRequest identifies a durable cleanup operation for the exact VM.
 type DeleteRequest struct {
 	Ref         WorkspaceRef
 	OperationID string
 }
 
+// NetworkRequest carries the admitted network mode for a particular VM.
 type NetworkRequest struct {
 	Ref               WorkspaceRef
 	OperationID, Mode string
 }
 
+// EnrollmentRequest carries an operation-scoped recovery image for an
+// eligible stopped VM.
 type EnrollmentRequest struct {
 	Ref                    WorkspaceRef
 	OperationID, MediaPath string
 	Eligible               bool
 }
 
+// DeliveryResult records the provider-confirmed drive and resulting VM inventory.
 type DeliveryResult struct {
 	Inventory Inventory
 	MediaID   string

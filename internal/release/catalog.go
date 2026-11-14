@@ -248,6 +248,7 @@ type artifactReader struct {
 	io.Reader
 }
 
+// Read checks cancellation while verifying or copying catalog files.
 func (r artifactReader) Read(p []byte) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err

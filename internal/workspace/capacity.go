@@ -24,6 +24,7 @@ type CapacityError struct {
 	Limit, Used, Requested int64
 }
 
+// Error returns the limiting resource for a refused reservation.
 func (err *CapacityError) Error() string {
 	return fmt.Sprintf("insufficient %s capacity (limit %d, used %d, requested %d)", err.Resource, err.Limit, err.Used, err.Requested)
 }

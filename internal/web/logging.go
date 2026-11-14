@@ -11,6 +11,7 @@ type responseStatus struct {
 	status int
 }
 
+// WriteHeader records the first status sent by the handler.
 func (w *responseStatus) WriteHeader(status int) {
 	if w.status != 0 {
 		return
@@ -19,6 +20,7 @@ func (w *responseStatus) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
+// Write records the implicit success status before writing a response body.
 func (w *responseStatus) Write(data []byte) (int, error) {
 	if w.status == 0 {
 		w.WriteHeader(http.StatusOK)

@@ -38,6 +38,7 @@ func NewLaunchExecutor(store *Store, machines provider.Provider, enrollment Enro
 		mediaRoot: mediaRoot, endpoint: endpoint, pollEndpoint: pollEndpoint, now: now, probeIDE: probe}
 }
 
+// Observe reconciles launch steps from provider inventory and authenticated guest evidence.
 func (e *LaunchExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
 	if step.Key == "verify_ide" {
 		evidence, err := verifyIDE(ctx, e.provision.store.db, op, e.probeIDE)
@@ -65,6 +66,7 @@ func (e *LaunchExecutor) Observe(ctx context.Context, op operation.Operation, st
 	}
 }
 
+// Apply advances the launch and rechecks the target after enrollment media attaches.
 func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
 	if step.Key == "verify_ide" {
 		return verifyIDE(ctx, e.provision.store.db, op, e.probeIDE)

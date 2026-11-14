@@ -17,6 +17,7 @@ type PowerController struct {
 	replace func(context.Context, provider.EnrollmentRequest, string) error
 }
 
+// NewPowerController binds power and media operations to the supported UTM scripting version.
 func NewPowerController(version string) *PowerController {
 	return &PowerController{version: version, inspect: (Inspector{Version: version}).Inspect,
 		apply: func(ctx context.Context, ref provider.WorkspaceRef, action string) error {
@@ -27,6 +28,7 @@ func NewPowerController(version string) *PowerController {
 		}}
 }
 
+// Start verifies the stopped instance and any required recovery media before power-on.
 func (p *PowerController) Start(ctx context.Context, req provider.StartRequest) (provider.Inventory, error) {
 	return p.change(ctx, req.Ref, req.OperationID, "start", provider.Stopped, provider.Running, func(inventory provider.Inventory) error {
 		if req.NetworkMode != "" && req.NetworkMode != inventory.NetworkMode {
@@ -51,6 +53,7 @@ func (p *PowerController) Start(ctx context.Context, req provider.StartRequest) 
 	})
 }
 
+// Stop verifies shutdown after a graceful request or an authorized retention force stop.
 func (p *PowerController) Stop(ctx context.Context, req provider.StopRequest) (provider.Inventory, error) {
 	action := "request"
 	if req.ForceRetentionDelete {

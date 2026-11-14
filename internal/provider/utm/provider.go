@@ -39,6 +39,7 @@ func NewProvider(catalog *release.Catalog, staging, storage string, minimum, max
 		staging: staging, storage: storage, minimum: minimum, maximum: maximum}, nil
 }
 
+// Capabilities checks UTM inventory access before advertising supported actions.
 func (p *Provider) Capabilities(ctx context.Context) (provider.Capabilities, error) {
 	// Confirm that this build can answer an authoritative inventory request.
 	probe := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
@@ -58,6 +59,7 @@ func (p *Provider) Capabilities(ctx context.Context) (provider.Capabilities, err
 	}, nil
 }
 
+// Inspect verifies the VM and checks managed storage before reporting absence.
 func (p *Provider) Inspect(ctx context.Context, ref provider.WorkspaceRef) (provider.Inventory, error) {
 	got, err := p.controller.inspect(ctx, ref)
 	if errors.Is(err, provider.ErrNotFound) {
@@ -89,6 +91,7 @@ func (p *Provider) observeMissing(ref provider.WorkspaceRef, absent error) (prov
 	return provider.Inventory{}, absent
 }
 
+// Create verifies existing inventory before importing a managed copy of the pinned image.
 func (p *Provider) Create(ctx context.Context, req provider.CreateRequest) (provider.Inventory, error) {
 	if req.OperationID == "" || req.EnrollmentMedia != "" {
 		return provider.Inventory{}, provider.ErrInvalidState
@@ -135,14 +138,17 @@ func (p *Provider) ImportCandidate(ctx context.Context, req provider.CreateReque
 	return p.controller.importStagedArtifact(ctx, req, artifact, p.staging, p.storage)
 }
 
+// Start delegates power-on and recovery media checks to the UTM power controller.
 func (p *Provider) Start(ctx context.Context, req provider.StartRequest) (provider.Inventory, error) {
 	return p.controller.Start(ctx, req)
 }
 
+// Stop delegates shutdown and its verification to the UTM power controller.
 func (p *Provider) Stop(ctx context.Context, req provider.StopRequest) (provider.Inventory, error) {
 	return p.controller.Stop(ctx, req)
 }
 
+// Delete removes the managed VM and verifies that no workspace bundles remain.
 func (p *Provider) Delete(ctx context.Context, req provider.DeleteRequest) (provider.Inventory, error) {
 	got, err := p.controller.DeleteManagedVM(ctx, req, filepath.Join(p.storage, managedBundleName(req.Ref)))
 	if err != nil {
@@ -155,6 +161,7 @@ func (p *Provider) Delete(ctx context.Context, req provider.DeleteRequest) (prov
 	return got, nil
 }
 
+// ApplyNetwork verifies the supported shared mode on a stopped VM.
 func (p *Provider) ApplyNetwork(ctx context.Context, req provider.NetworkRequest) (provider.Inventory, error) {
 	if req.Mode != "shared" {
 		return provider.Inventory{}, provider.ErrCapabilityUnsupported
@@ -175,6 +182,7 @@ func (p *Provider) ApplyNetwork(ctx context.Context, req provider.NetworkRequest
 	return got, nil
 }
 
+// DeliverEnrollment attaches recovery media to the matching stopped VM's owned drive.
 func (p *Provider) DeliverEnrollment(ctx context.Context, req provider.EnrollmentRequest) (provider.DeliveryResult, error) {
 	if !req.Eligible || req.Ref.InstanceID == "" || req.OperationID == "" {
 		return provider.DeliveryResult{}, provider.ErrInvalidState

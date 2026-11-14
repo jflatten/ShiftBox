@@ -51,6 +51,7 @@ type guestUpdateReader struct {
 	io.Reader
 }
 
+// Read checks cancellation before reading more update data.
 func (r guestUpdateReader) Read(buffer []byte) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err

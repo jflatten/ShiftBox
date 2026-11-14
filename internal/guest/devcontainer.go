@@ -211,6 +211,7 @@ type devContainerOutput struct {
 	buffer bytes.Buffer
 }
 
+// Write captures command output up to the diagnostic limit.
 func (o *devContainerOutput) Write(data []byte) (int, error) {
 	if len(data) > devContainerOutputMax-o.buffer.Len() {
 		return 0, errors.New("Dev Container CLI response exceeds the output limit")

@@ -88,11 +88,13 @@ type migrationPreflightExecutor struct {
 	evaluate     func(context.Context, string) (release.MigrationReport, error)
 }
 
+// Observe leaves preflight checks to Apply because they must inspect current prerequisites.
 func (e migrationPreflightExecutor) Observe(context.Context, operation.Operation, operation.Step) (string, bool, error) {
 	// Checks do not apply a migration. Retrying can safely evaluate them again.
 	return "", false, nil
 }
 
+// Apply evaluates the pinned release and records bounded preflight evidence.
 func (e migrationPreflightExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
 	if op.OriginatingAction != migrationPreflightAction || step.Key != "preflight" {
 		return "", operation.ErrConflict

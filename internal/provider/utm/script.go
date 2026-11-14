@@ -44,6 +44,7 @@ type Inspector struct {
 	Version string
 }
 
+// Inspect queries the pinned UTM scripting surface and matches the requested workspace identity.
 func (i Inspector) Inspect(ctx context.Context, ref provider.WorkspaceRef) (provider.Inventory, error) {
 	if i.Version == "" {
 		return provider.Inventory{}, provider.ErrCapabilityUnsupported

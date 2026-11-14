@@ -2,7 +2,9 @@ package provider
 
 import "context"
 
-// Provider is the controller's boundary for observed machine state and VM effects.
+// Provider is the controller's boundary for observed machine state and VM
+// effects. An uncertain effect leaves the controller responsible for
+// re-inspecting the workspace before retrying or releasing reservations.
 type Provider interface {
 	Capabilities(context.Context) (Capabilities, error)
 	Inspect(context.Context, WorkspaceRef) (Inventory, error)

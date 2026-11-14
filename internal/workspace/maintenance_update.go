@@ -42,6 +42,7 @@ type maintenanceUpdateExecutor struct {
 	power                  *maintenancePower
 }
 
+// Observe checks provider power or guest receipts before advancing the assigned update.
 func (e maintenanceUpdateExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
 	if op.WorkspaceID == nil || op.Type != "update" {
 		return "", false, &operation.StepFailure{Detail: "The workspace update operation is invalid."}
@@ -122,6 +123,7 @@ func maintenanceUpdateFailure(op operation.Operation, detail string) *operation.
 	return failure
 }
 
+// Apply requests an authorized power change or waits for the next guest receipt.
 func (e maintenanceUpdateExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
 	switch step.Key {
 	case "maintenance_boot", "maintenance_restore":

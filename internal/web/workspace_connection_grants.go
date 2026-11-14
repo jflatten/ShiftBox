@@ -95,6 +95,8 @@ func WorkspaceConnectionGrantHandlers(db *sql.DB, origin string, now func() time
 	return list, revoke
 }
 
+// revokeConnectionGrant retires the permission and its browser grants in one
+// transaction. The caller closes live connections after the commit.
 func revokeConnectionGrant(ctx context.Context, tx *sql.Tx, id, workspace, actor string, now time.Time) error {
 	const scope = `id=$1 AND resource_id=$2 AND resource_type='workspace' AND action='workspace.connect_admin'`
 	stamp := now.UTC().Format(time.RFC3339Nano)

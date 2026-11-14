@@ -30,6 +30,7 @@ type cliExit struct {
 	problem string
 }
 
+// Error returns the operator-facing explanation for the command's exit status.
 func (e cliExit) Error() string { return e.problem }
 
 func runMigrate(ctx context.Context, args []string, out, status io.Writer) error {

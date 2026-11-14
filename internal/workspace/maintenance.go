@@ -155,11 +155,13 @@ type maintenanceCampaignExecutor struct {
 	now          func() time.Time
 }
 
+// Observe leaves campaign reconciliation to the transactional work in Apply.
 func (e maintenanceCampaignExecutor) Observe(context.Context, operation.Operation, operation.Step) (string, bool, error) {
 	// Apply reconciles persisted campaign state without making external calls.
 	return "", false, nil
 }
 
+// Apply reconciles durable target outcomes into the campaign's state.
 func (e maintenanceCampaignExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
 	if op.WorkspaceID != nil || step.Key != "update_guests" {
 		return "", &operation.StepFailure{Detail: "The maintenance campaign operation is invalid."}

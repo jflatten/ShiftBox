@@ -261,6 +261,7 @@ type contextReader struct {
 	io.Reader
 }
 
+// Read stops archive I/O once the checkpoint context is canceled.
 func (r contextReader) Read(data []byte) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
@@ -270,6 +271,7 @@ func (r contextReader) Read(data []byte) (int, error) {
 
 type archiveBytes struct{ n int64 }
 
+// Write counts bytes for archive evidence without retaining their contents.
 func (c *archiveBytes) Write(data []byte) (int, error) {
 	c.n += int64(len(data))
 	return len(data), nil
