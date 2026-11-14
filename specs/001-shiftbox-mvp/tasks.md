@@ -2171,3 +2171,14 @@ This checkpoint does not itself change the goal status.
 - Go vet and focused race tests passed, including launch deadlines and
   migration parity on SQLite and PostgreSQL. Scheduling, reconciliation
   grace and automatic deletion remain open under T093.
+
+### Retention eligibility after reconciliation
+
+- Retention discovery requires an administrator limit and elapsed
+  post-reconciliation grace. It derives overdue dates from controller-owned
+  activity or creation time, checks the exact provider identity, and
+  rechecks workspace state, membership, and activity after inspection.
+- Tests cover disabled retention, grace, uncertain inventory, renewed
+  activity and a policy edit between discovery and the final recheck.
+  Go vet and the relevant race tests passed. Runtime reconciliation
+  timestamps, scheduling and deletion commitment remain open under T093.
