@@ -1697,9 +1697,11 @@ This checkpoint does not itself change the goal status.
   startup will run the campaign worker when the target executor is wired.
   Guest staging now verifies the release and protocol, Ed25519 signature,
   binary size, and SHA-256 digest before replacing a private staged file.
-  Verification tests use disposable keys. Production key provisioning,
-  campaign dispatch, activation, rollback, and prior-state restoration
-  remain open under T095.
+  Verification tests use disposable keys. The durable trial record selects
+  the last confirmed agent after an interrupted trial. Confirmation requires
+  the matching digest and attempt token, and an identical failed candidate
+  requires an explicit retry. Production key provisioning, guest dispatch,
+  supervisor integration, and prior-state restoration remain open under T095.
 
 ### Migration preflight CLI
 
