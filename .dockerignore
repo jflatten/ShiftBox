@@ -1,0 +1,16 @@
+.git/
+.agents/
+.codex/
+.cache/
+.shiftbox/
+node_modules/
+**/node_modules/
+**/.next/
+**/out/
+coverage/
+*.log*
+.env*
+Dockerfile*
+.dockerignore
+*.utm/
+*.qcow2*

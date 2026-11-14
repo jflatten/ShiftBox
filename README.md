@@ -20,6 +20,29 @@ When an agent edits a file or runs a test, you can pick up the work in the same 
 
 The first planned deployment runs on a Mac alongside UTM. ShiftBox manages workspace setup, access, and cleanup, and UTM runs the virtual machines. AWS EC2 is planned as a second provider.
 
-ShiftBox is in the design stage. Explore the [architecture readback](documentation/architecture/design-readback.md) for the first release scope and the [technology decisions](documentation/architecture/technology-decisions.md) for the planned stack.
+ShiftBox is being implemented and is not yet a runnable product. Explore the [architecture readback](documentation/architecture/design-readback.md) for the first release scope and the [implementation tasks](specs/001-shiftbox-mvp/tasks.md) for current progress.
+
+## Development prerequisites
+
+Use Go 1.27.4 and Node.js 26.13.x with npm. The UI is exported as static files;
+Node is a build dependency only. Install UI dependencies with `npm --prefix ui ci`.
+The single Go module pins dependencies in `go.mod` and `go.sum`.
+
+The [validation quickstart](specs/001-shiftbox-mvp/quickstart.md) describes the
+planned environment and acceptance scenarios. Full validation also requires an
+awake, logged-in Apple Mac with the pinned UTM release, an approved Ubuntu 24.04
+Minimal amd64 image, PostgreSQL with owned schemas and TLS, and trusted browser
+certificates/service names. Release versions and artifact digests must be recorded
+before claiming support.
+
+Build/test entry points are `make fmt-check vet test race`, `make ui-test ui-build`,
+`make integration`, and `make browser`. These commands become usable as their
+corresponding implementation and test tasks land; the current skeleton does not
+provide application routes or end-to-end fixtures. UI tests deliberately fail
+when no tests exist. Integration/browser tests require configured services.
+
+`make release SHIFTBOX_UTM_RELEASE=1` is reserved for a controlled Mac with
+disposable UTM fixtures. It must not be run against personal workspaces. No
+release-gate or first-use-study success is implied by a passing unit test.
 
 ShiftBox is released under the [MIT License](LICENSE).
