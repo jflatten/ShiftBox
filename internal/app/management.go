@@ -51,7 +51,9 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 		handlers[id] = handler
 	}
 	var passwordChange sync.Mutex
+	listConnectionGrants, revokeConnectionGrant := web.WorkspaceConnectionGrantHandlers(db, origin, now, registry)
 	for _, handler := range []web.AuthorizedHandler{
+		listConnectionGrants, revokeConnectionGrant,
 		listWorkspaces, getWorkspace, getOperation, streamEvents, listTemplates, createTemplate, reviseTemplate, budget, resourceProfile,
 		web.InfrastructureStatusHandler(db, origin, now, launchPolicy.Capabilities),
 		web.NetworkPolicyHandler(db, origin, now, uuid.NewString, launchPolicy.Capabilities),

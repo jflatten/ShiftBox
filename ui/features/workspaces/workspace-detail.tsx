@@ -7,10 +7,11 @@ import { readProblem } from '../../lib/api-problem';
 import { useOperation } from '../../lib/use-operation';
 import { workspaceState, type Workspace } from './workspace';
 import { RetentionWarning } from './retention';
+import { WorkspaceConnectionGrants } from './connection-grants';
 
 type WorkspaceAction = 'start' | 'stop' | 'rebuild' | 'repair' | 'retry' | 'delete';
 
-export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: string }) {
+export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToken: string; admin: boolean }) {
   const workspace = useQuery<Workspace>({
     queryKey: ['workspaces', 'detail', id],
     refetchInterval: query => query.state.data?.desiredState === 'deleted' ? false : 30_000,
@@ -146,6 +147,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
           <DeleteWorkspaceDialog name={data.name || id} opened={confirmDelete} busy={busy} submitting={submitting === 'delete'} error={error}
             cancel={() => setConfirmDelete(false)} confirm={() => void requestAction('delete')} />
           {displayedOperation ? <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation} onFinished={setOperationBusy} /> : null}
+          {admin ? <WorkspaceConnectionGrants workspaceId={id} csrfToken={csrfToken} /> : null}
         </Stack>
       ) : null}
     </>

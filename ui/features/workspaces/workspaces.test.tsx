@@ -31,6 +31,36 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
+// Administrators can confirm revocation by email and see the active list refresh.
+test('revokes an administrator connection grant from workspace details', async () => {
+  const path = '/api/v1/admin/workspaces/workspace-one/connection-grants';
+  let revoked = false;
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json({ ...session, user: { id: 'admin', role: 'administrator' } });
+    if (input === '/api/v1/workspaces/workspace-one') return json({ ...workspace, currentOperationId: null });
+    if (input === path) return json({ items: revoked ? [] : [{ id: 'grant-one', email: 'admin@example.test' }] });
+    if (input === path + '/grant-one' && init?.method === 'DELETE') {
+      revoked = true;
+      return json(null);
+    }
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId="workspace-one" /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Revoke access for admin@example.test' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Revoke connection grant' });
+  await waitFor(() => {
+    expect(within(dialog).getByText(/close immediately/)).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+  });
+  await user.click(within(dialog).getByRole('button', { name: 'Revoke access' }));
+  expect(fetch).toHaveBeenCalledWith(path + '/grant-one', expect.objectContaining({
+    method: 'DELETE', headers: { 'X-CSRF-Token': 'fixture' },
+  }));
+  expect(await screen.findByText('No active administrator connection grants.')).toBeVisible();
+});
+
 // Before entering repair, explain what developers can safely edit and tie the
 // explanation to the action so keyboard and screen-reader users receive it.
 test('explains repair before starting it and renders the server workflow', async () => {

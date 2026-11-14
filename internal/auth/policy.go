@@ -69,6 +69,10 @@ func Authorize(p Principal, action string, resource Resource, grants []ResourceG
 	}
 	owner := resource.OwnerID == p.User.ID
 	switch action {
+	case "workspace.manage_connection_grants":
+		if admin && resource.Type == "workspace" && resource.ID != "" {
+			return allow
+		}
 	case "workspace.list", "workspace.view", "workspace.start", "workspace.stop", "workspace.rebuild", "workspace.repair", "workspace.delete", "workspace.update", "workspace.update_policy":
 		if resource.Type == "workspace" && (owner || admin) {
 			return allow

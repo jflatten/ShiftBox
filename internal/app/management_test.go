@@ -40,7 +40,8 @@ func TestManagementServices(t *testing.T) {
 		catalog[route.OperationID] = route
 	}
 	for _, id := range []string{"listWorkspaces", "getWorkspace", "launchWorkspace", "requestWorkspaceAction",
-		"createWorkspaceEntryGrant", "getOperation", "streamOperationEvents", "listTemplates", "createTemplate",
+		"createWorkspaceEntryGrant", "listWorkspaceConnectionGrants", "revokeWorkspaceConnectionGrant",
+		"getOperation", "streamOperationEvents", "listTemplates", "createTemplate",
 		"createTemplateRevision", "updateTemplate", "grantTemplateLaunch", "revokeTemplateLaunch",
 		"updateCapacityBudget", "createResourceProfile", "getInfrastructureStatus", "replaceBrowserCertificate",
 		"listSecretMetadata", "setSecret", "deleteSecretOverride", "listUsers", "changeOwnPassword", "createLocalUser", "resetLocalUserPassword",

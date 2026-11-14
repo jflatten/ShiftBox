@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,6 +21,114 @@ import (
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
+
+// TestAdministratorConnectionGrantRevocation verifies exact workspace scope,
+// durable revocation before live closure, and retry after a closure failure.
+func TestAdministratorConnectionGrantRevocation(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "grants.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	const origin = "https://management.test"
+	const id = "00000000-0000-4000-8000-000000000004"
+	const other = "00000000-0000-4000-8000-000000000005"
+	const grant = "00000000-0000-4000-8000-000000000006"
+	memberToken, adminToken := strings.Repeat("A", 43), strings.Repeat("B", 42)+"A"
+	now := time.Now().UTC()
+	seedWorkspaceLaunch(t, db, "00000000-0000-4000-8000-000000000003", memberToken, now)
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, ws := range []string{id, other} {
+		exec(`INSERT INTO workspaces(id,installation_id,owner_user_id,template_id,template_revision,platform_artifact_id,
+			repository_url,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,desired_state,observed_state,
+			generation,ownership_marker,provider_instance_id,created_at,updated_at,version)
+			SELECT $1,id,'member','template',1,'artifact','https://github.com/example/repo','devcontainer.json',1,512,100,'{}',
+			'running','running',1,$1,$1,'now','now',1 FROM installations`, ws)
+	}
+	exec(`INSERT INTO resource_grants(id,subject_user_id,resource_type,resource_id,action,granted_by,granted_at)
+		VALUES($1,'owner','workspace',$2,'workspace.connect_admin','owner',$3)`, grant, id, now.Format(time.RFC3339Nano))
+	exec(`INSERT INTO origin_grants(id,token_digest,user_id,session_id,workspace_id,generation,service_key,origin,permission_basis,resource_grant_id,expires_at)
+		VALUES('origin','digest','owner','admin-session',$1,1,'ide','https://ide.test','workspace.connect_admin',$2,$3)`, id, grant, now.Add(time.Minute).Format(time.RFC3339Nano))
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		return auth.NewStore(db).SaveSession(ctx, tx, auth.Session{ID: "admin-session", UserID: "owner",
+			TokenDigest: auth.TokenDigest(adminToken), CSRFDigest: auth.TokenDigest(auth.CSRFToken(adminToken)),
+			Mode: "normal", AuthenticatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour)})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	registry := &proxy.Registry{}
+	closures := 0
+	_, err = registry.Register(proxy.Scope{WorkspaceID: id, GrantID: grant}, func() error { return nil }, func() error {
+		closures++
+		var revoked, originRevoked bool
+		if err := db.QueryRowContext(ctx, `SELECT r.revoked_at IS NOT NULL,o.revoked_at IS NOT NULL FROM resource_grants r
+			JOIN origin_grants o ON o.resource_grant_id=r.id WHERE r.id=$1`, grant).Scan(&revoked, &originRevoked); err != nil || !revoked || !originRevoked {
+			t.Errorf("connection close saw resource/origin revocation %t/%t (%v), want both committed", revoked, originRevoked, err)
+		}
+		if closures == 1 {
+			return errors.New("fixture close failure")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = registry.Register(proxy.Scope{WorkspaceID: id}, func() error { return nil }, func() error {
+		t.Error("revocation closed the workspace owner's unrelated connection")
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, revoke := web.WorkspaceConnectionGrantHandlers(db, origin, func() time.Time { return now }, registry)
+	mux := http.NewServeMux()
+	path := "/api/v1/admin/workspaces/"
+	mux.Handle("GET "+path+"{workspaceId}/connection-grants", &list)
+	mux.Handle("DELETE "+path+"{workspaceId}/connection-grants/{grantId}", &revoke)
+	request := func(method, ws, token, csrf string, want int) string {
+		t.Helper()
+		target := path + ws + "/connection-grants"
+		if method == http.MethodDelete {
+			target += "/" + grant
+		}
+		r := httptest.NewRequest(method, origin+target, nil)
+		r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		r.Header.Set("Origin", origin)
+		r.Header.Set("X-CSRF-Token", csrf)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Fatalf("%s %s returned %d %s, want %d", method, ws, w.Code, w.Body, want)
+		}
+		return w.Body.String()
+	}
+	csrf := auth.CSRFToken(adminToken)
+	if body := request(http.MethodGet, id, adminToken, csrf, 200); !strings.Contains(body, "owner@example.test") {
+		t.Errorf("active connection grant listing = %s, want administrator email", body)
+	}
+	request(http.MethodGet, id, memberToken, "", 403)
+	request(http.MethodDelete, id, memberToken, auth.CSRFToken(memberToken), 403)
+	request(http.MethodDelete, other, adminToken, csrf, 404)
+	request(http.MethodDelete, id, adminToken, "invalid", 403)
+	request(http.MethodDelete, id, adminToken, csrf, 503)
+	request(http.MethodDelete, id, adminToken, csrf, 204)
+	if body := request(http.MethodGet, id, adminToken, csrf, 200); strings.Contains(body, grant) {
+		t.Errorf("revoked grant was returned in active list: %s", body)
+	}
+	var events int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM audit_events WHERE action='workspace.manage_connection_grants' AND reason_code='connection_grant_revoked'").Scan(&events); err != nil || events != 1 || closures != 2 {
+		t.Errorf("revoke produced %d audit events and %d closure attempts (%v), want one event and two attempts", events, closures, err)
+	}
+}
 
 // TestWorkspaceEntryGrantAdmission checks the exact destination and that a
 // member may mint a grant for their own running workspace only. IDE grants

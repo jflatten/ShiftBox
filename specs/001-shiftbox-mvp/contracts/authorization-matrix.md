@@ -25,6 +25,7 @@ Email address, guest-supplied owner/template/scope values, provider display name
 | `workspace.start` / `workspace.stop` / `workspace.rebuild` / `workspace.repair` / `workspace.delete` / `workspace.update_policy` | Own workspace | Any workspace | Current version, provider capability, installation gate, and lifecycle authority must pass |
 | `workspace.connect_owner` | Own workspace | Own workspace | Workspace and origin grant must be eligible |
 | `workspace.connect_admin` | Never by role alone | Only with an active exact-resource `workspace.connect_admin` ResourceGrant | Connection is audited; secret and Git context remains the recorded workspace owner's |
+| `workspace.manage_connection_grants` | Never | List and revoke administrator connection grants for a workspace | Revocation is audited and closes connections authorized by the exact grant |
 | `template.create` | Creates a template owned by self | Creates a template owned by self unless an explicit owner is selected and recorded | No silent ownership transfer |
 | `template.view` | Owned or actively granted template | All templates, including archived through the administrator filter | Archived templates cannot launch |
 | `template.edit` / `template.create_revision` / `template.share` | Owned template | Any template | Mutation creates an immutable revision where launch fields change; ownership is unchanged |
@@ -68,6 +69,7 @@ Every OpenAPI operation maps to exactly one action. Grouped operation IDs below 
 | `requestWorkspaceAction` with `retry` | The action of the failed operation being retried; retry never grants new authority |
 | `createWorkspaceEntryGrant` for owner | `workspace.connect_owner` |
 | `createWorkspaceEntryGrant` for non-owner administrator | `workspace.connect_admin` |
+| `listWorkspaceConnectionGrants`, `revokeWorkspaceConnectionGrant` | `workspace.manage_connection_grants` |
 | `getOperation`, `streamOperationEvents` | Same permission required to view the operation's bound resource; installation-wide operations require their originating administrative action |
 | `listTemplates` | `template.view` |
 | `createTemplate` | `template.create` |

@@ -344,6 +344,46 @@ paths:
                   expiresAt: { type: string, format: date-time }
         default: { $ref: '#/components/responses/Error' }
 
+  /admin/workspaces/{workspaceId}/connection-grants:
+    get:
+      tags: [Workspaces]
+      operationId: listWorkspaceConnectionGrants
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Active administrator connection grants for this workspace
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, email]
+                      properties:
+                        id: { type: string, format: uuid }
+                        email: { type: string, format: email }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/workspaces/{workspaceId}/connection-grants/{grantId}:
+    delete:
+      tags: [Workspaces]
+      operationId: revokeWorkspaceConnectionGrant
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/CSRFToken'
+        - in: path
+          name: grantId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Grant revoked and its active connections closed }
+        default: { $ref: '#/components/responses/Error' }
+
   /operations/{operationId}:
     get:
       tags: [Operations]

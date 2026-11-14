@@ -30,7 +30,8 @@ export function Workspaces({ workspaceId, ownerId, launch = false }: {
         </>
       ) : launch ? <LaunchFlow key={current.user.id} csrfToken={current.csrfToken} userID={current.user.id}
         admin={current.role === 'administrator'} />
-        : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken} />
+        : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken}
+            admin={current.role === 'administrator'} />
           : <WorkspaceList key={ownerId} ownerId={ownerId} />}
     </ShiftBoxShell>
   );

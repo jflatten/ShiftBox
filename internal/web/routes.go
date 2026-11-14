@@ -30,6 +30,8 @@ func ManagementRoutes() []ManagementRoute {
 		{Method: "PATCH", Path: "/workspaces/{workspaceId}", OperationID: "updateWorkspacePolicy", Action: "workspace.update_policy"},
 		{Method: "POST", Path: "/workspaces/{workspaceId}/actions/{action}", OperationID: "requestWorkspaceAction", Resolver: "workspace_action"},
 		{Method: "POST", Path: "/workspaces/{workspaceId}/entry-grants", OperationID: "createWorkspaceEntryGrant", Resolver: "workspace_entry"},
+		{Method: "GET", Path: "/admin/workspaces/{workspaceId}/connection-grants", OperationID: "listWorkspaceConnectionGrants", Action: "workspace.manage_connection_grants"},
+		{Method: "DELETE", Path: "/admin/workspaces/{workspaceId}/connection-grants/{grantId}", OperationID: "revokeWorkspaceConnectionGrant", Action: "workspace.manage_connection_grants"},
 		{Method: "GET", Path: "/operations/{operationId}", OperationID: "getOperation", Resolver: "operation_resource"},
 		{Method: "GET", Path: "/operations/{operationId}/events", OperationID: "streamOperationEvents", Resolver: "operation_resource"},
 		{Method: "GET", Path: "/templates", OperationID: "listTemplates", Action: "template.view"},

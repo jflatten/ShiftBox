@@ -2932,3 +2932,8 @@ This checkpoint does not itself change the goal status.
   T092 now closes registered poll transports and waits for browser
   forwarding to finish before offboarding returns success. The remaining
   revocation paths still need end-to-end verification.
+- T092 adds administrator-only listing and revocation of existing workspace
+  connection grants. Revocation commits both the permission and its derived
+  browser grants with one audit event, then closes connections matching the
+  exact grant. Closure failure supports retry after commit. Go contract tests
+  and the administrator workspace UI tests passed.
