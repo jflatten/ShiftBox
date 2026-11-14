@@ -195,7 +195,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T096 [US3] Implement browser-certificate expiry/invalid notices, storage/provider/controller/key persistent conditions, and no unprotected listener fallback in `internal/app/conditions.go` and `internal/config/certificate.go`
 - [ ] T097 [US3] Implement current/N−1 compatibility evaluation and irreversible migration preflight requiring verified backup, guest gate, tools, keys, provider, database ownership, certificate, and CA lifetime in `internal/release/compatibility.go`, `internal/release/preflight.go`, and `cmd/shiftbox/migrate.go`
 - [X] T098 [US3] Implement system notices, receipts, condition persistence, dismissal/history, and protected retention pruning proven by T086 in `internal/app/notices.go` and `internal/app/retention.go`
-- [ ] T099 [US3] Implement workspace policy/action, user disable, notice publish/list/receipt, infrastructure status, browser-certificate replacement, platform artifact, resource profile, capacity, network policy, maintenance, and migration-preflight handlers from the OpenAPI and authorization-matrix contracts in `internal/web/workspace_policy_routes.go`, `internal/web/admin_routes.go`, `internal/web/notice_routes.go`, `internal/web/infrastructure_routes.go`, and `internal/web/maintenance_routes.go`
+- [X] T099 [US3] Implement workspace policy/action, user disable, notice publish/list/receipt, infrastructure status, browser-certificate replacement, platform artifact, resource profile, capacity, network policy, maintenance, and migration-preflight handlers from the OpenAPI and authorization-matrix contracts in `internal/web/workspace_policy_routes.go`, `internal/web/admin_routes.go`, `internal/web/notice_routes.go`, `internal/web/infrastructure_routes.go`, and `internal/web/maintenance_routes.go`
 - [X] T100 [US3] Implement the accessible destructive workspace Modal with initial focus on Cancel, typed workspace name, “I have pushed work I need to keep” acknowledgement, retained-path list, and management-backup exclusion in `ui/features/workspaces/delete-workspace-modal.tsx`
 - [ ] T101 [US3] Implement Mantine Infrastructure, People offboarding, Notices, Retention, and Maintenance screens with server-driven Steppers and actionable persistent conditions in `ui/features/admin/infrastructure.tsx`, `ui/features/admin/offboarding.tsx`, `ui/features/notices/notices.tsx`, `ui/features/workspaces/retention.tsx`, and `ui/features/admin/maintenance.tsx`
 - [X] T102 [US3] Implement `shiftbox recover-admin` and `shiftbox migrate preflight` human/JSON output, stable exit codes, secret-safe arguments, and audit behavior in `cmd/shiftbox/recover_admin.go`, `cmd/shiftbox/migrate.go`, and `cmd/shiftbox/output.go`
@@ -2169,6 +2169,11 @@ This checkpoint does not itself change the goal status.
 
 ### Infrastructure status API
 
+- T099's workspace and administrator handlers are registered in the active
+  management router. The rebuilt native controller opened HTTPS and served
+  the management API with the complete route catalog. The full `internal/web`,
+  `internal/app`, and `tests/contract` race suites passed. The live operations
+  journey remains tracked by T103.
 - The administrator status route reports provider identity and network modes,
   the saved capacity budget and version, and certificate validity warnings.
   The 30-day warning is computed from the active certificate's stored dates.
