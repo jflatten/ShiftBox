@@ -62,7 +62,7 @@ func RestorePostgresSchemas(ctx context.Context, stage string, replacement datab
 			"--single-transaction", "--schema="+target.schema, "--strict-names", "--no-owner", "--no-privileges",
 			"--use-list="+path+".list", path)
 		if err := runPostgresTool(command, stage, target.password); err != nil {
-			return errors.New("could not load the scoped PostgreSQL dumps; keep the replacement offline and review the target before retrying")
+			return errors.New("could not load both PostgreSQL schemas; keep the target offline and prepare an empty replacement before retrying")
 		}
 	}
 	return nil

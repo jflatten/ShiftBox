@@ -120,6 +120,9 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 		}
 		review, err := activateRestore(ctx, stage, *destination, expected.Metadata, plan.ID, target.postgres)
 		if err != nil {
+			if target.postgres != nil {
+				return fail(1, "restore.activation_failed", "Keep the PostgreSQL replacement offline. If either schema was loaded, provision an empty replacement with separate owners and validate again before retrying.")
+			}
 			return fail(1, "restore.activation_failed", "Cannot publish the replacement in recovery review. Inspect the replacement before retrying.")
 		}
 		result := restoreCLIResult{ValidationID: plan.ID, RecoveryReviewID: review,

@@ -222,7 +222,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 
 - [X] T109 [US4] Add BackupRecord and RecoveryReview migrations in `migrations/sqlite/00018_recovery.sql` and `migrations/postgres/00018_recovery.sql`, preserving these verbatim constraints: BackupRecord state is "`preparing`, `checkpointing`, `encrypting`, `completed`, or `failed`", the password/archive plaintext are never stored, and completion occurs "only after archive close and integrity verification"; RecoveryReview state is "`identity_review`, `provider_reconcile`, `authorization_review`, `ready`, `activated`, or `blocked`" and normal mutations, workspace access, and overdue destructive retention remain gated until `activated`
 - [ ] T110 [US4] Implement canonical backup manifest/checkpoint orchestration, scoped SQLite/PostgreSQL and Dex export, protected-file collection, passphrase age encryption, close/digest verification, and workspace-disk exclusion proven by T104 in `internal/backup/manifest.go`, `internal/backup/checkpoint.go`, and `internal/backup/backup.go`
-- [ ] T111 [US4] Implement whole-archive validation, compatibility/key/host/target ownership checks, empty replacement activation, and no merge/overwrite behavior proven by T105 in `internal/backup/validate.go` and `internal/backup/restore.go`
+- [X] T111 [US4] Implement whole-archive validation, compatibility/key/host/target ownership checks, empty replacement activation, and no merge/overwrite behavior proven by T105 in `internal/backup/validate.go` and `internal/backup/restore.go`
 - [ ] T112 [US4] Implement recovery-mode gate, stale-authority invalidation, identity review, provider reconciliation, workspace conflict decisions, authorization/retention review, and explicit normal-service activation proven by T106 in `internal/backup/recovery.go` and `internal/auth/recovery_gate.go`
 - [X] T113 [US4] Implement backup, restore-validation, and recovery-activation OpenAPI handlers with durable Operation steps in `internal/web/backup_routes.go` and `internal/web/recovery_routes.go`
 - [X] T114 [US4] Implement `shiftbox backup`, `shiftbox restore validate`, and `shiftbox restore activate` with TTY/stdin password handling, human/JSON output, and stable exits proven by T107 in `cmd/shiftbox/backup.go` and `cmd/shiftbox/restore.go`
@@ -1774,8 +1774,11 @@ This checkpoint does not itself change the goal status.
   replacement database. Each pre-provisioned owner restores only its
   schema in its own transaction. The local PostgreSQL 18 test confirmed
   new role ownership, damaged dump rejection before load, and refusal
-  to retry against an occupied target. Replacement configuration,
-  cross-schema failure recovery, and live recovery acceptance remain open.
+  to retry against an occupied target. A forced failure of the second
+  load left only the committed Dex schema. The CLI directs the operator
+  to keep the replacement offline and prepare an empty target. The
+  fixture revalidated and restored both schemas after it was reset.
+  Full recovery acceptance remains open under T116.
 - T112 records ordered identity, provider, and authorization/retention
   decisions. Provider ownership conflicts block approval, and activation
   requires fresh matching evidence and a current administrator. Approval
@@ -1823,8 +1826,7 @@ This checkpoint does not itself change the goal status.
   confirmation and waits for durable archive verification. T107 passed
   race-enabled API and CLI contract tests for passphrase handling, durable
   steps, stable JSON and exit codes, validation IDs, and explicit
-  activation. PostgreSQL cross-schema failure recovery remains open
-  under T111.
+  activation.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
