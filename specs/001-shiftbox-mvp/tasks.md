@@ -1923,3 +1923,12 @@ This checkpoint does not itself change the goal status.
   stop when the VM was imported before its instance was recorded. The UI,
   native provider offboarding, and reconciliation when no VM is found remain
   open. Unverified workspace outcomes retain their reservations.
+
+### People offboarding controls
+
+- People previews owned workspaces before disabling an account and explains
+  that sessions close and workspace files are preserved. After confirmation,
+  the dialog shows the controller's stop operations and their Stepper state.
+- The UI test covers a failed provider stop. All 39 UI tests, the production
+  build, and Go web, workspace, app, and contract race tests passed. Per-session
+  counts, live UTM offboarding, and post-dialog recovery remain open.

@@ -7,6 +7,7 @@ import { ShiftBoxShell } from '../../components/app-shell';
 import { APIProblemView } from '../../components/api-problem';
 import { APIProblemError, readProblem } from '../../lib/api-problem';
 import { useSession } from '../../lib/use-session';
+import { Offboarding } from './offboarding';
 
 interface Person {
   id: string;
@@ -37,6 +38,7 @@ export function People() {
     },
   });
   const data = allowed && !people.isError ? people.data : undefined;
+  const [selected, setSelected] = useState<Person>();
   return (
     <ShiftBoxShell session={current} alerts={[]} error={session.error ?? (allowed ? people.error : undefined) ?? undefined}>
       <Title order={1}>People</Title>
@@ -52,18 +54,25 @@ export function People() {
         csrfToken={current.csrfToken}
         canApprove={current.permissions.includes('user.approve')}
         canChangeRole={current.permissions.includes('user.change_role')}
+        onDisable={current.permissions.includes('user.disable') ? setSelected : undefined}
         refresh={people.refetch} /> : null}
+      {selected && allowed && current?.permissions.includes('user.disable') ? (
+        <Offboarding person={selected} csrfToken={current.csrfToken}
+          onClose={() => setSelected(undefined)} refresh={people.refetch} />
+      ) : null}
     </ShiftBoxShell>
   );
 }
 
-function PeopleTable({ people, csrfToken, canApprove, canChangeRole, refresh }: {
+function PeopleTable({ people, csrfToken, canApprove, canChangeRole, onDisable, refresh }: {
   people: Person[];
   csrfToken: string;
   canApprove: boolean;
   canChangeRole: boolean;
+  onDisable?: (person: Person) => void;
   refresh: () => Promise<unknown>;
 }) {
+  const hasActions = canApprove || canChangeRole || !!onDisable;
   return (
     <Table.ScrollContainer minWidth={520} type="native">
       <Table aria-label="Organization membership">
@@ -73,7 +82,7 @@ function PeopleTable({ people, csrfToken, canApprove, canChangeRole, refresh }: 
             <Table.Th scope="col">Role</Table.Th>
             <Table.Th scope="col">Membership</Table.Th>
             <Table.Th scope="col">Sign-in</Table.Th>
-            {canApprove || canChangeRole ? <Table.Th scope="col">Membership actions</Table.Th> : null}
+            {hasActions ? <Table.Th scope="col">Membership actions</Table.Th> : null}
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -86,11 +95,14 @@ function PeopleTable({ people, csrfToken, canApprove, canChangeRole, refresh }: 
               <Table.Td>{roleLabels[person.role]}</Table.Td>
               <Table.Td>{membershipLabels[person.membershipState]}</Table.Td>
               <Table.Td>{credentialLabels[person.credentialMode]}</Table.Td>
-              {canApprove || canChangeRole ? (
-                <Table.Td>{(canApprove && person.membershipState === 'pending') ||
+              {hasActions ? (
+                <Table.Td><Stack gap="xs" align="flex-start">{(canApprove && person.membershipState === 'pending') ||
                   (canChangeRole && person.membershipState === 'active') ? (
                   <MembershipRoleForm key={person.version} person={person} csrfToken={csrfToken} refresh={refresh} />
-                ) : null}</Table.Td>
+                ) : null}
+                {onDisable && person.membershipState !== 'disabled' ? (
+                  <Button size="compact-sm" color="red" variant="subtle" onClick={() => onDisable(person)}>Disable account</Button>
+                ) : null}</Stack></Table.Td>
               ) : null}
             </Table.Tr>
           ))}

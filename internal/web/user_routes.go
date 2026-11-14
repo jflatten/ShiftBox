@@ -122,6 +122,7 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, re
 			}
 			user.Role, user.MembershipState, user.Version = role, nextState, version+1
 			var owned map[string]bool
+			response := membershipResponse(user)
 			if disabling {
 				if journal == nil {
 					return nil, errors.New("workspace stop journal is unavailable")
@@ -135,7 +136,7 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, re
 					WHERE state='issued' AND workspace_id IN (SELECT id FROM workspaces WHERE owner_user_id=$1)`, id); err != nil {
 					return nil, err
 				}
-				ids, err := workspace.QueueOffboardingStops(ctx, tx, journal, id, actor.User.ID, user.Version, stamp)
+				ids, stops, err := workspace.QueueOffboardingStops(ctx, tx, journal, id, actor.User.ID, user.Version, stamp)
 				if err != nil {
 					return nil, err
 				}
@@ -143,8 +144,11 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, re
 				for _, workspaceID := range ids {
 					owned[workspaceID] = true
 				}
+				response = membershipJSON(user.Version, struct {
+					auth.User
+					StopOperations []workspace.OffboardingStop `json:"stopOperations"`
+				}{user, stops})
 			}
-			response := membershipResponse(user)
 			if !demotion && !disabling {
 				return response, nil
 			}
@@ -161,10 +165,14 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, re
 }
 
 func membershipResponse(user auth.User) http.Handler {
+	return membershipJSON(user.Version, user)
+}
+
+func membershipJSON(version int64, body any) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(user.Version, 10)))
-		_ = json.NewEncoder(w).Encode(user)
+		w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(version, 10)))
+		_ = json.NewEncoder(w).Encode(body)
 	})
 }
 

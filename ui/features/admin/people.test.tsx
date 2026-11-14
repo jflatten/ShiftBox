@@ -118,3 +118,43 @@ test('keeps the role unchanged when the controller protects the last administrat
     method: 'PATCH', body: '{"role":"member"}',
   }));
 });
+
+// Disabling an account previews owned workspaces and follows the controller's
+// stop operation, including a provider failure after access was closed.
+test('confirms offboarding and shows a failed workspace stop', async () => {
+  const account = { id: 'target', primaryEmail: 'target@example.test', membershipState: 'active',
+    credentialMode: 'local', role: 'member', version: 1 };
+  let disabled = false;
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json({ ...session, permissions: ['user.list', 'user.disable'] });
+    if (input === '/api/v1/admin/users') return json([disabled ? { ...account, membershipState: 'disabled' } : account]);
+    if (input === '/api/v1/workspaces?owner=target') return json({ items: [
+      { id: 'workspace-one', observedState: 'running', currentOperationId: null },
+    ], nextCursor: null });
+    if (input === '/api/v1/admin/users/target' && init?.method === 'PATCH') {
+      disabled = true;
+      return json({ ...account, membershipState: 'disabled',
+        stopOperations: [{ workspaceId: 'workspace-one', operationId: 'stop-one' }] });
+    }
+    if (input === '/api/v1/operations/stop-one') return json({
+      id: 'stop-one', status: 'failed', version: 2, currentStep: 'stop',
+      steps: [{ key: 'stop', index: 0, label: 'Stop workspace', status: 'failed', detail: 'Provider refused the stop.' }],
+    });
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><People /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Disable account' }));
+  const dialog = screen.getByRole('dialog');
+  expect(await within(dialog).findByText('workspace-one')).toBeVisible();
+  expect(within(dialog).getByText(/files are preserved/)).toBeVisible();
+  expect(fetch.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  await user.click(within(dialog).getByRole('button', { name: 'Confirm disable' }));
+  expect(await within(dialog).findByText('Provider refused the stop.')).toBeVisible();
+  expect(within(dialog).getByText('Sign-in sessions and tracked connections closed.')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/admin/users/target', expect.objectContaining({
+    method: 'PATCH', body: '{"membershipState":"disabled"}',
+    headers: expect.objectContaining({ 'If-Match': '"1"' }),
+  }));
+});

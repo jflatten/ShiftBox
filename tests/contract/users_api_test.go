@@ -94,6 +94,16 @@ func TestDisableMembershipCommitsStops(t *testing.T) {
 	if res.Code != 200 || closed != 2 {
 		t.Fatalf("disable = %d %s, closed %d, want 200 and two closures", res.Code, res.Body, closed)
 	}
+	var report struct {
+		StopOperations []struct {
+			WorkspaceID string
+			OperationID string
+		}
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &report); err != nil || len(report.StopOperations) != 1 ||
+		report.StopOperations[0].WorkspaceID != workspaceID || report.StopOperations[0].OperationID == "" {
+		t.Fatalf("disable stop operations = %+v (%v), want one workspace stop reference", report, err)
+	}
 	prior, err := journal.Get(ctx, pending.ID)
 	if err != nil || prior.Status != "cancelled" {
 		t.Errorf("superseded start = %s (%v), want cancelled", prior.Status, err)
