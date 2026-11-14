@@ -5,10 +5,12 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/template"
+	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 // ErrGuestReportConflict identifies an invalid, stale, or regressing report.
@@ -20,6 +22,8 @@ type PollReport struct {
 	LastOperationID string
 	Version         int64
 	Operation       *OperationReport
+	Activity        *workspace.CPUActivity
+	IDEConnected    func(workspaceID string) bool
 }
 
 // PollOperation is one controller-approved action and its workspace snapshot.
@@ -43,6 +47,14 @@ type pollArguments struct {
 func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now time.Time, report PollReport) (Contact, *PollOperation, error) {
 	var contact Contact
 	var dispatch *PollOperation
+	// Proxy admission takes the registry lock before checking the database.
+	// Read presence in the same order, then authenticate the workspace in SQL.
+	ideConnected := false
+	if report.IDEConnected != nil && leaf != nil && len(leaf.URIs) == 1 {
+		if parts := strings.Split(leaf.URIs[0].Path, "/"); len(parts) == 4 {
+			ideConnected = report.IDEConnected(parts[2])
+		}
+	}
 	err := database.Transaction(ctx, e.db, func(tx *sql.Tx) error {
 		var err error
 		contact, err = e.authenticate(ctx, tx, leaf, now)
@@ -50,6 +62,10 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 			return err
 		}
 		if err := acceptGuestReport(ctx, tx, contact, report); err != nil {
+			return err
+		}
+		if err := workspace.RecordActivity(ctx, tx, contact.WorkspaceID, contact.Generation, now,
+			workspace.ActivityPolicy{IDE: true, CPU: true, CPUThreshold: 5, Freshness: 90 * time.Second}, report.Activity, ideConnected); err != nil {
 			return err
 		}
 		dispatch, err = nextGuestOperation(ctx, tx, contact)

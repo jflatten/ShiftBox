@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 const pollPath = "/internal/v1/guest/poll"
@@ -37,11 +39,12 @@ func (identity AgentIdentity) pollClient(serverName string) *http.Client {
 }
 
 type guestPollRequest struct {
-	ProtocolVersion      string           `json:"protocolVersion"`
-	GuestRelease         string           `json:"guestRelease"`
-	LastOperationID      string           `json:"lastOperationId,omitempty"`
-	LastOperationVersion int64            `json:"lastOperationVersion,omitempty"`
-	Report               *OperationReport `json:"operationReport,omitempty"`
+	ProtocolVersion      string                 `json:"protocolVersion"`
+	GuestRelease         string                 `json:"guestRelease"`
+	LastOperationID      string                 `json:"lastOperationId,omitempty"`
+	LastOperationVersion int64                  `json:"lastOperationVersion,omitempty"`
+	Report               *OperationReport       `json:"operationReport,omitempty"`
+	Activity             *workspace.CPUActivity `json:"activity,omitempty"`
 }
 
 func newGuestPollRequest(protocol, release string, journal *localJournal) guestPollRequest {
@@ -216,8 +219,11 @@ func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release, secr
 			return guestGitAccessToken(ctx, client, identity.PollEndpoint)
 		},
 	}}
+	var sampler cpuSampler
 	for {
-		if err := pollAgent(ctx, client, identity.PollEndpoint, newGuestPollRequest(protocol, release, journal), journal, runtime, tunnel); err != nil {
+		input := newGuestPollRequest(protocol, release, journal)
+		input.Activity = sampler.sample(time.Now())
+		if err := pollAgent(ctx, client, identity.PollEndpoint, input, journal, runtime, tunnel); err != nil {
 			return err
 		}
 		delay := 27*time.Second + rand.N(6*time.Second)

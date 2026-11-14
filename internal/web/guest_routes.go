@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/guest"
+	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 // GuestCompatibility selects the protocol and two supported agent releases.
@@ -126,6 +127,9 @@ func GuestPollHandler(compatibility GuestCompatibility,
 		}
 		stamp := now().UTC()
 		report := guest.PollReport{Version: input.LastOperationVersion, Operation: input.OperationReport}
+		if input.Activity != nil {
+			report.Activity = &workspace.CPUActivity{SampledAt: input.Activity.SampledAt, Percent: input.Activity.CPUPercent}
+		}
 		if input.LastOperationID != nil {
 			report.LastOperationID = *input.LastOperationID
 		}

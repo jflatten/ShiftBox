@@ -2148,3 +2148,15 @@ This checkpoint does not itself change the goal status.
   configured limit. Automatic retention enforcement and browser controls
   remain open under T093 and T101.
 - Go vet, relevant race tests and the focused start-policy test passed.
+
+### Workspace activity observations
+
+- The guest samples aggregate Linux CPU counters across a two-minute
+  window. Authenticated poll exchanges use controller receipt time and
+  accept CPU activity above 5% when its sample is at most 90 seconds old.
+  Open authorized browser IDE requests also count on poll. Guest-reported
+  IDE counts do not affect retention.
+- Tests cover stale, idle and wrong-generation reports, monotonic activity,
+  the CPU sampling window, and browser connection presence. Go vet and the
+  relevant race tests passed. Monitor configuration, baseline deadlines,
+  outage grace and automatic deletion remain open under T093.

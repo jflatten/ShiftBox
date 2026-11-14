@@ -11,6 +11,7 @@ type Scope struct {
 	SessionID   string
 	WorkspaceID string
 	GrantID     string
+	IDE         bool
 }
 
 type connection struct {
@@ -25,6 +26,18 @@ type Registry struct {
 	mu          sync.Mutex
 	next        uint64
 	connections map[uint64]*connection
+}
+
+// HasIDEConnection reports whether an authenticated IDE request is still open.
+func (r *Registry) HasIDEConnection(workspaceID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, entry := range r.connections {
+		if entry.scope.WorkspaceID == workspaceID && entry.scope.IDE {
+			return true
+		}
+	}
+	return false
 }
 
 // Register checks current durable authority under the admission lock. Revocation

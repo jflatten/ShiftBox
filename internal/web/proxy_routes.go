@@ -89,7 +89,7 @@ func (s serviceProxy) serve(w http.ResponseWriter, r *http.Request) {
 	active, cancel := context.WithTimeout(ctx, deadline.Sub(s.now()))
 	defer cancel()
 	unregister, err := s.registry.Register(proxy.Scope{UserID: authority.UserID, SessionID: authority.SessionID,
-		WorkspaceID: workspace, GrantID: authority.ResourceGrantID}, func() error {
+		WorkspaceID: workspace, GrantID: authority.ResourceGrantID, IDE: service == "ide"}, func() error {
 		current, currentDeadline, err := lookup(active)
 		if err == nil && (current != authority || currentDeadline.Before(deadline)) {
 			return proxy.ErrOriginGrant

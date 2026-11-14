@@ -108,7 +108,13 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		listeners.tunnel = tunnel
 		listeners.TunnelAddress = guestAddress(config.PublicHost, tunnel.network)
 	}
-	internal.Handle("/internal/v1/guest/poll", web.GuestPollHandler(compatibility, enrollment.Exchange, now, listeners.TunnelAddress))
+	exchange := func(ctx context.Context, leaf *x509.Certificate, stamp time.Time, report guest.PollReport) (guest.Contact, *guest.PollOperation, error) {
+		if config.Tunnels != nil {
+			report.IDEConnected = config.Tunnels.Registry.HasIDEConnection
+		}
+		return enrollment.Exchange(ctx, leaf, stamp, report)
+	}
+	internal.Handle("/internal/v1/guest/poll", web.GuestPollHandler(compatibility, exchange, now, listeners.TunnelAddress))
 	return listeners, nil
 }
 
