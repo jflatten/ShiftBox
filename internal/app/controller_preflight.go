@@ -13,6 +13,7 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
+	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/secret"
@@ -71,7 +72,10 @@ func loadControllerState(ctx context.Context, db *sql.DB, active ActiveInstallat
 	dir := cfg.InstallationDir
 	cipher, err := loadControllerCipher(dir)
 	if err != nil {
-		return nil, err
+		conditionErr := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			return writeOperationalCondition(ctx, tx, keyUnavailable, true, time.Now())
+		})
+		return nil, errors.Join(err, conditionErr)
 	}
 
 	now := time.Now()

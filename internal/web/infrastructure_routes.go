@@ -67,6 +67,21 @@ func InfrastructureStatusHandler(db *sql.DB, origin string, now func() time.Time
 			if err != nil {
 				return nil, err
 			}
+			rows, err := tx.QueryContext(ctx, `SELECT condition_key,severity,detail FROM operational_conditions ORDER BY condition_key`)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				condition := infrastructureCondition{Active: true}
+				if err := rows.Scan(&condition.Key, &condition.Severity, &condition.Detail); err != nil {
+					return nil, err
+				}
+				conditions = append(conditions, condition)
+			}
+			if err := rows.Err(); err != nil {
+				return nil, err
+			}
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(version, 10)))

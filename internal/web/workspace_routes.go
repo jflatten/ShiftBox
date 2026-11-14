@@ -25,6 +25,8 @@ type WorkspaceLaunchPolicy struct {
 	RetentionMaximum *int64
 	// VerifyNetwork observes the provider's supported stopped-VM network mode.
 	VerifyNetwork func(context.Context, provider.NetworkRequest) (provider.Inventory, error)
+	// AvailableDisk measures the provider volume before a new allocation.
+	AvailableDisk func() (uint64, error)
 }
 
 type workspaceLaunchRequest struct {
@@ -138,8 +140,18 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 	if err != nil {
 		return operation.Operation{}, err
 	}
-	if _, err := workspace.ProfileResources(allocation, caps); err != nil {
+	resources, err := workspace.ProfileResources(allocation, caps)
+	if err != nil {
 		return operation.Operation{}, launchCapabilityProblem()
+	}
+	if policy.AvailableDisk != nil {
+		available, err := policy.AvailableDisk()
+		if err != nil {
+			return operation.Operation{}, Problem{Status: 503, Code: "workspace.storage_unavailable", Title: "Cannot verify available space on the workspace volume"}
+		}
+		if available < uint64(resources.DiskBytes) {
+			return operation.Operation{}, Problem{Status: 409, Code: "workspace.capacity_exceeded", Title: "There is insufficient disk space on the workspace volume", Fields: map[string]string{"resource": "disk"}}
+		}
 	}
 	if revision.RepositoryRef != "" {
 		intent.RepositoryRef = &revision.RepositoryRef

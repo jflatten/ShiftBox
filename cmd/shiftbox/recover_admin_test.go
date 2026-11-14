@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/url"
 	"os"
@@ -20,6 +21,23 @@ import (
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// TestRecoverAdminInvalidInputJSON checks the stable usage result without
+// echoing invalid arguments into the diagnostic envelope.
+func TestRecoverAdminInvalidInputJSON(t *testing.T) {
+	var out, status bytes.Buffer
+	err := run(t.Context(), []string{"recover-admin", "--json", "--email", "invalid-private-input"}, &out, &status)
+	var exit cliExit
+	var response struct {
+		APIVersion string                `json:"apiVersion"`
+		Problem    struct{ Code string } `json:"problem"`
+	}
+	if !errors.As(err, &exit) || exit.code != 2 || out.Len() != 0 || json.Unmarshal(status.Bytes(), &response) != nil ||
+		response.APIVersion != "shiftbox.io/cli/v1" || response.Problem.Code != "recovery.invalid_input" ||
+		strings.Contains(status.String(), "invalid-private-input") {
+		t.Fatal("invalid recovery input did not produce a redacted versioned usage diagnostic")
+	}
+}
 
 // TestRecoverAdminCommand uses retained Dex and verifies the local lock,
 // recovery without browser TLS, and rejection of the old credential.
@@ -132,7 +150,8 @@ func testRecoverAdminCommand(t *testing.T, appURI, dexURI string) {
 	if err == nil || out.Len() != 0 {
 		t.Fatal("recovery succeeded while installation lock was held")
 	}
-	if err := run(ctx, args, &out, io.Discard); err != nil {
+	var diagnostics bytes.Buffer
+	if err := run(ctx, append(args, "--json"), &out, &diagnostics); err != nil {
 		t.Fatal(err)
 	}
 	admin, _, _, _, closeDex, err := startControllerDex(ctx, dir, binary, cfg.ManagementOrigin, postgres)
@@ -141,6 +160,11 @@ func testRecoverAdminCommand(t *testing.T, appURI, dexURI string) {
 	}
 	defer closeDex()
 	newPassword := strings.TrimSpace(out.String())
+	var result struct{ Status string }
+	if json.Unmarshal(diagnostics.Bytes(), &result) != nil || result.Status != "succeeded" ||
+		newPassword == "" || strings.Contains(diagnostics.String(), newPassword) {
+		t.Fatal("recovery did not separate the temporary password from JSON status")
+	}
 	oldValid, oldErr := admin.PasswordVerified(ctx, email, oldPassword)
 	newValid, newErr := admin.PasswordVerified(ctx, email, newPassword)
 	if oldErr != nil || oldValid || newErr != nil || !newValid || len(newPassword) < 24 {

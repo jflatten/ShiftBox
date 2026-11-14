@@ -13,6 +13,9 @@ import (
 	"github.com/jflatten/ShiftBox/internal/identity"
 )
 
+// ErrAdministratorRecoveryDenied indicates the local account is ineligible.
+var ErrAdministratorRecoveryDenied = errors.New("recovery requires an existing active local administrator")
+
 // OpenAdministratorRecovery validates existing local state and loads only the
 // database and private Dex configuration needed for offline recovery.
 func OpenAdministratorRecovery(ctx context.Context, cfg config.Config) (*ControllerState, error) {
@@ -53,7 +56,7 @@ func recoverLocalAdministrator(ctx context.Context, db *sql.DB, installation, em
 			AND u.membership_state='active' AND u.credential_mode='local'
 			AND (SELECT count(*) FROM users WHERE primary_email=$2 AND credential_mode='local')=1`, installation, email).Scan(&userID)
 		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New("recovery requires an existing active local administrator")
+			return ErrAdministratorRecoveryDenied
 		}
 		if err != nil {
 			return err

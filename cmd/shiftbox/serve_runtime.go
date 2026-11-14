@@ -99,6 +99,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		return err
 	}
 	policy := web.WorkspaceLaunchPolicy{Capabilities: caps, Protocols: []string{guestProtocol}, VerifyNetwork: machines.ApplyNetwork}
+	policy.AvailableDisk = func() (uint64, error) { return app.AvailableWorkspaceSpace(settings.UTMStorage) }
 	services, err := app.NewManagementServices(state, journal, tunnels.Registry, policy, github, passwords, time.Now)
 	if err != nil {
 		return err
@@ -186,6 +187,9 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	defer localBackup.Close()
 	err = app.ServeController(ctx, dexDone, browser.Serve, workspaces.Serve, func(ctx context.Context) error {
 		return app.RunHistoryRetention(ctx, state.DB, cfg, checkpoint)
+	}, func(ctx context.Context) error {
+		return app.RunOperationalConditions(ctx, state.DB, cfg.InstallationDir, settings.UTMStorage,
+			uint64(caps.Minimum.DiskBytes), machines.Capabilities, checkpoint)
 	}, func(ctx context.Context) error {
 		return imports.Run(ctx, checkpoint.Enter)
 	}, func(ctx context.Context) error {

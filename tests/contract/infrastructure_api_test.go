@@ -86,6 +86,13 @@ func TestInfrastructureStatus(t *testing.T) {
 	if strings.Contains(response.Body.String(), "fixture-chain") {
 		t.Fatal("infrastructure status exposed the stored certificate chain")
 	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO operational_conditions(condition_key,severity,detail,observed_at)
+		VALUES('storage.low_space','warning','Free volume space before creating a workspace.',$1)`, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if response := read(http.StatusOK); !strings.Contains(response.Body.String(), `"key":"storage.low_space"`) {
+		t.Fatal("the administrator infrastructure response omitted the persisted storage condition")
+	}
 	if _, err := db.ExecContext(ctx, "DELETE FROM capacity_budgets"); err != nil {
 		t.Fatal(err)
 	}

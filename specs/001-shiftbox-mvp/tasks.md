@@ -191,13 +191,13 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T093 [US3] Implement activity observations, retention deadlines, host-outage grace, precommit authority/activity/state recheck, graceful then provider-enforced deletion, and verified reservation release proven by T082 in `internal/workspace/activity.go`, `internal/workspace/retention.go`, and `internal/workspace/delete.go`
 - [ ] T094 [US3] Implement long-stop eligibility verification and provider-mediated enrollment recovery without disk/identity reset proven by T084 in `internal/workspace/recovery.go` and `internal/provider/utm/enrollment.go`
 - [ ] T095 [US3] Implement maintenance campaign scheduling, warnings, per-target durable operations, safe-boundary activation, signed update staging, verification/rollback evidence, prior-state restoration, and blocked completion proven by T083 in `internal/workspace/maintenance.go` and `internal/guest/update.go`
-- [ ] T096 [US3] Implement browser-certificate expiry/invalid notices, storage/provider/controller/key persistent conditions, and no unprotected listener fallback in `internal/app/conditions.go` and `internal/config/certificate.go`
+- [X] T096 [US3] Implement browser-certificate expiry/invalid notices, storage/provider/controller/key persistent conditions, and no unprotected listener fallback in `internal/app/conditions.go` and `internal/config/certificate.go`
 - [ ] T097 [US3] Implement current/N−1 compatibility evaluation and irreversible migration preflight requiring verified backup, guest gate, tools, keys, provider, database ownership, certificate, and CA lifetime in `internal/release/compatibility.go`, `internal/release/preflight.go`, and `cmd/shiftbox/migrate.go`
-- [ ] T098 [US3] Implement system notices, receipts, condition persistence, dismissal/history, and protected retention pruning proven by T086 in `internal/app/notices.go` and `internal/app/retention.go`
+- [X] T098 [US3] Implement system notices, receipts, condition persistence, dismissal/history, and protected retention pruning proven by T086 in `internal/app/notices.go` and `internal/app/retention.go`
 - [ ] T099 [US3] Implement workspace policy/action, user disable, notice publish/list/receipt, infrastructure status, browser-certificate replacement, platform artifact, resource profile, capacity, network policy, maintenance, and migration-preflight handlers from the OpenAPI and authorization-matrix contracts in `internal/web/workspace_policy_routes.go`, `internal/web/admin_routes.go`, `internal/web/notice_routes.go`, `internal/web/infrastructure_routes.go`, and `internal/web/maintenance_routes.go`
 - [X] T100 [US3] Implement the accessible destructive workspace Modal with initial focus on Cancel, typed workspace name, “I have pushed work I need to keep” acknowledgement, retained-path list, and management-backup exclusion in `ui/features/workspaces/delete-workspace-modal.tsx`
 - [ ] T101 [US3] Implement Mantine Infrastructure, People offboarding, Notices, Retention, and Maintenance screens with server-driven Steppers and actionable persistent conditions in `ui/features/admin/infrastructure.tsx`, `ui/features/admin/offboarding.tsx`, `ui/features/notices/notices.tsx`, `ui/features/workspaces/retention.tsx`, and `ui/features/admin/maintenance.tsx`
-- [ ] T102 [US3] Implement `shiftbox recover-admin` and `shiftbox migrate preflight` human/JSON output, stable exit codes, secret-safe arguments, and audit behavior in `cmd/shiftbox/recover_admin.go`, `cmd/shiftbox/migrate.go`, and `cmd/shiftbox/output.go`
+- [X] T102 [US3] Implement `shiftbox recover-admin` and `shiftbox migrate preflight` human/JSON output, stable exit codes, secret-safe arguments, and audit behavior in `cmd/shiftbox/recover_admin.go`, `cmd/shiftbox/migrate.go`, and `cmd/shiftbox/output.go`
 - [ ] T103 [US3] Add and run the Go operations acceptance test together with the T088 Playwright journey, then record separate evidence for capacity, revocation, destructive clarity, recovery denial, and maintenance authority in `tests/acceptance/workspace_operations_test.go` and `documentation/validation/workspace-operations.md`
 
 **Checkpoint**: User Story 3 exposes every operational workflow and failure state without weakening ownership, reservations, or retained user work.
@@ -2884,3 +2884,20 @@ This checkpoint does not itself change the goal status.
   operation steps. It keeps the reservation while provider evidence
   remains incomplete. The race-enabled worker, capacity and restart
   integration, and deletion API tests passed.
+
+### Persistent infrastructure conditions and recovery CLI status
+
+- T096 persists provider, key-file, storage, and unexpected controller
+  failure conditions. The administrator views combine them with the
+  browser certificate warnings. Admission measures the UTM volume before
+  allocating a new disk, while stopping and inspecting existing workspaces
+  remain available. SQLite and PostgreSQL migration checks and the
+  fail-closed browser certificate tests passed.
+- T098 passed notice publication, dismissal, history, active condition
+  visibility, and protected history pruning tests. The history service
+  starts with the controller, with SQLite and PostgreSQL receipt coverage.
+- T102 adds stable recovery exit statuses and versioned JSON status on
+  stderr. The temporary password is delivered separately on stdout. The
+  pinned Dex recovery test verifies password replacement and excludes the
+  password from JSON. Migration preflight retains its stable result and
+  exit contract.

@@ -54,11 +54,12 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	}
 	clock := func() time.Time { return now }
 	journal := operation.NewJournal(db, clock, uuid.NewString)
+	available := uint64(1 << 40)
 	handler := web.WorkspaceLaunchHandler(db, origin, clock, journal, web.WorkspaceLaunchPolicy{
 		Capabilities: provider.Capabilities{Create: true, Start: true, Architecture: "amd64", Version: "5.0.8", NetworkModes: []string{"shared"},
 			Minimum: provider.Resources{CPU: 1, MemoryBytes: 512 << 20, DiskBytes: 1 << 20},
 			Maximum: provider.Resources{CPU: 8, MemoryBytes: 8192 << 20, DiskBytes: 100 << 20}},
-		Protocols: []string{"1"},
+		Protocols: []string{"1"}, AvailableDisk: func() (uint64, error) { return available, nil },
 	})
 	request := func(payload, key, csrf string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, origin+"/api/v1/workspaces", strings.NewReader(payload))
@@ -99,13 +100,19 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	if _, err := db.Exec("UPDATE installations SET min_guest_release='release'"); err != nil {
 		t.Fatal(err)
 	}
+	available = 1
+	check(request(selectedBody, key, csrf), 409, "workspace.capacity_exceeded")
+	available = 1 << 40
 	accepted := request(selectedBody, key, csrf)
 	check(accepted, 202, "")
 	var op operation.Operation
 	if err := json.Unmarshal(accepted.Body.Bytes(), &op); err != nil || op.WorkspaceID == nil || op.ID == "" {
 		t.Fatalf("launch response = %+v, %v, want durable operation", op, err)
 	}
+	// Disk pressure blocks new allocations, but it cannot hide a committed launch.
+	available = 1
 	replayed := request(selectedBody, key, csrf)
+	available = 1 << 40
 	check(replayed, 202, "")
 	check(request(strings.Replace(selectedBody, "MVP development", "Other workspace", 1), key, csrf), 409, "workspace.launch_conflict")
 	var savedName string

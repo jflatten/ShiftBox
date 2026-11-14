@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jflatten/ShiftBox/internal/app"
@@ -51,6 +52,11 @@ func runServe(ctx context.Context, args []string) error {
 			return err
 		}
 		err = serveActiveController(ctx, cfg, state, configPath)
+		if err != nil && ctx.Err() == nil && !errors.Is(err, errRecoveryActivated) {
+			record, cancel := context.WithTimeout(ctx, 3*time.Second)
+			err = errors.Join(err, app.RecordControllerFailure(record, state.DB, time.Now()))
+			cancel()
+		}
 		closeErr := state.Close()
 		if !errors.Is(err, errRecoveryActivated) || closeErr != nil {
 			return errors.Join(err, closeErr)

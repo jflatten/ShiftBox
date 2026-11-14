@@ -218,6 +218,8 @@ func deliverAdministrator(ctx context.Context, setup app.SetupHTTP, email string
 	return nil
 }
 
+var errInstallationLocked = errors.New("another ShiftBox process holds the installation lock")
+
 func lockSetup(dir string) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, errors.New("cannot create installation directory")
@@ -232,7 +234,7 @@ func lockSetup(dir string) (*os.File, error) {
 	}
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		lock.Close()
-		return nil, errors.New("another ShiftBox process holds the installation lock")
+		return nil, errInstallationLocked
 	}
 	return lock, nil
 }

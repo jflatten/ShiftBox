@@ -14,7 +14,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		if err.Error() != "" {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		if failure, ok := errors.AsType[cliExit](err); ok {
 			os.Exit(failure.code)
 		}
@@ -30,7 +32,7 @@ func run(ctx context.Context, args []string, out, status io.Writer) error {
 		case "serve":
 			return runServe(ctx, args[1:])
 		case "recover-admin":
-			return runRecoverAdmin(ctx, args[1:], out)
+			return runRecoverAdmin(ctx, args[1:], out, status)
 		case "backup":
 			return runBackup(ctx, args[1:], os.Stdin, out, status)
 		case "restore":
