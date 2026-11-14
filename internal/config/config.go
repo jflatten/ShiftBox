@@ -1,0 +1,44 @@
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+)
+
+// Config holds explicit installation inputs; only composition chooses its path.
+type Config struct {
+	InstallationDir             string `json:"installationDir"`
+	DataProfile                 string `json:"dataProfile"`
+	SQLitePath                  string `json:"sqlitePath"`
+	PostgresURI                 string `json:"postgresURI"`
+	ManagementOrigin            string `json:"managementOrigin"`
+	ExternalAuthIntervalSeconds int64  `json:"externalAuthIntervalSeconds"`
+}
+
+// Load reads one explicit file without consulting process environment variables.
+// Diagnostics deliberately omit file content and database credentials.
+func Load(path string) (Config, error) {
+	if path == "" {
+		return Config{}, errors.New("configuration path is required")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return Config{}, errors.New("cannot read configuration file")
+	}
+	defer file.Close()
+	cfg := Config{ExternalAuthIntervalSeconds: 14400}
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return Config{}, errors.New("invalid configuration document")
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return Config{}, errors.New("configuration must contain one document")
+	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}

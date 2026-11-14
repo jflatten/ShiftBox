@@ -1,0 +1,77 @@
+package config_test
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/jflatten/ShiftBox/internal/config"
+)
+
+// TestLoadRequiresExplicitPath prevents accidentally selecting stale installation state.
+func TestLoadRequiresExplicitPath(t *testing.T) {
+	if _, err := config.Load(""); err == nil {
+		t.Error("Load(empty path) succeeded, want explicit-path error")
+	}
+}
+
+// TestLoadRejectsInvalidAndRedacts prevents config errors from disclosing service credentials.
+func TestLoadRejectsInvalidAndRedacts(t *testing.T) {
+	for _, input := range []string{
+		`{"dataProfile":"postgres","postgresURI":"postgres://secret-password@host/db?sslmode=disable"}`,
+		`{"dataProfile":"sqlite","sqlitePath":"relative.db"}`,
+		`{"dataProfile":"other"}`,
+		`{"externalAuthIntervalSeconds":-1}`,
+		`{"unknown":"secret-password"}`,
+		`{"postgresURI":"secret-password"`,
+	} {
+		// Malformed, insecure, and ambiguous configurations must all fail closed.
+		t.Run(input, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := config.Load(path)
+			if err == nil {
+				t.Fatal("Load(invalid config) succeeded, want error")
+			}
+			if strings.Contains(err.Error(), "secret-password") {
+				t.Error("Load error discloses protected configuration")
+			}
+		})
+	}
+}
+
+// TestLoadIgnoresEnvironment keeps all configuration decisions at the explicit file boundary.
+func TestLoadIgnoresEnvironment(t *testing.T) {
+	t.Setenv("SHIFTBOX_DATA_PROFILE", "postgres")
+	path := filepath.Join(t.TempDir(), "config.json")
+	input := `{"dataProfile":"sqlite","sqlitePath":"/tmp/shiftbox-fixture.db","installationDir":"/tmp/shiftbox-fixture","managementOrigin":"https://shiftbox.test","externalAuthIntervalSeconds":14400}`
+	if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DataProfile != "sqlite" || got.ExternalAuthIntervalSeconds != 14400 {
+		t.Errorf("Load(file) = %+v, want explicit sqlite and 14400-second interval", got)
+	}
+}
+
+// TestInitialAuthorizationInterval applies the approved four-hour default only when omitted.
+func TestInitialAuthorizationInterval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	input := `{"dataProfile":"sqlite","sqlitePath":"/tmp/shiftbox-fixture.db","installationDir":"/tmp/shiftbox-fixture","managementOrigin":"https://shiftbox.test"}`
+	if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ExternalAuthIntervalSeconds != 14400 {
+		t.Errorf("default authorization interval = %d, want 14400", got.ExternalAuthIntervalSeconds)
+	}
+}
