@@ -93,7 +93,7 @@ func TestAuthorizedHandlerCommitsBeforeResponse(t *testing.T) {
 	principal.User.Role = "administrator"
 	handler.Route.Action = "workspace.connect_admin"
 	handler.Resolve = func(ctx context.Context, tx *sql.Tx, r *http.Request, p auth.Principal) (web.AuthorizationTarget, error) {
-		return web.AuthorizationTarget{Action: "workspace.connect_admin", Resource: auth.Resource{Type: "workspace", ID: "workspace", OwnerID: "another-user", Eligible: true}, Grants: []auth.ResourceGrant{{SubjectUserID: p.User.ID, ResourceType: "workspace", ResourceID: "workspace", Action: "workspace.connect_admin"}}}, nil
+		return web.AuthorizationTarget{Action: "workspace.connect_admin", Resource: auth.Resource{Type: "workspace", ID: "workspace", OwnerID: "another-user", Eligible: true}, Grants: []auth.ResourceGrant{{ID: "grant", SubjectUserID: p.User.ID, ResourceType: "workspace", ResourceID: "workspace", Action: "workspace.connect_admin"}}}, nil
 	}
 	if got := request(handler.Origin); got != 500 {
 		t.Fatalf("missing audit status = %d, want 500", got)
@@ -127,6 +127,26 @@ func TestAuthorizedHandlerCommitsBeforeResponse(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("committed audits = %d, want 1", count)
+	}
+
+	// The default writer persists the exact owner/grant evidence in the real
+	// audit schema before an administrator connection response is released.
+	if err := database.Migrate(context.Background(), db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM intents`); err != nil {
+		t.Fatal(err)
+	}
+	handler.Audit = nil
+	if got := request(handler.Origin); got != 204 {
+		t.Fatalf("default durable audit status = %d, want 204", got)
+	}
+	var metadata string
+	if err := db.QueryRow(`SELECT metadata_json FROM audit_events`).Scan(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata != `{"ownerId":"another-user","grantId":"grant"}` {
+		t.Errorf("access audit metadata = %s, want owner and exact grant", metadata)
 	}
 
 }

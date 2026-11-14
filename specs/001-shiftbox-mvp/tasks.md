@@ -671,3 +671,22 @@ This checkpoint does not itself change the goal status.
   not implementation of the missing endpoint callbacks: contextual resource/action
   resolvers and concrete flows still prevent a complete runnable controller.
   T013/T025 remain unchecked until those consuming requirements are satisfied.
+
+### Durable administrator-access audit prerequisite
+
+- Introduced the shared AuditEvent table in the initial foundation schema because
+  foundation authorization requires durable administrator-access evidence before
+  the later sharing flows. T069 must reuse this table rather than create a second
+  audit store; its remaining sharing/secret/Git migrations are still pending.
+- Added an append-only store API with ordered database-generated IDs, explicit
+  actor/action/resource/outcome, and bounded typed owner/grant metadata. Both
+  database schemas reject unknown fields, nested values, null identifiers, and
+  non-object metadata. There is no event-update API.
+- The authorization handler now defaults to this writer for administrator
+  workspace connections, recording the exact active grant and workspace owner
+  alongside intent. Missing audit storage or a later intent failure prevents
+  success; the test exercises real schema persistence as well as rollback.
+- Audit/web/auth/config/contract race suites pass with PostgreSQL enabled;
+  formatting and vet pass. Initial schema edits do not upgrade the existing
+  fixture's durable tables. Retention (T071), concrete entry grants/proxy access,
+  and broader sharing flows remain unfinished; no additional task is marked done.

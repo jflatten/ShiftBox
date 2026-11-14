@@ -133,3 +133,18 @@ CREATE TABLE operation_events (
  payload_json TEXT NOT NULL,
  PRIMARY KEY (operation_id, event_id)
 );
+
+-- Shared security audit is needed before administrator connection admission.
+-- Only explicitly modeled non-secret identifiers are accepted as metadata.
+CREATE TABLE audit_events (
+ id BIGSERIAL PRIMARY KEY,
+ occurred_at TEXT NOT NULL,
+ actor_type TEXT NOT NULL CHECK (actor_type IN ('user','guest','controller','local_recovery')),
+ actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
+ action TEXT NOT NULL CHECK (length(action) > 0),
+ resource_type TEXT NOT NULL CHECK (length(resource_type) > 0),
+ resource_id TEXT NOT NULL CHECK (length(resource_id) > 0),
+ outcome TEXT NOT NULL CHECK (length(outcome) > 0),
+ reason_code TEXT NOT NULL CHECK (length(reason_code) > 0),
+ metadata_json TEXT NOT NULL CHECK (length(metadata_json) <= 2048 AND (jsonb_typeof(metadata_json::jsonb) = 'object' AND (metadata_json::jsonb - 'ownerId' - 'grantId') = '{}'::jsonb AND (NOT metadata_json::jsonb ? 'ownerId' OR jsonb_typeof(metadata_json::jsonb->'ownerId') = 'string') AND (NOT metadata_json::jsonb ? 'grantId' OR jsonb_typeof(metadata_json::jsonb->'grantId') = 'string')))
+);
