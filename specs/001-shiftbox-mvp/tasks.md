@@ -1552,6 +1552,10 @@ This checkpoint does not itself change the goal status.
   commit failure, verifies that ordinary local setup cannot reopen the
   source, and resumes the original activation. Live PostgreSQL tests cover
   readiness validation, replay, and selection by the runtime DB opener.
+- T120 injects a failure in the live PostgreSQL activation transaction after
+  SQLite retirement. With both stores reopened, protected recovery completes
+  the original pending target operation from the encrypted selected profile
+  without a browser session or a second Dex transfer.
 - Protected setup still needs to orchestrate profile selection, Dex
   transfer, cutover, and restart recovery from the command and HTTP routes.
 

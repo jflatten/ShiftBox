@@ -199,7 +199,8 @@ func configureActivationCertificate(t *testing.T, db *sql.DB, cipher *cryptostor
 }
 
 // TestStagePostgresSetup copies only the initial account and current TLS
-// configuration, and keeps the destination inactive and free of old sessions.
+// configuration, and resumes a failed activation across a restart using only
+// the saved profile and retirement receipt.
 func TestStagePostgresSetup(t *testing.T) {
 	appURI, dexURI := os.Getenv("SHIFTBOX_TEST_SETUP_APP_URI"), os.Getenv("SHIFTBOX_TEST_SETUP_DEX_URI")
 	if appURI == "" || dexURI == "" {
@@ -213,7 +214,7 @@ func TestStagePostgresSetup(t *testing.T) {
 	if !roots.AppendCertsFromPEM(cert) {
 		t.Fatal("invalid fixture trust")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	target := database.PostgresSetupTarget{ApplicationURI: appURI, DexURI: dexURI, Roots: roots}
 	if err := database.PreflightPostgresSetup(ctx, target); err != nil {
@@ -383,14 +384,49 @@ func TestStagePostgresSetup(t *testing.T) {
 	budgetVersion = `"1"`
 	request(http.MethodPut, "admin/capacity", "", `{"cpuCount":6,"memoryMiB":8192,"diskMiB":20480}`, 204)
 	transferReady = true
-	request(http.MethodPost, "setup/activate", key, "", 202)
+	for _, statement := range []string{
+		`CREATE FUNCTION shiftbox.fail_fixture_activation() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'fixture activation interruption'; END $$`,
+		`CREATE TRIGGER fail_fixture_activation BEFORE UPDATE ON shiftbox.installations
+		FOR EACH ROW WHEN (NEW.state='active') EXECUTE FUNCTION shiftbox.fail_fixture_activation()`,
+	} {
+		if _, err := dst.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request(http.MethodPost, "setup/activate", key, "", 500)
 	if transfers != 2 {
 		t.Fatalf("activation attempted %d identity transfers, want one attempt and one retry", transfers)
 	}
 	request(http.MethodPost, "setup/activate", key, "", 401)
+	var preparedID, preparedStatus string
+	if err := dst.QueryRowContext(ctx, "SELECT id,status FROM operations WHERE request_key=$1", key).Scan(&preparedID, &preparedStatus); err != nil ||
+		preparedID == "" || preparedStatus != "pending" {
+		t.Fatalf("target activation before restart = %s/%s (%v), want the pending operation", preparedID, preparedStatus, err)
+	}
+	if err := errors.Join(src.Close(), dst.Close()); err != nil {
+		t.Fatal(err)
+	}
+	src, err = database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: bootstrapPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	dst, err = database.OpenPostgresSetupApplication(ctx, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+	if _, err := dst.ExecContext(ctx, "DROP TRIGGER fail_fixture_activation ON shiftbox.installations"); err != nil {
+		t.Fatal(err)
+	}
+	// Compose a fresh local recovery path without a browser session or a
+	// transfer callback. The encrypted selected profile gives it the target.
+	setup = app.SetupHTTP{DB: src, InstallationID: id, Cipher: cipher, CertificateRoots: browserRoots,
+		Journal: operation.NewJournal(src, clock, uuid.NewString), Now: clock, NewID: uuid.NewString}
 	first, err := setup.ResumeRetiredPostgresSetup(ctx)
-	if err != nil || first.Status != "succeeded" {
-		t.Fatalf("activation = %s, %v, want succeeded", first.Status, err)
+	if err != nil || first.Status != "succeeded" || first.ID != preparedID {
+		t.Fatalf("activation after restart = %s/%s (%v), want %s/succeeded", first.ID, first.Status, err, preparedID)
 	}
 	again, err := setup.ActivatePostgres(ctx, dst, "owner", key)
 	if err != nil || again.ID != first.ID {
