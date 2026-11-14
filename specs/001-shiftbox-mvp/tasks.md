@@ -1143,3 +1143,15 @@ This checkpoint does not itself change the goal status.
 - Production provisioning must persist the managed bundle location before
   wiring this into the provider's delete method. External enrollment images
   have a separate cleanup lifecycle.
+
+### Native UTM workspace artifact import
+
+- Added stopped UTM import under a deterministic workspace and generation
+  bundle name. Reconciliation checks the ownership tag, artifact identity,
+  compute settings, shared network, disk and media drives, and managed bundle.
+  An unowned destination blocks a second import after an interrupted attempt.
+- UTM 5.0.8 imported a disposable export into an independent VM, applied
+  its ownership and compute settings, reused it on retry, and deleted it
+  without changing the digests of the exported source.
+- Production catalog staging, disk-capacity verification and adjustment,
+  boot of the pinned Ubuntu artifact, and enrollment remain pending.

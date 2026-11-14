@@ -92,10 +92,15 @@ func TestLiveUTMTaggedDrive(t *testing.T) {
 	notes := ownershipPrefix + string(marker)
 	const fixture = `
 on run argv
+    if item 2 of argv is "export" then set exportPath to POSIX file (item 5 of argv)
     tell application "/Applications/UTM.app"
         if UTM version is not item 1 of argv then error "unexpected UTM version"
         if item 2 of argv is "create" then
             set vm to make new virtual machine with properties {backend:qemu, configuration:{name:item 3 of argv, notes:item 4 of argv, architecture:"x86_64", cpu cores:2, memory:512, hypervisor:false, drives:{{guest size:64}}}}
+            return id of vm
+        end if
+        if item 2 of argv is "source" then
+            set vm to make new virtual machine with properties {backend:qemu, configuration:{name:item 3 of argv, notes:"ShiftBox disposable import source", architecture:"x86_64", cpu cores:2, memory:512, hypervisor:false, drives:{{guest size:64}, {removable:true}}}}
             return id of vm
         end if
         if item 2 of argv is "media" then
@@ -103,16 +108,32 @@ on run argv
             return id of vm
         end if
         set vm to virtual machine id (item 3 of argv)
+        if item 2 of argv is "export" then
+            set vmConfig to configuration of vm
+            if notes of vmConfig is not "ShiftBox disposable import source" or status of vm is not stopped then error "fixture does not match"
+            export vm to exportPath
+            return id of vm
+        end if
         set vmConfig to configuration of vm
+        if item 2 of argv is "delete source" then
+            if notes of vmConfig is not "ShiftBox disposable import source" or status of vm is not stopped then error "fixture does not match"
+            delete vm
+            return
+        end if
         if notes of vmConfig is not item 4 of argv or status of vm is not stopped then error "fixture does not match"
         delete vm
     end tell
 end run
 `
-	run := func(action, value string) (string, error) {
+	run := func(action, value string, extra ...string) (string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		out, err := exec.CommandContext(ctx, "/usr/bin/osascript", "-e", fixture, "--", version, action, value, notes).Output()
+		args := append([]string{"-e", fixture, "--", version, action, value, notes}, extra...)
+		out, err := exec.CommandContext(ctx, "/usr/bin/osascript", args...).Output()
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			t.Logf("fixture %s: %s", action, exit.Stderr)
+		}
 		return strings.TrimSpace(string(out)), err
 	}
 	action := "create"
@@ -156,6 +177,9 @@ end run
 		checkLivePower(t, controller, ref)
 	}
 	if root := os.Getenv("SHIFTBOX_TEST_UTM_STORAGE"); root != "" {
+		if os.Getenv("SHIFTBOX_TEST_UTM_IMPORT") == version {
+			checkLiveImport(t, controller, root, run)
+		}
 		checkLiveDeletion(t, controller, ref, filepath.Join(root, fixtureName+".utm"))
 	}
 }

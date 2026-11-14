@@ -118,7 +118,10 @@ func applyPower(ctx context.Context, version string, ref provider.WorkspaceRef, 
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/usr/bin/osascript", "-l", "JavaScript", "-e", powerScript, "--", version, ref.InstanceID, string(refJSON), action)
-	out, err := cmd.Output()
+	return effectResult(cmd.Output())
+}
+
+func effectResult(out []byte, err error) error {
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && bytes.Contains(exit.Stderr, []byte("(-1743)")) {
