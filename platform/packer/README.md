@@ -17,8 +17,12 @@ git -C .cache/packer/utm-plugin checkout --detach fccda3be64189b5c057f6076184be7
     go build -trimpath -ldflags '-X github.com/naveenrajm7/packer-plugin-utm/version.Version=4.0.0 -X github.com/naveenrajm7/packer-plugin-utm/version.VersionPrerelease=' -o ../packer-plugin-utm .
 )
 packer plugins install --path .cache/packer/packer-plugin-utm github.com/naveenrajm7/utm
-platform/packer/build-image.sh development
+platform/packer/build-image.sh development /absolute/path/to/guest-update.pub
 ```
+
+Supply the release publisher's raw 32-byte Ed25519 public key. The image
+installs it as `/usr/local/share/shiftbox/guest-update.pub`. Keep the matching
+private key in the release signing environment.
 
 The build creates a disposable VM under a unique name and provisions it
 using a temporary SSH key. The shutdown step removes the build key,

@@ -1,12 +1,42 @@
 package release_test
 
 import (
+	"crypto/ed25519"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestPackerGuestUpdateKey checks that the image carries only the supplied
+// publisher public key in a root-owned location and discards the upload.
+func TestPackerGuestUpdateKey(t *testing.T) {
+	root := filepath.Join("..", "..", "platform", "packer")
+	for name, markers := range map[string][]string{
+		"build-image.sh":   {"guest-update-public-key", "wc -c", "guest_update_public_key=$build_dir/guest-update.pub"},
+		"shiftbox.pkr.hcl": {"source      = var.guest_update_public_key", "install -D -o root -g root -m 0644 /tmp/shiftbox-guest-update.pub /usr/local/share/shiftbox/guest-update.pub"},
+		"seal-image.sh":    {"/tmp/shiftbox-guest-update.pub"},
+	} {
+		raw, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, marker := range markers {
+			if !strings.Contains(string(raw), marker) {
+				t.Errorf("%s missing public-key provisioning marker %q", name, marker)
+			}
+		}
+	}
+	key := filepath.Join(t.TempDir(), "truncated-key.pub")
+	if err := os.WriteFile(key, []byte("truncated"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(t.Context(), "/bin/sh", filepath.Join(root, "build-image.sh"), "fixture", key).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "32 raw bytes") {
+		t.Errorf("build with a truncated public key = %v/%q, want validation before the VM build", err, out)
+	}
+}
 
 // TestPackerBuildPlan checks the pinned UTM cloud recipe with the real plugin
 // and ensures its build seed uses a temporary SSH key.
@@ -38,7 +68,16 @@ func TestPackerBuildPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	publisher, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisherPath := filepath.Join(dir, "publisher.pub")
+	if err := os.WriteFile(publisherPath, publisher, 0644); err != nil {
+		t.Fatal(err)
+	}
 	args := []string{"validate", "-var", "build_public_key=" + strings.TrimSpace(string(public)), "-var", "build_private_key=" + key,
+		"-var", "guest_update_public_key=" + publisherPath,
 		"-var", "agent_binary=" + key, "-var", "output_directory=" + filepath.Join(dir, "export"),
 		"-var", "build_name=shiftbox-packer-fixture", recipe}
 	if out, err := exec.CommandContext(t.Context(), packer, args...).CombinedOutput(); err != nil {

@@ -29,6 +29,10 @@ variable "agent_binary" {
   type = string
 }
 
+variable "guest_update_public_key" {
+  type = string
+}
+
 source "utm-cloud" "shiftbox" {
   vm_name            = var.build_name
   vm_arch            = "x86_64"
@@ -89,6 +93,11 @@ build {
   }
 
   provisioner "file" {
+    source      = var.guest_update_public_key
+    destination = "/tmp/shiftbox-guest-update.pub"
+  }
+
+  provisioner "file" {
     source      = "${path.root}/../guest/shiftbox-agent.service"
     destination = "/tmp/shiftbox-agent.service"
   }
@@ -118,6 +127,7 @@ build {
       "cloud-init status --wait",
       "sudo /bin/sh /tmp/shiftbox-install-toolchain",
       "sudo install -m 0755 /tmp/shiftbox-agent /usr/local/bin/shiftbox-agent",
+      "sudo install -D -o root -g root -m 0644 /tmp/shiftbox-guest-update.pub /usr/local/share/shiftbox/guest-update.pub",
       "sudo ln -s /usr/local/bin/shiftbox-agent /usr/local/bin/shiftbox",
       "sudo install -D -m 0755 /tmp/shiftbox-start-agent /usr/local/libexec/shiftbox-start-agent",
       "sudo install -m 0644 /tmp/shiftbox-agent.service /etc/systemd/system/shiftbox-agent.service",

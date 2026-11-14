@@ -2,13 +2,22 @@
 set -eu
 umask 077
 
-if [ "$#" -ne 1 ] || [ -z "$1" ]; then
-    echo "Usage: build-image.sh <guest-release>" >&2
+if [ "$#" -ne 2 ] || [ -z "$1" ]; then
+    echo "Usage: build-image.sh <guest-release> <guest-update-public-key>" >&2
     exit 2
 fi
 case "$1" in
     *[!a-zA-Z0-9._-]*) echo "Guest release contains unsupported characters." >&2; exit 2 ;;
 esac
+
+case "$2" in
+    /*) publisher_key=$2 ;;
+    *) publisher_key=$PWD/$2 ;;
+esac
+if [ ! -f "$publisher_key" ] || [ "$(wc -c < "$publisher_key")" -ne 32 ]; then
+    echo "The Ed25519 guest update public key must contain 32 raw bytes." >&2
+    exit 2
+fi
 
 recipe_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 root=$(CDPATH='' cd -- "$recipe_dir/../.." && pwd)
@@ -25,11 +34,19 @@ trap 'rm -f "$build_dir/ssh-key" "$build_dir/ssh-key.pub"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+cp "$publisher_key" "$build_dir/guest-update.pub"
 ssh-keygen -q -t ed25519 -N '' -C '' -f "$build_dir/ssh-key"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-X main.agentRelease=$1"     -o "$build_dir/shiftbox-agent" ./cmd/shiftbox-agent
 
 echo "Build directory: $build_dir"
-packer build     -var "build_name=shiftbox-${build_dir##*/}"     -var "output_directory=$build_dir/export"     -var "build_public_key=$(cat "$build_dir/ssh-key.pub")"     -var "build_private_key=$build_dir/ssh-key"     -var "agent_binary=$build_dir/shiftbox-agent"     "$recipe_dir/shiftbox.pkr.hcl"
+packer build \
+    -var "build_name=shiftbox-${build_dir##*/}" \
+    -var "output_directory=$build_dir/export" \
+    -var "build_public_key=$(cat "$build_dir/ssh-key.pub")" \
+    -var "build_private_key=$build_dir/ssh-key" \
+    -var "agent_binary=$build_dir/shiftbox-agent" \
+    -var "guest_update_public_key=$build_dir/guest-update.pub" \
+    "$recipe_dir/shiftbox.pkr.hcl"
 
 mkdir "$build_dir/final"
 /usr/bin/osascript "$recipe_dir/prepare-export.applescript" \

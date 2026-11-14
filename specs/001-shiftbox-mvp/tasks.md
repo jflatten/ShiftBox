@@ -1715,8 +1715,10 @@ This checkpoint does not itself change the goal status.
   loop now handles the staging command and journals the digest for replay after
   restart. The controller dispatches staging only for the active workspace
   generation and persists its receipt. Identical receipt replays succeed and
-  changed receipts are rejected. Production key provisioning, activation,
-  and prior-state restoration remain open under T095.
+  changed receipts are rejected. The image build now installs a supplied
+  Ed25519 publisher public key in the guest's fixed trust path. Release
+  signing and native image validation, activation, and prior-state
+  restoration remain open under T095.
 
 ### Migration preflight CLI
 
