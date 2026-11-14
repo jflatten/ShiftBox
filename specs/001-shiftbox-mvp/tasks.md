@@ -416,3 +416,15 @@ This checkpoint does not itself change the goal status.
 - The handler's lookup and revoke functions are explicit composition dependencies;
   production router/state wiring and general route/action authorization remain
   unfinished. T025 and its broader test tasks remain unchecked.
+
+### Current resource-grant persistence
+
+- Added transaction-scoped reads of active grants for an exact subject/resource
+  type/resource ID and idempotent revocation preserving the first timestamp.
+- Test-first SQLite coverage excludes revoked and unrelated grants, verifies
+  rollback preserves permission, and proves committed revocation removes admin
+  connection authority. Active admin connection decisions still require audit and
+  retain the workspace owner's secret/Git context.
+- Auth race tests, formatting, and vet pass. T023 remains unchecked: the consuming
+  administrator connection flow must still commit audit evidence before access;
+  this store does not itself grant access or close registered connections.

@@ -141,6 +141,40 @@ func (s *Store) Grant(ctx context.Context, tx *sql.Tx, grant ResourceGrant) erro
 	return err
 }
 
+// ActiveGrants reads current exact-resource permissions in the authorization
+// transaction. A grant alone does not bypass membership, role, or audit checks.
+func (s *Store) ActiveGrants(ctx context.Context, tx *sql.Tx, subjectID, resourceType, resourceID string) ([]ResourceGrant, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id,subject_user_id,resource_type,resource_id,action,granted_by,granted_at FROM resource_grants WHERE subject_user_id=$1 AND resource_type=$2 AND resource_id=$3 AND revoked_at IS NULL ORDER BY id`, subjectID, resourceType, resourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var grants []ResourceGrant
+	for rows.Next() {
+		var grant ResourceGrant
+		var granted string
+		if err := rows.Scan(&grant.ID, &grant.SubjectUserID, &grant.ResourceType, &grant.ResourceID, &grant.Action, &grant.GrantedBy, &granted); err != nil {
+			return nil, err
+		}
+		grant.GrantedAt, err = time.Parse(time.RFC3339Nano, granted)
+		if err != nil {
+			return nil, err
+		}
+		grants = append(grants, grant)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return grants, nil
+}
+
+// RevokeGrant preserves the first revocation time in the caller's authorized
+// transaction. The caller commits audit evidence here, then closes live access.
+func (s *Store) RevokeGrant(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
+	_, err := tx.ExecContext(ctx, `UPDATE resource_grants SET revoked_at=$1 WHERE id=$2 AND revoked_at IS NULL`, authTime(now), id)
+	return err
+}
+
 func grantAction(kind, action string) bool {
 	switch action {
 	case "workspace.view", "workspace.start", "workspace.stop", "workspace.rebuild", "workspace.repair", "workspace.delete", "workspace.update", "workspace.update_policy", "workspace.connect_owner", "workspace.connect_admin":
