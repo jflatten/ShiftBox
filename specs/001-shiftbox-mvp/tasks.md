@@ -238,7 +238,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 **Purpose**: Verify the integrated MVP against the approved architecture without adding deferred product scope.
 
 - [X] T117 [P] First add a failing OpenAPI-to-TypeScript drift test, then generate UI contract types without generated Go handlers and make the drift test pass in `tests/contract/openapi_types_test.go`, `ui/lib/api-types.ts`, and `scripts/check-openapi.sh`
-- [ ] T118 [P] Add bounded redaction and secret-leak tests across logs, URLs, API responses, browser storage, process arguments, audit metadata, and archives in `tests/integration/secret_leak_test.go` and `ui/tests/e2e/browser-storage.spec.ts`
+- [X] T118 [P] Add bounded redaction and secret-leak tests across logs, URLs, API responses, browser storage, process arguments, audit metadata, and archives in `tests/integration/secret_leak_test.go` and `ui/tests/e2e/browser-storage.spec.ts`
 - [ ] T119 [P] Add automated accessibility checks plus manual keyboard/focus evidence for every Mantine Stepper workflow in `ui/tests/e2e/accessibility.spec.ts` and `documentation/validation/accessibility.md`
 - [ ] T120 Add end-to-end controller restart injection at every persisted setup, lifecycle, maintenance, backup, restore, and recovery step in `tests/acceptance/restart_matrix_test.go`
 - [ ] T121 Add SQLite/PostgreSQL parity, race, real HTTP/mTLS, Dex/OIDC, hostile-origin, and corrupted-backup integration gates in `tests/integration/release_gate_test.go`
@@ -2961,3 +2961,10 @@ This checkpoint does not itself change the goal status.
   schema and activity checks. Maintenance admission, notice retention, and
   network-policy tests passed. Pinned UTM continues to reject restrictions
   without an enforceable provider exception set.
+
+### Redaction release regressions
+
+- T118 verifies API and audit responses, request logging, scoped service
+  entry and forwarding, browser storage and URLs, the Dex child process,
+  and a real encrypted checkpoint archive with synthetic values. All three
+  race-enabled Go tests and the production-export Chrome check passed.
