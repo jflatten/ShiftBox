@@ -1757,3 +1757,16 @@ This checkpoint does not itself change the goal status.
   absent names, scope injection, a stopped VM and a revoked registration.
   Guest, app, web, secret and contract race suites passed.
 - The in-guest command and its exit codes remain open under T075.
+
+### In-guest secret command
+
+- Added `shiftbox secrets get-secret` with exact stdout bytes and stable
+  success, missing, denied, and unavailable exits. Each call uses the
+  agent's Unix socket and a new controller request, including reads after
+  a prior success. The private guest identity remains outside the
+  container mounts.
+- The guest image provides the command on the VM and mounts a separate
+  runtime copy and socket directory into the development container.
+  Linux amd64 build and local socket, CLI, and Dev Container invocation
+  tests passed. A rebuilt UTM image and live container check remain open.
+- The standalone Git credential-helper command remains open under T075.

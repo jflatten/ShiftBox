@@ -113,6 +113,7 @@ build {
       "cloud-init status --wait",
       "sudo /bin/sh /tmp/shiftbox-install-toolchain",
       "sudo install -m 0755 /tmp/shiftbox-agent /usr/local/bin/shiftbox-agent",
+      "sudo ln -s /usr/local/bin/shiftbox-agent /usr/local/bin/shiftbox",
       "sudo install -D -m 0755 /tmp/shiftbox-start-agent /usr/local/libexec/shiftbox-start-agent",
       "sudo install -m 0644 /tmp/shiftbox-agent.service /etc/systemd/system/shiftbox-agent.service",
       "sudo systemctl enable shiftbox-agent.service",

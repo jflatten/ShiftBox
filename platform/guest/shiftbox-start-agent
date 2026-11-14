@@ -5,9 +5,17 @@ set -eu
 # service's namespace so no development-container process needs access.
 seed_device=/dev/disk/by-label/SHIFTBOX
 seed_directory=/run/shiftbox-enrollment
+chmod 0700 "$seed_directory"
 if [ -b "$seed_device" ]; then
     # Linux otherwise lowercases names on plain ISO9660 media.
     mount -t iso9660 -o ro,nosuid,nodev,noexec,map=off "$seed_device" "$seed_directory"
 fi
 
+# Bind a runtime copy into development containers. Never mount the executable
+# that systemd uses or the directory containing the guest's private key.
+command_copy=$(mktemp /run/shiftbox-credentials/.shiftbox.XXXXXXXX)
+trap 'rm -f -- "$command_copy"' EXIT
+install -m 0755 /usr/local/bin/shiftbox-agent "$command_copy"
+mv -fT -- "$command_copy" /run/shiftbox-credentials/shiftbox
+trap - EXIT
 exec /usr/local/bin/shiftbox-agent serve

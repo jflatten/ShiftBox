@@ -5,8 +5,9 @@ After=network-online.target
 
 [Service]
 Type=simple
-RuntimeDirectory=shiftbox-enrollment
-RuntimeDirectoryMode=0700
+RuntimeDirectory=shiftbox-enrollment shiftbox-credentials
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=restart
 PrivateMounts=yes
 ExecStart=/usr/local/libexec/shiftbox-start-agent
 Restart=on-failure

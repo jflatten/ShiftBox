@@ -24,6 +24,15 @@ var (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if len(os.Args) > 1 && os.Args[1] == "secrets" {
+		code := secretCommand(ctx, os.Args[1:], os.Stdout, os.Stderr, func(ctx context.Context, name string) (string, error) {
+			return guest.ReadLocalSecret(ctx, guest.SecretSocketPath, name)
+		})
+		if code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
 	if err := run(ctx, os.Args[1:]); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, err)
 		if errors.Is(err, errUsage) {
@@ -37,5 +46,5 @@ func run(ctx context.Context, args []string) error {
 	if len(args) != 1 || args[0] != "serve" {
 		return errUsage
 	}
-	return guest.ServeAgent(ctx, stateDirectory, seedFile, "1", agentRelease)
+	return guest.ServeAgent(ctx, stateDirectory, seedFile, "1", agentRelease, guest.SecretSocketPath)
 }

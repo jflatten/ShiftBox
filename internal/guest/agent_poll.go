@@ -177,7 +177,7 @@ func validPollEndpoint(endpoint string) bool {
 
 // ServeAgent loads the on-disk identity or enrolls from mounted recovery media,
 // then maintains authenticated contact until stopped by the supervisor.
-func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release string) error {
+func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release, secretSocket string) error {
 	if !filepath.IsAbs(stateDir) || !filepath.IsAbs(seedPath) {
 		return errors.New("invalid guest service configuration")
 	}
@@ -195,6 +195,13 @@ func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release strin
 	}
 	client := identity.pollClient("")
 	defer client.CloseIdleConnections()
+	if secretSocket != "" {
+		stopSecrets, err := listenSecretSocket(ctx, secretSocket, client, identity.PollEndpoint)
+		if err != nil {
+			return err
+		}
+		defer stopSecrets()
+	}
 	tunnel := &agentTunnel{protocol: protocol, tls: client.Transport.(*http.Transport).TLSClientConfig.Clone(),
 		retry: 5 * time.Second, serve: ServeTunnel}
 	defer tunnel.close()
@@ -203,7 +210,7 @@ func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release strin
 		return err
 	}
 	project := filepath.Join(stateDir, "project")
-	runtime := devContainer{workspace: project, repository: &repositoryPreparation{
+	runtime := devContainer{workspace: project, credentials: secretSocket != "", repository: &repositoryPreparation{
 		project: project,
 		token: func(ctx context.Context) (string, error) {
 			return guestGitAccessToken(ctx, client, identity.PollEndpoint)

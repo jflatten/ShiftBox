@@ -420,8 +420,9 @@ func TestDevContainerLifecycle(t *testing.T) {
 	workspace := t.TempDir()
 	var calls [][]string
 	runtime := devContainer{
-		workspace: workspace,
-		config:    ".devcontainer/go/devcontainer.json",
+		workspace:   workspace,
+		config:      ".devcontainer/go/devcontainer.json",
+		credentials: true,
 		run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
 			calls = append(calls, append([]string{executable}, args...))
 			if args[0] == "up" {
@@ -442,6 +443,8 @@ func TestDevContainerLifecycle(t *testing.T) {
 	wantCalls := [][]string{
 		{"/usr/local/bin/devcontainer", "up", "--workspace-folder", workspace, "--docker-path", "/usr/bin/docker",
 			"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", "shiftbox.container=development",
+			"--mount", "type=bind,source=/run/shiftbox-credentials,target=/run/shiftbox-credentials",
+			"--mount", "type=bind,source=/run/shiftbox-credentials/shiftbox,target=/usr/local/bin/shiftbox",
 			"--config", workspace + "/.devcontainer/go/devcontainer.json", "--skip-non-blocking-commands",
 			"--skip-post-attach", "--include-merged-configuration"},
 		{"/usr/local/bin/devcontainer", "run-user-commands", "--workspace-folder", workspace, "--docker-path", "/usr/bin/docker",

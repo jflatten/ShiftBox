@@ -17,15 +17,17 @@ const (
 	devContainerCLI       = "/usr/local/bin/devcontainer"
 	devContainerOutputMax = 1 << 20
 	developmentLabel      = "shiftbox.container=development"
+	credentialDirectory   = "/run/shiftbox-credentials"
 )
 
 var dockerContainerID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type devContainer struct {
-	workspace  string
-	config     string
-	repository *repositoryPreparation
-	run        func(context.Context, string, ...string) ([]byte, error)
+	workspace   string
+	config      string
+	repository  *repositoryPreparation
+	credentials bool
+	run         func(context.Context, string, ...string) ([]byte, error)
 }
 
 // containerConnection records successful execution through the declared waitFor
@@ -82,6 +84,13 @@ func (d devContainer) invoke(ctx context.Context, stage string, options ...strin
 	// append a second copy of project hooks to the saved container metadata.
 	args := []string{stage, "--workspace-folder", d.workspace, "--docker-path", "/usr/bin/docker",
 		"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", developmentLabel}
+	if stage == "up" && d.credentials {
+		// Mount the directory so an agent restart can replace its listener.
+		// The command file is a runtime copy, separate from the agent binary.
+		args = append(args,
+			"--mount", "type=bind,source="+credentialDirectory+",target="+credentialDirectory,
+			"--mount", "type=bind,source="+credentialDirectory+"/shiftbox,target=/usr/local/bin/shiftbox")
+	}
 	if d.config != "" {
 		if !validDevContainerPath(d.config) {
 			return devContainerResult{}, errors.New("invalid Dev Container configuration path")

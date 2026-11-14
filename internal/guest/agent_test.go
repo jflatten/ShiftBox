@@ -120,7 +120,7 @@ func TestGuestAgentEnrollmentRetry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- guest.ServeAgent(ctx, state, filepath.Join(state, "absent.json"), "1", "test") }()
+	go func() { done <- guest.ServeAgent(ctx, state, filepath.Join(state, "absent.json"), "1", "test", "") }()
 	select {
 	case <-contact:
 		cancel()
