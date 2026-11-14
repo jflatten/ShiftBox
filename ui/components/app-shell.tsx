@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { Alert, AppShell, Burger, Group, Image, NavLink, Stack, useComputedColorScheme } from '@mantine/core';
+import { APIProblemView } from './api-problem';
 
 export interface ShellSession {
   role: 'member' | 'administrator';
@@ -11,9 +12,10 @@ export interface ShellSession {
 }
 
 /** Shared navigation is a convenience; every destination still enforces server authorization. */
-export function ShiftBoxShell({ session, alerts, children }: {
+export function ShiftBoxShell({ session, alerts, error, children }: {
   session?: ShellSession;
   alerts: { id: string; title: string; detail?: string }[];
+  error?: unknown;
   children: ReactNode;
 }) {
   const [opened, setOpened] = useState(false);
@@ -38,6 +40,7 @@ export function ShiftBoxShell({ session, alerts, children }: {
       <AppShell.Main>
         <Stack gap="lg">
           <Stack gap="sm" role="region" aria-label="Persistent conditions">
+            {error !== undefined ? <APIProblemView error={error} /> : null}
             {alerts.map(alert => <Alert key={alert.id} title={alert.title} color="red">{alert.detail}</Alert>)}
           </Stack>
           {children}

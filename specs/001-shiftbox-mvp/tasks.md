@@ -474,3 +474,17 @@ This checkpoint does not itself change the goal status.
 - Next generated `ui/AGENTS.md` and TypeScript development-route configuration;
   retained those framework instructions/settings. Local test browser and dev server
   were stopped before the successful production build.
+
+### Shared API problem guidance
+
+- Added validated problem decoding and a reusable Mantine persistent error view
+  with recovery detail, field corrections, and request reference. Malformed JSON,
+  HTML proxy responses, mismatched HTTP status, and arbitrary exceptions use fixed
+  safe guidance. The session page now uses this shared path.
+- All 18 UI tests and TypeScript checks pass. The browser rendered the fallback
+  alert for the absent controller; React introspection confirmed APIProblemView.
+  Next MCP reports no compilation/runtime errors; WCAG A/AA scan has zero violations
+  and zero incomplete findings. Structured controller guidance is unit-tested;
+  end-to-end controller integration remains pending.
+- Test browser closed. Next dev remains on port 3127 (exec session 91329) for the
+  next UI verification loop; inspect the live handle before assuming it remains up.
