@@ -241,7 +241,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T118 [P] Add bounded redaction and secret-leak tests across logs, URLs, API responses, browser storage, process arguments, audit metadata, and archives in `tests/integration/secret_leak_test.go` and `ui/tests/e2e/browser-storage.spec.ts`
 - [ ] T119 [P] Add automated accessibility checks plus manual keyboard/focus evidence for every Mantine Stepper workflow in `ui/tests/e2e/accessibility.spec.ts` and `documentation/validation/accessibility.md`
 - [ ] T120 Add end-to-end controller restart injection at every persisted setup, lifecycle, maintenance, backup, restore, and recovery step in `tests/acceptance/restart_matrix_test.go`
-- [ ] T121 Add SQLite/PostgreSQL parity, race, real HTTP/mTLS, Dex/OIDC, hostile-origin, and corrupted-backup integration gates in `tests/integration/release_gate_test.go`
+- [X] T121 Add SQLite/PostgreSQL parity, race, real HTTP/mTLS, Dex/OIDC, hostile-origin, and corrupted-backup integration gates in `tests/integration/release_gate_test.go`
 - [X] T122 Run the already-defined exact UTM/Packer/import/boot/recovery/drive-preservation harness under the `utm_release` build tag and record controlled-host evidence in `tests/release/utm_stack_test.go` and `documentation/validation/utm-stack.md`
 - [X] T123 Add Debian and Ubuntu glibc/amd64 fixtures that separately exercise prebuilt-image and Dockerfile/build-definition Dev Containers, declared features, lifecycle-hook success/failure, declared connection-ready stages, and retained-data checks in `tests/release/fixtures/debian/` and `tests/release/fixtures/ubuntu/`
 - [ ] T124 Run V1–V14 and a moderated first-use study with at least 10 eligible participants and at least 9 first-attempt successes, recording protocol, eligibility, failures, results, release/browser/database/UTM/platform/guest/IDE/schema/certificate versions, and artifact digests in `documentation/validation/mvp-v1-v14.md`, `documentation/validation/first-use-study.md`, and `platform/manifests/release.json`
@@ -2968,3 +2968,12 @@ This checkpoint does not itself change the goal status.
   entry and forwarding, browser storage and URLs, the Dex child process,
   and a real encrypted checkpoint archive with synthetic values. All three
   race-enabled Go tests and the production-export Chrome check passed.
+
+### Local release integration gates
+
+- T121 adds an HTTPS membership mutation check that denies a sibling preview
+  despite valid management credentials and leaves membership unchanged. Its
+  management-origin control succeeds. Race-enabled SQLite/PostgreSQL parity,
+  live mTLS revocation, pinned Dex/upstream OIDC exchange, scoped service
+  entry, and corrupted encrypted archive checks passed. The exact UTM stack
+  and full release gate matrix remain under T061 and T124.
