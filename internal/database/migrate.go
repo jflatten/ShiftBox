@@ -43,6 +43,26 @@ func Migrate(ctx context.Context, db *sql.DB, profile string) error {
 	return err
 }
 
+// CurrentSchemaVersion reports the newest migration shipped by this executable.
+func CurrentSchemaVersion(profile string) (int64, error) {
+	if profile != "sqlite" && profile != "postgres" {
+		return 0, errors.New("unsupported migration profile")
+	}
+	entries, err := fs.Glob(migrations.Files, profile+"/*.sql")
+	if err != nil || len(entries) == 0 {
+		return 0, ErrSchemaDrift
+	}
+	var version int64
+	for _, entry := range entries {
+		n, err := goose.NumericComponent(entry)
+		if err != nil {
+			return 0, err
+		}
+		version = max(version, n)
+	}
+	return version, nil
+}
+
 // Version reports the installed application schema version for release preflight.
 func Version(ctx context.Context, db *sql.DB, profile string) (int64, error) {
 	p, err := migrationProvider(db, profile)

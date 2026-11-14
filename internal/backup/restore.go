@@ -32,8 +32,16 @@ func CreateRestorePlan(ctx context.Context, directory, targetDigest string, arch
 	if err != nil {
 		return RestorePlan{}, err
 	}
+	return RecordRestorePlan(ctx, directory, targetDigest, validation)
+}
+
+// RecordRestorePlan persists successful validation without keeping a passphrase.
+func RecordRestorePlan(ctx context.Context, directory, targetDigest string, validation RestoreValidation) (RestorePlan, error) {
 	if err := ctx.Err(); err != nil {
 		return RestorePlan{}, err
+	}
+	if !privateCheckpointDirectory(directory) {
+		return RestorePlan{}, errRestorePlan
 	}
 	plan := RestorePlan{ID: uuid.NewString(), TargetDigest: targetDigest, Validation: validation}
 	if err := saveRestorePlan(directory, plan); err != nil {

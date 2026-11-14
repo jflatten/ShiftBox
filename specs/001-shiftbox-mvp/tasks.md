@@ -1789,6 +1789,12 @@ This checkpoint does not itself change the goal status.
   and activation routes without guest listeners or retention workers.
   Review activation closes that listener and reruns startup checks.
   Restore-validation routing and live recovery acceptance remain open.
+- T114 exposes `shiftbox restore validate` with terminal or explicit
+  stdin passphrase input. It checks against the installed executable's
+  schema and the operator-supplied installation and release IDs, then
+  writes a private validation record. Validation does not require a
+  working source database. Restore activation and the backup CLI
+  remain open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
