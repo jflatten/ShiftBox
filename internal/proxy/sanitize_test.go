@@ -10,6 +10,68 @@ import (
 	"github.com/jflatten/ShiftBox/internal/proxy"
 )
 
+// TestServiceAllowlistRejectsUnregisteredDestinations prevents cross-workspace, stale-generation, and arbitrary-port routing.
+func TestServiceAllowlistRejectsUnregisteredDestinations(t *testing.T) {
+	allowlist, err := proxy.NewServiceAllowlist("workspace-one", 4, []proxy.Service{{Key: "ide", Protocols: []string{"http", "websocket"}}, {Key: "preview-8080", Protocols: []string{"http"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		workspace     string
+		generation    int64
+		key, protocol string
+		want          bool
+	}{
+		{"workspace-one", 4, "ide", "http", true},
+		{"workspace-one", 4, "ide", "websocket", true},
+		{"workspace-one", 4, "preview-8080", "http", true},
+		{"workspace-two", 4, "ide", "http", false},
+		{"workspace-one", 3, "ide", "http", false},
+		{"workspace-one", 4, "preview-8080", "websocket", false},
+		{"workspace-one", 4, "preview-9000", "http", false},
+		{"workspace-one", 4, "127.0.0.1:22", "http", false},
+		{"workspace-one", 4, "http://169.254.169.254/", "http", false},
+		{"workspace-one", 4, "ide", "tcp", false},
+	} {
+		if got := allowlist.Allows(tc.workspace, tc.generation, tc.key, tc.protocol); got != tc.want {
+			t.Errorf("Allows(%q,%d,%q,%q) = %t, want %t", tc.workspace, tc.generation, tc.key, tc.protocol, got, tc.want)
+		}
+	}
+}
+
+// TestServiceAllowlistCopiesRegistration prevents later guest-message mutation from expanding admitted protocols.
+func TestServiceAllowlistCopiesRegistration(t *testing.T) {
+	services := []proxy.Service{{Key: "ide", Protocols: []string{"http"}}}
+	allowlist, err := proxy.NewServiceAllowlist("workspace", 1, services)
+	if err != nil {
+		t.Fatal(err)
+	}
+	services[0].Protocols[0] = "websocket"
+	services[0].Key = "preview-8080"
+	if !allowlist.Allows("workspace", 1, "ide", "http") || allowlist.Allows("workspace", 1, "ide", "websocket") || allowlist.Allows("workspace", 1, "preview-8080", "http") {
+		t.Error("registration mutation changed the immutable service allowlist")
+	}
+}
+
+// TestServiceAllowlistRejectsAmbiguousRegistration rejects duplicate keys and protocols outside the HTTP/WebSocket contract.
+func TestServiceAllowlistRejectsAmbiguousRegistration(t *testing.T) {
+	for _, services := range [][]proxy.Service{
+		{{Key: "ide", Protocols: []string{"tcp"}}},
+		{{Key: "", Protocols: []string{"http"}}},
+		{{Key: "ide"}},
+		{{Key: "ide", Protocols: []string{"http"}}, {Key: "ide", Protocols: []string{"websocket"}}},
+	} {
+		if _, err := proxy.NewServiceAllowlist("workspace", 1, services); err == nil {
+			t.Errorf("NewServiceAllowlist(%+v) accepted invalid registration", services)
+		}
+	}
+	for _, workspace := range []string{"", "workspace"} {
+		if _, err := proxy.NewServiceAllowlist(workspace, 0, nil); err == nil {
+			t.Errorf("NewServiceAllowlist(%q,0) accepted missing authority", workspace)
+		}
+	}
+}
+
 // TestSanitizeKeepsManagementAuthorityOutOfGuests preserves app cookies while stripping controller authority.
 func TestSanitizeKeepsManagementAuthorityOutOfGuests(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "https://preview.example.test/", nil)

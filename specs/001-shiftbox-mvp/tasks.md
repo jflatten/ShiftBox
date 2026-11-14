@@ -51,7 +51,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T011 [P] Write failing protected-value and internal-PKI tests for AES-256-GCM random nonces, contextual AAD, tamper/wrong-record rejection, plaintext omission, stable installation CA loading, TLS 1.3 verification, and invalid key/certificate rejection in `internal/cryptostore/store_test.go` and `internal/guest/ca_test.go`
 - [X] T012 [P] Write failing operation-journal and reconciler tests for unique `(requested_by, request_key)`, generation fencing, renewable leases, monotonic events, preserved completed steps, atomic success evidence, commit-before-effect ordering, and restart-safe work claiming in `internal/operation/journal_test.go` and `internal/operation/reconciler_test.go`
 - [ ] T013 [P] Write failing session, authorization-matrix, Dex, and OIDC tests for opaque token digests, membership/session gates, every route-to-action mapping in `contracts/authorization-matrix.md`, owner/non-owner/admin exact-grant decisions, CSRF, exact Origin, stable upstream identity, supervisor failure, and revoke-before-close ordering in `internal/auth/session_test.go`, `internal/auth/policy_test.go`, and `internal/identity/dex_test.go`
-- [ ] T014 [P] Write failing HTTP/proxy boundary tests for RFC 3339 timestamps, UUIDs, stable problems, request IDs, conditional versions, idempotency keys, body limits, unknown-field rejection, management-header stripping, service allowlisting, and OpenAPI route/action drift in `internal/web/problem_test.go`, `internal/web/middleware_test.go`, `internal/proxy/sanitize_test.go`, and `tests/contract/openapi_routes_test.go`
+- [X] T014 [P] Write failing HTTP/proxy boundary tests for RFC 3339 timestamps, UUIDs, stable problems, request IDs, conditional versions, idempotency keys, body limits, unknown-field rejection, management-header stripping, service allowlisting, and OpenAPI route/action drift in `internal/web/problem_test.go`, `internal/web/middleware_test.go`, `internal/proxy/sanitize_test.go`, and `tests/contract/openapi_routes_test.go`
 - [X] T015 [P] Write failing SSE tests for ordered event IDs, Last-Event-ID replay, sequence-gap recovery, authorization recheck, and immediate closure on revocation in `internal/web/events_test.go`
 - [X] T016 [P] Write failing UI component tests for server-derived Mantine Stepper state, disabled future steps, retained failure history, accessible labels, live status semantics, and refetch on SSE gaps in `ui/components/workflow-stepper.test.tsx`
 
@@ -529,3 +529,18 @@ This checkpoint does not itself change the goal status.
   end-to-end Go/SSE browser validation; those remain in later user-story tasks.
 - 24 tasks are now complete. Remaining foundation tasks: T013, T014, T018, T023,
   and T025. The development server (91329) was stopped before the final build.
+
+### HTTP/proxy boundary test coverage completed
+
+- T014 is complete: existing problem/request-ID/UUID/version/idempotency/body-limit/
+  unknown-field/header tests, RFC 3339 SSE decoding, route/action contract checks,
+  and new service-allowlist failure tests cover its shared boundary requirements.
+- Added an immutable service allowlist bound to controller-derived workspace ID and
+  generation. Only exact registered HTTP/WebSocket service keys are admitted;
+  browser-selected network destinations are never converted to controller dials.
+  Tests reject cross-workspace/stale-generation/protocol/key misuse and prove input
+  mutation cannot change the captured allowlist.
+- Proxy, web, and contract race checks plus formatting/vet pass. This is a boundary
+  primitive, not a running tunnel: mTLS/Yamux registration and actual proxy stream
+  enforcement remain T053 work. Runtime route authorization remains T013/T025 work.
+- 25 tasks are complete. Remaining foundation tasks: T013, T018, T023, T025.
