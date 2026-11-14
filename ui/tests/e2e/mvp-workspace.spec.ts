@@ -209,19 +209,7 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     const normalOrigin = await openIDE(page, 'Open IDE', managementOrigin);
     const markerEditor = await openFile(page, fixture.markerFile);
     await writeEditor(page, markerEditor, marker);
-    // Keep the saving editor open while a second tab verifies the remote write.
-    const reader = await page.context().newPage();
-    try {
-      const workbenchURL = page.url();
-      await expect(async () => {
-        await reader.goto(workbenchURL, { waitUntil: 'domcontentloaded' });
-        await dismissFixtureTrust(reader);
-        const saved = await openFile(reader, fixture.markerFile);
-        await expect(saved.locator('.view-lines')).toHaveText(marker, { timeout: 2_000 });
-      }).toPass({ timeout: workbenchTimeout });
-    } finally {
-      await reader.close();
-    }
+    await verifySavedFile(page, fixture.markerFile, marker);
     await page.goto(workspaceURL);
     await activate(page.getByRole('button', { name: 'Stop workspace' }));
     await stepCompleted(page, 'Stop workspace');
@@ -241,6 +229,7 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
   await test.step('Repair a broken project and retry setup', async () => {
     const broken = '{"image":"invalid image reference for repair fixture"}';
     await writeEditor(page, await openFile(page, fixture.devcontainerPath), broken);
+    await verifySavedFile(page, fixture.devcontainerPath, broken);
     await page.goto(workspaceURL);
     await activate(page.getByRole('button', { name: 'Rebuild container' }));
     await expect(page.getByRole('button', { name: 'Rebuild the development container: Failed' }))
@@ -253,7 +242,9 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     await expect((await openFile(page, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
     // The fixture is plain JSON. Restore the equivalent configuration as
     // one line so the editor's automatic indentation cannot change it.
-    await writeEditor(page, await openFile(page, fixture.devcontainerPath), JSON.stringify(JSON.parse(savedConfig)));
+    const restored = JSON.stringify(JSON.parse(savedConfig));
+    await writeEditor(page, await openFile(page, fixture.devcontainerPath), restored);
+    await verifySavedFile(page, fixture.devcontainerPath, restored);
     await page.goto(workspaceURL);
     await activate(page.getByRole('button', { name: 'Exit repair and retry setup' }));
     await stepCompleted(page, 'Exit repair and retry development setup');
@@ -342,4 +333,20 @@ async function writeEditor(page: Page, editor: Locator, content: string) {
   // The pinned browser workbench advertises Ctrl+S even on the macOS host.
   await page.keyboard.press('Control+s');
   await expect(page.locator('.tabs-container .tab.active')).not.toHaveClass(/\bdirty\b/);
+}
+
+async function verifySavedFile(page: Page, path: string, content: string) {
+  // Keep the saving editor open while a second tab verifies the remote write.
+  const reader = await page.context().newPage();
+  try {
+    const workbenchURL = page.url();
+    await expect(async () => {
+      await reader.goto(workbenchURL, { waitUntil: 'domcontentloaded' });
+      await dismissFixtureTrust(reader);
+      const saved = await openFile(reader, path);
+      await expect(saved.locator('.view-lines')).toHaveText(content, { timeout: 2_000 });
+    }).toPass({ timeout: workbenchTimeout });
+  } finally {
+    await reader.close();
+  }
 }

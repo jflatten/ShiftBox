@@ -38,8 +38,12 @@ stop. It read an older marker, so the failure can occur without a VM restart.
 In a short follow-up, typing the marker and using the workbench's Ctrl+S
 shortcut returned the new contents after a reload when the saving page
 remained open long enough for the remote write. The lifecycle test now uses a
-second tab to wait for the saved contents before stopping the VM. The full
-lifecycle, repair and Go journal checks remain pending.
+second tab to wait for the saved contents before stopping the VM. A resumed
+Chrome run confirmed the marker survived both stop/start and rebuild. The
+next rebuild unexpectedly succeeded after the editor was used to break the
+configuration. The test now verifies the broken and restored configuration
+in a second tab before issuing either action. Repair and the Go journal check
+remain pending.
 
 Run the browser spec with `SHIFTBOX_MVP_FIXTURE` pointing at a fresh local
 fixture and with the same valid certificate trust available to Chrome and the
