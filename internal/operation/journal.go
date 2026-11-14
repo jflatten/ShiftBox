@@ -123,22 +123,26 @@ func (j *Journal) claim(ctx context.Context, id, worker string, duration time.Du
 
 func (j *Journal) change(ctx context.Context, claim Claim, evidence string, change func(*Operation) error) error {
 	return database.Transaction(ctx, j.db, func(tx *sql.Tx) error {
-		if err := lockOperation(ctx, tx, claim.OperationID); err != nil {
-			return err
-		}
-		op, err := readOperation(ctx, tx, claim.OperationID)
-		if err != nil {
-			return err
-		}
-		now := j.now().UTC()
-		if op.Generation != claim.Generation || op.leaseOwner != claim.Token || !op.leaseExpiresAt.After(now) || op.Status != "running" {
-			return ErrConflict
-		}
-		if err := change(&op); err != nil {
-			return err
-		}
-		return saveOperation(ctx, tx, &op, evidence, now)
+		return j.changeInTx(ctx, tx, claim, evidence, change)
 	})
+}
+
+func (j *Journal) changeInTx(ctx context.Context, tx *sql.Tx, claim Claim, evidence string, change func(*Operation) error) error {
+	if err := lockOperation(ctx, tx, claim.OperationID); err != nil {
+		return err
+	}
+	op, err := readOperation(ctx, tx, claim.OperationID)
+	if err != nil {
+		return err
+	}
+	now := j.now().UTC()
+	if op.Generation != claim.Generation || op.leaseOwner != claim.Token || !op.leaseExpiresAt.After(now) || op.Status != "running" {
+		return ErrConflict
+	}
+	if err := change(&op); err != nil {
+		return err
+	}
+	return saveOperation(ctx, tx, &op, evidence, now)
 }
 
 func lockOperation(ctx context.Context, tx *sql.Tx, id string) error {
@@ -182,7 +186,14 @@ func (j *Journal) Renew(ctx context.Context, claim Claim, duration time.Duration
 
 // StartStep durably records the active step before any external effect.
 func (j *Journal) StartStep(ctx context.Context, claim Claim, index int) error {
-	return j.change(ctx, claim, "", func(op *Operation) error {
+	return database.Transaction(ctx, j.db, func(tx *sql.Tx) error {
+		return j.StartStepInTx(ctx, tx, claim, index)
+	})
+}
+
+// StartStepInTx records an active step alongside its domain state.
+func (j *Journal) StartStepInTx(ctx context.Context, tx *sql.Tx, claim Claim, index int) error {
+	return j.changeInTx(ctx, tx, claim, "", func(op *Operation) error {
 		if index < 0 || index >= len(op.Steps) {
 			return ErrConflict
 		}
@@ -203,10 +214,17 @@ func (j *Journal) StartStep(ctx context.Context, claim Claim, index int) error {
 
 // CompleteStep commits verified evidence and step completion atomically.
 func (j *Journal) CompleteStep(ctx context.Context, claim Claim, index int, evidence string) error {
+	return database.Transaction(ctx, j.db, func(tx *sql.Tx) error {
+		return j.CompleteStepInTx(ctx, tx, claim, index, evidence)
+	})
+}
+
+// CompleteStepInTx commits step completion with related domain evidence.
+func (j *Journal) CompleteStepInTx(ctx context.Context, tx *sql.Tx, claim Claim, index int, evidence string) error {
 	if evidence == "" || len(evidence) > 4096 {
 		return errors.New("completion requires bounded non-secret evidence")
 	}
-	return j.change(ctx, claim, evidence, func(op *Operation) error {
+	return j.changeInTx(ctx, tx, claim, evidence, func(op *Operation) error {
 		if index < 0 || index >= len(op.Steps) || op.Steps[index].Status != "active" {
 			return ErrConflict
 		}

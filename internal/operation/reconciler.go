@@ -2,8 +2,11 @@ package operation
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/jflatten/ShiftBox/internal/database"
 )
 
 // Executor reconciles one approved effect. Observe must inspect authoritative
@@ -99,10 +102,17 @@ func (w *Worker) RunOnce(ctx context.Context, id string) error {
 }
 
 func (j *Journal) failStep(ctx context.Context, claim Claim, index int, detail string) error {
+	return database.Transaction(ctx, j.db, func(tx *sql.Tx) error {
+		return j.FailStepInTx(ctx, tx, claim, index, detail)
+	})
+}
+
+// FailStepInTx records a terminal failure with related domain state.
+func (j *Journal) FailStepInTx(ctx context.Context, tx *sql.Tx, claim Claim, index int, detail string) error {
 	if detail == "" || len(detail) > 4096 {
 		return errors.New("failure requires bounded non-secret evidence")
 	}
-	return j.change(ctx, claim, detail, func(op *Operation) error {
+	return j.changeInTx(ctx, tx, claim, detail, func(op *Operation) error {
 		if index < 0 || index >= len(op.Steps) || op.Steps[index].Status != "active" {
 			return ErrConflict
 		}

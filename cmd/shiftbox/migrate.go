@@ -93,8 +93,6 @@ func migrationCapabilities(ctx context.Context, cfg config.Config, state *app.Co
 func assessControllerMigration(ctx context.Context, cfg config.Config, state *app.ControllerState, manifest release.MigrationRelease, caps provider.Capabilities) (release.MigrationReport, error) {
 	now := time.Now()
 	evidence := release.MigrationEvidence{
-		// A prepared archive is insufficient. The backup service must supply
-		// completed integrity evidence before this command can report readiness.
 		ProviderCompatible: manifest.ProtocolVersion == guestProtocol && caps.Version == manifest.UTM.Version &&
 			caps.Architecture == "amd64" && caps.Create && caps.Start && caps.Stop && caps.Delete,
 		StorageWritable: migrationStorageWritable(cfg.InstallationDir),

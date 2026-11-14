@@ -1693,7 +1693,7 @@ This checkpoint does not itself change the goal status.
   UTM capability checks, and the pinned Dex binary digest. PostgreSQL
   dump and restore tools must match the application server major.
 - Unit tests cover manifest rejection and blocked preflight output.
-  The installed backup verifier, identity-store privileges, and
+  Identity-store privileges and
   irreversible migration acceptance remain open.
 
 ### Migration preflight management route
@@ -1703,8 +1703,8 @@ This checkpoint does not itself change the goal status.
   beside the configuration passed to `shiftbox serve`, with private
   directories and file permissions. Admission persists the release ID
   for retries, and the worker reports blockers on the operation.
-- Verified backup evidence and live irreversible-migration acceptance
-  remain open under T097. Preflight does not apply migrations.
+- Live irreversible-migration acceptance remains open under T097.
+  Preflight does not apply migrations.
 
 ### Backup and recovery schema
 
@@ -1737,8 +1737,12 @@ This checkpoint does not itself change the goal status.
   fixture test checks that both dumps exclude writes after the cutoff
   and unrelated schema contents. Credentials stay in private temporary
   password files outside the archive allowlist.
-- T104 and T110 stay open for live controller and Dex coordination,
-  durable backup completion, and uninterrupted workspace computation evidence.
+- T110 records checkpoint progress and commits a verified archive's
+  digests, size, and operation completion together. Failed captures
+  commit a sanitized failure. T097 checks the completed evidence for
+  the same installation, release, profile, and application schema.
+- T104 and T110 stay open for live controller and Dex coordination
+  and uninterrupted workspace computation evidence.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
