@@ -46,6 +46,7 @@ func TestSetupCommandResumes(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "installation")
 	args := []string{"setup", "--installation-dir", dir, "--administrator-email", "owner@example.test", "--dex-binary", binary}
 	var firstPassword string
+	var firstCA []byte
 	for attempt := 0; attempt < 2; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		var out bytes.Buffer
@@ -60,6 +61,15 @@ func TestSetupCommandResumes(t *testing.T) {
 		}
 		if !status.reached {
 			t.Fatal("setup did not serve its advertised loopback URL")
+		}
+		caRecord, err := os.ReadFile(filepath.Join(dir, "guest-ca.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if attempt == 0 {
+			firstCA = caRecord
+		} else if !bytes.Equal(firstCA, caRecord) {
+			t.Fatal("setup retry changed the installation guest CA")
 		}
 		if attempt == 0 {
 			firstPassword = strings.TrimSpace(out.String())

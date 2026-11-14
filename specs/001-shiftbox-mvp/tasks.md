@@ -1416,3 +1416,15 @@ This checkpoint does not itself change the goal status.
 - Local TLS tests cover both listeners, certificate rotation and shutdown.
   Installation CA provisioning and `shiftbox serve` startup composition
   still need wiring.
+
+### Installation guest certificate authority
+
+- Setup provisions a stable installation guest CA before starting Dex.
+  Its signing key is encrypted under the installation key, scoped to the
+  installation ID, and stored with the public certificate in one private
+  atomically published file.
+- The runtime loader refuses missing, damaged, expired or mismatched trust
+  material. The initial root lifetime is five years. Native Dex setup
+  restart tests confirm the CA record is reused.
+- Production serve and management backup/restore still need to load or
+  preserve this retained authority.

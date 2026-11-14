@@ -49,37 +49,34 @@ func EnsureBootstrapCertificate(path string, now time.Time) (tls.Certificate, er
 		return tls.Certificate{}, errBootstrapCertificate
 	}
 	material := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})...)
-	// Publish one complete private file without overwriting an identity created by
-	// another attempt. A crash cannot leave mismatched certificate/key files.
-	file, err := os.CreateTemp(filepath.Dir(path), ".bootstrap-tls-*")
-	if err != nil {
-		return tls.Certificate{}, errBootstrapCertificate
-	}
-	defer os.Remove(file.Name())
-	if _, err := file.Write(material); err != nil {
-		file.Close()
-		return tls.Certificate{}, errBootstrapCertificate
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return tls.Certificate{}, errBootstrapCertificate
-	}
-	if err := file.Close(); err != nil {
-		return tls.Certificate{}, errBootstrapCertificate
-	}
-	if err := os.Link(file.Name(), path); err != nil && !errors.Is(err, os.ErrExist) {
-		return tls.Certificate{}, errBootstrapCertificate
-	}
-	directory, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return tls.Certificate{}, errBootstrapCertificate
-	}
-	err = directory.Sync()
-	closeErr := directory.Close()
-	if err != nil || closeErr != nil {
+	if err := publishPrivateFile(path, ".bootstrap-tls-*", material); err != nil {
 		return tls.Certificate{}, errBootstrapCertificate
 	}
 	return loadBootstrapCertificate(path, now)
+}
+
+// publishPrivateFile atomically creates a durable file without replacing an
+// existing identity. The caller reloads the winning file.
+func publishPrivateFile(path, pattern string, material []byte) error {
+	file, err := os.CreateTemp(filepath.Dir(path), pattern)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	_, writeErr := file.Write(material)
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+		return err
+	}
+	if err := os.Link(file.Name(), path); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	return errors.Join(directory.Sync(), directory.Close())
 }
 
 func loadBootstrapCertificate(path string, now time.Time) (tls.Certificate, error) {
