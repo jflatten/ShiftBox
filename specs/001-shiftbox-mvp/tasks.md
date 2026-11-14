@@ -454,3 +454,23 @@ This checkpoint does not itself change the goal status.
   gap refetch, terminal closure, lost authorization, cache removal, and cleanup.
 - Application-level provider/page wiring and real browser/SSE verification remain
   pending. T016/T029 are not marked complete based on isolated hook tests.
+
+### Branded static shell and browser validation
+
+- Added Mantine AppShell with approved light/dark logo assets, responsive navigation,
+  session-mode/permission-aware links, and a persistent alert landmark. Added the
+  Mantine and in-memory Query providers, App Router layout, and session-reading home.
+- Tests first cover member/admin navigation, restricted sessions, persistent alerts,
+  and unavailable session API. All 13 UI tests, TypeScript, and static export pass;
+  `ui/out/index.html` is produced without a production Node server.
+- Verified Next 16.4.6 Turbopack via MCP: no compilation issues/runtime errors, route
+  `/`. Agent-browser 0.36.0 confirmed the rendered shell and React provider/component
+  tree. Corrected an alert-landmark accessibility issue with a regression test;
+  repeat WCAG A/AA scan reports zero violations and zero incomplete findings.
+- The controller API is not running; browser validation intentionally observed the
+  persistent connection-error state. Sign-in and navigation destination pages are
+  not implemented. Full session/operation browser journeys remain pending, as does
+  the reusable API problem view. T029 remains unchecked.
+- Next generated `ui/AGENTS.md` and TypeScript development-route configuration;
+  retained those framework instructions/settings. Local test browser and dev server
+  were stopped before the successful production build.
