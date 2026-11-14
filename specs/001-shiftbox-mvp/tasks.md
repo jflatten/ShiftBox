@@ -1771,8 +1771,14 @@ This checkpoint does not itself change the goal status.
   initial review, old session and grant invalidation, GitHub reconnect
   requirement, and interrupted job records in one transaction before
   publication. The gate and rollback passed SQLite tests, and the gate
-  passed a disposable PostgreSQL test. PostgreSQL restore publication,
-  command integration, and the full recovery review remain open.
+  passed a disposable PostgreSQL test.
+- T111 verifies both PostgreSQL dumps before loading them into a
+  replacement database. Each pre-provisioned owner restores only its
+  schema in its own transaction. The local PostgreSQL 18 test confirmed
+  new role ownership, damaged dump rejection before load, and refusal
+  to retry against an occupied target. Replacement configuration,
+  command integration, cross-schema failure recovery, and the full
+  recovery review remain open.
 - T046 remains open for the selected browser IDE and release artifact
   validation. The UTM test ends at authenticated enrollment. It does not
   prove a real project checkout, Dev Container launch, or browser IDE.
