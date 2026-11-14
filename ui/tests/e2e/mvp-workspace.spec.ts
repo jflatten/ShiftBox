@@ -302,14 +302,22 @@ async function dismissFixtureTrust(page: Page) {
 }
 
 async function openFile(page: Page, name: string) {
+  await dismissFixtureTrust(page);
   const explorer = page.getByRole('tree', { name: 'Files Explorer' });
+  if (!await explorer.isVisible()) {
+    const explorerTab = page.getByRole('tab', { name: /^Explorer \(/ });
+    await expect(explorerTab).toBeVisible({ timeout: workbenchTimeout });
+    if (!await explorer.isVisible()) await explorerTab.click();
+  }
   const path = name.split('/');
   const file = path.pop();
   for (const [index, folder] of path.entries()) {
     const item = explorer.getByRole('treeitem', { name: folder, exact: true });
     await expect(item).toBeVisible({ timeout: workbenchTimeout });
     const child = explorer.getByRole('treeitem', { name: path[index + 1] ?? file, exact: true });
-    if (!await child.isVisible()) await item.locator('.monaco-tl-twistie').click();
+    if (await item.getAttribute('aria-expanded') === 'false' || !await child.isVisible()) {
+      await item.locator('.monaco-tl-twistie').click();
+    }
   }
   const item = explorer.getByRole('treeitem', { name: file, exact: true });
   await expect(item).toBeVisible({ timeout: workbenchTimeout });
