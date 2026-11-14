@@ -1723,8 +1723,10 @@ This checkpoint does not itself change the goal status.
   redelivery. The controller now dispatches activation for the staged
   operation, stores the result separately from the staging receipt, and
   checks that successful activation reports the assigned release and staged
-  digest. Target execution, native signed-update validation, and prior-state
-  restoration remain open under T095.
+  digest. The target executor compares the staging receipt with the pinned
+  artifact, fails on rollback, and requires the assigned release and
+  protocol at verification. Controller startup wiring, stopped-workspace
+  power handling, and native signed-update validation remain open under T095.
 
 ### Migration preflight CLI
 
