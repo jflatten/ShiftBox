@@ -20,6 +20,7 @@ var (
 )
 
 const maintenanceTime = "2006-01-02T15:04:05.000000000Z"
+const maintenanceCampaignAction = "maintenance.manage"
 const maintenanceTargetAction = "maintenance.update_guest"
 
 // MaintenanceCampaign is the public campaign status and journal reference.
@@ -110,7 +111,7 @@ func ScheduleMaintenance(ctx context.Context, tx *sql.Tx, journal *operation.Jou
 		return operation.Operation{}, ErrMaintenanceUnavailable
 	}
 	op, err := journal.CreateInTx(ctx, tx, operation.Request{Actor: actor, Key: key, Type: "update",
-		OriginatingAction: "maintenance.manage", Generation: 1,
+		OriginatingAction: maintenanceCampaignAction, Generation: 1,
 		Steps: []operation.Step{{Key: "update_guests", Label: "Update retained workspaces"}}})
 	if err != nil {
 		return operation.Operation{}, err
@@ -125,6 +126,84 @@ func ScheduleMaintenance(ctx context.Context, tx *sql.Tx, journal *operation.Jou
 		WHERE installation_id=$2 AND desired_state<>'deleted' AND observed_state<>'deleted' AND deletion_commit_at IS NULL`,
 		op.ID, installation, created)
 	return op, err
+}
+
+// MaintenanceCampaignWorker reconciles campaign deadlines and aggregates the
+// durable outcomes of workspace update operations.
+func (s *Store) MaintenanceCampaignWorker(journal *operation.Journal, installation string, now func() time.Time) *operation.Worker {
+	return &operation.Worker{Journal: journal, Name: "maintenance-campaign", LeaseDuration: time.Minute,
+		Actions: []string{maintenanceCampaignAction}, Executor: maintenanceCampaignExecutor{s, journal, installation, now}}
+}
+
+type maintenanceCampaignExecutor struct {
+	store        *Store
+	journal      *operation.Journal
+	installation string
+	now          func() time.Time
+}
+
+func (e maintenanceCampaignExecutor) Observe(context.Context, operation.Operation, operation.Step) (string, bool, error) {
+	// Apply reconciles persisted campaign state without making external calls.
+	return "", false, nil
+}
+
+func (e maintenanceCampaignExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
+	if op.WorkspaceID != nil || step.Key != "update_guests" {
+		return "", &operation.StepFailure{Detail: "The maintenance campaign operation is invalid."}
+	}
+	now := e.now()
+	if err := e.store.PrepareMaintenanceTargets(ctx, e.journal, e.installation, op.ID, now); err != nil {
+		return "", err
+	}
+	state, err := e.store.reconcileMaintenanceCampaign(ctx, e.installation, op.ID, now)
+	if err != nil {
+		return "", err
+	}
+	switch state {
+	case "scheduled":
+		return "", &operation.StepWaiting{Detail: "Waiting for the maintenance deadline."}
+	case "active":
+		return "", &operation.StepWaiting{Detail: "Waiting for safe workspace updates to finish."}
+	case "blocked":
+		return "", &operation.StepFailure{Detail: "Review the failed workspace updates before advancing the controller release."}
+	case "completed":
+		return "All retained maintenance targets are settled.", nil
+	default:
+		return "", &operation.StepFailure{Detail: "The maintenance campaign is no longer active."}
+	}
+}
+
+func (s *Store) reconcileMaintenanceCampaign(ctx context.Context, installation, campaign string, now time.Time) (string, error) {
+	var state string
+	err := database.Transaction(ctx, s.db, func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM maintenance_campaigns WHERE operation_id=$1 AND installation_id=$2`,
+			campaign, installation).Scan(&state); err != nil || state != "active" {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE maintenance_targets SET
+			state=CASE WHEN (SELECT o.status FROM operations o WHERE o.id=maintenance_targets.operation_id)='succeeded'
+				THEN 'completed' ELSE 'failed' END,
+			updated_at=$2
+			WHERE campaign_id=$1 AND state NOT IN ('completed','failed')
+			AND EXISTS (SELECT 1 FROM operations o WHERE o.id=maintenance_targets.operation_id
+			AND o.status IN ('succeeded','failed','cancelled'))`, campaign, now.UTC().Format(maintenanceTime))
+		if err != nil {
+			return err
+		}
+		var pending, failed bool
+		if err := tx.QueryRowContext(ctx, `SELECT
+			EXISTS(SELECT 1 FROM maintenance_targets WHERE campaign_id=$1 AND state NOT IN ('completed','failed')),
+			EXISTS(SELECT 1 FROM maintenance_targets WHERE campaign_id=$1 AND state='failed')`, campaign).Scan(&pending, &failed); err != nil || pending {
+			return err
+		}
+		state = "completed"
+		if failed {
+			state = "blocked"
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE maintenance_campaigns SET state=$2 WHERE operation_id=$1 AND state='active'`, campaign, state)
+		return capacityWrite(result, err)
+	})
+	return state, err
 }
 
 // PrepareMaintenanceTargets journals only due targets with no unsettled

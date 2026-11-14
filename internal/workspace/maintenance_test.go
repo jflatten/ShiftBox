@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"testing"
@@ -11,6 +12,94 @@ import (
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
 )
+
+// TestMaintenanceCampaignWorker confirms that a scheduled campaign waits for
+// its deadline and that a failed workspace update blocks campaign completion.
+func TestMaintenanceCampaignWorker(t *testing.T) {
+	db, journal, now := maintenanceFixture(t, "retained")
+	ctx := t.Context()
+	maintenanceExec(t, db, `UPDATE workspaces SET observed_state='running' WHERE id='retained'`)
+	deadline := now.Add(time.Hour)
+	campaign, err := scheduleMaintenanceFixture(t, db, journal, "reservation-release", deadline, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := NewStore(db).MaintenanceCampaignWorker(journal, testInstallation, func() time.Time { return now })
+	assert := func(wantCampaign, wantOperation string) {
+		t.Helper()
+		var state string
+		if err := db.QueryRow(`SELECT state FROM maintenance_campaigns WHERE operation_id=$1`, campaign.ID).Scan(&state); err != nil {
+			t.Fatal(err)
+		}
+		op, err := journal.Get(ctx, campaign.ID)
+		if err != nil || op.Status != wantOperation || state != wantCampaign {
+			t.Errorf("campaign/operation state = %s/%s (%v), want %s/%s", state, op.Status, err, wantCampaign, wantOperation)
+		}
+	}
+	for _, test := range []struct {
+		at                  time.Time
+		campaign, operation string
+	}{
+		{deadline.Add(-time.Second), "scheduled", "waiting"},
+		{deadline, "active", "waiting"},
+	} {
+		now = test.at
+		if err := worker.RunOnce(ctx, campaign.ID); err == nil {
+			t.Error("campaign worker returned success while work was still pending")
+		}
+		assert(test.campaign, test.operation)
+	}
+	var target string
+	if err := db.QueryRow(`SELECT operation_id FROM maintenance_targets WHERE campaign_id=$1`, campaign.ID).Scan(&target); err != nil {
+		t.Fatal(err)
+	}
+	targetWorker := operation.Worker{Journal: journal, Name: "fixture-update", LeaseDuration: time.Minute,
+		Executor: failingMaintenanceTarget{}, Actions: []string{maintenanceTargetAction}}
+	if err := targetWorker.RunOnce(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.RunOnce(ctx, campaign.ID); err != nil {
+		t.Fatal(err)
+	}
+	assert("blocked", "failed")
+	var state string
+	if err := db.QueryRow(`SELECT state FROM maintenance_targets WHERE operation_id=$1`, target).Scan(&state); err != nil || state != "failed" {
+		t.Errorf("maintenance target = %s (%v), want failed", state, err)
+	}
+}
+
+type failingMaintenanceTarget struct{}
+
+func (failingMaintenanceTarget) Observe(context.Context, operation.Operation, operation.Step) (string, bool, error) {
+	return "", false, nil
+}
+
+func (failingMaintenanceTarget) Apply(context.Context, operation.Operation, operation.Step) (string, error) {
+	return "", &operation.StepFailure{Detail: "The guest rejected the staged update."}
+}
+
+// TestMaintenanceCampaignWorkerWithNoTargets ensures a due campaign can finish
+// when the installation has no retained workspaces to update.
+func TestMaintenanceCampaignWorkerWithNoTargets(t *testing.T) {
+	db, journal, now := maintenanceFixture(t)
+	deadline := now.Add(time.Hour)
+	campaign, err := scheduleMaintenanceFixture(t, db, journal, "reservation-release", deadline, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := NewStore(db).MaintenanceCampaignWorker(journal, testInstallation, func() time.Time { return deadline })
+	if err := worker.RunOnce(t.Context(), campaign.ID); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := db.QueryRow(`SELECT state FROM maintenance_campaigns WHERE operation_id=$1`, campaign.ID).Scan(&state); err != nil || state != "completed" {
+		t.Errorf("empty maintenance campaign = %s (%v), want completed", state, err)
+	}
+	op, err := journal.Get(t.Context(), campaign.ID)
+	if err != nil || op.Status != "succeeded" {
+		t.Errorf("empty campaign operation = %s (%v), want succeeded", op.Status, err)
+	}
+}
 
 // TestScheduleMaintenanceCapturesRetainedWorkspaces verifies that scheduling
 // records a warning without starting stopped guests or changing workspace state.

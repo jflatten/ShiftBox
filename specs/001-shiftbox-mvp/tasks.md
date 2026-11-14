@@ -1691,6 +1691,9 @@ This checkpoint does not itself change the goal status.
   eligible workspace generation after existing lifecycle work settles. It
   records the latest desired state, skips committed deletions, and reuses
   the same operation after a restart.
+  The campaign worker waits until the deadline and aggregates the target
+  operation outcomes. A failed target blocks campaign completion. Controller
+  startup will run the campaign worker when the target executor is wired.
   Guest staging now verifies the release and protocol, Ed25519 signature,
   binary size, and SHA-256 digest before replacing a private staged file.
   Verification tests use disposable keys. Production key provisioning,
