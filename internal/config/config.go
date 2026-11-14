@@ -15,6 +15,15 @@ type Config struct {
 	PostgresURI                 string `json:"postgresURI"`
 	ManagementOrigin            string `json:"managementOrigin"`
 	ExternalAuthIntervalSeconds int64  `json:"externalAuthIntervalSeconds"`
+	AuditRetentionDays          *int   `json:"auditRetentionDays,omitempty"`
+}
+
+// AuditHistoryDays returns the configured age limit or the 90-day default.
+func (c Config) AuditHistoryDays() int {
+	if c.AuditRetentionDays == nil {
+		return 90
+	}
+	return *c.AuditRetentionDays
 }
 
 // Load reads one explicit file without consulting process environment variables.

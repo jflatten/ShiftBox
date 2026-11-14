@@ -85,3 +85,34 @@ func TestInitialAuthorizationInterval(t *testing.T) {
 		t.Errorf("default authorization interval = %d, want 14400", got.ExternalAuthIntervalSeconds)
 	}
 }
+
+// TestAuditRetentionDays covers the operator default, override and invalid age.
+func TestAuditRetentionDays(t *testing.T) {
+	const base = `{"dataProfile":"sqlite","sqlitePath":"/tmp/shiftbox-fixture.db","installationDir":"/tmp/shiftbox-fixture","managementOrigin":"https://shiftbox.test"`
+	for _, tc := range []struct {
+		name, setting string
+		days          int
+	}{
+		{"default", "", 90},
+		{"override", `,"auditRetentionDays":120`, 120},
+		{"zero", `,"auditRetentionDays":0`, 0},
+		{"negative", `,"auditRetentionDays":-1`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(base+tc.setting+"}"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(path)
+			if tc.days == 0 {
+				if err == nil {
+					t.Fatal("Load accepted a nonpositive audit retention setting")
+				}
+				return
+			}
+			if err != nil || cfg.AuditHistoryDays() != tc.days {
+				t.Errorf("audit history = %d days (%v), want %d", cfg.AuditHistoryDays(), err, tc.days)
+			}
+		})
+	}
+}

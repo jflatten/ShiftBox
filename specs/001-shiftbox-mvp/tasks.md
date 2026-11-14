@@ -1968,3 +1968,13 @@ This checkpoint does not itself change the goal status.
 - All 42 UI tests and the production build passed. Chrome verified mobile
   navigation, filtering and pagination by keyboard using fixture responses.
   Configurable audit retention remains open under T071.
+
+### Audit retention policy and pruning
+
+- Controller configuration accepts `auditRetentionDays`, defaulting to 90.
+  The pruning service deletes history strictly before the cutoff during an
+  active installation and preserves membership, grants, unresolved operations
+  and workspace provenance. The cutoff comparison supports existing rows
+  with variable RFC3339 fractional-second precision.
+- Audit, configuration, app, CLI and contract race tests passed. Scheduling
+  pruning in the active controller and dismissed-notice retention remain open.

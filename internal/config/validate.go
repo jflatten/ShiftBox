@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Validate rejects ambiguous paths, insecure service URLs, and invalid intervals.
@@ -15,6 +16,9 @@ func (c Config) Validate() error {
 	}
 	if c.ExternalAuthIntervalSeconds <= 0 {
 		return errors.New("external authorization interval must be positive")
+	}
+	if days := c.AuditHistoryDays(); days <= 0 || days > int(time.Duration(1<<63-1)/(24*time.Hour)) {
+		return errors.New("audit retention must be a positive supported number of days")
 	}
 	if err := validateManagementOrigin(c.ManagementOrigin); err != nil {
 		return err
