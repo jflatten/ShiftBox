@@ -37,6 +37,10 @@ The build installs Coder code-server 4.145.2 from its checksum-pinned Linux
 amd64 release archive. The installed distribution retains its license and
 third-party notices.
 
+The build also preloads `shiftbox/repair:ubuntu-24.04` from a digest-pinned
+Ubuntu amd64 base with the same code-server distribution. It verifies that
+code-server starts without network access or an image pull.
+
 The build writes `manifest.json` beside `shiftbox.utm` in the `final`
 directory. The manifest records the guest and IDE versions and digests,
 source revision, and exported file digests. The manifest tool can also run

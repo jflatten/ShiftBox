@@ -75,6 +75,20 @@ systemctl enable --now docker.service
 test "$(docker version --format '{{.Server.Version}}')" = 29.9.3
 test "$(docker version --format '{{.Client.Version}}')" = 29.9.3
 docker buildx version | grep -E '(^| )v0\.39\.0( |$)'
+
+# Bake the independent repair environment into the VM's local image store.
+# It uses the same verified IDE archive and never consults a project Dockerfile.
+repair_base='ubuntu@sha256:77eb101c607d6e3d4f5ad0c8a02c2136c689b98aba1f359e6502ba517e5c57ec'
+repair_image='shiftbox/repair:ubuntu-24.04'
+docker pull --platform linux/amd64 "$repair_base"
+docker build --network=none --platform linux/amd64 --tag "$repair_image" \
+    --file - /usr/local/lib/shiftbox/code-server <<REPAIR
+FROM $repair_base
+COPY . /opt/shiftbox-code-server/
+REPAIR
+docker run --rm --pull=never --network=none "$repair_image" \
+    /opt/shiftbox-code-server/bin/code-server --version | grep -F "$CODE_SERVER_VERSION"
+
 test "$(node --version)" = "$node_version"
 test "$(devcontainer --version)" = "$devcontainer_version"
 git --version

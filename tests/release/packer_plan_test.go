@@ -94,3 +94,19 @@ func TestPackerBrowserIDE(t *testing.T) {
 		}
 	}
 }
+
+// TestPackerRepairImage checks that Packer preloads an independent Ubuntu
+// repair container and verifies the packaged IDE without network access.
+func TestPackerRepairImage(t *testing.T) {
+	path := filepath.Join("..", "..", "platform", "packer", "install-toolchain.sh")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"ubuntu@sha256:77eb101c607d6e3d4f5ad0c8a02c2136c689b98aba1f359e6502ba517e5c57ec",
+		"shiftbox/repair:ubuntu-24.04", "COPY . /opt/shiftbox-code-server/", "--pull=never --network=none"} {
+		if !strings.Contains(string(raw), marker) {
+			t.Errorf("%s missing repair image build or verification marker %q", path, marker)
+		}
+	}
+}

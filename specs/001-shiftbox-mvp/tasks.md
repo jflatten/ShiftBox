@@ -2474,3 +2474,11 @@ This checkpoint does not itself change the goal status.
 - T052 and T055 stay open for repair using the approved preloaded Ubuntu
   container, separate repair home, and packaged code-server. The full
   UTM browser journey remains under T039 and T061.
+
+### Preloaded repair image
+
+- T052's Packer recipe now builds a local repair image from a digest-pinned
+  Ubuntu 24.04 amd64 base and the verified code-server distribution.
+  The release recipe test passed, and Docker verified code-server 4.145.2
+  in the built image with image pulls and networking disabled. Guest
+  repair commands and a UTM artifact containing the image remain pending.
