@@ -11,6 +11,7 @@ type Scope struct {
 	SessionID   string
 	WorkspaceID string
 	GrantID     string
+	Service     string
 	IDE         bool
 }
 

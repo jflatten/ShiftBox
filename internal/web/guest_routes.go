@@ -198,6 +198,7 @@ func GuestPollHandler(compatibility GuestCompatibility,
 		w.Header().Set("Content-Type", "application/json")
 		if tunnelAddress != "" && contact.DesiredState == "running" {
 			w.Header().Set(guest.TunnelAddressHeader, tunnelAddress)
+			w.Header().Set(guest.PreviewPortsHeader, contact.PreviewPorts)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"protocolVersion": compatibility.Protocol, "serverTime": stamp,

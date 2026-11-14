@@ -33,6 +33,9 @@ func TestTunnelFramesPreserveHTTPBytes(t *testing.T) {
 // TestTunnelServicesRejectRemoteTargets verifies that service declarations
 // cannot introduce network destinations or unsupported protocols.
 func TestTunnelServicesRejectRemoteTargets(t *testing.T) {
+	if _, err := ValidateTunnelServices([]TunnelService{{Key: "preview-8080", Target: "127.0.0.1:9090", Protocols: []string{"http"}}}); err == nil {
+		t.Error("preview for port 8080 accepted a different loopback port")
+	}
 	for _, target := range []string{"192.0.2.4:8080", "localhost:8080", "127.0.0.1:0", "[::]:8080", "/var/run/docker.sock"} {
 		if _, err := ValidateTunnelServices([]TunnelService{{Key: "ide", Target: target, Protocols: []string{"http"}}}); err == nil {
 			t.Errorf("ValidateTunnelServices(%q) = nil, want rejection", target)

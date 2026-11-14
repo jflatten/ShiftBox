@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -148,6 +149,11 @@ func TestGuestTunnelHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	previewPort, err := strconv.Atoi(target.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	previewService := "preview-" + strconv.Itoa(previewPort)
 	server, err := tls.Listen("tcp", "127.0.0.1:0", guest.ServerTLS(leafFixture(t, key, cert, false), ca))
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +176,10 @@ func TestGuestTunnelHTTP(t *testing.T) {
 	}()
 	go func() {
 		done <- guest.ServeTunnel(ctx, server.Addr().String(), clientTLS,
-			"1", 4, []proxy.TunnelService{{Key: "ide", Target: target.Host, Protocols: []string{"http", "websocket"}}})
+			"1", 4, []proxy.TunnelService{
+				{Key: "ide", Target: target.Host, Protocols: []string{"http", "websocket"}},
+				{Key: previewService, Target: target.Host, Protocols: []string{"http", "websocket"}},
+			})
 	}()
 	open := func(key string, generation int64) (net.Conn, error) {
 		return tunnels.Open(ctx, "workspace", generation, proxy.StreamHeader{ServiceKey: key, RequestID: "fixture", Protocol: "http"})
@@ -221,6 +230,16 @@ func TestGuestTunnelHTTP(t *testing.T) {
 		response.Header().Get("X-Received-Cookie") != "app=fixture" {
 		t.Errorf("HTTP through Yamux returned status %d and headers %v, want 204, exact path, and application cookie",
 			response.Code, response.Header())
+	}
+	// The registered preview uses its own service key and strips the same
+	// authority cookies as the IDE when it forwards to the local app.
+	preview := httptest.NewRequest(http.MethodGet, "https://preview.test/project", nil)
+	preview.Header.Set("Cookie", "__Host-shiftbox_origin=private; app=fixture")
+	previewResponse := httptest.NewRecorder()
+	tunnels.Forward(previewResponse, preview, "workspace", 4, previewService, "preview-fixture")
+	if previewResponse.Code != http.StatusNoContent || previewResponse.Header().Get("X-Received-Path") != "/project" ||
+		previewResponse.Header().Get("X-Received-Cookie") != "app=fixture" {
+		t.Errorf("registered preview returned %d with unexpected path or cookies", previewResponse.Code)
 	}
 	if err := tunnels.ProbeIDE(ctx, "workspace", 4, "workspace.ide.test"); err != nil {
 		t.Errorf("ProbeIDE(authenticated IDE service) = %v, want success", err)

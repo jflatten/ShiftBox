@@ -25,6 +25,7 @@ type workspaceView struct {
 	Generation         int64              `json:"generation"`
 	Resources          workspaceResources `json:"resources"`
 	CurrentOperationID *string            `json:"currentOperationId"`
+	PreviewPorts       []int              `json:"previewPorts"`
 	LastActivityAt     *string            `json:"lastActivityAt"`
 	RetentionDeadline  *string            `json:"retentionDeadline"`
 	Version            int64              `json:"version"`
@@ -40,7 +41,7 @@ const workspaceProjection = `w.id,w.owner_user_id,w.template_id,w.template_revis
 	w.desired_state,w.observed_state,w.generation,w.cpu_count,w.memory_mib,w.disk_mib,
 	(SELECT o.id FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
 	   AND o.status IN ('pending','running','waiting') ORDER BY o.created_at DESC,o.id DESC LIMIT 1),
-	w.last_activity_at,w.retention_deadline,w.version`
+	w.last_activity_at,w.retention_deadline,w.version,w.preview_ports_json`
 
 const workspaceFrom = ` FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id`
 
@@ -122,15 +123,20 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 				workspaceView
 				CanOpenIDE            bool                            `json:"canOpenIde"`
 				CanOpenRepair         bool                            `json:"canOpenRepair"`
+				CanOpenPreviews       bool                            `json:"canOpenPreviews"`
+				CanEditPreviewPorts   bool                            `json:"canEditPreviewPorts"`
 				CanStartRepair        bool                            `json:"canStartRepair"`
 				CanRetryAfterRepair   bool                            `json:"canRetryAfterRepair"`
 				LastFailedOperationID *string                         `json:"lastFailedOperationId"`
 				Retention             *WorkspaceRetentionStatus       `json:"retention,omitempty"`
 				Maintenance           *workspace.WorkspaceMaintenance `json:"maintenance,omitempty"`
 			}{
-				workspaceView:         view,
-				CanOpenIDE:            auth.Authorize(principal, entry.Action, entry.Resource, entry.Grants, now()).Allowed,
-				CanOpenRepair:         auth.Authorize(principal, repairEntry.Action, repairEntry.Resource, repairEntry.Grants, now()).Allowed,
+				workspaceView: view,
+				CanOpenIDE:    auth.Authorize(principal, entry.Action, entry.Resource, entry.Grants, now()).Allowed,
+				CanOpenRepair: auth.Authorize(principal, repairEntry.Action, repairEntry.Resource, repairEntry.Grants, now()).Allowed,
+				CanOpenPreviews: view.DesiredState == "running" && view.ObservedState == "running" && auth.Authorize(principal, entry.Action,
+					auth.Resource{Type: "workspace", ID: view.ID, OwnerID: view.OwnerID, Eligible: true}, entry.Grants, now()).Allowed,
+				CanEditPreviewPorts:   auth.Authorize(principal, "workspace.update_policy", target.Resource, nil, now()).Allowed,
 				CanStartRepair:        canStartRepair,
 				CanRetryAfterRepair:   canRetryAfterRepair,
 				LastFailedOperationID: lastFailedID,
@@ -210,9 +216,14 @@ func listWorkspaces(ctx context.Context, tx *sql.Tx, r *http.Request, principal 
 
 func scanWorkspace(row interface{ Scan(...any) error }) (workspaceView, error) {
 	var view workspaceView
+	var previewJSON string
 	err := row.Scan(&view.ID, &view.OwnerID, &view.TemplateID, &view.TemplateRevision, &view.PlatformRelease,
 		&view.DesiredState, &view.ObservedState, &view.Generation,
 		&view.Resources.CPUCount, &view.Resources.MemoryMiB, &view.Resources.DiskMiB,
-		&view.CurrentOperationID, &view.LastActivityAt, &view.RetentionDeadline, &view.Version)
+		&view.CurrentOperationID, &view.LastActivityAt, &view.RetentionDeadline, &view.Version, &previewJSON)
+	if err != nil {
+		return view, err
+	}
+	view.PreviewPorts, err = workspace.ParsePreviewPorts(previewJSON)
 	return view, err
 }

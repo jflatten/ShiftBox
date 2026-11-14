@@ -26,6 +26,7 @@ type Contact struct {
 	Generation   int64
 	DesiredState string
 	RenewAfter   time.Time
+	PreviewPorts string
 }
 
 // Authenticate checks the leaf against current registration and records

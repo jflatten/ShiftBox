@@ -48,7 +48,7 @@ func TestWorkspacePolicyUpdate(t *testing.T) {
 	limit := int64(86400)
 	handler := web.WorkspacePolicyHandler(db, origin, func() time.Time { return now }, web.WorkspaceLaunchPolicy{
 		Capabilities: provider.Capabilities{Version: "5.0.8", NetworkModes: []string{"shared"}}, RetentionMaximum: &limit,
-	})
+	}, nil)
 	mux := http.NewServeMux()
 	mux.Handle("PATCH /api/v1/workspaces/{workspaceId}", &handler)
 	send := func(body, version string, want int) {
@@ -91,6 +91,16 @@ func TestWorkspacePolicyUpdate(t *testing.T) {
 		t.Fatalf("stored policy = %s, %s, %d, deadline %v (%v), want unchanged launch, selected policy and one hour from last activity", launch, current, duration, deadline, err)
 	}
 	send(`{"retentionSeconds":null}`, `"3"`, 200)
+	// Preview configuration accepts only distinct TCP ports and is versioned
+	// alongside the other workspace settings.
+	send(`{"previewPorts":[8080,8080]}`, `"4"`, 400)
+	send(`{"previewPorts":[0,65536]}`, `"4"`, 400)
+	send(`{"previewPorts":[8080]}`, `"3"`, 412)
+	send(`{"previewPorts":[9000,8080]}`, `"4"`, 200)
+	var ports string
+	if err := db.QueryRowContext(ctx, "SELECT preview_ports_json FROM workspaces WHERE id=$1", id).Scan(&ports); err != nil || ports != "[8080,9000]" {
+		t.Fatalf("configured preview ports = %q (%v), want [8080,9000]", ports, err)
+	}
 	var cleared bool
 	if err := db.QueryRowContext(ctx, "SELECT retention_seconds IS NULL AND retention_deadline IS NULL FROM workspaces WHERE id=$1", id).Scan(&cleared); err != nil || !cleared {
 		t.Fatalf("retention cleared = %t (%v), want true", cleared, err)

@@ -77,6 +77,11 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 		} else if count != 1 {
 			return ErrGuestUnauthorized
 		}
+		if contact.DesiredState == "running" {
+			if err := tx.QueryRowContext(ctx, "SELECT preview_ports_json FROM workspaces WHERE id=$1", contact.WorkspaceID).Scan(&contact.PreviewPorts); err != nil {
+				return err
+			}
+		}
 		if err := workspace.RecordActivity(ctx, tx, contact.WorkspaceID, contact.Generation, now,
 			workspace.ActivityPolicy{IDE: true, CPU: true, CPUThreshold: 5, Freshness: 90 * time.Second}, report.Activity, ideConnected); err != nil {
 			return err

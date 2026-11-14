@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -89,6 +90,10 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 	csrf := auth.CSRFToken(token)
 	request(workspace, "preview-8080", "invalid", 403)
 	request(other, "preview-8080", csrf, 403)
+	request(workspace, "preview-8080", csrf, 403)
+	if _, err := db.ExecContext(ctx, "UPDATE workspaces SET preview_ports_json='[8080]' WHERE id=$1", workspace); err != nil {
+		t.Fatal(err)
+	}
 	request(workspace, "ide", csrf, 403)
 	canOpenIDE(false)
 	bootTime := now.Add(-time.Hour)
@@ -298,4 +303,64 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 	if forwarded != 4 {
 		t.Errorf("forwarded %d requests, want four authorized requests", forwarded)
 	}
+	// Removing the port cancels existing browser traffic and revokes previously
+	// issued cookies. Re-adding the same port cannot restore those cookies.
+	replacement, replacementToken, err := auth.NewSession("preview-removal-session", "member", "normal", now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		return auth.NewStore(db).SaveSession(ctx, tx, replacement)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var replacementGrant struct{ ExchangeURL string }
+	newGrant := requestAs(replacementToken, workspace, "preview-8080", auth.CSRFToken(replacementToken), 201)
+	if err := json.Unmarshal(newGrant.Body.Bytes(), &replacementGrant); err != nil {
+		t.Fatal(err)
+	}
+	previewCookie := send("GET", replacementGrant.ExchangeURL, "", nil, 200).Result().Cookies()[0]
+	var activeVersion int64
+	if err := db.QueryRowContext(ctx, "SELECT version FROM workspaces WHERE id=$1", workspace).Scan(&activeVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE operations SET status='cancelled' WHERE workspace_id=$1 AND status IN ('pending','running','waiting')", workspace); err != nil {
+		t.Fatal(err)
+	}
+	streamStarted, streamClosed = make(chan struct{}), make(chan struct{})
+	preview := httptest.NewRequest(http.MethodGet, serviceOrigin+"/stream", nil).WithContext(streamCtx)
+	preview.AddCookie(previewCookie)
+	preview.AddCookie(&http.Cookie{Name: "app", Value: "fixture"})
+	go func() {
+		defer close(streamClosed)
+		router.ServeHTTP(httptest.NewRecorder(), preview)
+	}()
+	select {
+	case <-streamStarted:
+	case <-time.After(time.Second):
+		t.Fatal("preview stream did not open")
+	}
+	policy := web.WorkspacePolicyHandler(db, origin, func() time.Time { return now }, web.WorkspaceLaunchPolicy{}, registry)
+	patchPorts := func(body, version string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, origin+"/api/v1/workspaces/"+workspace, strings.NewReader(body))
+		req.SetPathValue("workspaceId", workspace)
+		req.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: replacementToken})
+		req.Header.Set("Origin", origin)
+		req.Header.Set("If-Match", version)
+		req.Header.Set("X-CSRF-Token", auth.CSRFToken(replacementToken))
+		response := httptest.NewRecorder()
+		policy.ServeHTTP(response, req)
+		if response.Code != 200 {
+			t.Fatalf("preview update = %d, want 200", response.Code)
+		}
+	}
+	patchPorts(`{"previewPorts":[]}`, strconv.Quote(strconv.FormatInt(activeVersion, 10)))
+	select {
+	case <-streamClosed:
+	case <-time.After(time.Second):
+		t.Fatal("preview stream remained open after the port was removed")
+	}
+	patchPorts(`{"previewPorts":[8080]}`, strconv.Quote(strconv.FormatInt(activeVersion+1, 10)))
+	send("GET", serviceOrigin+"/", "", previewCookie, 403)
 }

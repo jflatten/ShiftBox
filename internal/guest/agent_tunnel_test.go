@@ -73,3 +73,33 @@ func TestAgentTunnelRejectsForeignEndpoint(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentAdvertisesConfiguredPreview verifies that a controller-selected
+// port gets one named loopback service and that malformed lists fail closed.
+func TestAgentAdvertisesConfiguredPreview(t *testing.T) {
+	headers := http.Header{TunnelAddressHeader: {"internal.test:9443"}, PreviewPortsHeader: {"[8080]"}}
+	offer, err := readTunnelOffer("https://internal.test:8443"+pollPath, headers, 1, "running")
+	if err != nil {
+		t.Fatal(err)
+	}
+	advertised := make(chan []proxy.TunnelService, 1)
+	supervisor := agentTunnel{retry: time.Second, serve: func(ctx context.Context, _ string, _ *tls.Config, _ string, _ int64, services []proxy.TunnelService) error {
+		advertised <- services
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	defer supervisor.close()
+	supervisor.update(t.Context(), offer)
+	select {
+	case services := <-advertised:
+		if len(services) != 3 || services[2].Key != "preview-8080" || services[2].Target != "127.0.0.1:8080" {
+			t.Fatalf("tunnel services = %+v, want IDE, repair, and configured loopback preview", services)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("configured workspace did not register a preview service")
+	}
+	headers.Set(PreviewPortsHeader, "[0]")
+	if _, err := readTunnelOffer("https://internal.test:8443"+pollPath, headers, 1, "running"); err == nil {
+		t.Fatal("accepted an invalid preview port")
+	}
+}

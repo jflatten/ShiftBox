@@ -6,16 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 // WorkspacePolicyHandler updates policy without changing the template or launch snapshot.
-func WorkspacePolicyHandler(db *sql.DB, origin string, now func() time.Time, policy WorkspaceLaunchPolicy) AuthorizedHandler {
+func WorkspacePolicyHandler(db *sql.DB, origin string, now func() time.Time, policy WorkspaceLaunchPolicy, registry *proxy.Registry) AuthorizedHandler {
 	return AuthorizedHandler{
 		DB: db, Origin: origin, Now: now,
 		Route: ManagementRoute{Method: http.MethodPatch, Path: "/workspaces/{workspaceId}", OperationID: "updateWorkspacePolicy", Action: "workspace.update_policy"},
@@ -25,12 +27,12 @@ func WorkspacePolicyHandler(db *sql.DB, origin string, now func() time.Time, pol
 			return target, err
 		},
 		Apply: func(ctx context.Context, tx *sql.Tx, r *http.Request, _ auth.Principal, target AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
-			return applyWorkspacePolicy(ctx, tx, r, target.Resource.ID, policy, now())
+			return applyWorkspacePolicy(ctx, tx, r, target.Resource.ID, policy, now(), registry)
 		},
 	}
 }
 
-func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id string, policy WorkspaceLaunchPolicy, now time.Time) (http.Handler, error) {
+func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id string, policy WorkspaceLaunchPolicy, now time.Time, registry *proxy.Registry) (http.Handler, error) {
 	version, err := RequireVersion(r)
 	if err != nil {
 		return nil, err
@@ -38,6 +40,7 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 	var input struct {
 		RetentionSeconds json.RawMessage `json:"retentionSeconds"`
 		NetworkPolicyID  json.RawMessage `json:"networkPolicyId"`
+		PreviewPorts     json.RawMessage `json:"previewPorts"`
 	}
 	if err := DecodeJSON(nil, r, &input, 4096); err != nil {
 		return nil, err
@@ -65,7 +68,18 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 		}
 		network = &snapshot
 	}
-	if input.RetentionSeconds == nil && network == nil {
+	var ports []int
+	var previewJSON *string
+	if input.PreviewPorts != nil {
+		ports, err = workspace.ParsePreviewPorts(string(input.PreviewPorts))
+		if err != nil {
+			return nil, invalidAuthorizationFields()
+		}
+		encoded, _ := json.Marshal(ports)
+		value := string(encoded)
+		previewJSON = &value
+	}
+	if input.RetentionSeconds == nil && network == nil && previewJSON == nil {
 		return nil, invalidAuthorizationFields()
 	}
 	// Share the lifecycle admission lock so a policy decision cannot race the
@@ -86,6 +100,27 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 	}
 	var baseline string
 	var deadline *string
+	removed := map[string]bool{}
+	if previewJSON != nil {
+		var previous string
+		if err := tx.QueryRowContext(ctx, "SELECT preview_ports_json FROM workspaces WHERE id=$1", id).Scan(&previous); err != nil {
+			return nil, err
+		}
+		old, err := workspace.ParsePreviewPorts(previous)
+		if err != nil {
+			return nil, err
+		}
+		for _, port := range old {
+			if slices.Contains(ports, port) {
+				continue
+			}
+			service := "preview-" + strconv.Itoa(port)
+			removed[service] = true
+			if _, err := tx.ExecContext(ctx, "UPDATE origin_grants SET revoked_at=$1 WHERE workspace_id=$2 AND service_key=$3 AND revoked_at IS NULL", now.UTC().Format(time.RFC3339Nano), id, service); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if retention != nil {
 		// A policy edit does not count as workspace activity. Stopped and
 		// never-connected workspaces use their last known activity or launch.
@@ -101,10 +136,11 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 	result, err := tx.ExecContext(ctx, `UPDATE workspaces SET
 		retention_seconds=CASE WHEN $1 THEN CAST($2 AS BIGINT) ELSE retention_seconds END,
 		retention_deadline=CASE WHEN $1 THEN CAST($7 AS TEXT) ELSE retention_deadline END,
-		network_policy_override_json=COALESCE(CAST($3 AS TEXT),network_policy_override_json),updated_at=$4,version=version+1
+		network_policy_override_json=COALESCE(CAST($3 AS TEXT),network_policy_override_json),
+		preview_ports_json=COALESCE(CAST($9 AS TEXT),preview_ports_json),updated_at=$4,version=version+1
 		WHERE id=$5 AND version=$6 AND EXISTS (SELECT 1 FROM installations WHERE singleton=1 AND state='active')
 		AND ($8='' OR COALESCE(last_activity_at,created_at)=$8)`,
-		input.RetentionSeconds != nil, retention, network, now.UTC().Format(time.RFC3339Nano), id, version, deadline, baseline)
+		input.RetentionSeconds != nil, retention, network, now.UTC().Format(time.RFC3339Nano), id, version, deadline, baseline, previewJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +156,12 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 		return nil, err
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if registry != nil && len(removed) > 0 {
+			if err := registry.CloseMatching(func(scope proxy.Scope) bool { return scope.WorkspaceID == id && removed[scope.Service] }); err != nil {
+				WriteProblem(w, RequestID(r.Context()), err)
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(view.Version, 10)))
 		_ = json.NewEncoder(w).Encode(view)

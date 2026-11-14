@@ -9,6 +9,9 @@ export interface Workspace {
   currentOperationId: string | null;
   lastFailedOperationId?: string | null;
   canOpenIde?: boolean;
+  previewPorts?: number[];
+  canOpenPreviews?: boolean;
+  canEditPreviewPorts?: boolean;
   canOpenRepair?: boolean;
   canStartRepair?: boolean;
   canRetryAfterRepair?: boolean;

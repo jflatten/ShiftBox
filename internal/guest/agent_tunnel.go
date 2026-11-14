@@ -12,14 +12,19 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/proxy"
+	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 // TunnelAddressHeader advertises the dedicated tunnel address on authenticated polls.
 const TunnelAddressHeader = "Shiftbox-Tunnel-Address"
 
+// PreviewPortsHeader carries the controller-authorized JSON array of local ports.
+const PreviewPortsHeader = "Shiftbox-Preview-Ports"
+
 type tunnelOffer struct {
 	address    string
 	generation int64
+	previews   string
 }
 
 func readTunnelOffer(endpoint string, headers http.Header, generation int64, desired string) (tunnelOffer, error) {
@@ -37,7 +42,18 @@ func readTunnelOffer(endpoint string, headers http.Header, generation int64, des
 		strconv.FormatUint(number, 10) != port || !strings.EqualFold(host, poll.Hostname()) {
 		return tunnelOffer{}, errors.New("invalid controller guest tunnel address")
 	}
-	return tunnelOffer{address: net.JoinHostPort(poll.Hostname(), port), generation: generation}, nil
+	previews := headers.Values(PreviewPortsHeader)
+	if len(previews) > 1 {
+		return tunnelOffer{}, errors.New("ambiguous guest preview ports")
+	}
+	offer := tunnelOffer{address: net.JoinHostPort(poll.Hostname(), port), generation: generation}
+	if len(previews) == 1 && previews[0] != "[]" && previews[0] != "" {
+		if _, err := workspace.ParsePreviewPorts(previews[0]); err != nil {
+			return tunnelOffer{}, err
+		}
+		offer.previews = previews[0]
+	}
+	return offer, nil
 }
 
 // agentTunnel is owned by the poll loop. Its worker retries independently
@@ -68,6 +84,14 @@ func (t *agentTunnel) update(ctx context.Context, offer tunnelOffer) {
 		services := []proxy.TunnelService{
 			{Key: "ide", Target: proxy.IDESocket, Protocols: []string{"http", "websocket"}},
 			{Key: "repair", Target: proxy.RepairSocket, Protocols: []string{"http", "websocket"}},
+		}
+		if offer.previews != "" {
+			ports, _ := workspace.ParsePreviewPorts(offer.previews) // The poll decoder already validated this value.
+			for _, port := range ports {
+				text := strconv.Itoa(port)
+				services = append(services, proxy.TunnelService{Key: "preview-" + text,
+					Target: net.JoinHostPort("127.0.0.1", text), Protocols: []string{"http", "websocket"}})
+			}
 		}
 		for runCtx.Err() == nil {
 			_ = t.serve(runCtx, offer.address, t.tls, t.protocol, offer.generation, services)

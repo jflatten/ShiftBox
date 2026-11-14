@@ -12,6 +12,8 @@ import (
 	"net"
 	"net/netip"
 	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -235,6 +237,9 @@ func ValidateTunnelServices(input []TunnelService) ([]Service, error) {
 	for _, service := range input {
 		target, err := netip.ParseAddrPort(service.Target)
 		local := err == nil && target.Addr().IsLoopback() && target.Port() != 0
+		if strings.HasPrefix(service.Key, "preview-") && (!local || service.Key != "preview-"+strconv.Itoa(int(target.Port()))) {
+			return nil, errors.New("preview service must match its loopback port")
+		}
 		if (!local && !IsWorkbenchSocket(service.Key, service.Target) || service.Key == "repair" && target.IsValid()) ||
 			len(service.Key) > 63 || !tunnelServiceKey.MatchString(service.Key) || len(service.Protocols) > 2 {
 			return nil, errors.New("invalid guest tunnel service")

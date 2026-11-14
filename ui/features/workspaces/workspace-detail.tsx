@@ -108,6 +108,10 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
           {error !== undefined && !confirmDelete ? <APIProblemView error={error} /> : null}
           {data.canOpenIde ? <OpenIDE id={id} csrfToken={csrfToken} /> : null}
           {data.canOpenRepair ? <OpenIDE id={id} csrfToken={csrfToken} service="repair" describedBy={repairDescriptionId} /> : null}
+          {data.canOpenPreviews || data.canEditPreviewPorts ? (
+            <WorkspacePreviews key={(data.previewPorts ?? []).join(',')} workspace={data} csrfToken={csrfToken}
+              disabled={busy || data.desiredState === 'deleted'} refresh={workspace.refetch} />
+          ) : null}
           {action ? (
             <Group>
               <Button loading={submitting === action} disabled={!!data.currentOperationId || operationBusy || !!submitting}
@@ -189,8 +193,54 @@ function WorkspaceTime({ value, fallback }: { value: string | null; fallback: st
   return <time dateTime={value}>{date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>;
 }
 
+function WorkspacePreviews({ workspace, csrfToken, disabled, refresh }: {
+  workspace: Workspace; csrfToken: string; disabled: boolean; refresh: () => Promise<unknown>;
+}) {
+  const [value, setValue] = useState((workspace.previewPorts ?? []).join(', '));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<unknown>();
+  const save = async () => {
+    const values = value.trim() ? value.split(',').map(port => port.trim()) : [];
+    const ports = values.map(Number);
+    if (ports.length > 32 || new Set(ports).size !== ports.length ||
+        values.some((port, index) => !/^\d{1,5}$/.test(port) || ports[index] < 1 || ports[index] > 65535)) {
+      setError(new Error('Enter up to 32 distinct ports from 1 to 65535.'));
+      return;
+    }
+    setSaving(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`/api/v1/workspaces/${encodeURIComponent(workspace.id)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'If-Match': `"${workspace.version}"` },
+        body: JSON.stringify({ previewPorts: ports }),
+      });
+      if (!response.ok) throw await readProblem(response);
+      await refresh();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Stack gap="xs">
+      {workspace.canEditPreviewPorts ? <form onSubmit={event => { event.preventDefault(); void save(); }}>
+        <Stack gap="xs" align="flex-start">
+          <TextInput label="Preview ports" description="Comma-separated ports on the workspace VM." value={value}
+            onChange={event => setValue(event.currentTarget.value)} disabled={disabled || saving} />
+          <Button type="submit" variant="default" disabled={disabled} loading={saving}>Save preview ports</Button>
+        </Stack>
+      </form> : null}
+      {error !== undefined ? <APIProblemView error={error} /> : null}
+      {workspace.canOpenPreviews ? <Group>
+        {(workspace.previewPorts ?? []).map(port => <OpenIDE key={port} id={workspace.id} csrfToken={csrfToken} service={`preview-${port}`} />)}
+      </Group> : null}
+    </Stack>
+  );
+}
+
 function OpenIDE({ id, csrfToken, service = 'ide', describedBy }: {
-  id: string; csrfToken: string; service?: 'ide' | 'repair'; describedBy?: string;
+  id: string; csrfToken: string; service?: 'ide' | 'repair' | `preview-${number}`; describedBy?: string;
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<unknown>();
@@ -225,7 +275,9 @@ function OpenIDE({ id, csrfToken, service = 'ide', describedBy }: {
 
   return (
     <Stack align="flex-start" gap="xs">
-      <Button loading={submitting} aria-describedby={describedBy} onClick={() => void open()}>{service === 'repair' ? 'Open repair IDE' : 'Open IDE'}</Button>
+      <Button loading={submitting} aria-describedby={describedBy} onClick={() => void open()}>
+        {service === 'ide' ? 'Open IDE' : service === 'repair' ? 'Open repair IDE' : `Open preview ${service.slice(8)}`}
+      </Button>
       {error !== undefined ? <APIProblemView error={error} /> : null}
     </Stack>
   );

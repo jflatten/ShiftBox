@@ -8,12 +8,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/proxy"
+	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 // ServiceEntryPath exchanges an origin grant before starting a workspace session.
@@ -93,7 +95,7 @@ func (s serviceProxy) serve(w http.ResponseWriter, r *http.Request) {
 	active, cancel := context.WithTimeout(ctx, deadline.Sub(s.now()))
 	defer cancel()
 	unregister, err := s.registry.Register(proxy.Scope{UserID: authority.UserID, SessionID: authority.SessionID,
-		WorkspaceID: workspace, GrantID: authority.ResourceGrantID, IDE: service == "ide" || service == "repair"}, func() error {
+		WorkspaceID: workspace, GrantID: authority.ResourceGrantID, Service: service, IDE: service == "ide" || service == "repair"}, func() error {
 		current, currentDeadline, err := lookup(active)
 		if err == nil && (current != authority || currentDeadline.Before(deadline)) {
 			return proxy.ErrOriginGrant
@@ -269,10 +271,11 @@ func serviceEntryTarget(ctx context.Context, tx *sql.Tx, store *auth.Store, prin
 	return target, err
 }
 
-func serviceWorkspace(ctx context.Context, tx *sql.Tx, workspace, service string) (auth.Resource, int64, error) {
-	resource := auth.Resource{Type: "workspace", ID: workspace}
+func serviceWorkspace(ctx context.Context, tx *sql.Tx, id, service string) (auth.Resource, int64, error) {
+	resource := auth.Resource{Type: "workspace", ID: id}
 	var generation int64
-	err := tx.QueryRowContext(ctx, `SELECT w.owner_user_id,w.generation,
+	var previews string
+	err := tx.QueryRowContext(ctx, `SELECT w.owner_user_id,w.generation,w.preview_ports_json,
 		(w.desired_state='running' AND w.observed_state='running' AND i.state='active'
 		AND owner.membership_state='active' AND ($2 NOT IN ('ide','repair') OR EXISTS (
 		 SELECT 1 FROM operation_steps s
@@ -285,6 +288,11 @@ func serviceWorkspace(ctx context.Context, tx *sql.Tx, workspace, service string
 		 )
 		)))
 		FROM workspaces w JOIN installations i ON i.id=w.installation_id JOIN users owner ON owner.id=w.owner_user_id
-		WHERE w.id=$1`, workspace, service).Scan(&resource.OwnerID, &generation, &resource.Eligible)
+		WHERE w.id=$1`, id, service).Scan(&resource.OwnerID, &generation, &previews, &resource.Eligible)
+	if err == nil && service != "ide" && service != "repair" && resource.Eligible {
+		port, ok := workspace.PreviewPort(service)
+		ports, parseErr := workspace.ParsePreviewPorts(previews)
+		resource.Eligible = ok && parseErr == nil && slices.Contains(ports, port)
+	}
 	return resource, generation, err
 }
