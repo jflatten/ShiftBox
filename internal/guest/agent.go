@@ -15,6 +15,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -102,11 +103,7 @@ func EnrollAgent(ctx context.Context, directory string, input io.Reader, protoco
 	if err != nil {
 		return AgentIdentity{}, err
 	}
-	data, err := json.Marshal(record)
-	if err != nil {
-		return AgentIdentity{}, err
-	}
-	if err := writePrivateState(filepath.Join(directory, "identity.json"), data); err != nil {
+	if err := record.save(directory); err != nil {
 		return AgentIdentity{}, err
 	}
 	if err := os.Remove(keyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -117,16 +114,105 @@ func EnrollAgent(ctx context.Context, directory string, input io.Reader, protoco
 
 // LoadAgentIdentity reopens a valid enrolled identity without recovery media.
 func LoadAgentIdentity(directory string, now time.Time) (AgentIdentity, error) {
-	file, err := os.Open(filepath.Join(directory, "identity.json"))
+	record, err := readAgentIdentity(directory)
 	if err != nil {
 		return AgentIdentity{}, err
 	}
-	defer file.Close()
+	return record.identity(now)
+}
+
+func readAgentIdentity(directory string) (agentIdentityFile, error) {
 	var record agentIdentityFile
-	if err := decodeAgentJSON(file, &record); err != nil {
+	file, err := os.Open(filepath.Join(directory, "identity.json"))
+	if err != nil {
+		return record, err
+	}
+	defer file.Close()
+	err = decodeAgentJSON(file, &record)
+	return record, err
+}
+
+func (r agentIdentityFile) save(directory string) error {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	return writePrivateState(filepath.Join(directory, "identity.json"), data)
+}
+
+// RenewAgentIdentity proves possession of the live identity and a fresh key,
+// then replaces the stored key and certificate together.
+func RenewAgentIdentity(ctx context.Context, directory string, now time.Time) (AgentIdentity, error) {
+	record, err := readAgentIdentity(directory)
+	if err != nil {
 		return AgentIdentity{}, err
 	}
-	return record.identity(now)
+	current, err := record.identity(now)
+	if err != nil {
+		return AgentIdentity{}, err
+	}
+	old := current.Certificate.Leaf
+	if len(old.URIs) != 1 || now.Before(guestRenewAfter(old)) || !now.Before(old.NotAfter) {
+		return AgentIdentity{}, ErrGuestUnauthorized
+	}
+	keyPath := filepath.Join(directory, "pending-renewal-key.json")
+	keyPEM, key, err := agentEnrollmentKey(keyPath, old.SerialNumber.Text(16))
+	if err != nil {
+		return AgentIdentity{}, err
+	}
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	if err != nil {
+		return AgentIdentity{}, err
+	}
+	body, err := json.Marshal(map[string]string{
+		"csrPem": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr})),
+	})
+	if err != nil {
+		return AgentIdentity{}, err
+	}
+	endpoint, err := url.Parse(current.PollEndpoint)
+	if err != nil {
+		return AgentIdentity{}, err
+	}
+	endpoint.Path, endpoint.RawPath = RenewalPath, ""
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return AgentIdentity{}, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	client := current.pollClient("")
+	defer client.CloseIdleConnections()
+	response, err := client.Do(request)
+	if err != nil {
+		return AgentIdentity{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return AgentIdentity{}, errors.New("controller did not accept guest certificate renewal")
+	}
+	var result struct {
+		CertificatePEM string `json:"certificatePem"`
+	}
+	if err := decodeAgentJSON(response.Body, &result); err != nil {
+		return AgentIdentity{}, err
+	}
+	record.CertificatePEM, record.KeyPEM = result.CertificatePEM, keyPEM
+	next, err := record.identity(time.Now())
+	if err != nil {
+		return AgentIdentity{}, err
+	}
+	leaf := next.Certificate.Leaf
+	if len(leaf.URIs) != 1 || leaf.URIs[0].String() != old.URIs[0].String() ||
+		leaf.SerialNumber.Cmp(old.SerialNumber) == 0 || !leaf.NotAfter.After(old.NotAfter) {
+		return AgentIdentity{}, errors.New("invalid replacement guest identity")
+	}
+	if err := record.save(directory); err != nil {
+		return AgentIdentity{}, err
+	}
+	// Leaving the pending file is harmless after a successful save. The next
+	// renewal's predecessor serial will select a new pending key.
+	_ = os.Remove(keyPath)
+	return next, nil
 }
 
 func (r agentIdentityFile) identity(now time.Time) (AgentIdentity, error) {

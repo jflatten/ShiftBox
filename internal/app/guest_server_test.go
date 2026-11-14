@@ -107,6 +107,7 @@ func TestGuestListenersSeparateEnrollmentAndPolling(t *testing.T) {
 	post(listeners.EnrollURL, 409)
 	post(strings.Replace(listeners.EnrollURL, "/internal/v1/enroll", "/internal/v1/guest/poll", 1), 404)
 	post(strings.Replace(listeners.EnrollURL, "/internal/v1/enroll", guest.GitAccessTokenPath, 1), 404)
+	post(strings.Replace(listeners.EnrollURL, "/internal/v1/enroll", guest.RenewalPath, 1), 404)
 	if resp, err := client.Post(listeners.PollURL, "application/json", bytes.NewBufferString("{}")); err == nil {
 		resp.Body.Close()
 		t.Error("poll listener accepted TLS without a client certificate")
@@ -114,6 +115,10 @@ func TestGuestListenersSeparateEnrollmentAndPolling(t *testing.T) {
 	if resp, err := client.Post(strings.Replace(listeners.PollURL, "/internal/v1/guest/poll", guest.GitAccessTokenPath, 1), "", nil); err == nil {
 		resp.Body.Close()
 		t.Error("Git token listener accepted TLS without a client certificate")
+	}
+	if resp, err := client.Post(strings.Replace(listeners.PollURL, "/internal/v1/guest/poll", guest.RenewalPath, 1), "", nil); err == nil {
+		resp.Body.Close()
+		t.Error("renewal listener accepted TLS without a client certificate")
 	}
 	if listeners.TunnelAddress == "" || strings.Contains(listeners.PollURL, listeners.TunnelAddress+"/") {
 		t.Fatal("Yamux must use a distinct address from HTTPS polling")

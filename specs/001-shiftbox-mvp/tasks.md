@@ -111,7 +111,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 
 ### Guest, workspace, API, and UI implementation
 
-- [ ] T049 [US1] Implement provider-mediated one-use enrollment, CSR key-proof retry, controller-owned certificate fields, and four-hour replacement/eight-hour validity in `internal/guest/enrollment.go` and `internal/guest/certificates.go`
+- [X] T049 [US1] Implement provider-mediated one-use enrollment, CSR key-proof retry, controller-owned certificate fields, and four-hour replacement/eight-hour validity in `internal/guest/enrollment.go` and `internal/guest/certificates.go`
 - [ ] T050 [US1] Implement authenticated guest poll handling with derived identity, one active operation, generation fencing, bounded evidence, 30-second jittered cadence, and N/N−1 checks proven by T034 in `internal/guest/protocol.go` and `internal/web/guest_routes.go`
 - [X] T051 [US1] Implement `shiftbox-agent serve` supervision and persistent operation attempt/step journal in `cmd/shiftbox-agent/main.go`, `internal/guest/agent.go`, and `internal/guest/local_journal.go`
 - [ ] T052 [US1] Implement the fixed approved guest command executor for repository preparation, prebuilt-image and Dockerfile/build-definition Dev Containers, declared features, lifecycle hooks, declared connection-ready stage, rebuild, IDE verification, repair entry/exit, and graceful shutdown proven by T037 in `internal/guest/executor.go`, `internal/guest/devcontainer.go`, and `internal/guest/repair.go`
@@ -2737,3 +2737,15 @@ This checkpoint does not itself change the goal status.
   and the named data retained across rebuild. Both repair controls expose
   the explanation to assistive technology. UI type checking and 72 tests
   passed.
+
+### Guest client certificate renewal
+
+- T049 adds authenticated renewal at four hours. The controller validates a
+  fresh CSR, issues an eight-hour replacement capped by the installation CA,
+  and commits the new serial before responding. A guest can recover the same
+  replacement with the same key while its predecessor is still valid.
+- The guest replaces its stored key and certificate together and reopens its
+  authenticated connections. Race-enabled guest and controller tests covered
+  the lost-response retry and the first poll with the replacement. SQLite
+  and PostgreSQL migration parity passed. Native UTM lifecycle acceptance
+  remains under T061 and the recovery tasks.

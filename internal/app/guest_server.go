@@ -71,6 +71,7 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		return nil, err
 	}
 	internal := http.NewServeMux()
+	internal.Handle(guest.RenewalPath, web.GuestRenewalHandler(enrollment.Renew, now))
 	if config.GitHub != nil {
 		internal.Handle(guest.GitAccessTokenPath, web.GuestGitTokenHandler(enrollment.Authenticate, config.GitHub.AccessToken, now))
 	}

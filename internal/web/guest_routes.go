@@ -53,10 +53,8 @@ func GuestEnrollmentHandler(compatibility GuestCompatibility,
 			WriteProblem(w, requestID, Problem{Status: 409, Code: "guest.release_unsupported", Title: "Guest release or protocol is unsupported"})
 			return
 		}
-		raw := bytes.TrimSpace([]byte(input.CSRPEM))
-		csr, rest := pem.Decode(raw)
-		if csr == nil || csr.Type != "CERTIFICATE REQUEST" || len(csr.Headers) != 0 ||
-			len(bytes.TrimSpace(rest)) != 0 || !bytes.HasPrefix(raw, []byte("-----BEGIN CERTIFICATE REQUEST-----")) {
+		csr := guestCSR(input.CSRPEM)
+		if csr == nil {
 			WriteProblem(w, requestID, Problem{Status: 400, Code: "guest.invalid_csr", Title: "Invalid guest certificate request"})
 			return
 		}
@@ -64,7 +62,7 @@ func GuestEnrollmentHandler(compatibility GuestCompatibility,
 			WriteProblem(w, requestID, errors.New("enrollment handler is incomplete"))
 			return
 		}
-		der, err := enroll(r.Context(), input.Grant, csr.Bytes, now())
+		der, err := enroll(r.Context(), input.Grant, csr, now())
 		if errors.Is(err, guest.ErrEnrollmentDenied) {
 			WriteProblem(w, requestID, Problem{Status: 403, Code: "guest.enrollment_denied", Title: "Guest enrollment was denied"})
 			return
@@ -79,6 +77,56 @@ func GuestEnrollmentHandler(compatibility GuestCompatibility,
 			ProtocolVersion string `json:"protocolVersion"`
 			CertificatePEM  string `json:"certificatePem"`
 		}{compatibility.Protocol, string(certificate)})
+	})
+	return WithRequestID(mux)
+}
+
+func guestCSR(value string) []byte {
+	raw := bytes.TrimSpace([]byte(value))
+	csr, rest := pem.Decode(raw)
+	if csr == nil || csr.Type != "CERTIFICATE REQUEST" || len(csr.Headers) != 0 ||
+		len(bytes.TrimSpace(rest)) != 0 || !bytes.HasPrefix(raw, []byte("-----BEGIN CERTIFICATE REQUEST-----")) {
+		return nil
+	}
+	return csr.Bytes
+}
+
+// GuestRenewalHandler serves renewal on the internal mutual TLS listener.
+func GuestRenewalHandler(renew func(context.Context, *x509.Certificate, []byte, time.Time) ([]byte, error), now func() time.Time) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST "+guest.RenewalPath, func(w http.ResponseWriter, r *http.Request) {
+		requestID := RequestID(r.Context())
+		w.Header().Set("Cache-Control", "no-store")
+		denied := Problem{Status: 403, Code: "guest.identity_denied", Title: "Guest identity is not authorized"}
+		if r.TLS == nil || r.TLS.Version < tls.VersionTLS13 || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.VerifiedChains[0]) == 0 {
+			WriteProblem(w, requestID, denied)
+			return
+		}
+		var input struct {
+			CSRPEM string `json:"csrPem"`
+		}
+		if err := DecodeJSON(w, r, &input, 16<<10); err != nil {
+			WriteProblem(w, requestID, err)
+			return
+		}
+		csr := guestCSR(input.CSRPEM)
+		if csr == nil {
+			WriteProblem(w, requestID, Problem{Status: 400, Code: "guest.invalid_csr", Title: "Invalid guest certificate request"})
+			return
+		}
+		der, err := renew(r.Context(), r.TLS.VerifiedChains[0][0], csr, now())
+		if errors.Is(err, guest.ErrGuestUnauthorized) {
+			WriteProblem(w, requestID, denied)
+			return
+		}
+		if err != nil {
+			WriteProblem(w, requestID, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"certificatePem": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+		})
 	})
 	return WithRequestID(mux)
 }

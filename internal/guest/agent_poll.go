@@ -19,6 +19,7 @@ import (
 const pollPath = "/internal/v1/guest/poll"
 
 var errAgentOperationPending = errors.New("guest operation execution unavailable")
+var errAgentIdentityRenewed = errors.New("guest identity renewed")
 
 // Poll authenticates a single poll using the saved guest identity.
 func (identity AgentIdentity) Poll(ctx context.Context, endpoint, serverName, protocol, release string) error {
@@ -207,6 +208,19 @@ func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release, secr
 			return err
 		}
 	}
+	for {
+		err := serveAgentIdentity(ctx, identity, stateDir, protocol, release, secretSocket)
+		if !errors.Is(err, errAgentIdentityRenewed) {
+			return err
+		}
+		identity, err = LoadAgentIdentity(stateDir, time.Now())
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, protocol, release, secretSocket string) error {
 	client := identity.pollClient("")
 	defer client.CloseIdleConnections()
 	if secretSocket != "" {
@@ -232,9 +246,19 @@ func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release, secr
 			},
 		}}
 	var sampler cpuSampler
+	renewAfter := guestRenewAfter(identity.Certificate.Leaf)
 	for {
+		now := time.Now()
+		if !now.Before(renewAfter) {
+			if _, err := RenewAgentIdentity(ctx, stateDir, now); err == nil {
+				return errAgentIdentityRenewed
+			}
+			// Continue with the current identity when the controller has not
+			// replaced it. If the response was lost, the next attempt reuses
+			// the pending key even across a supervisor restart.
+		}
 		input := newGuestPollRequest(protocol, release, journal)
-		input.Activity = sampler.sample(time.Now())
+		input.Activity = sampler.sample(now)
 		if err := pollAgent(ctx, client, identity.PollEndpoint, input, journal, runtime, tunnel); err != nil {
 			return err
 		}
