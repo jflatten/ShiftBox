@@ -1,5 +1,5 @@
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { ShiftBoxShell } from './app-shell';
 
 // A member must not be offered administration navigation by the shared shell.
@@ -31,4 +31,35 @@ test('shows permitted administration navigation', () => {
 test('links authorized administrators to People', () => {
   render(<MantineProvider><ShiftBoxShell session={{ role: 'administrator', mode: 'normal', installationState: 'active', permissions: ['user.list'] }} alerts={[]}><h1>Overview</h1></ShiftBoxShell></MantineProvider>);
   expect(screen.getByRole('link', { name: 'People' })).toHaveAttribute('href', '/users/');
+});
+
+// An overdue organizational session still offers renewal, while protected
+// navigation and the page body wait for successful upstream authorization.
+test('gates overdue organizational sessions', () => {
+  render(<MantineProvider><ShiftBoxShell session={{
+    role: 'member', mode: 'normal', installationState: 'active',
+    permissions: ['session.external_reauthorize'], csrfToken: 'fixture',
+    externalAuthorizationDueAt: '2000-01-01T00:00:00Z',
+  }} alerts={[]}><h1>Private workspaces</h1></ShiftBoxShell></MantineProvider>);
+  expect(screen.getByRole('button', { name: 'Renew authorization' })).toBeVisible();
+  expect(screen.getByText('Organizational authorization expired')).toBeVisible();
+  expect(screen.queryByRole('link', { name: 'Workspaces' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Private workspaces' })).not.toBeInTheDocument();
+});
+
+// An open workspace page must stop displaying protected content at the
+// organizational deadline even when no navigation or refetch occurs.
+test('gates a mounted page when organizational authorization expires', () => {
+  jest.useFakeTimers();
+  try {
+    const due = new Date(Date.now() + 1000).toISOString();
+    render(<MantineProvider><ShiftBoxShell session={{
+      role: 'member', mode: 'normal', installationState: 'active', csrfToken: 'fixture',
+      permissions: ['session.external_reauthorize'], externalAuthorizationDueAt: due,
+    }} alerts={[]}><h1>Private workspaces</h1></ShiftBoxShell></MantineProvider>);
+    expect(screen.getByRole('heading', { name: 'Private workspaces' })).toBeVisible();
+    act(() => jest.advanceTimersByTime(1000));
+    expect(screen.getByText('Organizational authorization expired')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Private workspaces' })).not.toBeInTheDocument();
+  } finally { jest.useRealTimers(); }
 });

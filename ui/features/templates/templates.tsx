@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button, Group, Table, Text, Title } from '@mantine/core';
 import { APIProblemView } from '../../components/api-problem';
 import { ShiftBoxShell } from '../../components/app-shell';
+import { SignInChoices } from '../session/sign-in';
 import { useSession } from '../../lib/use-session';
 import { useTemplates } from './use-templates';
 
@@ -14,7 +15,7 @@ export function Templates() {
     <ShiftBoxShell session={session.session} alerts={[]} error={session.error ?? undefined}>
       <Title order={1}>Templates</Title>
       {session.isPending ? <Text role="status">Checking your session…</Text> : null}
-      {session.data === null ? <Button component="a" href="/auth/login" style={{ alignSelf: 'flex-start' }}>Sign in</Button> : null}
+      {session.data === null ? <SignInChoices /> : null}
       {normal ? <TemplateList /> : null}
     </ShiftBoxShell>
   );

@@ -1,8 +1,9 @@
 'use client';
 
-import { Button, Text, Title } from '@mantine/core';
+import { Text, Title } from '@mantine/core';
 import { ShiftBoxShell } from '../components/app-shell';
 import { ActivePasswordForm } from '../features/session/password';
+import { SignInChoices } from '../features/session/sign-in';
 import { useSession } from '../lib/use-session';
 
 export default function Home() {
@@ -16,7 +17,7 @@ export default function Home() {
       {passwordRequired
         ? <ActivePasswordForm key={current.user.id} csrfToken={current.csrfToken} />
         : session.data === null
-        ? <Button component="a" href="/auth/login" style={{ alignSelf: 'flex-start' }}>Sign in</Button>
+        ? <SignInChoices />
         : <Text>{session.isPending ? 'Checking your session…' : current ? 'Choose a destination from the navigation.' : 'Your session could not be checked.'}</Text>}
     </ShiftBoxShell>
   );

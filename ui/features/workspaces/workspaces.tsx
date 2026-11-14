@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ShiftBoxShell } from '../../components/app-shell';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
+import { SignInChoices } from '../session/sign-in';
 import { useSession } from '../../lib/use-session';
 import { LaunchFlow } from './launch-flow';
 import { WorkspaceDetail } from './workspace-detail';
@@ -25,7 +26,7 @@ export function Workspaces({ workspaceId, ownerId, launch = false }: {
         <>
           <Title order={1}>Workspaces</Title>
           {session.isPending ? <Text role="status">Checking your session…</Text> : null}
-          {session.data === null ? <Button component="a" href="/auth/login" style={{ alignSelf: 'flex-start' }}>Sign in</Button> : null}
+          {session.data === null ? <SignInChoices /> : null}
         </>
       ) : launch ? <LaunchFlow csrfToken={current.csrfToken} />
         : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken} />

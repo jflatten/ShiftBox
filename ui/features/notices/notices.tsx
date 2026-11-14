@@ -7,6 +7,7 @@ import { ShiftBoxShell, type ShellSession } from '../../components/app-shell';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
 import { useInfrastructure } from '../../lib/use-infrastructure';
+import { SignInChoices } from '../session/sign-in';
 import { useSession } from '../../lib/use-session';
 import { PublishNotice } from './publish-notice';
 
@@ -33,7 +34,7 @@ export function Notices() {
     <ShiftBoxShell session={current} alerts={alerts} error={session.error ?? (canViewInfrastructure ? error : undefined) ?? undefined}>
       <Title order={1}>Notices</Title>
       {session.isPending ? <Text role="status">Checking your session…</Text> : null}
-      {session.data === null ? <Button component="a" href="/auth/login" style={{ alignSelf: 'flex-start' }}>Sign in</Button> : null}
+      {session.data === null ? <SignInChoices /> : null}
       {allowed ? <NoticeList key={current.user.id} userId={current.user.id} csrfToken={current.csrfToken} session={current} /> : null}
     </ShiftBoxShell>
   );

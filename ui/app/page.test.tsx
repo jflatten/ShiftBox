@@ -23,3 +23,14 @@ test('shows the controller problem from a failed session read', async () => {
     expect(screen.getByRole('alert')).toHaveTextContent('session-reference');
   } finally { globalThis.fetch = original; }
 });
+
+// The sign-in choices let organizational users start the upstream flow.
+test('offers local and organizational sign-in', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+  try {
+    render(<Providers><Home /></Providers>);
+    expect(await screen.findByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/auth/login');
+    expect(screen.getByRole('link', { name: 'Sign in with your organization' })).toHaveAttribute('href', '/auth/external');
+  } finally { globalThis.fetch = original; }
+});

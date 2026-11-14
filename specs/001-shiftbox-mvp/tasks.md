@@ -2282,3 +2282,18 @@ This checkpoint does not itself change the goal status.
   checks passed on SQLite and a fresh disposable PostgreSQL database.
 - T062, T070, and T076 are checked off. T077 still needs the external
   identity controls and T060 still needs the remaining management routes.
+
+### Organizational sign-in and GitHub connection screens
+
+- T077 adds organizational sign-in alongside local sign-in. The shared
+  shell shows the upstream authorization deadline and gates the visible
+  workspace and management content when it expires. The renewal stepper
+  hands off to the controller's short-lived Dex URL.
+- Account shows GitHub connection status and supports connect, reconnect,
+  and confirmed disconnect. Authorization links must match the expected
+  destination and expire in the UI at the server-provided time.
+- UI tests cover an open page reaching its deadline, failed renewal,
+  invalid destination, and confirmed GitHub disconnection. Chrome
+  verified both authorization handoffs and the disconnect confirmation
+  against local fixture responses. T077 remains open for template and
+  secret controls.

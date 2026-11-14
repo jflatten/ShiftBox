@@ -7,6 +7,7 @@ import { APIProblemView } from '../../components/api-problem';
 import { ShiftBoxShell } from '../../components/app-shell';
 import { readProblem } from '../../lib/api-problem';
 import { useInfrastructure, type Capacity, type InfrastructureStatus } from '../../lib/use-infrastructure';
+import { SignInChoices } from '../session/sign-in';
 import { useSession } from '../../lib/use-session';
 import { BrowserCertificate } from './browser-certificate';
 
@@ -27,7 +28,7 @@ export function Infrastructure() {
     <ShiftBoxShell session={current} alerts={alerts} error={session.error ?? (allowed ? status.error : undefined) ?? undefined}>
       <Title order={1}>Infrastructure</Title>
       {session.isPending ? <Text role="status">Checking your session…</Text> : null}
-      {session.data === null ? <Button component="a" href="/auth/login" style={{ alignSelf: 'flex-start' }}>Sign in</Button> : null}
+      {session.data === null ? <SignInChoices /> : null}
       {current && !allowed ? <Text>Administrator access required.</Text> : null}
       {allowed && status.isPending ? <Text role="status">Loading infrastructure status…</Text> : null}
       {allowed && status.isError ? (

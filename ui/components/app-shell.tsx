@@ -3,12 +3,16 @@
 import { useState, type ReactNode } from 'react';
 import { Alert, AppShell, Burger, Group, Image, NavLink, Stack, useComputedColorScheme } from '@mantine/core';
 import { APIProblemView } from './api-problem';
+import { ExternalReauthorization } from '../features/session/external-reauthorization';
+import { useAuthorizationExpired } from '../lib/use-authorization-expired';
 
 export interface ShellSession {
   role: 'member' | 'administrator';
   mode: string;
   installationState: string;
   permissions: string[];
+  csrfToken?: string;
+  externalAuthorizationDueAt?: string | null;
 }
 
 /** Shared navigation is a convenience; every destination still enforces server authorization. */
@@ -20,10 +24,14 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
 }) {
   const [opened, setOpened] = useState(false);
   const scheme = useComputedColorScheme('light');
-  const normal = session?.mode === 'normal' && session.installationState === 'active';
   const permitted = (action: string) => session?.permissions.includes(action);
+  const canRenew = permitted('session.external_reauthorize') && !!session?.csrfToken;
+  const deadline = Date.parse(session?.externalAuthorizationDueAt ?? '');
+  const expired = useAuthorizationExpired(deadline);
+  const renewalRequired = canRenew && (expired || !Number.isFinite(deadline));
+  const normal = session?.mode === 'normal' && session.installationState === 'active' && !renewalRequired;
   const account = (normal && permitted('git.manage')) ||
-    (session?.installationState === 'active' && permitted('session.change_password'));
+    (!renewalRequired && session?.installationState === 'active' && permitted('session.change_password'));
   return (
     <AppShell header={{ height: 72 }} navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="lg">
       <AppShell.Header>
@@ -37,8 +45,8 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
         {normal ? <NavLink href="/templates/" label="Templates" /> : null}
         {normal && permitted('notice.list') ? <NavLink href="/notices/" label="Notices" /> : null}
         {account ? <NavLink href="/account/" label="Account" /> : null}
-        {session?.role === 'administrator' && permitted('infrastructure.view') ? <NavLink href="/infrastructure/" label="Infrastructure" /> : null}
-        {session?.role === 'administrator' && permitted('user.list') ? <NavLink href="/users/" label="People" /> : null}
+        {!renewalRequired && session?.role === 'administrator' && permitted('infrastructure.view') ? <NavLink href="/infrastructure/" label="Infrastructure" /> : null}
+        {normal && session?.role === 'administrator' && permitted('user.list') ? <NavLink href="/users/" label="People" /> : null}
         {normal && session?.role === 'administrator' && permitted('audit.list') ? <NavLink href="/audit/" label="Audit" /> : null}
       </AppShell.Navbar>
       <AppShell.Main>
@@ -46,8 +54,12 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
           <Stack gap="sm" role="region" aria-label="Persistent conditions">
             {error !== undefined ? <APIProblemView error={error} /> : null}
             {alerts.map(alert => <Alert key={alert.id} title={alert.title} color={alert.color ?? 'red'}>{alert.detail}</Alert>)}
+            {canRenew && session?.csrfToken ? (
+              <ExternalReauthorization key={session.csrfToken} csrfToken={session.csrfToken}
+                dueAt={session.externalAuthorizationDueAt} expired={!!renewalRequired} />
+            ) : null}
           </Stack>
-          {children}
+          {!renewalRequired ? children : null}
         </Stack>
       </AppShell.Main>
     </AppShell>
