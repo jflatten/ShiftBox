@@ -36,7 +36,7 @@ type serviceProxy struct {
 }
 
 func (s serviceProxy) serve(w http.ResponseWriter, r *http.Request) {
-	workspace, service, found := s.hosts.Resolve(r.Host)
+	workspace, service, found := s.hosts.ResolveAuthority(r.Host)
 	if r.TLS == nil || !found {
 		http.NotFound(w, r)
 		return
@@ -208,7 +208,7 @@ func WorkspaceEntryGrantHandler(db *sql.DB, origin string, now func() time.Time,
 				return AuthorizationTarget{}, err
 			}
 			workspace := r.PathValue("workspaceId")
-			host, err := hosts.Hostname(workspace, input.Service)
+			host, err := hosts.ServiceAuthority(workspace, input.Service)
 			if err != nil {
 				return AuthorizationTarget{}, Problem{Status: 400, Code: "request.invalid_service", Title: "Invalid workspace service"}
 			}

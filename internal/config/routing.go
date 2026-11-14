@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net"
 	"net/url"
 	"regexp"
 	"strings"
@@ -14,6 +15,8 @@ var serviceLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,23}[a-z0-9])?$`)
 // guest-chosen network addresses. Its validated suffixes cannot change afterward.
 type ServiceHosts struct {
 	management    string
+	authority     string
+	port          string
 	ideSuffix     string
 	previewSuffix string
 }
@@ -27,13 +30,46 @@ func NewServiceHosts(managementOrigin, idePattern, previewPattern string) (*Serv
 		return nil, err
 	}
 	origin, _ := url.Parse(managementOrigin)
-	hosts := &ServiceHosts{management: origin.Hostname(), ideSuffix: strings.TrimPrefix(idePattern, "{workspace}"), previewSuffix: strings.TrimPrefix(previewPattern, "{service}--{workspace}")}
+	hosts := &ServiceHosts{management: origin.Hostname(), authority: origin.Host, port: origin.Port(),
+		ideSuffix: strings.TrimPrefix(idePattern, "{workspace}"), previewSuffix: strings.TrimPrefix(previewPattern, "{service}--{workspace}")}
 	// Host-scoped cookies do not isolate ports, so a different port cannot make
 	// a management hostname safe to reuse for guest content.
 	if _, _, ok := hosts.Resolve(hosts.management); ok {
 		return nil, errors.New("management hostname overlaps a service hostname")
 	}
 	return hosts, nil
+}
+
+// ManagementAuthority returns the exact Host header for the management origin.
+func (h *ServiceHosts) ManagementAuthority() string {
+	if h == nil {
+		return ""
+	}
+	return h.authority
+}
+
+// ServiceAuthority builds the service Host header on the browser HTTPS port.
+func (h *ServiceHosts) ServiceAuthority(workspace, service string) (string, error) {
+	name, err := h.Hostname(workspace, service)
+	if err != nil || h.port == "" {
+		return name, err
+	}
+	return net.JoinHostPort(name, h.port), nil
+}
+
+// ResolveAuthority admits a canonical service Host header on the configured port.
+func (h *ServiceHosts) ResolveAuthority(authority string) (workspace, service string, ok bool) {
+	if h == nil {
+		return "", "", false
+	}
+	if h.port == "" {
+		return h.Resolve(authority)
+	}
+	host, port, err := net.SplitHostPort(authority)
+	if err != nil || port != h.port || net.JoinHostPort(host, port) != authority {
+		return "", "", false
+	}
+	return h.Resolve(host)
 }
 
 // Hostname constructs one IDE or preview hostname. Service key "ide" selects

@@ -86,7 +86,7 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 	registry := &proxy.Registry{}
 	streamStarted := make(chan struct{})
 	streamClosed := make(chan struct{})
-	router := web.ServiceProxyHandler(db, hosts, registry, func() time.Time { return now },
+	serviceProxy := web.ServiceProxyHandler(db, hosts, registry, func() time.Time { return now },
 		func(w http.ResponseWriter, r *http.Request, id string, generation int64, service, requestID string) {
 			forwarded++
 			if id != workspace || generation != 1 || service != "preview-8080" || requestID == "" || r.Header.Get("Cookie") != "app=fixture" {
@@ -99,6 +99,10 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusNoContent)
 		})
+	router, err := web.NewBrowserRouter(hosts, handler, serviceProxy)
+	if err != nil {
+		t.Fatal(err)
+	}
 	send := func(method, uri, requestOrigin string, cookie *http.Cookie, want int) *httptest.ResponseRecorder {
 		t.Helper()
 		r := httptest.NewRequest(method, uri, nil)
