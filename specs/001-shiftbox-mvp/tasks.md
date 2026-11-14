@@ -1874,3 +1874,12 @@ This checkpoint does not itself change the goal status.
   Contract tests cover pending and disabled accounts and live role changes.
   Web, application, CLI, and contract race suites passed. Account mutations
   and `serve` startup composition remain open.
+
+### People membership view
+
+- The People page displays current memberships, roles, and local or external
+  sign-in modes. A failed read can be retried, and direct visits require the
+  administrator's current list permission.
+- All 36 UI tests and the production build passed. Chrome exercised mobile
+  keyboard navigation and retry with fixture responses. Approval and
+  offboarding actions remain open under T077 and T101.
