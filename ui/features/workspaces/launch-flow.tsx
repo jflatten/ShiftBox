@@ -1,22 +1,10 @@
 import { useRef, useState } from 'react';
 import { Anchor, Button, Group, Radio, Stack, Text, Title } from '@mantine/core';
-import { useQuery } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
 import { useOperation } from '../../lib/use-operation';
-
-interface LaunchTemplate {
-  id: string;
-  name: string;
-  currentRevision: number;
-  repositoryUrl: string;
-  repositoryRef?: string;
-  devcontainerPath: string;
-  resourceProfileId: string;
-  platformArtifactId: string;
-  secretNames?: string[];
-}
+import { useTemplates, type TemplateRevision } from '../templates/use-templates';
 
 interface AcceptedLaunch {
   id: string;
@@ -26,22 +14,13 @@ interface AcceptedLaunch {
 export function LaunchFlow({ csrfToken }: { csrfToken: string }) {
   const [cursors, setCursors] = useState<string[]>([]);
   const [selected, setSelected] = useState('');
-  const [review, setReview] = useState<LaunchTemplate>();
+  const [review, setReview] = useState<TemplateRevision>();
   const [accepted, setAccepted] = useState<AcceptedLaunch>();
   const [error, setError] = useState<unknown>();
   const [submitting, setSubmitting] = useState(false);
   const requestKeys = useRef(new Map<string, string>());
   const cursor = cursors.at(-1);
-  const templates = useQuery<{ items: LaunchTemplate[]; nextCursor: string | null }>({
-    queryKey: ['templates', 'launch', cursor ?? ''],
-    enabled: !accepted,
-    queryFn: async ({ signal }) => {
-      const suffix = cursor ? '?cursor=' + encodeURIComponent(cursor) : '';
-      const response = await fetch('/api/v1/templates' + suffix, { signal, cache: 'no-store' });
-      if (!response.ok) throw await readProblem(response);
-      return response.json();
-    },
-  });
+  const templates = useTemplates(cursor, !accepted);
   const data = templates.isError ? undefined : templates.data;
   const chosen = data?.items.find(item => templateKey(item) === selected);
 
@@ -131,7 +110,7 @@ export function LaunchFlow({ csrfToken }: { csrfToken: string }) {
   );
 }
 
-function templateKey(template: LaunchTemplate) {
+function templateKey(template: TemplateRevision) {
   return `${template.id}/${template.currentRevision}`;
 }
 
