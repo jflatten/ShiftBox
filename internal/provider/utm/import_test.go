@@ -129,8 +129,13 @@ func checkLiveImport(t *testing.T, controller *PowerController, root string, fix
 			}
 		}()
 	}
-	if err != nil || got.InstanceID == fixtureID || len(got.Resources) != 3 {
+	if err != nil || got.InstanceID == fixtureID || len(got.Resources) != 3 || !got.DiskCapacityKnown || got.Effective.DiskBytes != req.Resources.DiskBytes {
 		t.Fatalf("imported fixture = %+v, %v, want new stopped VM with its own disk and recovery drive", got, err)
+	}
+	measured, err := controller.InspectStoppedDisk(context.Background(), got.Ref, stageRoot)
+	if err != nil || !measured.DiskCapacityKnown || measured.Effective.DiskBytes != req.Resources.DiskBytes ||
+		measured.Resources[1].GuestBytes == nil || *measured.Resources[1].GuestBytes != req.Resources.DiskBytes {
+		t.Fatalf("attached disk inventory = %+v, %v, want verified 64 MiB", measured, err)
 	}
 	repeat, err := controller.ImportCatalogArtifact(context.Background(), req, sourceRoot, manifest, stageRoot, root)
 	if err != nil || repeat.InstanceID != got.InstanceID {

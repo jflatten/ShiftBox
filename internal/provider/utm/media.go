@@ -124,6 +124,9 @@ on run argv
     return "issued"
 end run
 
+` + matchOwnerScript
+
+const matchOwnerScript = `
 on matchesOwner(vmNotes, argv)
     considering case
         if vmNotes does not start with "shiftbox:" then return false

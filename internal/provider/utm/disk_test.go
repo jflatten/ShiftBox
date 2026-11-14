@@ -78,3 +78,28 @@ func TestStagedDiskMatchesAllocation(t *testing.T) {
 		t.Errorf("verifyStagedDisk(128 MiB) = %v, want unsupported", err)
 	}
 }
+
+// TestExportedDiskMustMatchInventory refuses capacity evidence from a
+// different VM or a drive omitted from the scripting inventory.
+func TestExportedDiskMustMatchInventory(t *testing.T) {
+	inventory := provider.Inventory{
+		InstanceID: "vm",
+		Ref:        provider.WorkspaceRef{InstallationID: "install", WorkspaceID: "workspace", Generation: 1, OwnershipMarker: "marker"},
+		ArtifactID: "artifact", Release: "release",
+		Resources: []provider.OwnedResource{{ID: "vm", Type: "vm"}, {ID: "vm/disk", Type: "disk"}},
+	}
+	const notes = `"Notes":"shiftbox:{\"installationId\":\"install\",\"workspaceId\":\"workspace\",\"generation\":1,\"marker\":\"marker\",\"artifactId\":\"artifact\",\"release\":\"release\"}"`
+	for _, tc := range []struct {
+		instance, drive string
+		want            error
+	}{
+		{"other", "disk", provider.ErrOwnershipMismatch},
+		{"vm", "other", provider.ErrOutcomeUnknown},
+	} {
+		config := `{"Information":{"UUID":"` + tc.instance + `",` + notes + `},"Drive":[{"Identifier":"` + tc.drive + `","ImageType":"Disk","ImageName":"disk.qcow2"}]}`
+		got, err := exportedDiskInventory(inventory, nil, []byte(config))
+		if !errors.Is(err, tc.want) || got.DiskCapacityKnown {
+			t.Errorf("exportedDiskInventory(%s, %s) = %v, %v, want unknown capacity and %v", tc.instance, tc.drive, got.DiskCapacityKnown, err, tc.want)
+		}
+	}
+}

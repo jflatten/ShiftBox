@@ -1270,3 +1270,16 @@ This checkpoint does not itself change the goal status.
 - This proves requested capacity at the input boundary. Attached disk
   capacity still needs provider or authenticated guest evidence. The UTM
   scripting readback only exposes host allocation on this build.
+
+### Verify attached UTM disk capacity
+
+- Catalog import now measures capacity after import using a temporary export
+  through the supported UTM command. It matches the exported UUID, ownership
+  and drive IDs against native inventory before reading the QCOW2 header.
+  Verification leaves the live bundle untouched.
+- Native UTM 5.0.8 import and repeat import verified the attached 64 MiB
+  fixture disk. Unit tests reject a different VM or drive. Provider,
+  workspace, release and contract race tests and Go vet passed.
+- Temporary export has storage and time costs on real platform images.
+  Production provider composition, disk resizing and release boot validation
+  remain pending.

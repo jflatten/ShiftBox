@@ -40,7 +40,22 @@ func (p *PowerController) ImportCatalogArtifact(ctx context.Context, req provide
 	if err := verifyStagedDisk(ctx, artifact, req.Resources.DiskBytes); err != nil {
 		return provider.Inventory{}, err
 	}
-	return p.ImportManagedVM(ctx, req, artifact.Bundle, storage)
+	inventory, err := p.ImportManagedVM(ctx, req, artifact.Bundle, storage)
+	if err != nil {
+		return inventory, err
+	}
+	if !inventory.DiskCapacityKnown {
+		inventory, err = p.InspectStoppedDisk(ctx, inventory.Ref, stagingRoot)
+		if err != nil {
+			return inventory, err
+		}
+	}
+	if inventory.Ref.InstallationID != req.Ref.InstallationID || inventory.Ref.WorkspaceID != req.Ref.WorkspaceID ||
+		inventory.Ref.Generation != req.Ref.Generation || inventory.Ref.OwnershipMarker != req.Ref.OwnershipMarker ||
+		!inventory.DiskCapacityKnown {
+		return inventory, provider.ErrOutcomeUnknown
+	}
+	return inventory, verifyImportedVM(inventory, req, filepath.Join(storage, managedBundleName(req.Ref)))
 }
 
 // ImportManagedVM imports a verified, staged artifact under its reserved
