@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Providers } from '../../app/providers';
 import { Workspaces } from './workspaces';
@@ -19,8 +19,13 @@ const launchTemplate = {
   resourceProfileId: 'small', platformArtifactId: 'ubuntu', secretNames: ['API_KEY'],
 };
 const originalFetch = globalThis.fetch;
+const originalEventSource = Object.getOwnPropertyDescriptor(globalThis, 'EventSource');
 
-afterEach(() => { globalThis.fetch = originalFetch; });
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  if (originalEventSource) Object.defineProperty(globalThis, 'EventSource', originalEventSource);
+  else Reflect.deleteProperty(globalThis, 'EventSource');
+});
 
 function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
@@ -180,6 +185,48 @@ test('submits stop with CSRF and the workspace version', async () => {
     method: 'POST', headers: expect.objectContaining({ 'If-Match': '"4"', 'X-CSRF-Token': 'fixture', 'Idempotency-Key': expect.any(String) }),
   }));
   expect(screen.getAllByText('Running', { exact: true })).toHaveLength(2);
+});
+
+// Permanent deletion requires the exact workspace ID and explicit consent,
+// then displays the provider verification step without changing observed state.
+test('confirms workspace deletion and follows its durable operation', async () => {
+  class OperationStream extends EventTarget { close() {} }
+  Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: OperationStream });
+  let deleting = false;
+  const endpoint = '/api/v1/workspaces/workspace-one/actions/delete';
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces/workspace-one') return json({
+      ...workspace, desiredState: deleting ? 'deleted' : 'stopped', currentOperationId: deleting ? 'delete-op' : null,
+    });
+    if (input === endpoint && init?.method === 'POST') {
+      deleting = true;
+      return json({ id: 'delete-op' });
+    }
+    if (input === '/api/v1/operations/delete-op') return json({
+      id: 'delete-op', version: 1, status: 'waiting', currentStep: 'delete',
+      steps: [{ key: 'delete', index: 0, label: 'Delete workspace and retained files', status: 'active' }],
+    });
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Delete workspace' }));
+  const dialog = within(await screen.findByRole('dialog', { name: 'Delete workspace' }));
+  await waitFor(() => expect(dialog.getByRole('button', { name: 'Cancel' })).toHaveFocus());
+  expect(dialog.getByText(/permanently delete/i)).toBeVisible();
+  const confirm = dialog.getByRole('button', { name: 'Delete permanently' });
+  await user.type(dialog.getByRole('textbox', { name: /workspace id/i }), workspace.id);
+  expect(confirm).toBeDisabled();
+  await user.click(dialog.getByRole('checkbox', { name: /permanent/i }));
+  await user.click(confirm);
+  expect(fetch).toHaveBeenCalledWith(endpoint, expect.objectContaining({
+    method: 'POST', body: JSON.stringify({ confirmDataLoss: true }),
+    headers: expect.objectContaining({ 'If-Match': '"4"', 'X-CSRF-Token': 'fixture' }),
+  }));
+  expect(await screen.findByText('Waiting — Delete workspace and retained files')).toBeVisible();
+  expect(screen.getByText('Stopped', { exact: true })).toBeVisible();
 });
 
 // Rebuild can be requested for a running workspace and displays the durable

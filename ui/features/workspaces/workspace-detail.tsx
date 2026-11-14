@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Anchor, Button, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Button, Checkbox, Group, Modal, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { WorkflowStepper } from '../../components/workflow-stepper';
@@ -8,7 +8,7 @@ import { useOperation } from '../../lib/use-operation';
 import { workspaceState, type Workspace } from './workspace';
 import { RetentionWarning } from './retention';
 
-type WorkspaceAction = 'start' | 'stop' | 'rebuild' | 'repair' | 'retry';
+type WorkspaceAction = 'start' | 'stop' | 'rebuild' | 'repair' | 'retry' | 'delete';
 
 export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: string }) {
   const workspace = useQuery<Workspace>({
@@ -26,10 +26,12 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
   const [operationBusy, setOperationBusy] = useState(false);
   const [submitting, setSubmitting] = useState<WorkspaceAction>();
   const [error, setError] = useState<unknown>();
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const request = useRef<{ action: WorkspaceAction; version: number; key: string }>(undefined);
   const displayedOperation = data?.currentOperationId ?? (operationBusy ? operationId : data?.lastFailedOperationId ?? operationId);
   const action = data?.desiredState === 'running' && data.observedState === 'running' ? 'stop' :
     data?.desiredState === 'stopped' && data.observedState === 'stopped' ? 'start' : undefined;
+  const busy = !!data?.currentOperationId || operationBusy || !!submitting;
 
   const requestAction = async (action: WorkspaceAction) => {
     if (!data || submitting) return;
@@ -41,7 +43,11 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
       }
       const response = await fetch(`/api/v1/workspaces/${encodeURIComponent(id)}/actions/${action}`, {
         method: 'POST',
-        headers: { 'X-CSRF-Token': csrfToken, 'If-Match': `"${data.version}"`, 'Idempotency-Key': request.current.key },
+        headers: {
+          'X-CSRF-Token': csrfToken, 'If-Match': `"${data.version}"`, 'Idempotency-Key': request.current.key,
+          ...(action === 'delete' ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body: action === 'delete' ? JSON.stringify({ confirmDataLoss: true }) : undefined,
       });
       if (!response.ok) {
         if (response.status === 412) void workspace.refetch();
@@ -50,6 +56,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
       const accepted: { id: string } = await response.json();
       setOperationBusy(true);
       setOperationId(accepted.id);
+      if (action === 'delete') setConfirmDelete(false);
       request.current = undefined;
       await workspace.refetch();
     } catch (error) {
@@ -95,7 +102,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
           {data.canStartRepair || data.canOpenRepair || data.canRetryAfterRepair ? (
             <Text id={repairDescriptionId} size="sm">Repair opens your project files in a separate IDE and skips project hooks, tasks, and extensions.</Text>
           ) : null}
-          {error !== undefined ? <APIProblemView error={error} /> : null}
+          {error !== undefined && !confirmDelete ? <APIProblemView error={error} /> : null}
           {data.canOpenIde ? <OpenIDE id={id} csrfToken={csrfToken} /> : null}
           {data.canOpenRepair ? <OpenIDE id={id} csrfToken={csrfToken} service="repair" describedBy={repairDescriptionId} /> : null}
           {action ? (
@@ -124,10 +131,48 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
               ) : null}
             </Group>
           ) : null}
+          {data.desiredState !== 'deleted' && data.observedState !== 'deleted' ? (
+            <Button variant="subtle" color="red" disabled={busy} style={{ alignSelf: 'flex-start' }}
+              onClick={() => { setError(undefined); setConfirmDelete(true); }}>Delete workspace</Button>
+          ) : null}
+          {confirmDelete ? <DeleteWorkspaceDialog id={id} busy={busy} submitting={submitting === 'delete'} error={error}
+            cancel={() => setConfirmDelete(false)} confirm={() => void requestAction('delete')} /> : null}
           {displayedOperation ? <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation} onFinished={setOperationBusy} /> : null}
         </Stack>
       ) : null}
     </>
+  );
+}
+
+function DeleteWorkspaceDialog({ id, busy, submitting, error, cancel, confirm }: {
+  id: string;
+  busy: boolean;
+  submitting: boolean;
+  error: unknown;
+  cancel: () => void;
+  confirm: () => void;
+}) {
+  const [typedID, setTypedID] = useState('');
+  const [accepted, setAccepted] = useState(false);
+  const enabled = typedID === id && accepted && !busy;
+  return (
+    <Modal opened onClose={cancel} title="Delete workspace" closeOnClickOutside={false} closeOnEscape={!submitting} withCloseButton={!submitting}>
+      <form onSubmit={event => { event.preventDefault(); if (enabled) confirm(); }}>
+        <Stack>
+          <Text>Permanently delete this workspace, including project files, the developer home, and named application volumes.</Text>
+          <Text size="sm">Workspace ID <Text span fw={600}>{id}</Text></Text>
+          <TextInput label="Type the workspace ID" value={typedID} onChange={event => setTypedID(event.currentTarget.value)}
+            disabled={submitting} autoComplete="off" />
+          <Checkbox label="I understand that deletion is permanent" checked={accepted}
+            onChange={event => setAccepted(event.currentTarget.checked)} disabled={submitting} />
+          {error !== undefined ? <APIProblemView error={error} /> : null}
+          <Group justify="flex-end">
+            <Button type="button" variant="default" data-autofocus disabled={submitting} onClick={cancel}>Cancel</Button>
+            <Button type="submit" color="red" disabled={!enabled} loading={submitting}>Delete permanently</Button>
+          </Group>
+        </Stack>
+      </form>
+    </Modal>
   );
 }
 

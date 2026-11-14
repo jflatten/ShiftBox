@@ -54,11 +54,7 @@ func (s *Store) CommitRetentionDeletion(ctx context.Context, journal *operation.
 		committed, err = journal.CreateInTx(ctx, tx, operation.Request{
 			Actor: "controller", Key: "retention-delete:" + ref.WorkspaceID + ":" + strconv.FormatInt(ref.Generation, 10),
 			Type: "delete", OriginatingAction: retentionDeleteAction, WorkspaceID: &ref.WorkspaceID, Generation: ref.Generation,
-			Steps: []operation.Step{
-				{Key: "shutdown", Label: "Request graceful shutdown"},
-				{Key: "stop", Label: "Verify workspace stopped"},
-				{Key: "delete", Label: "Delete workspace and retained files"},
-			},
+			Steps: deletionSteps(),
 		})
 		if err != nil {
 			return err
@@ -78,13 +74,21 @@ func (s *Store) CommitRetentionDeletion(ctx context.Context, journal *operation.
 	return committed, nil
 }
 
-type retentionExecutor struct {
+func deletionSteps() []operation.Step {
+	return []operation.Step{
+		{Key: "shutdown", Label: "Request graceful shutdown"},
+		{Key: "stop", Label: "Verify workspace stopped"},
+		{Key: "delete", Label: "Delete workspace and retained files"},
+	}
+}
+
+type deletionExecutor struct {
 	store    *Store
 	machines provider.Provider
 	now      func() time.Time
 }
 
-func (e retentionExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
+func (e deletionExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
 	req, shutdownAt, err := e.request(ctx, op, step)
 	if err != nil {
 		return "", false, err
@@ -121,7 +125,10 @@ func (e retentionExecutor) Observe(ctx context.Context, op operation.Operation, 
 			return "Guest verified graceful workload shutdown.", true, nil
 		}
 		if !e.now().Before(shutdownAt.Add(time.Minute)) {
-			return "The graceful shutdown window elapsed. Retention authorizes provider-enforced stop.", true, nil
+			if op.OriginatingAction == retentionDeleteAction {
+				return "The graceful shutdown window elapsed. Retention authorizes provider-enforced stop.", true, nil
+			}
+			return "The guest did not confirm shutdown. Request a graceful stop through the provider.", true, nil
 		}
 		return "", false, &operation.StepWaiting{Cause: errGuestShutdownPending, Detail: "Waiting for graceful workload shutdown before removing the workspace and retained files."}
 	case "stop":
@@ -139,7 +146,7 @@ func (e retentionExecutor) Observe(ctx context.Context, op operation.Operation, 
 	return "", false, retentionWaiting(provider.ErrOutcomeUnknown)
 }
 
-func (e retentionExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
+func (e deletionExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
 	req, shutdownAt, err := e.request(ctx, op, step)
 	if err != nil {
 		return "", err
@@ -150,7 +157,7 @@ func (e retentionExecutor) Apply(ctx context.Context, op operation.Operation, st
 	case "stop":
 		want = provider.Stopped
 		got, err = e.machines.Stop(ctx, provider.StopRequest{Ref: req.Ref, OperationID: op.ID,
-			ForceRetentionDelete: !e.now().Before(shutdownAt.Add(time.Minute))})
+			ForceRetentionDelete: op.OriginatingAction == retentionDeleteAction && !e.now().Before(shutdownAt.Add(time.Minute))})
 	case "delete":
 		want = provider.Deleted
 		got, err = e.machines.Delete(ctx, provider.DeleteRequest{Ref: req.Ref, OperationID: op.ID})
@@ -169,8 +176,10 @@ func (e retentionExecutor) Apply(ctx context.Context, op operation.Operation, st
 	return evidence, err
 }
 
-func (e retentionExecutor) request(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, time.Time, error) {
-	if op.Type != "delete" || op.OriginatingAction != retentionDeleteAction || op.Actor != "controller" || op.WorkspaceID == nil ||
+func (e deletionExecutor) request(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, time.Time, error) {
+	authorizedAction := (op.OriginatingAction == retentionDeleteAction && op.Actor == "controller") ||
+		(op.OriginatingAction == "workspace.delete" && op.Actor != "" && op.Actor != "controller")
+	if op.Type != "delete" || !authorizedAction || op.WorkspaceID == nil ||
 		op.StartedAt == nil || op.Status != "running" || step.Status != "active" {
 		return provider.CreateRequest{}, time.Time{}, provider.ErrInvalidState
 	}
@@ -199,7 +208,7 @@ func (e retentionExecutor) request(ctx context.Context, op operation.Operation, 
 	return req, shutdownAt, err
 }
 
-func (e retentionExecutor) record(ctx context.Context, op operation.Operation, ref provider.WorkspaceRef, got provider.Inventory, want provider.PowerState) (string, bool, error) {
+func (e deletionExecutor) record(ctx context.Context, op operation.Operation, ref provider.WorkspaceRef, got provider.Inventory, want provider.PowerState) (string, bool, error) {
 	now := e.now().UTC()
 	if got.Ref != ref || got.Power != want || got.ObservedAt.Before(*op.StartedAt) {
 		return "", false, retentionWaiting(provider.ErrOutcomeUnknown)
@@ -227,5 +236,5 @@ func (e retentionExecutor) record(ctx context.Context, op operation.Operation, r
 }
 
 func retentionWaiting(err error) error {
-	return &operation.StepWaiting{Cause: err, Detail: "Waiting for the provider to verify retention cleanup. Unconfirmed resources remain reserved."}
+	return &operation.StepWaiting{Cause: err, Detail: "Waiting for the provider to verify workspace cleanup. Unconfirmed resources remain reserved."}
 }

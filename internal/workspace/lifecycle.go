@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jflatten/ShiftBox/internal/audit"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 )
@@ -19,7 +20,7 @@ var (
 	ErrOperationInProgress = errors.New("workspace operation in progress")
 )
 
-// PowerIntent identifies an authorized start, stop, or rebuild of a retained workspace.
+// PowerIntent identifies an authorized lifecycle action for a retained workspace.
 type PowerIntent struct {
 	WorkspaceID, ActorID, RequestKey, Action string
 	Version                                  int64
@@ -35,6 +36,8 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		desired, label = "running", "Start workspace"
 	case "stop":
 		desired, label = "stopped", "Stop workspace"
+	case "delete":
+		desired = "deleted"
 	case "rebuild":
 		desired, label = "running", "Rebuild the development container"
 	case "repair":
@@ -115,7 +118,8 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 			return operation.Operation{}, provider.ErrInvalidState
 		}
 	}
-	result, err = tx.ExecContext(ctx, `UPDATE workspaces SET desired_state=$2,updated_at=$3,version=version+1
+	result, err = tx.ExecContext(ctx, `UPDATE workspaces SET desired_state=$2,updated_at=$3,version=version+1,
+		deletion_commit_at=CASE WHEN $2='deleted' THEN $3 ELSE deletion_commit_at END
 		WHERE id=$1 AND version=$4`, intent.WorkspaceID, desired, now.UTC().Format(time.RFC3339Nano), version)
 	if err := capacityWrite(result, err); err != nil {
 		if errors.Is(err, ErrCapacityConflict) {
@@ -132,6 +136,12 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 	switch intent.Action {
 	case "stop":
 		steps = []operation.Step{{Key: "shutdown", Label: "Stop workspace workloads"}, {Key: "stop", Label: label}}
+	case "delete":
+		steps = deletionSteps()
+		if _, err := audit.Append(ctx, tx, audit.Event{OccurredAt: now, ActorType: "user", ActorID: intent.ActorID,
+			Action: action, ResourceType: "workspace", ResourceID: intent.WorkspaceID, Outcome: "allowed", ReasonCode: "confirmed_data_loss"}); err != nil {
+			return operation.Operation{}, err
+		}
 	case "start":
 		steps = append([]operation.Step{{Key: "start", Label: label}}, developmentSteps("Start the development container")...)
 	case "rebuild", "retry":

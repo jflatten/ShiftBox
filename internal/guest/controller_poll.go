@@ -117,7 +117,7 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 		  AND (w.observed_state='running' OR ($4='deleted' AND w.observed_state IN ('stopped','unreachable')))
 		  AND w.desired_state=$4
 		  AND (($3='configure' AND o.type='provision' AND o.originating_action='workspace.launch' AND o.requested_by=w.owner_user_id)
-		    OR ($3='shutdown' AND $4='deleted' AND o.type='delete' AND o.originating_action='workspace.retention_delete'
+		    OR ($3='shutdown' AND $4='deleted' AND o.type='delete' AND o.originating_action IN ('workspace.retention_delete','workspace.delete')
 		      AND w.deletion_commit_at IS NOT NULL)
 		    OR (($3='shutdown' AND $4='stopped' AND o.type='stop' AND o.originating_action='workspace.stop'
 		      OR $3='configure' AND o.type='start' AND o.originating_action='workspace.start'

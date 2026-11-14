@@ -326,9 +326,6 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 // TestWorkspaceDeleteAndUpdateAPI covers the published lifecycle actions for
 // an owned stopped workspace, including explicit deletion and unavailable maintenance.
 func TestWorkspaceDeleteAndUpdateAPI(t *testing.T) {
-	if os.Getenv("SHIFTBOX_TEST_WORKSPACE_DELETE_UPDATE") != "1" {
-		t.Skip("set SHIFTBOX_TEST_WORKSPACE_DELETE_UPDATE=1 for the T099 deletion and T095 update contract checks")
-	}
 	ctx := t.Context()
 	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "workspace.db")})
 	if err != nil {
@@ -370,6 +367,9 @@ func TestWorkspaceDeleteAndUpdateAPI(t *testing.T) {
 		return w
 	}
 	t.Run("update without scheduled maintenance", func(t *testing.T) {
+		if os.Getenv("SHIFTBOX_TEST_WORKSPACE_DELETE_UPDATE") != "1" {
+			t.Skip("set SHIFTBOX_TEST_WORKSPACE_DELETE_UPDATE=1 for the pending T095 update contract")
+		}
 		response := request("update", "")
 		if response.Code != http.StatusConflict {
 			t.Errorf("workspace update without scheduled maintenance returned %d %s, want %d", response.Code, response.Body, http.StatusConflict)
@@ -393,12 +393,13 @@ func TestWorkspaceDeleteAndUpdateAPI(t *testing.T) {
 			t.Fatalf("confirmed deletion returned %s (%v), want a durable delete operation", accepted.Body, err)
 		}
 		var desired, observed, disk string
-		if err := db.QueryRowContext(ctx, `SELECT w.desired_state,w.observed_state,r.disk_state FROM workspaces w
-			JOIN reservations r ON r.workspace_id=w.id WHERE w.id=$1`, workspaceID).Scan(&desired, &observed, &disk); err != nil {
+		var committed bool
+		if err := db.QueryRowContext(ctx, `SELECT w.desired_state,w.observed_state,r.disk_state,w.deletion_commit_at IS NOT NULL FROM workspaces w
+			JOIN reservations r ON r.workspace_id=w.id WHERE w.id=$1`, workspaceID).Scan(&desired, &observed, &disk, &committed); err != nil {
 			t.Fatal(err)
 		}
-		if desired != "deleted" || observed != "stopped" || disk != "reserved" {
-			t.Errorf("deletion admission produced %s/%s with %s disk, want deleted/stopped and reserved disk", desired, observed, disk)
+		if desired != "deleted" || observed != "stopped" || disk != "reserved" || !committed {
+			t.Errorf("deletion admission produced %s/%s with %s disk and commit %t, want deleted/stopped, reserved disk and durable commit", desired, observed, disk, committed)
 		}
 		var replayed operation.Operation
 		replay := request("delete", `{"confirmDataLoss":true}`)

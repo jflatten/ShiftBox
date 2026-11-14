@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/provider/fake"
@@ -124,6 +125,12 @@ func TestRetentionCandidates(t *testing.T) {
 // TestRetentionWorkerPreservesDiskUntilVerified exercises the grace timeout,
 // provider-enforced stop, partial removal, and a lost final deletion reply.
 func TestRetentionWorkerPreservesDiskUntilVerified(t *testing.T) {
+	t.Run("retention", func(t *testing.T) { verifyDeletionWorker(t, true) })
+	t.Run("explicit", func(t *testing.T) { verifyDeletionWorker(t, false) })
+}
+
+func verifyDeletionWorker(t *testing.T, retention bool) {
+	t.Helper()
 	ctx := t.Context()
 	db := openWorkspaceDatabase(t, "sqlite")
 	seedReservationWorkspaces(t, db)
@@ -171,7 +178,18 @@ func TestRetentionWorkerPreservesDiskUntilVerified(t *testing.T) {
 		t.Fatalf("retention candidates = %d (%v), want one", len(list), err)
 	}
 	journal := operation.NewJournal(db, clock, uuid.NewString)
-	op, err := store.CommitRetentionDeletion(ctx, journal, list[0], now, policy)
+	var op operation.Operation
+	if retention {
+		op, err = store.CommitRetentionDeletion(ctx, journal, list[0], now, policy)
+	} else {
+		err = database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			var admitErr error
+			op, admitErr = AdmitPower(ctx, tx, journal, PowerIntent{
+				WorkspaceID: id, ActorID: "reservation-owner", RequestKey: "explicit-delete-fixture", Action: "delete", Version: 1,
+			}, now)
+			return admitErr
+		})
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,8 +209,12 @@ func TestRetentionWorkerPreservesDiskUntilVerified(t *testing.T) {
 	now = now.Add(time.Second)
 	run(nil)
 	run(nil)
-	if machines.forced != 1 {
-		t.Fatalf("provider force stop calls = %d, want 1", machines.forced)
+	wantForced := 0
+	if retention {
+		wantForced = 1
+	}
+	if machines.forced != wantForced {
+		t.Fatalf("provider force stop calls = %d, want %d", machines.forced, wantForced)
 	}
 	checkReservation(t, db, id, "released", "reserved")
 	machines.FailDelete()

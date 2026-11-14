@@ -188,7 +188,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T090 [US3] Complete admission/reconciliation behavior for explicit limiting-resource errors, no queue/eviction/resize, retained reservations, orphan/conflict visibility, and restart-safe inspection proven by T079 in `internal/workspace/capacity.go`, `internal/workspace/reconciler.go`, and `internal/provider/reconcile.go`
 - [ ] T091 [US3] Implement provider-capability-derived network policies, stopped-only application, explicit required exceptions, post-change verification, and remain-stopped failure behavior proven by T080 in `internal/workspace/network.go` and `internal/provider/utm/network.go`
 - [ ] T092 [US3] Implement transactional user/permission/session/origin/guest revocation publication and closure of all established connection types proven by T081 in `internal/auth/revocation.go`, `internal/proxy/registry.go`, and `internal/guest/tunnel.go`
-- [ ] T093 [US3] Implement activity observations, retention deadlines, host-outage grace, precommit authority/activity/state recheck, graceful then provider-enforced deletion, and verified reservation release proven by T082 in `internal/workspace/activity.go`, `internal/workspace/retention.go`, and `internal/workspace/delete.go`
+- [X] T093 [US3] Implement activity observations, retention deadlines, host-outage grace, precommit authority/activity/state recheck, graceful then provider-enforced deletion, and verified reservation release proven by T082 in `internal/workspace/activity.go`, `internal/workspace/retention.go`, and `internal/workspace/delete.go`
 - [ ] T094 [US3] Implement long-stop eligibility verification and provider-mediated enrollment recovery without disk/identity reset proven by T084 in `internal/workspace/recovery.go` and `internal/provider/utm/enrollment.go`
 - [ ] T095 [US3] Implement maintenance campaign scheduling, warnings, per-target durable operations, safe-boundary activation, signed update staging, verification/rollback evidence, prior-state restoration, and blocked completion proven by T083 in `internal/workspace/maintenance.go` and `internal/guest/update.go`
 - [ ] T096 [US3] Implement browser-certificate expiry/invalid notices, storage/provider/controller/key persistent conditions, and no unprotected listener fallback in `internal/app/conditions.go` and `internal/config/certificate.go`
@@ -2414,6 +2414,12 @@ This checkpoint does not itself change the goal status.
   outage grace, the original deadline, and what deletion removes.
   Native UTM automatic cleanup, configurable activity monitoring, and
   production startup wiring remain open under T093.
+- T093 is complete. The active runtime schedules retention with outage grace,
+  and the worker tests verify graceful shutdown, retention-authorized
+  escalation, partial cleanup, lost replies, and capacity release only after
+  provider confirmation. T099 now admits confirmed explicit deletion and
+  T101 shows typed confirmation with Cancel focused first and server-driven
+  cleanup progress. Explicit deletion uses a graceful provider stop.
 
 ### Signed-in administrator password reset
 

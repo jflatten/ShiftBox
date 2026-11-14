@@ -14,7 +14,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
-// WorkspacePowerHandler admits start, stop, and rebuild for the workspace owner
+// WorkspacePowerHandler admits lifecycle actions for the workspace owner
 // or administrator through the contextual workspace action route.
 func WorkspacePowerHandler(db *sql.DB, origin string, now func() time.Time, journal *operation.Journal) AuthorizedHandler {
 	return AuthorizedHandler{
@@ -31,7 +31,7 @@ func WorkspacePowerHandler(db *sql.DB, origin string, now func() time.Time, jour
 				// therefore uses the permission that admitted repair.
 				action = "repair"
 			}
-			if action != "start" && action != "stop" && action != "rebuild" && action != "repair" {
+			if action != "start" && action != "stop" && action != "rebuild" && action != "repair" && action != "delete" {
 				return AuthorizationTarget{}, Problem{Status: 400, Code: "workspace.invalid_action", Title: "Choose a supported workspace action"}
 			}
 			return (WorkspaceAuthorization{Workspace: target.Resource}).Action(actor, action)
@@ -48,17 +48,21 @@ func WorkspacePowerHandler(db *sql.DB, origin string, now func() time.Time, jour
 			if err != nil {
 				return nil, err
 			}
+			var input struct {
+				ConfirmDataLoss bool `json:"confirmDataLoss"`
+			}
 			if r.ContentLength != 0 {
-				var input struct {
-					ConfirmDataLoss bool `json:"confirmDataLoss"`
-				}
 				if err := DecodeJSON(nil, r, &input, 4096); err != nil {
 					return nil, err
 				}
 			}
+			action := r.PathValue("action")
+			if action == "delete" && !input.ConfirmDataLoss {
+				return nil, Problem{Status: 400, Code: "workspace.confirm_data_loss", Title: "Confirm permanent deletion of the workspace and retained files"}
+			}
 			op, err := workspace.AdmitPower(ctx, tx, journal, workspace.PowerIntent{
 				WorkspaceID: target.Resource.ID, ActorID: actor.User.ID, RequestKey: key,
-				Action: r.PathValue("action"), Version: version,
+				Action: action, Version: version,
 			}, now())
 			if err != nil {
 				return nil, powerAdmissionProblem(err)

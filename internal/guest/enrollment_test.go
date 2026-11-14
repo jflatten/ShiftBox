@@ -714,13 +714,13 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		}
 	})
 	// A committed deletion permits only the current graceful shutdown poll.
-	t.Run("retention shutdown remains available until stop", func(t *testing.T) {
+	t.Run("committed deletion permits shutdown only", func(t *testing.T) {
 		const deleteID = "99999999-0000-4000-8000-000000000005"
 		if _, err := db.Exec("UPDATE workspaces SET desired_state='deleted',deletion_commit_at=$1 WHERE id='work'", now.Format(time.RFC3339Nano)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,version,originating_action)
-			VALUES($1,'work','delete',1,'controller','retention-fixture','waiting','shutdown','now',13,'workspace.retention_delete')`, deleteID); err != nil {
+			VALUES($1,'work','delete',1,'owner','explicit-delete-fixture','waiting','shutdown','now',13,'workspace.delete')`, deleteID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`INSERT INTO operation_steps(operation_id,step_index,step_key,label,status)
@@ -730,19 +730,19 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		code, body := pollResponse(hello)
 		if code != 200 || !strings.Contains(body, `"command":"shutdown-for-stop"`) ||
 			!strings.Contains(body, `"desiredState":"stopped"`) || !strings.Contains(body, `"type":"stop"`) {
-			t.Fatalf("retention poll = %d %s, want compatible shutdown command", code, body)
+			t.Fatalf("delete poll = %d %s, want compatible shutdown command", code, body)
 		}
 		const report = `{"protocolVersion":"1","guestRelease":"test","lastOperationId":"` + deleteID + `","lastOperationVersion":13,
 			"operationReport":{"operationId":"` + deleteID + `","workspaceGeneration":1,
 			"status":"succeeded","step":"workload.shutdown","attempt":1,"evidence":{"waitForReached":false}}}`
 		if code := poll(report); code != 200 {
-			t.Fatalf("retention shutdown report = %d, want 200", code)
+			t.Fatalf("delete shutdown report = %d, want 200", code)
 		}
 		if _, err := db.Exec("UPDATE operations SET current_step='stop' WHERE id=$1", deleteID); err != nil {
 			t.Fatal(err)
 		}
 		if code := poll(hello); code != 403 {
-			t.Fatalf("poll after retention shutdown = %d, want 403", code)
+			t.Fatalf("poll after delete shutdown = %d, want 403", code)
 		}
 	})
 	var authenticated string

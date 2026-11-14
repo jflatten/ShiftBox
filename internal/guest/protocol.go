@@ -70,7 +70,7 @@ func (e *Enrollment) authenticate(ctx context.Context, db pollQueryer, leaf *x50
 		      AND u.membership_state='active' AND w.provider_instance_id IS NOT NULL
 		      AND (w.desired_state<>'deleted' OR ($8 AND w.deletion_commit_at IS NOT NULL AND EXISTS (
 		        SELECT 1 FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
-		        AND o.type='delete' AND o.originating_action='workspace.retention_delete'
+		        AND o.type='delete' AND o.originating_action IN ('workspace.retention_delete','workspace.delete')
 		        AND o.status IN ('running','waiting') AND o.current_step='shutdown'))))
 		RETURNING (SELECT desired_state FROM workspaces WHERE id=$2),
 		          (SELECT owner_user_id FROM workspaces WHERE id=$2),
