@@ -14,7 +14,31 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/release"
 )
+
+// ImportCatalogArtifact stages verified catalog content in a temporary
+// directory and passes the workspace copy to the native UTM import path.
+func (p *PowerController) ImportCatalogArtifact(ctx context.Context, req provider.CreateRequest, directory, manifestPath, stagingRoot, storage string) (provider.Inventory, error) {
+	manifest, err := os.Open(manifestPath)
+	if err != nil {
+		return provider.Inventory{}, fmt.Errorf("%w: cannot open catalog manifest", release.ErrInvalidArtifact)
+	}
+	defer manifest.Close()
+	stage, err := os.MkdirTemp(stagingRoot, "import-")
+	if err != nil {
+		return provider.Inventory{}, fmt.Errorf("create VM import staging directory: %w", err)
+	}
+	defer os.RemoveAll(stage)
+	artifact, err := release.StageArtifact(ctx, directory, manifest, stage, managedBundleName(req.Ref))
+	if err != nil {
+		return provider.Inventory{}, err
+	}
+	if artifact.Manifest.ReleaseID != req.Release {
+		return provider.Inventory{}, fmt.Errorf("%w: catalog release does not match workspace", release.ErrInvalidArtifact)
+	}
+	return p.ImportManagedVM(ctx, req, artifact.Bundle, storage)
+}
 
 // ImportManagedVM imports a verified, staged artifact under its reserved
 // filename. Storage is UTM's configured Documents directory. Enrollment is

@@ -1155,3 +1155,15 @@ This checkpoint does not itself change the goal status.
   without changing the digests of the exported source.
 - Production catalog staging, disk-capacity verification and adjustment,
   boot of the pinned Ubuntu artifact, and enrollment remain pending.
+
+### Verified platform artifact staging
+
+- Added strict amd64 manifest validation and streamed SHA-256 verification
+  of every file in a UTM export. The verifier rejects missing, undeclared,
+  and non-regular files. Staging writes a separate copy and removes it on
+  failure.
+- The native UTM 5.0.8 import test now uses the verified staging path and
+  proves import, retry, and deletion preserve the source bundle's digests.
+  Release, provider, and contract race tests and Go vet passed.
+- Durable catalog publication, default selection, release compatibility,
+  and boot validation of the pinned Ubuntu artifact remain pending.

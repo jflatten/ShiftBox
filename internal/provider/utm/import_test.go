@@ -3,16 +3,20 @@ package utm
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/release"
 )
 
 // TestImportRefusesUntrackedBundle prevents a duplicate import if an earlier
@@ -94,15 +98,18 @@ func checkLiveImport(t *testing.T, controller *PowerController, root string, fix
 		}
 	}()
 
-	source := filepath.Join(t.TempDir(), name)
+	sourceRoot := t.TempDir()
+	source := filepath.Join(sourceRoot, "reference.utm")
 	if _, err := fixture("export", fixtureID, source); err != nil {
 		t.Fatalf("export import source: %v", err)
 	}
 	sourceFiles := bundleDigests(t, source)
+	manifest := fixtureImportManifest(t, sourceRoot, sourceFiles)
+	stageRoot := t.TempDir()
 	destination := filepath.Join(root, name)
 	req := provider.CreateRequest{Ref: ref, OperationID: "fixture-create", ArtifactID: "fixture", Release: "fixture",
 		Resources: provider.Resources{CPU: 3, MemoryBytes: 768 << 20, DiskBytes: 64 << 20}, NetworkMode: "shared"}
-	got, err := controller.ImportManagedVM(context.Background(), req, source, root)
+	got, err := controller.ImportCatalogArtifact(context.Background(), req, sourceRoot, manifest, stageRoot, root)
 	if got.InstanceID != "" {
 		defer func() {
 			_, err := controller.DeleteManagedVM(context.Background(), provider.DeleteRequest{Ref: got.Ref, OperationID: "fixture-cleanup"}, destination)
@@ -114,7 +121,7 @@ func checkLiveImport(t *testing.T, controller *PowerController, root string, fix
 	if err != nil || got.InstanceID == fixtureID || len(got.Resources) != 3 {
 		t.Fatalf("imported fixture = %+v, %v, want new stopped VM with its own disk and recovery drive", got, err)
 	}
-	repeat, err := controller.ImportManagedVM(context.Background(), req, source, root)
+	repeat, err := controller.ImportCatalogArtifact(context.Background(), req, sourceRoot, manifest, stageRoot, root)
 	if err != nil || repeat.InstanceID != got.InstanceID {
 		t.Fatalf("repeated import = %s, %v, want %s", repeat.InstanceID, err, got.InstanceID)
 	}
@@ -122,6 +129,33 @@ func checkLiveImport(t *testing.T, controller *PowerController, root string, fix
 	if got := bundleDigests(t, source); !maps.Equal(got, sourceFiles) {
 		t.Fatal("importing or deleting the workspace changed the exported source")
 	}
+}
+
+// fixtureImportManifest records the native export files in the catalog format.
+func fixtureImportManifest(t *testing.T, root string, files map[string][32]byte) string {
+	t.Helper()
+	component := release.ArtifactComponent{Version: "fixture", SHA256: strings.Repeat("0", 64)}
+	manifest := release.ArtifactManifest{SchemaVersion: 1, ReleaseID: "fixture",
+		Architecture: "amd64", PlatformVersion: "fixture", ProtocolVersion: "1", Guest: component, IDE: component,
+		Provenance: release.ArtifactProvenance{Source: "native UTM test fixture", Revision: "fixture"}}
+	for path, sum := range files {
+		kind := "vm"
+		if filepath.Ext(path) == ".qcow2" {
+			kind = "disk"
+		}
+		manifest.Resources = append(manifest.Resources, release.ArtifactResource{
+			Path: "reference.utm/" + path, Type: kind, SHA256: hex.EncodeToString(sum[:]),
+		})
+	}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(root, "manifest.json")
+	if err := os.WriteFile(manifestPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return manifestPath
 }
 
 // bundleDigests records each file in the disposable source without reading
