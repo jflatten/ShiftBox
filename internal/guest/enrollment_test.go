@@ -250,8 +250,44 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		if _, err := db.Exec(`UPDATE operations SET current_step='maintenance_activate' WHERE id=$1`, target); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := db.Exec(`INSERT INTO operation_steps(operation_id,step_index,step_key,label,status)
+			VALUES($1,1,'maintenance_activate','Activate update','active')`, target); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := enrollment.UpdateRelease(ctx, leaf, now); !errors.Is(err, guest.ErrGuestUnauthorized) {
 			t.Errorf("UpdateRelease after staging = %v, want denial", err)
+		}
+		// The guest can replay its staging receipt while the trial boots.
+		stagedDigest := strings.Repeat("a", 64)
+		receipt.Evidence.UpdateDigest = stagedDigest
+		_, activation, err := enrollment.Exchange(ctx, leaf, now, input)
+		if err != nil || activation == nil || activation.Command != "activate-guest-update" || activation.Version != dispatch.Version {
+			t.Fatalf("activation dispatch = %+v (%v), want activation for staged version", activation, err)
+		}
+		receipt.Step = "update.activate"
+		receipt.Evidence.UpdateDigest = strings.Repeat("b", 64)
+		if _, _, err := enrollment.Exchange(ctx, leaf, now, input); !errors.Is(err, guest.ErrGuestReportConflict) {
+			t.Errorf("activation for a different digest = %v, want conflict", err)
+		}
+		receipt.Evidence.UpdateDigest = stagedDigest
+		input.GuestRelease = "previous"
+		if _, _, err := enrollment.Exchange(ctx, leaf, now, input); !errors.Is(err, guest.ErrGuestReportConflict) {
+			t.Errorf("activation from the previous release = %v, want conflict", err)
+		}
+		input.GuestRelease = "test"
+		for range 2 {
+			if _, next, err := enrollment.Exchange(ctx, leaf, now, input); err != nil || next != nil {
+				t.Fatalf("activation receipt = %+v (%v), want successful idempotent receipt", next, err)
+			}
+		}
+		var status, savedDigest string
+		if err := db.QueryRow(`SELECT activation_status,update_digest FROM guest_dispatches WHERE operation_id=$1`,
+			target).Scan(&status, &savedDigest); err != nil || status != "succeeded" || savedDigest != stagedDigest {
+			t.Errorf("stored activation = %q/%q (%v), want succeeded with staged digest", status, savedDigest, err)
+		}
+		receipt.Status, receipt.Problem = "failed", "guest.update_rolled_back"
+		if _, _, err := enrollment.Exchange(ctx, leaf, now, input); !errors.Is(err, guest.ErrGuestReportConflict) {
+			t.Errorf("changed activation receipt = %v, want conflict", err)
 		}
 	})
 	if leaf.Subject.CommonName == "injected" || len(leaf.DNSNames) != 0 || len(leaf.URIs) != 1 ||

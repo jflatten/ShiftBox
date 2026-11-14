@@ -117,6 +117,9 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 	if update, err := nextGuestUpdateStage(ctx, tx, contact); err != nil || update != nil {
 		return update, err
 	}
+	if update, err := nextGuestUpdateActivation(ctx, tx, contact); err != nil || update != nil {
+		return update, err
+	}
 	dispatch := PollOperation{}
 	var step string
 	switch contact.DesiredState {
@@ -207,6 +210,9 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 	repair := report.Step == "repair.enter"
 	if report.Step == "update.stage" {
 		return acceptGuestUpdateStage(ctx, tx, contact, input)
+	}
+	if report.Step == "update.activate" {
+		return acceptGuestUpdateActivation(ctx, tx, contact, input)
 	}
 	if report.Evidence.UpdateDigest != "" {
 		return ErrGuestReportConflict

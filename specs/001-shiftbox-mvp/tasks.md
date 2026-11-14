@@ -1720,8 +1720,11 @@ This checkpoint does not itself change the goal status.
   signing command matches the pinned manifest before publishing a detached
   signature. Guest activation now starts a supervisor trial only for the
   staged operation and release, then reports confirmation or rollback on
-  redelivery. Controller activation dispatch and receipt, native signed-update
-  validation, and prior-state restoration remain open under T095.
+  redelivery. The controller now dispatches activation for the staged
+  operation, stores the result separately from the staging receipt, and
+  checks that successful activation reports the assigned release and staged
+  digest. Target execution, native signed-update validation, and prior-state
+  restoration remain open under T095.
 
 ### Migration preflight CLI
 

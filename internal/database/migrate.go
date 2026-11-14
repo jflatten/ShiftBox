@@ -126,7 +126,7 @@ func CheckSchema(ctx context.Context, db *sql.DB, profile string) error {
 		"SELECT operation_id,installation_id,folder,make_default FROM platform_imports WHERE 1=0",
 		"SELECT operation_id,installation_id,release_id,deadline,state FROM maintenance_campaigns WHERE 1=0",
 		"SELECT campaign_id,workspace_id,generation,operation_id,state FROM maintenance_targets WHERE 1=0",
-		"SELECT update_digest FROM guest_dispatches WHERE 1=0",
+		"SELECT update_digest,activation_status FROM guest_dispatches WHERE 1=0",
 		"SELECT operation_id,installation_id,release_id FROM migration_preflights WHERE 1=0",
 		"SELECT id,operation_id,product_release,state,manifest_digest,archive_digest,size_bytes,completed_at FROM backup_records WHERE 1=0",
 		"SELECT id,restore_operation_id,state,reviewed_users_json,reconciled_workspaces_json,approved_by,activated_at,version FROM recovery_reviews WHERE 1=0",
