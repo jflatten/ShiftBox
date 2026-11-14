@@ -84,5 +84,31 @@ rejected, the old SQLite configuration failed on startup, and a fresh
 Chrome session signed in as administrator on PostgreSQL. The [release
 tracker](mvp-v1-v14.md) records the controller and guest digests.
 
+## SQLite identity and migration preflight on `mvp-rc2`
+
+Chrome completed protected SQLite setup in 54.6 seconds. A fresh
+administrator session confirmed the management listener hid setup.
+The People page created a local member, whose first sign-in was
+restricted until the temporary password changed. The browser verified
+that a member could list workspaces after that change and could not use
+the administrator's membership API.
+
+An administrator reset held open across the member's password change
+was refused with HTTP 412. The browser closed the stale dialog, refreshed
+People, and completed a reset. The old password and normal session were
+then rejected. The replacement temporary password required another
+change. Disabling the member revoked the replacement session, denied
+fresh sign-in and preserved administrator access. The database recorded
+the reset, password changes and disablement, and the expected session
+revocation reasons. Separate race-enabled tests using the pinned Dex
+process passed local membership checks and an organization sign-in
+round trip against a local OpenID Connect issuer.
+
+The check-only migration command on the same SQLite installation returned
+exit 7 with only `migration.backup_required` before a backup. After the
+controller created and verified an encrypted management archive, preflight
+against the exact `mvp-rc2` manifest returned exit 0 with zero blockers.
+The fixture had no retained workspaces.
+
 T125 remains open for the outstanding scenarios in sections 3–10. The
 [release tracker](mvp-v1-v14.md) records the remaining live checks.
