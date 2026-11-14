@@ -59,16 +59,6 @@ CREATE TABLE users (
  updated_at TEXT NOT NULL,
  version BIGINT NOT NULL CHECK (version > 0)
 );
--- One initial owner intent survives setup retries without resetting credentials.
-CREATE TABLE bootstrap_administrator (
- installation_id TEXT PRIMARY KEY REFERENCES installations(id),
- user_id TEXT NOT NULL UNIQUE REFERENCES users(id),
- password_hash TEXT NOT NULL,
- password_ciphertext_id TEXT UNIQUE REFERENCES protected_values(id),
- credential_ready INTEGER NOT NULL DEFAULT 0 CHECK (credential_ready IN (0,1)),
- delivered_at TEXT,
- created_at TEXT NOT NULL
-);
 CREATE TABLE identity_bindings (
  id TEXT PRIMARY KEY,
  user_id TEXT NOT NULL REFERENCES users(id),
@@ -162,4 +152,16 @@ CREATE TABLE audit_events (
  outcome TEXT NOT NULL CHECK (length(outcome) > 0),
  reason_code TEXT NOT NULL CHECK (length(reason_code) > 0),
  metadata_json TEXT NOT NULL CHECK (length(metadata_json) <= 2048 AND (json_valid(metadata_json) AND json_type(metadata_json) = 'object' AND json_remove(metadata_json, '$.ownerId', '$.grantId') = '{}' AND (json_type(metadata_json, '$.ownerId') IS NULL OR json_type(metadata_json, '$.ownerId') = 'text') AND (json_type(metadata_json, '$.grantId') IS NULL OR json_type(metadata_json, '$.grantId') = 'text')))
+);
+
+-- One initial owner intent survives setup retries without resetting credentials.
+CREATE TABLE bootstrap_administrator (
+ installation_id TEXT PRIMARY KEY REFERENCES installations(id),
+ user_id TEXT NOT NULL UNIQUE REFERENCES users(id),
+ operation_id TEXT UNIQUE REFERENCES operations(id),
+ password_hash TEXT NOT NULL,
+ password_ciphertext_id TEXT UNIQUE REFERENCES protected_values(id),
+ credential_ready INTEGER NOT NULL DEFAULT 0 CHECK (credential_ready IN (0,1)),
+ delivered_at TEXT,
+ created_at TEXT NOT NULL
 );

@@ -14,6 +14,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/migrations"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
@@ -93,6 +94,18 @@ func checkAdministratorIntent(t *testing.T, profile string) {
 	if first.UserID != second.UserID || string(first.PasswordHash) != string(second.PasswordHash) {
 		t.Fatal("setup retry replaced stable identity or credential")
 	}
+	journal := operation.NewJournal(db, time.Now, func() string { return "00000000-0000-4000-8000-000000000010" })
+	admission, err := app.BeginAdministrator(ctx, db, journal, input, cipher, "setup-owner-request-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := app.BeginAdministrator(ctx, db, journal, input, cipher, "setup-owner-request-02")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admission.AdministratorID != first.UserID || repeated.Operation.ID != admission.Operation.ID {
+		t.Fatal("setup retry created a different administrator workflow")
+	}
 	var role, email string
 	var change bool
 	if err := db.QueryRow(`SELECT role,primary_email,must_change_password FROM users`).Scan(&role, &email, &change); err != nil {
@@ -131,18 +144,36 @@ func checkAdministratorIntent(t *testing.T, profile string) {
 		}
 		return apiFailure
 	})
-	if err := app.ReconcileAdministrator(ctx, db, installation, admin); !errors.Is(err, apiFailure) {
+	worker := operation.Worker{Journal: journal, Name: "setup-worker", LeaseDuration: 30 * time.Second, Executor: &app.AdministratorExecutor{DB: db, InstallationID: installation, Admin: admin}}
+	if err := worker.RunOnce(ctx, admission.Operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.RunOnce(ctx, admission.Operation.ID); !errors.Is(err, apiFailure) {
 		t.Fatalf("Dex failure = %v, want fixture failure", err)
 	}
 	if password, err := app.ClaimTemporaryPassword(ctx, db, installation, cipher, time.Now()); err == nil || password != "" {
 		t.Fatal("failed Dex call enabled delivery")
 	}
+	waiting, err := journal.Get(ctx, admission.Operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if waiting.Status != "waiting" || waiting.Steps[0].Status != "succeeded" || waiting.Steps[1].Status != "active" {
+		t.Fatal("Dex failure lost completed setup evidence or failed to retain waiting step")
+	}
 	apiFailure = nil
-	if err := app.ReconcileAdministrator(ctx, db, installation, admin); err != nil {
+	if err := worker.RunOnce(ctx, admission.Operation.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := app.ReconcileAdministrator(ctx, db, installation, admin); err != nil {
 		t.Fatal(err)
+	}
+	finished, err := journal.Get(ctx, admission.Operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Status != "succeeded" || len(finished.Steps) != 2 || finished.Steps[0].Status != "succeeded" || finished.Steps[1].Status != "succeeded" {
+		t.Fatal("administrator workflow did not retain completed progress")
 	}
 	if calls != 2 {
 		t.Errorf("Dex calls = %d, want failed attempt and successful retry only", calls)

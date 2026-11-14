@@ -78,6 +78,11 @@ func (j *Journal) Get(ctx context.Context, id string) (Operation, error) {
 	return op, err
 }
 
+// GetInTx reads workflow evidence inside a caller-owned admission transaction.
+func (j *Journal) GetInTx(ctx context.Context, tx *sql.Tx, id string) (Operation, error) {
+	return readOperation(ctx, tx, id)
+}
+
 // Claim leases restartable work and gives each worker attempt a distinct fence.
 func (j *Journal) Claim(ctx context.Context, id, worker string, duration time.Duration) (Claim, error) {
 	var claim Claim

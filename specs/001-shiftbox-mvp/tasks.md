@@ -877,3 +877,18 @@ This checkpoint does not itself change the goal status.
 - App race tests pass on SQLite/PostgreSQL; native Dex integration and formatting/
   vet pass. Visible setup operations, protected HTTP/CLI composition, explicit
   local reset, and forced-password-change transitions remain unfinished.
+
+### Journaled administrator setup workflow
+
+- Added atomic admission linking the initial administrator intent to one durable
+  setup operation. Even a retry with a different HTTP idempotency key returns the
+  linked operation rather than creating another administrator workflow.
+- Added the shared-worker executor for Record initial administrator and Configure
+  local sign-in. It observes durable setup evidence before applying Dex effects;
+  errors leave the current step waiting and retain the completed first step.
+- Both-profile tests exercise failure, retry, stable operation identity, and final
+  ordered completion. App/operation/identity/contract race suites pass with local
+  PostgreSQL and pinned Dex fixtures; formatting/vet pass.
+- This supplies authoritative Stepper/SSE data but does not yet mount protected
+  setup endpoints or render setup forms. HTTP/CLI composition, explicit reset,
+  forced password change, and the remaining setup steps remain incomplete.
