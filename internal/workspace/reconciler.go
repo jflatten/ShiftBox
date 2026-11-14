@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/operation"
@@ -45,7 +46,8 @@ func (e workspaceExecutor) Observe(ctx context.Context, op operation.Operation, 
 	if executor == nil {
 		return "", false, provider.ErrInvalidState
 	}
-	return executor.Observe(ctx, op, step)
+	evidence, done, err := executor.Observe(ctx, op, step)
+	return evidence, done, workspaceEffectError(op, err)
 }
 
 func (e workspaceExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
@@ -53,5 +55,22 @@ func (e workspaceExecutor) Apply(ctx context.Context, op operation.Operation, st
 	if executor == nil {
 		return "", provider.ErrInvalidState
 	}
-	return executor.Apply(ctx, op, step)
+	evidence, err := executor.Apply(ctx, op, step)
+	return evidence, workspaceEffectError(op, err)
+}
+
+func workspaceEffectError(op operation.Operation, err error) error {
+	if err == nil || op.OriginatingAction != "user.disable" {
+		return err
+	}
+	detail := "The provider has not confirmed the workspace stopped. Check that UTM is running and the VM is reachable."
+	switch {
+	case errors.Is(err, provider.ErrNotFound):
+		detail = "UTM could not find the workspace VM. Check the provider inventory. ShiftBox is retaining its reservations."
+	case errors.Is(err, provider.ErrOwnershipMismatch):
+		detail = "The VM no longer matches the workspace's ownership record. Check the provider inventory before attempting a stop."
+	case errors.Is(err, provider.ErrPermission):
+		detail = "ShiftBox could not stop the workspace through UTM. Check the controller's UTM automation permissions."
+	}
+	return &operation.StepWaiting{Detail: detail, Cause: err}
 }

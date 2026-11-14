@@ -95,6 +95,22 @@ test('submits stop with CSRF and the workspace version', async () => {
   expect(screen.getAllByText('Running', { exact: true })).toHaveLength(2);
 });
 
+// The workspace list opened from People keeps the disabled member's scope
+// across pages so the operator can return to their stop workflows.
+test('keeps the owner filter when paging from People', async () => {
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json({ ...session, user: { id: 'admin', role: 'administrator' } });
+    if (input === '/api/v1/workspaces?owner=member') return json({ items: [workspace], nextCursor: 'cursor-one' });
+    if (input === '/api/v1/workspaces?owner=member&cursor=cursor-one') return json({ items: [], nextCursor: null });
+    throw new Error('unexpected request');
+  });
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={null} ownerId="member" /></Providers>);
+  expect(await screen.findByRole('link', { name: 'workspace-one' })).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(await screen.findByText('No workspaces on this page.')).toBeVisible();
+});
+
 // Launch requires review of the selected revision and preserves the reviewed
 // request identity when capacity refusal leaves the form available for retry.
 test('reviews a template revision and reports a capacity refusal', async () => {

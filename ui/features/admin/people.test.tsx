@@ -42,6 +42,7 @@ test('retries a failed membership read and shows account states', async () => {
   expect(within(pending).getByText('Pending')).toBeVisible();
   expect(within(pending).getByText('External')).toBeVisible();
   expect(within(disabled).getByText('Disabled')).toBeVisible();
+  expect(within(disabled).getByRole('link', { name: /View workspaces/ })).toHaveAttribute('href', '/workspaces/?owner=disabled');
   expect(reads).toBe(2);
 });
 

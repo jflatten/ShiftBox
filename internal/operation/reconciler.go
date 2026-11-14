@@ -20,6 +20,17 @@ type StepFailure struct {
 
 func (f *StepFailure) Error() string { return f.Detail }
 
+// StepWaiting carries a public explanation for an effect that will be retried.
+type StepWaiting struct {
+	Detail string
+	Cause  error
+}
+
+func (w *StepWaiting) Error() string { return w.Detail }
+
+// Unwrap preserves the underlying cause for the controller.
+func (w *StepWaiting) Unwrap() error { return w.Cause }
+
 // Worker processes one operation step at a time with durable intent and fencing.
 type Worker struct {
 	Journal       *Journal
@@ -71,7 +82,11 @@ func (w *Worker) RunOnce(ctx context.Context, id string) error {
 		if failure, ok := errors.AsType[*StepFailure](err); ok {
 			return w.Journal.failStep(ctx, claim, index, failure.Detail)
 		}
-		waitErr := w.Journal.wait(ctx, claim, "Waiting for a verified observation before retrying.")
+		detail := "Waiting for a verified observation before retrying."
+		if waiting, ok := errors.AsType[*StepWaiting](err); ok && waiting.Detail != "" && len(waiting.Detail) <= 4096 {
+			detail = waiting.Detail
+		}
+		waitErr := w.Journal.wait(ctx, claim, detail)
 		return errors.Join(err, waitErr)
 	}
 	if err := w.Journal.CompleteStep(ctx, claim, index, evidence); err != nil {

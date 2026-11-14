@@ -7,7 +7,7 @@ import { Workspaces } from '../../features/workspaces/workspaces';
 
 function SelectedWorkspace() {
   const search = useSearchParams();
-  return <Workspaces workspaceId={search.get('id')} launch={search.get('launch') === '1'} />;
+  return <Workspaces workspaceId={search.get('id')} ownerId={search.get('owner')} launch={search.get('launch') === '1'} />;
 }
 
 export default function WorkspacesPage() {

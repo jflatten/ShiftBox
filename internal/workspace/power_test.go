@@ -172,6 +172,14 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	machines.LoseReply("stop")
 	run(offboard, provider.ErrOutcomeUnknown)
 	checkReservation(t, db, id, "reserved", "reserved")
+	waiting, err := journal.Get(ctx, offboard.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantDetail = "The provider has not confirmed the workspace stopped. Check that UTM is running and the VM is reachable."
+	if waiting.Status != "waiting" || waiting.Steps[0].Detail != wantDetail {
+		t.Errorf("offboarding after lost response = %s, %q, want waiting with recovery guidance", waiting.Status, waiting.Steps[0].Detail)
+	}
 	run(offboard, nil)
 	checkState(offboard, "stopped", "succeeded")
 	checkReservation(t, db, id, "released", "reserved")

@@ -12,7 +12,11 @@ import { WorkspaceDetail } from './workspace-detail';
 
 import { workspaceState, type Workspace } from './workspace';
 
-export function Workspaces({ workspaceId, launch = false }: { workspaceId: string | null; launch?: boolean }) {
+export function Workspaces({ workspaceId, ownerId, launch = false }: {
+  workspaceId: string | null;
+  ownerId?: string | null;
+  launch?: boolean;
+}) {
   const session = useSession();
   const current = session.session?.mode === 'normal' && session.session.installationState === 'active' ? session.session : undefined;
   return (
@@ -24,18 +28,22 @@ export function Workspaces({ workspaceId, launch = false }: { workspaceId: strin
           {session.data === null ? <Button component="a" href="/auth/login" style={{ alignSelf: 'flex-start' }}>Sign in</Button> : null}
         </>
       ) : launch ? <LaunchFlow csrfToken={current.csrfToken} />
-        : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken} /> : <WorkspaceList />}
+        : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken} />
+          : <WorkspaceList key={ownerId} ownerId={ownerId} />}
     </ShiftBoxShell>
   );
 }
 
-function WorkspaceList() {
+function WorkspaceList({ ownerId }: { ownerId?: string | null }) {
   const [cursors, setCursors] = useState<string[]>([]);
   const cursor = cursors.at(-1);
   const page = useQuery<{ items: Workspace[]; nextCursor: string | null }>({
-    queryKey: ['workspaces', 'list', cursor ?? ''],
+    queryKey: ['workspaces', 'list', ownerId ?? '', cursor ?? ''],
     queryFn: async ({ signal }) => {
-      const suffix = cursor ? '?cursor=' + encodeURIComponent(cursor) : '';
+      const params = new URLSearchParams();
+      if (ownerId) params.set('owner', ownerId);
+      if (cursor) params.set('cursor', cursor);
+      const suffix = params.size > 0 ? '?' + params : '';
       const response = await fetch('/api/v1/workspaces' + suffix, { signal, cache: 'no-store' });
       if (!response.ok) throw await readProblem(response);
       return response.json();
@@ -46,7 +54,8 @@ function WorkspaceList() {
     <>
       <Group justify="space-between">
         <Title order={1}>Workspaces</Title>
-        <Button component="a" href="/workspaces/?launch=1">Launch workspace</Button>
+        {ownerId ? <Anchor href="/workspaces/">All workspaces</Anchor> :
+          <Button component="a" href="/workspaces/?launch=1">Launch workspace</Button>}
       </Group>
       {page.isError ? <APIProblemView error={page.error} /> : null}
       {page.isPending ? <Text role="status">Loading workspaces…</Text> : null}

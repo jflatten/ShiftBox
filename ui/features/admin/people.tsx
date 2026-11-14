@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, NativeSelect, Stack, Table, Text, Title } from '@mantine/core';
+import { Anchor, Button, NativeSelect, Stack, Table, Text, Title } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { ShiftBoxShell } from '../../components/app-shell';
 import { APIProblemView } from '../../components/api-problem';
@@ -91,6 +91,10 @@ function PeopleTable({ people, csrfToken, canApprove, canChangeRole, onDisable, 
               <Table.Th scope="row">
                 {person.displayName ? <Text fw={600}>{person.displayName}</Text> : null}
                 <Text size="sm">{person.primaryEmail}</Text>
+                {person.membershipState === 'disabled' ? (
+                  <Anchor size="sm" href={`/workspaces/?owner=${encodeURIComponent(person.id)}`}
+                    aria-label={`View workspaces for ${person.primaryEmail}`}>View workspaces</Anchor>
+                ) : null}
               </Table.Th>
               <Table.Td>{roleLabels[person.role]}</Table.Td>
               <Table.Td>{membershipLabels[person.membershipState]}</Table.Td>

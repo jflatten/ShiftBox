@@ -1932,3 +1932,12 @@ This checkpoint does not itself change the goal status.
 - The UI test covers a failed provider stop. All 39 UI tests, the production
   build, and Go web, workspace, app, and contract race tests passed. Per-session
   counts, live UTM offboarding, and post-dialog recovery remain open.
+
+### Offboarding stop visibility after close
+
+- Disabled accounts link to their workspace list. The owner filter stays
+  in the URL and across pages, so administrators can return to pending
+  and failed stop workflows after closing the offboarding dialog.
+- Unconfirmed provider stops persist recovery guidance in the Stepper.
+  Missing or mismatched VM inventory does not release reservations.
+  All 40 UI tests, production build, and Go race tests passed.
