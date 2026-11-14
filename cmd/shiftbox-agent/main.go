@@ -14,6 +14,7 @@ import (
 const (
 	stateDirectory = "/var/lib/shiftbox-agent"
 	seedFile       = "/run/shiftbox-enrollment/ENROLLMENT.JSON"
+	platformAgent  = "/usr/local/bin/shiftbox-agent"
 )
 
 var (
@@ -22,6 +23,15 @@ var (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "supervisor-select" && os.Geteuid() == 0 {
+		path, err := guest.SelectGuestAgent(stateDirectory, platformAgent)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Could not verify the guest agent for startup.")
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, path)
+		return
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if len(os.Args) > 1 && os.Args[1] == "git" {

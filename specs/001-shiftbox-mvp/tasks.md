@@ -1700,8 +1700,11 @@ This checkpoint does not itself change the goal status.
   Verification tests use disposable keys. The durable trial record selects
   the last confirmed agent after an interrupted trial. Confirmation requires
   the matching digest and attempt token, and an identical failed candidate
-  requires an explicit retry. Production key provisioning, guest dispatch,
-  supervisor integration, and prior-state restoration remain open under T095.
+  requires an explicit retry. The platform launcher now selects the agent
+  through its fixed supervisor entry point, checks the recorded binary digest
+  before launch, and falls back when the candidate is missing or changed.
+  Production key provisioning, guest dispatch and authenticated confirmation,
+  and prior-state restoration remain open under T095.
 
 ### Migration preflight CLI
 

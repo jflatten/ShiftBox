@@ -21,4 +21,5 @@ trap 'rm -f -- "$command_copy"' EXIT
 install -m 0755 /usr/local/bin/shiftbox-agent "$command_copy"
 mv -fT -- "$command_copy" /run/shiftbox-credentials/shiftbox
 trap - EXIT
-exec /usr/local/bin/shiftbox-agent serve
+agent=$(/usr/local/bin/shiftbox-agent supervisor-select)
+exec "$agent" serve

@@ -44,7 +44,8 @@ func TestPlatformImageBootConfiguration(t *testing.T) {
 			"WantedBy=multi-user.target",
 		}},
 		{path: "guest/shiftbox-start-agent", lines: []string{
-			"exec /usr/local/bin/shiftbox-agent serve",
+			"agent=$(/usr/local/bin/shiftbox-agent supervisor-select)",
+			`exec "$agent" serve`,
 		}},
 	} {
 		raw, err := os.ReadFile(filepath.Join(root, file.path))
