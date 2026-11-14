@@ -97,8 +97,8 @@ func validPollEndpoint(endpoint string) bool {
 
 // ServeAgent loads the on-disk identity or enrolls from mounted recovery media,
 // then maintains authenticated contact until stopped by the supervisor.
-func ServeAgent(ctx context.Context, stateDir, seedPath, endpoint, protocol, release string) error {
-	if !filepath.IsAbs(stateDir) || !filepath.IsAbs(seedPath) || !validPollEndpoint(endpoint) {
+func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release string) error {
+	if !filepath.IsAbs(stateDir) || !filepath.IsAbs(seedPath) {
 		return errors.New("invalid guest service configuration")
 	}
 	identity, err := LoadAgentIdentity(stateDir, time.Now())
@@ -116,7 +116,7 @@ func ServeAgent(ctx context.Context, stateDir, seedPath, endpoint, protocol, rel
 	client := identity.pollClient("")
 	defer client.CloseIdleConnections()
 	for {
-		if err := pollAgent(ctx, client, endpoint, protocol, release); err != nil {
+		if err := pollAgent(ctx, client, identity.PollEndpoint, protocol, release); err != nil {
 			return err
 		}
 		delay := 27*time.Second + rand.N(6*time.Second)

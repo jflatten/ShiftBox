@@ -13,24 +13,24 @@ var errGuestContactPending = errors.New("waiting for authenticated guest contact
 
 // EnrollmentDelivery handles the private recovery image for one operation.
 type EnrollmentDelivery interface {
-	Deliver(context.Context, string, provider.Inventory, time.Time, string, string,
+	Deliver(context.Context, string, provider.Inventory, time.Time, string, string, string,
 		func(context.Context, provider.EnrollmentRequest) (provider.DeliveryResult, error)) (string, error)
 	CleanupDelivery(context.Context, string, provider.WorkspaceRef, string) error
 }
 
 // LaunchExecutor reconciles VM provisioning and authenticated initial enrollment.
 type LaunchExecutor struct {
-	provision           *ProvisionExecutor
-	enrollment          EnrollmentDelivery
-	mediaRoot, endpoint string
-	now                 func() time.Time
+	provision                         *ProvisionExecutor
+	enrollment                        EnrollmentDelivery
+	mediaRoot, endpoint, pollEndpoint string
+	now                               func() time.Time
 }
 
 // NewLaunchExecutor binds launch workflow steps to the provider and enrollment service.
 func NewLaunchExecutor(store *Store, machines provider.Provider, enrollment EnrollmentDelivery,
-	mediaRoot, endpoint string, now func() time.Time) *LaunchExecutor {
+	mediaRoot, endpoint, pollEndpoint string, now func() time.Time) *LaunchExecutor {
 	return &LaunchExecutor{provision: NewProvisionExecutor(store, machines), enrollment: enrollment,
-		mediaRoot: mediaRoot, endpoint: endpoint, now: now}
+		mediaRoot: mediaRoot, endpoint: endpoint, pollEndpoint: pollEndpoint, now: now}
 }
 
 func (e *LaunchExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
@@ -67,7 +67,7 @@ func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step
 	default:
 		return "", provider.ErrOutcomeUnknown
 	}
-	if _, err := e.enrollment.Deliver(ctx, op.ID, got, e.now(), e.mediaRoot, e.endpoint, e.provision.provider.DeliverEnrollment); err != nil {
+	if _, err := e.enrollment.Deliver(ctx, op.ID, got, e.now(), e.mediaRoot, e.endpoint, e.pollEndpoint, e.provision.provider.DeliverEnrollment); err != nil {
 		return "", err
 	}
 	// Recheck the workspace after the external attachment. Only this path,

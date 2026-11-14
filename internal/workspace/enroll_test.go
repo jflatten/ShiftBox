@@ -51,7 +51,7 @@ func TestLaunchWorkerWaitsForGuestContact(t *testing.T) {
 	mediaRoot := t.TempDir()
 	newWorker := func() *operation.Worker {
 		return &operation.Worker{Journal: journal, Name: "test", LeaseDuration: time.Minute,
-			Executor: NewLaunchExecutor(store, machines, enrollment, mediaRoot, "https://internal.test/internal/v1/enroll", time.Now)}
+			Executor: NewLaunchExecutor(store, machines, enrollment, mediaRoot, "https://internal.test/internal/v1/enroll", "https://internal.test:8443/internal/v1/guest/poll", time.Now)}
 	}
 	worker := newWorker()
 	if err := worker.RunOnce(ctx, op.ID); err != nil {
@@ -110,7 +110,7 @@ func (p *enrollmentFixtureProvider) Create(ctx context.Context, req provider.Cre
 }
 
 func (s *stubEnrollment) Deliver(ctx context.Context, operationID string, inv provider.Inventory, _ time.Time,
-	_, _ string, attach func(context.Context, provider.EnrollmentRequest) (provider.DeliveryResult, error),
+	_, _, _ string, attach func(context.Context, provider.EnrollmentRequest) (provider.DeliveryResult, error),
 ) (string, error) {
 	s.deliveries++
 	_, err := attach(ctx, provider.EnrollmentRequest{Ref: inv.Ref, OperationID: operationID, MediaPath: "/fixture.iso", Eligible: true})

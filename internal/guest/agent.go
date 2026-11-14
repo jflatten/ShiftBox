@@ -24,16 +24,16 @@ const agentPayloadLimit = 16 << 10
 
 // AgentIdentity is the guest's persisted client identity and controller trust.
 type AgentIdentity struct {
-	Certificate tls.Certificate
-	Roots       *x509.CertPool
-	EnrollURL   string
+	Certificate  tls.Certificate
+	Roots        *x509.CertPool
+	PollEndpoint string
 }
 
 type agentIdentityFile struct {
 	CertificatePEM string `json:"certificatePem"`
 	KeyPEM         []byte `json:"keyPem"`
 	CAPEM          string `json:"caPem"`
-	EnrollURL      string `json:"enrollUrl"`
+	PollEndpoint   string `json:"pollEndpoint"`
 }
 
 // EnrollAgent exchanges a recovery seed for a certificate. The guest retains
@@ -97,7 +97,7 @@ func EnrollAgent(ctx context.Context, directory string, input io.Reader, protoco
 		return AgentIdentity{}, errors.New("invalid guest enrollment response")
 	}
 
-	record := agentIdentityFile{CertificatePEM: result.CertificatePEM, KeyPEM: keyPEM, CAPEM: seed.CAPEM, EnrollURL: seed.Endpoint}
+	record := agentIdentityFile{CertificatePEM: result.CertificatePEM, KeyPEM: keyPEM, CAPEM: seed.CAPEM, PollEndpoint: seed.PollEndpoint}
 	identity, err := record.identity(now)
 	if err != nil {
 		return AgentIdentity{}, err
@@ -130,6 +130,9 @@ func LoadAgentIdentity(directory string, now time.Time) (AgentIdentity, error) {
 }
 
 func (r agentIdentityFile) identity(now time.Time) (AgentIdentity, error) {
+	if !validPollEndpoint(r.PollEndpoint) {
+		return AgentIdentity{}, errors.New("invalid stored guest poll endpoint")
+	}
 	pair, err := tls.X509KeyPair([]byte(r.CertificatePEM), r.KeyPEM)
 	if err != nil || pair.Leaf == nil {
 		return AgentIdentity{}, errors.New("invalid guest identity pair")
@@ -142,7 +145,7 @@ func (r agentIdentityFile) identity(now time.Time) (AgentIdentity, error) {
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
 		return AgentIdentity{}, errors.New("guest identity validation failed")
 	}
-	return AgentIdentity{Certificate: pair, Roots: roots, EnrollURL: r.EnrollURL}, nil
+	return AgentIdentity{Certificate: pair, Roots: roots, PollEndpoint: r.PollEndpoint}, nil
 }
 
 func agentEnrollmentKey(path, grantDigest string) ([]byte, *ecdsa.PrivateKey, error) {

@@ -82,7 +82,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		root := t.TempDir()
 		mediaRoot = root
 		failure := errors.New("provider lost delivery reply")
-		_, err := enrollment.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll",
+		_, err := enrollment.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll", "https://internal.test:8443/internal/v1/guest/poll",
 			func(_ context.Context, req provider.EnrollmentRequest) (provider.DeliveryResult, error) {
 				if req.Ref != ref || req.OperationID != "op" || !req.Eligible {
 					t.Error("delivery did not use the verified operation and instance")
@@ -105,7 +105,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		if _, err := db.Exec("DELETE FROM enrollment_grants WHERE state='invalidated'"); err != nil {
 			t.Fatal(err)
 		}
-		image, err := enrollment.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll",
+		image, err := enrollment.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll", "https://internal.test:8443/internal/v1/guest/poll",
 			func(_ context.Context, req provider.EnrollmentRequest) (provider.DeliveryResult, error) {
 				data, err := os.ReadFile(req.MediaPath)
 				if err != nil {
@@ -130,7 +130,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		if _, err := db.Exec("UPDATE enrollment_grants SET media_attached_at=NULL WHERE state='issued'"); err != nil {
 			t.Fatal(err)
 		}
-		resumed, err := reopened.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll",
+		resumed, err := reopened.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll", "https://internal.test:8443/internal/v1/guest/poll",
 			func(_ context.Context, req provider.EnrollmentRequest) (provider.DeliveryResult, error) {
 				if req.MediaPath != image {
 					t.Fatal("interrupted delivery replaced the prepared image")
@@ -140,7 +140,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		if err != nil || resumed != image {
 			t.Fatalf("interrupted delivery = %q, %v, want original prepared image", resumed, err)
 		}
-		resumed, err = reopened.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll",
+		resumed, err = reopened.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll", "https://internal.test:8443/internal/v1/guest/poll",
 			func(context.Context, provider.EnrollmentRequest) (provider.DeliveryResult, error) {
 				t.Fatal("confirmed delivery reached the provider again")
 				return provider.DeliveryResult{}, nil

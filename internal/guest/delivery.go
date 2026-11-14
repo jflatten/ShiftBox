@@ -18,7 +18,7 @@ import (
 // A stopped retry can reuse an intact image after an interrupted attachment.
 // Failed attachment invalidates the grant before removing the image.
 func (e *Enrollment) Deliver(ctx context.Context, operationID string, inventory provider.Inventory,
-	now time.Time, root, endpoint string,
+	now time.Time, root, endpoint, pollEndpoint string,
 	attach func(context.Context, provider.EnrollmentRequest) (provider.DeliveryResult, error),
 ) (string, error) {
 	if e.authority == nil || attach == nil || !filepath.IsAbs(root) ||
@@ -51,7 +51,7 @@ func (e *Enrollment) Deliver(ctx context.Context, operationID string, inventory 
 		}
 		id = auth.TokenDigest(token)
 		ca := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.authority.Certificate.Raw})
-		image, err = BuildEnrollmentMedia(ctx, root, EnrollmentSeed{Grant: token, Endpoint: endpoint, CAPEM: string(ca)})
+		image, err = BuildEnrollmentMedia(ctx, root, EnrollmentSeed{Grant: token, Endpoint: endpoint, PollEndpoint: pollEndpoint, CAPEM: string(ca)})
 		if err != nil {
 			return e.failDelivery(ctx, id, image, err)
 		}

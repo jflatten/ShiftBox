@@ -1395,3 +1395,12 @@ This checkpoint does not itself change the goal status.
 - The platform build still needs to install the unit, launcher, binary and
   controller poll endpoint configuration. Guest operation dispatch, local
   attempt journaling, renewal and validation inside Ubuntu remain pending.
+
+### Installation-specific guest endpoints in recovery media
+
+- Enrollment delivery now supplies both internal HTTPS endpoints and the
+  public CA. The agent validates them and persists the mTLS poll endpoint
+  with its identity, keeping the Ubuntu artifact installation-independent.
+- The TLS test has separate enrollment and polling listeners and verifies
+  that a restarted agent polls with its saved identity after removing the
+  seed. Native media tests verify both endpoint values are present.

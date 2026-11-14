@@ -25,7 +25,7 @@ import (
 // TestGuestAgentEnrollmentRetry proves a fresh agent recovers the exact key
 // across an enrollment failure and loads the issued identity without the seed.
 func TestGuestAgentEnrollmentRetry(t *testing.T) {
-	ca, _, issuerKey, issuer := authorityFixture(t)
+	ca, authorityKeyPEM, issuerKey, issuer := authorityFixture(t)
 	var attempted []byte
 	var issued []byte
 	now := time.Now()
@@ -82,7 +82,26 @@ func TestGuestAgentEnrollmentRetry(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 	state := t.TempDir()
-	seed := guest.EnrollmentSeed{Grant: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), Endpoint: server.URL + "/internal/v1/enroll", CAPEM: string(ca)}
+	contact := make(chan struct{}, 1)
+	poller := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v1/guest/poll" || len(r.TLS.VerifiedChains) == 0 ||
+			!bytes.Equal(r.TLS.VerifiedChains[0][0].Raw, issued) {
+			t.Error("poll did not use the enrolled identity")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		_, _ = w.Write([]byte(`{"protocolVersion":"1","workspaceGeneration":1,"desiredState":"running","serverTime":"2026-11-14T00:00:00Z","operation":null,"certificate":{"renewAfter":"2026-11-14T04:00:00Z"}}`))
+		contact <- struct{}{}
+	}))
+	authority, err := guest.LoadCA(ca, authorityKeyPEM, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poller.TLS = guest.ServerTLS(tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, authority)
+	poller.StartTLS()
+	defer poller.Close()
+	seed := guest.EnrollmentSeed{Grant: base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+		Endpoint: server.URL + "/internal/v1/enroll", PollEndpoint: poller.URL + "/internal/v1/guest/poll", CAPEM: string(ca)}
 	raw, err := json.Marshal(seed)
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +116,19 @@ func TestGuestAgentEnrollmentRetry(t *testing.T) {
 	loaded, err := guest.LoadAgentIdentity(state, now)
 	if err != nil || !bytes.Equal(loaded.Certificate.Certificate[0], issued) {
 		t.Fatalf("loading without seed failed: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- guest.ServeAgent(ctx, state, filepath.Join(state, "absent.json"), "1", "test") }()
+	select {
+	case <-contact:
+		cancel()
+		<-done
+	case err := <-done:
+		t.Fatalf("agent exited without polling the seeded endpoint: %v", err)
+	case <-ctx.Done():
+		t.Fatal("agent did not poll the seeded endpoint")
 	}
 	if _, err := guest.LoadAgentIdentity(state, now.Add(time.Hour)); err == nil {
 		t.Error("agent accepted an expired identity from disk")

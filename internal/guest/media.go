@@ -21,14 +21,15 @@ var ErrInvalidEnrollmentSeed = errors.New("invalid guest enrollment seed")
 // EnrollmentSeed is the payload the guest reads from the recovery medium.
 // It contains the public trust anchor and a single short-lived credential.
 type EnrollmentSeed struct {
-	Grant    string `json:"grant"`
-	Endpoint string `json:"endpoint"`
-	CAPEM    string `json:"caPem"`
+	Grant        string `json:"grant"`
+	Endpoint     string `json:"endpoint"`
+	CAPEM        string `json:"caPem"`
+	PollEndpoint string `json:"pollEndpoint"`
 }
 
 func (s EnrollmentSeed) valid() bool {
 	key, err := base64.RawURLEncoding.Strict().DecodeString(s.Grant)
-	if err != nil || len(key) != 32 {
+	if err != nil || len(key) != 32 || !validPollEndpoint(s.PollEndpoint) {
 		return false
 	}
 	endpoint, err := url.Parse(s.Endpoint)

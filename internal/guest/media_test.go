@@ -19,13 +19,15 @@ import (
 func TestEnrollmentSeedRejectsInvalidInputs(t *testing.T) {
 	ca, _, _, _ := authorityFixture(t)
 	grant := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-	valid := guest.EnrollmentSeed{Grant: grant, Endpoint: "https://internal.test:8443/internal/v1/enroll", CAPEM: string(ca)}
+	valid := guest.EnrollmentSeed{Grant: grant, Endpoint: "https://internal.test:8443/internal/v1/enroll", PollEndpoint: "https://internal.test:9443/internal/v1/guest/poll", CAPEM: string(ca)}
 	for _, seed := range []guest.EnrollmentSeed{
-		{Grant: grant, Endpoint: "http://internal.test/internal/v1/enroll", CAPEM: string(ca)},
-		{Grant: grant, Endpoint: "https://operator:secret@internal.test/internal/v1/enroll", CAPEM: string(ca)},
-		{Grant: grant, Endpoint: "https://internal.test/internal/v1/enroll?secret=1", CAPEM: string(ca)},
-		{Grant: "short", Endpoint: valid.Endpoint, CAPEM: string(ca)},
-		{Grant: grant, Endpoint: valid.Endpoint, CAPEM: "invalid"},
+		{Grant: grant, Endpoint: "http://internal.test/internal/v1/enroll", PollEndpoint: valid.PollEndpoint, CAPEM: string(ca)},
+		{Grant: grant, Endpoint: "https://operator:secret@internal.test/internal/v1/enroll", PollEndpoint: valid.PollEndpoint, CAPEM: string(ca)},
+		{Grant: grant, Endpoint: "https://internal.test/internal/v1/enroll?secret=1", PollEndpoint: valid.PollEndpoint, CAPEM: string(ca)},
+		{Grant: "short", Endpoint: valid.Endpoint, PollEndpoint: valid.PollEndpoint, CAPEM: string(ca)},
+		{Grant: grant, Endpoint: valid.Endpoint, PollEndpoint: valid.PollEndpoint, CAPEM: "invalid"},
+		{Grant: grant, Endpoint: valid.Endpoint, PollEndpoint: "http://internal.test/internal/v1/guest/poll", CAPEM: string(ca)},
+		{Grant: grant, Endpoint: valid.Endpoint, PollEndpoint: valid.Endpoint, CAPEM: string(ca)},
 	} {
 		path := t.TempDir()
 		if _, err := guest.BuildEnrollmentMedia(context.Background(), path, seed); !errors.Is(err, guest.ErrInvalidEnrollmentSeed) {
@@ -47,7 +49,7 @@ func TestEnrollmentMediaContainsOnlySeed(t *testing.T) {
 	root := t.TempDir()
 	seed := guest.EnrollmentSeed{
 		Grant:    base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{42}, 32)),
-		Endpoint: "https://internal.test:8443/internal/v1/enroll", CAPEM: string(ca),
+		Endpoint: "https://internal.test:8443/internal/v1/enroll", PollEndpoint: "https://internal.test:9443/internal/v1/guest/poll", CAPEM: string(ca),
 	}
 	for range 2 {
 		path, err := guest.BuildEnrollmentMedia(context.Background(), root, seed)
@@ -69,7 +71,7 @@ func TestEnrollmentMediaContainsOnlySeed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, value := range []string{seed.Grant, seed.Endpoint, "ENROLLMENT.JSON", "SHIFTBOX"} {
+		for _, value := range []string{seed.Grant, seed.Endpoint, seed.PollEndpoint, "ENROLLMENT.JSON", "SHIFTBOX"} {
 			if !bytes.Contains(data, []byte(value)) {
 				t.Errorf("ISO missing expected payload field or label")
 			}

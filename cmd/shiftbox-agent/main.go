@@ -6,16 +6,14 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/jflatten/ShiftBox/internal/guest"
 )
 
 const (
-	stateDirectory   = "/var/lib/shiftbox-agent"
-	seedFile         = "/run/shiftbox-enrollment/ENROLLMENT.JSON"
-	pollEndpointFile = "/etc/shiftbox/guest-poll-endpoint"
+	stateDirectory = "/var/lib/shiftbox-agent"
+	seedFile       = "/run/shiftbox-enrollment/ENROLLMENT.JSON"
 )
 
 var (
@@ -39,9 +37,5 @@ func run(ctx context.Context, args []string) error {
 	if len(args) != 1 || args[0] != "serve" {
 		return errUsage
 	}
-	endpoint, err := os.ReadFile(pollEndpointFile)
-	if err != nil || len(endpoint) > 4096 {
-		return errors.New("guest controller endpoint is unavailable")
-	}
-	return guest.ServeAgent(ctx, stateDirectory, seedFile, strings.TrimSpace(string(endpoint)), "1", agentRelease)
+	return guest.ServeAgent(ctx, stateDirectory, seedFile, "1", agentRelease)
 }
