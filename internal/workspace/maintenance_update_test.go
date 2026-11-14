@@ -19,7 +19,7 @@ import (
 func TestMaintenancePowerRetainsDesiredState(t *testing.T) {
 	db, journal, now := maintenanceFixture(t, "retained")
 	ctx := t.Context()
-	machines := fake.New()
+	machines := &maintenanceStopProvider{Provider: fake.New()}
 	ref := provider.WorkspaceRef{InstallationID: testInstallation, WorkspaceID: "retained", OwnershipMarker: "owned", Generation: 1}
 	got, err := machines.Create(ctx, provider.CreateRequest{Ref: ref, OperationID: "fixture-create", ArtifactID: "reservation-artifact",
 		Release: "reservation-release", NetworkMode: "nat", Resources: provider.Resources{CPU: 2, MemoryBytes: 1024 << 20, DiskBytes: 40 << 20}})
@@ -104,15 +104,37 @@ func TestMaintenancePowerRetainsDesiredState(t *testing.T) {
 	// A newly constructed worker must finish the remaining power step.
 	worker = store.MaintenanceUpdateWorker(journal, testInstallation, "1", nil)
 	worker.Executor = executor
+	if err := worker.RunOnce(ctx, id); !errors.Is(err, provider.ErrOutcomeUnknown) {
+		t.Fatalf("uncertain maintenance stop = %v, want unknown outcome", err)
+	}
+	checkReservation(t, db, "retained", "reserved", "reserved")
 	if err := worker.RunOnce(ctx, id); err != nil {
 		t.Fatal(err)
 	}
 	assertPower("stopped")
 	checkReservation(t, db, "retained", "released", "reserved")
+	if machines.stopAttempts != 1 || machines.forcedStop {
+		t.Errorf("maintenance stop attempts = %d, force = %t, want one graceful request", machines.stopAttempts, machines.forcedStop)
+	}
 	op, err = journal.Get(ctx, id)
 	if err != nil || op.Status != "failed" || op.Steps[1].Detail == "" || op.Steps[4].Status != "succeeded" {
 		t.Errorf("result after restoring power = %+v (%v), want original failure and successful restoration", op, err)
 	}
+}
+
+type maintenanceStopProvider struct {
+	provider.Provider
+	stopAttempts int
+	forcedStop   bool
+}
+
+func (p *maintenanceStopProvider) Stop(ctx context.Context, req provider.StopRequest) (provider.Inventory, error) {
+	p.stopAttempts++
+	p.forcedStop = p.forcedStop || req.ForceRetentionDelete
+	if _, err := p.Provider.Stop(ctx, req); err != nil {
+		return provider.Inventory{}, err
+	}
+	return provider.Inventory{}, provider.ErrOutcomeUnknown
 }
 
 // TestMaintenanceUpdateWorker advances on durable matching receipts alone

@@ -446,6 +446,32 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 		checkSecret(secretURL, "", 200, `"value":"fallback-fixture","source":"organization"`)
+		// A management boot can be running at the provider while the
+		// workspace intent is stopped. Poll access must not expose workloads.
+		if _, err := db.Exec(`UPDATE workspaces SET desired_state='stopped',preview_ports_json='[3000]' WHERE id='work'`); err != nil {
+			t.Fatal(err)
+		}
+		checkSecret(secretURL, "{}", 403, "guest.identity_denied")
+		managementPoll, err := pollClient.Post(listeners.PollURL, "application/json",
+			bytes.NewBufferString(`{"protocolVersion":"1","guestRelease":"test"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var maintenanceState struct {
+			DesiredState string
+			Operation    *guest.PollOperation
+		}
+		decodeErr := json.NewDecoder(managementPoll.Body).Decode(&maintenanceState)
+		managementPoll.Body.Close()
+		if managementPoll.StatusCode != 200 || decodeErr != nil || maintenanceState.DesiredState != "stopped" ||
+			maintenanceState.Operation != nil || managementPoll.Header.Get(guest.TunnelAddressHeader) != "" ||
+			managementPoll.Header.Get(guest.PreviewPortsHeader) != "" {
+			t.Fatalf("management-only poll = %d, %+v (%v), want stopped, no workload command, tunnel, or previews",
+				managementPoll.StatusCode, maintenanceState, decodeErr)
+		}
+		if _, err := db.Exec("UPDATE workspaces SET desired_state='running',preview_ports_json='[]' WHERE id='work'"); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := db.Exec("UPDATE workspaces SET observed_state='stopped' WHERE id='work'"); err != nil {
 			t.Fatal(err)
 		}
@@ -629,6 +655,15 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 			return body.String()
 		}
 		mode("connected")
+		if _, err := db.Exec("UPDATE workspaces SET desired_state='stopped',observed_state='running' WHERE id='work'"); err != nil {
+			t.Fatal(err)
+		}
+		if body := request("", 403); strings.Contains(body, "fixture-user-access-token") {
+			t.Error("management-only boot disclosed a Git access token")
+		}
+		if _, err := db.Exec("UPDATE workspaces SET desired_state='running',observed_state='stopped' WHERE id='work'"); err != nil {
+			t.Fatal(err)
+		}
 		request(`{"ownerId":"other","repositoryUrl":"https://github.com/example/other"}`, 400)
 		req, err := http.NewRequest(http.MethodPost, server.URL+gitPath, nil)
 		if err != nil {

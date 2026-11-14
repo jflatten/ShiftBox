@@ -1744,6 +1744,10 @@ This checkpoint does not itself change the goal status.
   confirmation receipt, and completion over the real mutual TLS listeners.
   It uses a fixture guest client. Native signed-update validation remains
   open under T095.
+  Mutual TLS tests also prove a management-only guest can poll while
+  development commands, tunnel and preview offers, secrets, and Git
+  credentials are withheld. A lost graceful-stop reply keeps reservations
+  until a fresh provider observation confirms shutdown.
 
 ### Migration preflight CLI
 
