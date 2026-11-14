@@ -21,7 +21,8 @@ that local binary. The companion UTM export's artifact manifest SHA-256 was
 | Native UTM platform validation | Setup booted the imported image in a disposable VM, confirmed an authenticated guest poll, removed the VM, and recorded the image as available. |
 | Go native UTM enrollment and stop | `TestUTMGuestEnrollment` passed in 63.76 seconds. The guest enrolled in 45 seconds, and offboarding stopped the VM while preserving its owned disk. The test removed the disposable VM afterward. |
 | Chrome management handoff | The controller required a fresh sign-in after activation. Chrome signed in through Dex. The resumed run verified a connected fixture GitHub App authorization. |
-| Chrome workspace journey | Chrome created the private-repository template, launched a UTM workspace, and reconnected the operation stream. Provisioning and guest enrollment completed. The run timed out after four minutes waiting for IDE verification while Dev Container configuration had a pending dispatch. Repository checkout, IDE access, stop and start, rebuild, and repair remain unverified. |
+| Chrome workspace launch | Chrome created the private-repository template, launched a UTM workspace, and reconnected the operation stream. The four-minute browser timer elapsed during Dev Container setup. The same controller journal later confirmed repository configuration, IDE verification, and completion of the remaining hooks. |
+| Chrome IDE entry | The pinned controller returned a 403 after Chrome stored the Strict service cookie and withheld it on the cross-site redirect. A follow-up build of the same controller source with the entry fix opened the workbench and saved a file. This build was used only for the resumed verification. |
 | Go workspace journal check | Pending a completed workspace journey. |
 
 Run the browser spec with `SHIFTBOX_MVP_FIXTURE` pointing at a fresh local
@@ -30,10 +31,13 @@ test runner. With Node 26, `NODE_USE_SYSTEM_CA=1` lets the test runner use
 system trust for its HTTPS requests. Use the development candidate and
 fixture-specific GitHub App installation.
 If consent must be completed in a different browser, keep the disposable
-controller running until GitHub returns to ShiftBox. Use
-`SHIFTBOX_MVP_RESUME_ACTIVE=1` only to resume a previously verified setup
-with the same running fixture and before creating a workspace. Record
-setup and workspace results separately when using this mode.
+controller running until GitHub returns to ShiftBox. Set
+`SHIFTBOX_MVP_RESUME_ACTIVE=1` to resume a previously verified setup with
+the same installation. Record setup and workspace results separately when
+using this mode.
+If a previously recorded launch completed after a browser interruption, also
+set `SHIFTBOX_MVP_RESUME_WORKSPACE` to that existing disposable workspace's UUID
+to rerun the browser IDE and lifecycle checks without creating a second VM.
 
 After Chrome completes, point `SHIFTBOX_TEST_MVP_DATABASE` at the same
 disposable SQLite database and run

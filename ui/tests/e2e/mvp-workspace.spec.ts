@@ -30,7 +30,9 @@ type WorkspaceFixture = {
 
 const fixturePath = process.env.SHIFTBOX_MVP_FIXTURE;
 const resumeActive = process.env.SHIFTBOX_MVP_RESUME_ACTIVE === '1';
+const resumeWorkspaceID = process.env.SHIFTBOX_MVP_RESUME_WORKSPACE;
 const startupTimeout = 4 * 60_000;
+const firstLaunchTimeout = 10 * 60_000;
 const workbenchTimeout = 3 * 60_000;
 const githubConsentTimeout = 9 * 60_000;
 
@@ -52,6 +54,9 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
   const installation: InstallationFixture = JSON.parse(await readFile(fixturePath, 'utf8'));
   const setupOrigin = new URL(installation.setupURL).origin;
   const managementOrigin = new URL(installation.managementURL).origin;
+  if (resumeWorkspaceID && (!resumeActive || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(resumeWorkspaceID))) {
+    throw new Error('Resume requires an activated fixture and its workspace UUID');
+  }
   if (!isAbsolute(installation.workspaceFixturePath) || new URL(setupOrigin).hostname !== '127.0.0.1' ||
       !setupOrigin.startsWith('https://') || !managementOrigin.startsWith('https://') || setupOrigin === managementOrigin) {
     throw new Error('Use a protected loopback setup URL and separate HTTPS management origin');
@@ -125,9 +130,10 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
   const savedConfig = await readFile(fixture.originalDevcontainerPath, 'utf8');
   const templateName = `MVP journey ${Date.now()}`;
   const marker = `shiftbox-retained-${Date.now()}`;
-  let workspaceURL = '';
+  let workspaceURL = resumeWorkspaceID ? new URL(`/workspaces/?id=${resumeWorkspaceID}`, managementOrigin).href : '';
 
   await test.step('Authorize GitHub and create a template', async () => {
+    if (resumeWorkspaceID) return;
     await page.goto(new URL('/account/', managementOrigin).href);
     const connected = page.getByText('GitHub is connected.', { exact: true });
     const connect = page.getByRole('button', { name: /^(Connect|Reconnect) GitHub$/ });
@@ -159,6 +165,11 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
   });
 
   await test.step('Reconnect workflow events and withhold IDE until verification', async () => {
+    if (resumeWorkspaceID) {
+      await page.goto(workspaceURL);
+      await expect(page.getByRole('button', { name: 'Open IDE', exact: true })).toBeVisible({ timeout: firstLaunchTimeout });
+      return;
+    }
     let streamAttempts = 0;
     await page.route('**/api/v1/operations/*/events', async route => {
       streamAttempts++;
@@ -183,7 +194,7 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
       await expect(early.getByRole('button', { name: /^Verify the browser IDE: (Pending|In progress)$/ })).toBeVisible();
       await expect(early.getByRole('button', { name: 'Open IDE', exact: true })).toHaveCount(0);
       await expect.poll(() => streamAttempts, { timeout: startupTimeout }).toBeGreaterThanOrEqual(2);
-      await stepCompleted(page, 'Verify the browser IDE');
+      await stepCompleted(page, 'Verify the browser IDE', firstLaunchTimeout);
       await expect(early.getByRole('button', { name: 'Open IDE', exact: true })).toBeVisible({ timeout: startupTimeout });
       await stepCompleted(page, 'Finish remaining setup hooks');
     } finally {
@@ -266,8 +277,8 @@ async function passwordLogin(page: Page, email: string, password: string) {
   }
 }
 
-async function stepCompleted(page: Page, label: string) {
-  await expect(page.getByRole('button', { name: `${label}: Completed`, exact: true })).toBeVisible({ timeout: startupTimeout });
+async function stepCompleted(page: Page, label: string, timeout = startupTimeout) {
+  await expect(page.getByRole('button', { name: `${label}: Completed`, exact: true })).toBeVisible({ timeout });
 }
 
 async function openIDE(page: Page, button: string, managementOrigin: string) {
@@ -299,14 +310,9 @@ async function openFile(page: Page, name: string) {
 async function writeEditor(page: Page, editor: Locator, content: string) {
   await editor.locator('.view-lines').click();
   await page.keyboard.press('Escape');
-  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.press('Control+Home');
+  await page.keyboard.press('Control+Shift+End');
   await page.keyboard.press('Backspace');
-  // A Monaco selection can stop inside JSON. Re-select after the first
-  // deletion and verify the buffer is empty before entering new content.
-  if ((await editor.locator('.view-lines').innerText()).trim() !== '') {
-    await page.keyboard.press('ControlOrMeta+a');
-    await page.keyboard.press('Backspace');
-  }
   await expect(editor.locator('.view-lines')).toHaveText(/^\s*$/);
   await page.keyboard.insertText(content);
   await page.keyboard.press('ControlOrMeta+s');
