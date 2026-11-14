@@ -18,8 +18,73 @@ import (
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/provider/fake"
+	"github.com/jflatten/ShiftBox/internal/web"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
+
+// TestRestartInterruptsRestoreValidation verifies that startup interrupts
+// pending and active validation jobs whose private inputs died with the process.
+func TestRestartInterruptsRestoreValidation(t *testing.T) {
+	for _, active := range []bool{false, true} {
+		name := "pending"
+		if active {
+			name = "active"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "restore.db")}
+			open := func() *sql.DB {
+				t.Helper()
+				db, err := database.Open(ctx, cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = db.Close() })
+				return db
+			}
+			db := open()
+			if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
+				t.Fatal(err)
+			}
+			journal := operation.NewJournal(db, time.Now, uuid.NewString)
+			op, err := journal.Create(ctx, operation.Request{
+				Type: "restore", Actor: "fixture-admin", Key: "restore-validation-restart",
+				Generation: 1, OriginatingAction: "restore.validate",
+				Steps: []operation.Step{{Key: "validate", Label: "Verify archive and replacement"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if active {
+				claim, err := journal.Claim(ctx, op.ID, "restore-validation", time.Minute)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := journal.StartStep(ctx, claim, 0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			db = open()
+			journal = operation.NewJournal(db, time.Now, uuid.NewString)
+			for range 2 {
+				if err := web.InterruptRestoreValidations(ctx, db, journal); err != nil {
+					t.Fatal(err)
+				}
+			}
+			persisted, err := journal.Get(ctx, op.ID)
+			if err != nil || persisted.Status != "failed" || len(persisted.Steps) != 1 {
+				t.Fatalf("restore validation after restart = %q (%v), want a failed validation", persisted.Status, err)
+			}
+			step := persisted.Steps[0]
+			if step.Status != "failed" || step.Detail != "Validation was interrupted. Submit the archive and passphrase again." {
+				t.Errorf("validation step after restart = %s/%q, want failure with retry instructions", step.Status, step.Detail)
+			}
+		})
+	}
+}
 
 // TestRestartWorkspaceProvision loses the provider's creation reply, closes
 // the database, and verifies that a new worker adopts the exact existing VM.

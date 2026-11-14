@@ -14,14 +14,29 @@ import (
 	"github.com/jflatten/ShiftBox/internal/provider/fake"
 )
 
-// TestPowerWorkerReconcilesLostReplies checks that a restart observes the VM
-// before retrying, releases only compute after stop, and waits for fresh guest
-// contact and a working browser IDE after start.
+// TestPowerWorkerReconcilesLostReplies reopens the controller database and
+// recreates its worker before each step. The provider and guest evidence
+// survive the controller, including lost start and stop replies.
 func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	ctx := t.Context()
-	db := openWorkspaceDatabase(t, "sqlite")
+	fixtureDB := openWorkspaceDatabase(t, "sqlite")
 	const id = "power-workspace"
-	seedReservationWorkspaces(t, db)
+	seedReservationWorkspaces(t, fixtureDB)
+	var sequence int
+	var databaseName, databasePath string
+	if err := fixtureDB.QueryRow("PRAGMA database_list").Scan(&sequence, &databaseName, &databasePath); err != nil {
+		t.Fatal(err)
+	}
+	openControllerDB := func() *sql.DB {
+		t.Helper()
+		db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: databasePath})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return db
+	}
+	db := openControllerDB()
+	t.Cleanup(func() { _ = db.Close() })
 	machines := &powerFixtureProvider{Provider: fake.New()}
 	ref := provider.WorkspaceRef{InstallationID: testInstallation, WorkspaceID: id, OwnershipMarker: "owned", Generation: 1}
 	machine, err := machines.Create(ctx, provider.CreateRequest{Ref: ref, OperationID: "create-fixture", ArtifactID: "reservation-artifact",
@@ -44,7 +59,7 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 			"DELETE FROM reservations WHERE workspace_id=$1",
 			"DELETE FROM workspaces WHERE id=$1",
 		} {
-			if _, err := db.Exec(query, id); err != nil {
+			if _, err := fixtureDB.Exec(query, id); err != nil {
 				t.Error(err)
 			}
 		}
@@ -59,6 +74,15 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 		VALUES($1,1,'active',$2,$3)`, id, time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), testStamp)
 	store := NewStore(db)
 	journal := operation.NewJournal(db, time.Now, uuid.NewString)
+	restart := func() {
+		t.Helper()
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		db = openControllerDB()
+		store = NewStore(db)
+		journal = operation.NewJournal(db, time.Now, uuid.NewString)
+	}
 	if err := store.SetCapacityBudget(ctx, testInstallation, Allocation{CPU: 2, MemoryMiB: 1024, DiskMiB: 40}, 0, "reservation-owner", time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -98,6 +122,7 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	}
 	run := func(op operation.Operation, want error) {
 		t.Helper()
+		restart()
 		worker := NewWorker(journal, NewLaunchExecutor(store, machines, nil, "", "", "", time.Now, probe),
 			NewPowerExecutor(store, machines, time.Now, probe))
 		if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, want) {
@@ -178,6 +203,7 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	run(repair, errGuestConfigurationPending)
 	exec("INSERT INTO guest_dispatches(operation_id,dispatch_version,status,container_id) VALUES($1,1,'succeeded','repair-container')", repair.ID)
 	run(repair, nil)
+	restart()
 	repairExecutor := NewPowerExecutor(store, machines, time.Now, probe)
 	repairExecutor.probeRepair = func(_ context.Context, workspace string, generation int64) error {
 		if workspace != id || generation != 1 {
