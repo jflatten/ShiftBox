@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -93,8 +94,12 @@ func TestLiveUTMTaggedDrive(t *testing.T) {
 on run argv
     tell application "/Applications/UTM.app"
         if UTM version is not item 1 of argv then error "unexpected UTM version"
-        if item 2 of argv is "create" or item 2 of argv is "power" then
+        if item 2 of argv is "create" then
             set vm to make new virtual machine with properties {backend:qemu, configuration:{name:item 3 of argv, notes:item 4 of argv, architecture:"x86_64", cpu cores:2, memory:512, hypervisor:false, drives:{{guest size:64}}}}
+            return id of vm
+        end if
+        if item 2 of argv is "media" then
+            set vm to make new virtual machine with properties {backend:qemu, configuration:{name:item 3 of argv, notes:item 4 of argv, architecture:"x86_64", cpu cores:2, memory:512, hypervisor:false, drives:{{guest size:64}, {removable:true}}}}
             return id of vm
         end if
         set vm to virtual machine id (item 3 of argv)
@@ -112,8 +117,11 @@ end run
 	}
 	action := "create"
 	powerTest := os.Getenv("SHIFTBOX_TEST_UTM_POWER") == version
-	if powerTest {
-		action = "power"
+	mediaTest := os.Getenv("SHIFTBOX_TEST_UTM_MEDIA") == version
+	expectedResources := 2
+	if mediaTest {
+		action = "media"
+		expectedResources++
 	}
 	ref.InstanceID, err = run(action, "ShiftBox-Inventory-"+ref.WorkspaceID)
 	if err != nil || ref.InstanceID == "" {
@@ -133,9 +141,12 @@ end run
 		}
 	})
 	inventory, err := (Inspector{Version: version}).Inspect(context.Background(), ref)
-	if err != nil || inventory.Power != provider.Stopped || len(inventory.Resources) != 2 ||
+	if err != nil || inventory.Power != provider.Stopped || len(inventory.Resources) != expectedResources ||
 		inventory.Resources[1].Type != "disk" || inventory.Resources[1].HostBytes == nil {
 		t.Fatalf("native tagged inventory = %+v, error = %v", inventory, err)
+	}
+	if mediaTest {
+		checkLiveMediaReplacement(t, controller, inventory)
 	}
 	if !powerTest {
 		return
@@ -153,5 +164,41 @@ end run
 	if err != nil || stopped.Power != provider.Stopped {
 		t.Fatalf("native stop: %s, %v", stopped.Power, err)
 	}
+}
 
+// checkLiveMediaReplacement observes two distinguishable media sizes through
+// the native scripting API and verifies the persistent disk survives both updates.
+func checkLiveMediaReplacement(t *testing.T, controller *PowerController, before provider.Inventory) {
+	t.Helper()
+	target := before.Resources[2]
+	if target.Type != "media" {
+		t.Fatalf("expected removable recovery drive, got %s", target.Type)
+	}
+	req := provider.EnrollmentRequest{Ref: before.Ref, OperationID: "fixture-recovery", Eligible: true}
+	for _, size := range []int{2, 5} {
+		payload := t.TempDir()
+		if err := os.WriteFile(filepath.Join(payload, "fixture.txt"), make([]byte, size<<20), 0600); err != nil {
+			t.Fatal(err)
+		}
+		req.MediaPath = filepath.Join(t.TempDir(), "recovery.iso")
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		out, err := exec.CommandContext(ctx, "/usr/bin/hdiutil", "makehybrid", "-iso", "-o", req.MediaPath, payload).CombinedOutput()
+		cancel()
+		if err != nil {
+			t.Fatalf("make recovery image: %v, %s", err, out)
+		}
+		info, err := os.Stat(req.MediaPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, err := controller.ReplaceRecoveryMedia(context.Background(), req, target.ID)
+		if err != nil {
+			t.Fatalf("replace recovery media: %v", err)
+		}
+		got := after.Resources[2].HostBytes
+		want := info.Size() / (1 << 20) * (1 << 20)
+		if got == nil || *got != want {
+			t.Fatalf("expected recovery image with %d host bytes, got %v", want, after.Resources[2])
+		}
+	}
 }

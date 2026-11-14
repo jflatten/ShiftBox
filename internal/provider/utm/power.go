@@ -8,15 +8,16 @@ import (
 	"github.com/jflatten/ShiftBox/internal/provider"
 )
 
-// PowerController serializes VM power changes and verifies their effects.
+// PowerController serializes VM power and recovery-media changes.
 type PowerController struct {
 	mu      sync.Mutex
+	version string
 	inspect func(context.Context, provider.WorkspaceRef) (provider.Inventory, error)
 	apply   func(context.Context, provider.WorkspaceRef, string) error
 }
 
 func NewPowerController(version string) *PowerController {
-	return &PowerController{inspect: (Inspector{Version: version}).Inspect,
+	return &PowerController{version: version, inspect: (Inspector{Version: version}).Inspect,
 		apply: func(ctx context.Context, ref provider.WorkspaceRef, action string) error {
 			return applyPower(ctx, version, ref, action)
 		}}
