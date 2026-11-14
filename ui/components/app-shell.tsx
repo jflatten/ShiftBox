@@ -36,6 +36,7 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
         {permitted('git.manage') ? <NavLink href="/account/" label="Account" /> : null}
         {session?.role === 'administrator' && permitted('infrastructure.view') ? <NavLink href="/infrastructure/" label="Infrastructure" /> : null}
         {session?.role === 'administrator' && permitted('user.list') ? <NavLink href="/users/" label="People" /> : null}
+        {normal && session?.role === 'administrator' && permitted('audit.list') ? <NavLink href="/audit/" label="Audit" /> : null}
       </AppShell.Navbar>
       <AppShell.Main>
         <Stack gap="lg">

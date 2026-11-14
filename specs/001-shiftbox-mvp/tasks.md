@@ -1959,3 +1959,12 @@ This checkpoint does not itself change the goal status.
   response Link header to carry the append-order cursor.
 - Audit, web, app and contract race tests passed. The browser audit view and
   configurable retention remain open under T071 and T077.
+
+### Administrator audit history page
+
+- Added the Audit page with action and resource filters and server-driven
+  pagination. The page checks current administrator permission before
+  requesting history and displays the recorded actor, resource and outcome.
+- All 42 UI tests and the production build passed. Chrome verified mobile
+  navigation, filtering and pagination by keyboard using fixture responses.
+  Configurable audit retention remains open under T071.
