@@ -1335,3 +1335,15 @@ This checkpoint does not itself change the goal status.
   authenticated HTTPS.
 - Durable delivery tracking, cleanup after guest consumption, and the actual
   Ubuntu boot-time reader remain pending.
+
+### Durable enrollment media tracking
+
+- Persist the private image directory against the grant before asking the
+  provider to attach it. A restart reuses a recorded image and repeats
+  attachment only when its confirmation was interrupted.
+- Cleanup removes media for consumed grants after authenticated guest contact
+  and for invalidated or expired attempts. Retrying cleanup after removal is
+  safe. The native ISO test checks recovery and preservation before use.
+- The workspace enrollment worker still needs to call these operations and
+  confirm guest contact. A crash while building an ISO before the tracking
+  write can leave an untracked file with an expiring grant.

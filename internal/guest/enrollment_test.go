@@ -77,8 +77,10 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var mediaRoot, retainedImage string
 	if os.Getenv("SHIFTBOX_TEST_ENROLLMENT_MEDIA") != "" {
 		root := t.TempDir()
+		mediaRoot = root
 		failure := errors.New("provider lost delivery reply")
 		_, err := enrollment.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll",
 			func(_ context.Context, req provider.EnrollmentRequest) (provider.DeliveryResult, error) {
@@ -123,6 +125,35 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		if _, err := os.Stat(image); err != nil {
 			t.Fatalf("successful delivery did not retain the image: %v", err)
 		}
+		retainedImage = image
+		reopened := guest.NewEnrollment(db, ca)
+		if _, err := db.Exec("UPDATE enrollment_grants SET media_attached_at=NULL WHERE state='issued'"); err != nil {
+			t.Fatal(err)
+		}
+		resumed, err := reopened.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll",
+			func(_ context.Context, req provider.EnrollmentRequest) (provider.DeliveryResult, error) {
+				if req.MediaPath != image {
+					t.Fatal("interrupted delivery replaced the prepared image")
+				}
+				return provider.DeliveryResult{Inventory: inventory, MediaID: "vm/recovery"}, nil
+			})
+		if err != nil || resumed != image {
+			t.Fatalf("interrupted delivery = %q, %v, want original prepared image", resumed, err)
+		}
+		resumed, err = reopened.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll",
+			func(context.Context, provider.EnrollmentRequest) (provider.DeliveryResult, error) {
+				t.Fatal("confirmed delivery reached the provider again")
+				return provider.DeliveryResult{}, nil
+			})
+		if err != nil || resumed != image {
+			t.Fatalf("reopened delivery = %q, %v, want original attachment", resumed, err)
+		}
+		if err := reopened.CleanupDelivery(ctx, "op", ref, root); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(image); err != nil {
+			t.Fatal("cleanup removed the unconsumed image")
+		}
 	}
 	var digest string
 	if err := db.QueryRow("SELECT id FROM enrollment_grants").Scan(&digest); err != nil || len(digest) != 64 || digest == token {
@@ -142,6 +173,17 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	replay, err := enrollment.Enroll(ctx, token, csr, now.Add(time.Minute))
 	if err != nil || !bytes.Equal(replay, first) {
 		t.Errorf("same-key retry = %v, want exact issued certificate", err)
+	}
+	if retainedImage != "" {
+		reopened := guest.NewEnrollment(db, ca)
+		for range 2 {
+			if err := reopened.CleanupDelivery(ctx, "op", ref, mediaRoot); err != nil {
+				t.Fatalf("cleanup confirmed enrollment: %v", err)
+			}
+		}
+		if _, err := os.Stat(retainedImage); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("media after cleanup = %v, want absent", err)
+		}
 	}
 	if _, err := enrollment.Enroll(ctx, token, fixtureCSR(t), now); !errors.Is(err, guest.ErrEnrollmentDenied) {
 		t.Errorf("alternate key = %v, want denial", err)

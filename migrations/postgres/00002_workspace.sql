@@ -178,6 +178,9 @@ CREATE TABLE enrollment_grants (
  state TEXT NOT NULL CHECK (state IN ('issued','consumed','expired','invalidated')),
  key_proof TEXT,
  certificate_der TEXT,
+ media_directory TEXT,
+ media_attached_at TEXT,
+ CHECK (media_directory IS NOT NULL OR media_attached_at IS NULL),
  CHECK (state <> 'consumed' OR (key_proof IS NOT NULL AND certificate_der IS NOT NULL)),
  FOREIGN KEY (workspace_id,generation) REFERENCES guest_registrations(workspace_id,generation)
 );

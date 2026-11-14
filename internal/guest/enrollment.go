@@ -34,8 +34,7 @@ func NewEnrollment(db *sql.DB, authority *Authority) *Enrollment {
 // current authorized operation. Only the returned token goes to delivery media.
 func (e *Enrollment) Mint(ctx context.Context, operationID string, inventory provider.Inventory, now time.Time) (string, error) {
 	ref := inventory.Ref
-	if inventory.Power != provider.Stopped || ref.InstanceID == "" || inventory.InstanceID != ref.InstanceID ||
-		inventory.ObservedAt.IsZero() || inventory.ObservedAt.After(now) || now.Sub(inventory.ObservedAt) > time.Minute {
+	if !stoppedForEnrollment(inventory, now) {
 		return "", ErrEnrollmentDenied
 	}
 	var value [32]byte
@@ -142,6 +141,16 @@ func (e *Enrollment) Enroll(ctx context.Context, token string, csr []byte, now t
 	return certificate, nil
 }
 
+func stoppedForEnrollment(inventory provider.Inventory, now time.Time) bool {
+	return inventory.Power == provider.Stopped && inventory.Ref.InstanceID != "" &&
+		inventory.InstanceID == inventory.Ref.InstanceID && !inventory.ObservedAt.IsZero() &&
+		!inventory.ObservedAt.After(now) && now.Sub(inventory.ObservedAt) <= time.Minute
+}
+
+type enrollmentQuery interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 func lockRegistration(ctx context.Context, tx *sql.Tx, workspace string, generation int64) error {
 	result, err := tx.ExecContext(ctx, `UPDATE guest_registrations SET state=state WHERE workspace_id=$1 AND generation=$2`, workspace, generation)
 	if err != nil {
@@ -157,7 +166,7 @@ func lockRegistration(ctx context.Context, tx *sql.Tx, workspace string, generat
 	return nil
 }
 
-func enrollmentTarget(ctx context.Context, tx *sql.Tx, workspace string, generation int64, op string) (provider.WorkspaceRef, string, string, string, error) {
+func enrollmentTarget(ctx context.Context, tx enrollmentQuery, workspace string, generation int64, op string) (provider.WorkspaceRef, string, string, string, error) {
 	ref := provider.WorkspaceRef{WorkspaceID: workspace, Generation: generation}
 	var state, proof, expires string
 	err := tx.QueryRowContext(ctx, `SELECT w.installation_id,w.ownership_marker,w.provider_instance_id,r.state,
