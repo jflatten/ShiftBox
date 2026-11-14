@@ -217,7 +217,13 @@ test('confirms workspace deletion and follows its durable operation', async () =
   await waitFor(() => expect(dialog.getByRole('button', { name: 'Cancel' })).toHaveFocus());
   expect(dialog.getByText(/permanently delete/i)).toBeVisible();
   const confirm = dialog.getByRole('button', { name: 'Delete permanently' });
-  await user.type(dialog.getByRole('textbox', { name: /workspace id/i }), workspace.id);
+  const typedID = dialog.getByRole('textbox', { name: /workspace id/i });
+  await user.type(typedID, workspace.id.toUpperCase());
+  await user.click(dialog.getByRole('checkbox', { name: /permanent/i }));
+  expect(confirm).toBeDisabled();
+  await user.click(dialog.getByRole('checkbox', { name: /permanent/i }));
+  await user.clear(typedID);
+  await user.type(typedID, workspace.id);
   expect(confirm).toBeDisabled();
   await user.click(dialog.getByRole('checkbox', { name: /permanent/i }));
   await user.click(confirm);

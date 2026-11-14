@@ -138,8 +138,8 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
             <Button variant="subtle" color="red" disabled={busy} style={{ alignSelf: 'flex-start' }}
               onClick={() => { setError(undefined); setConfirmDelete(true); }}>Delete workspace</Button>
           ) : null}
-          {confirmDelete ? <DeleteWorkspaceDialog id={id} busy={busy} submitting={submitting === 'delete'} error={error}
-            cancel={() => setConfirmDelete(false)} confirm={() => void requestAction('delete')} /> : null}
+          <DeleteWorkspaceDialog id={id} opened={confirmDelete} busy={busy} submitting={submitting === 'delete'} error={error}
+            cancel={() => setConfirmDelete(false)} confirm={() => void requestAction('delete')} />
           {displayedOperation ? <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation} onFinished={setOperationBusy} /> : null}
         </Stack>
       ) : null}
@@ -147,8 +147,9 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
   );
 }
 
-function DeleteWorkspaceDialog({ id, busy, submitting, error, cancel, confirm }: {
+function DeleteWorkspaceDialog({ id, opened, busy, submitting, error, cancel, confirm }: {
   id: string;
+  opened: boolean;
   busy: boolean;
   submitting: boolean;
   error: unknown;
@@ -159,7 +160,9 @@ function DeleteWorkspaceDialog({ id, busy, submitting, error, cancel, confirm }:
   const [accepted, setAccepted] = useState(false);
   const enabled = typedID === id && accepted && !busy;
   return (
-    <Modal opened onClose={cancel} title="Delete workspace" closeOnClickOutside={false} closeOnEscape={!submitting} withCloseButton={!submitting}>
+    <Modal opened={opened} onClose={cancel} onExitTransitionEnd={() => { setTypedID(''); setAccepted(false); }}
+      title="Delete workspace" closeOnClickOutside={false} closeOnEscape={!submitting} withCloseButton={!submitting}
+      transitionProps={{ duration: 0 }}>
       <form onSubmit={event => { event.preventDefault(); if (enabled) confirm(); }}>
         <Stack>
           <Text>Permanently delete this workspace, including project files, the developer home, and named application volumes.</Text>

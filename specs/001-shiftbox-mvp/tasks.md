@@ -172,14 +172,14 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 ### Tests first
 
 - [ ] T079 [P] [US3] Write failing capacity/reconciliation tests for CPU, memory, and disk refusal; no queue/eviction/resize; lost response; controller restart; conflicting inventory; and reservation retention until confirmed evidence in `tests/integration/capacity_reconciliation_test.go`
-- [ ] T080 [P] [US3] Write failing network-policy tests for only provider-supported modes, stopped-only changes, required controller/DNS/repository exceptions, allowlist validation, verification failure, and remain-stopped behavior in `internal/workspace/network_test.go`
+- [X] T080 [P] [US3] Write failing network-policy tests for only provider-supported modes, stopped-only changes, required controller/DNS/repository exceptions, allowlist validation, verification failure, and remain-stopped behavior in `internal/workspace/network_test.go`
 - [ ] T081 [P] [US3] Write failing revocation integration tests that close management SSE, IDE, preview, WebSocket, poll, and tunnel connections before reporting success and request stops for disabled users in `tests/integration/revocation_test.go`
 - [X] T082 [P] [US3] Write failing retention tests for disabled-by-default deletion, selected activity signals, outage grace, final transaction recheck, graceful timeout, explicit deletion authority, partial cleanup, and disk reservation retention in `internal/workspace/retention_test.go`
 - [ ] T083 [P] [US3] Write failing maintenance tests for deadlines, warnings, capacity, safe activation boundaries, no maintenance force-kill, verification/rollback evidence, prior stopped-state restoration, and compatibility blocking in `internal/workspace/maintenance_test.go`
 - [ ] T084 [P] [US3] Write failing long-stop recovery tests for exact provider instance/ownership/generation, one-use delivery, preserved disks/drive lists, and denial of revoked/deleted/unknown/cloned/mismatched identities in `tests/integration/long_stop_recovery_test.go`
 - [ ] T085 [P] [US3] Write failing certificate/release/preflight API and CLI tests for 30-day browser warnings, independent internal PKI, invalid replacement rejection, no plaintext fallback, N/N−1 guest support, retained-workspace gate, backup/key/certificate/provider/tool checks, stable exits, and actionable blocks in `internal/release/preflight_test.go` and `cmd/shiftbox/migrate_test.go`
 - [ ] T086 [P] [US3] Write failing notice, infrastructure, maintenance, and audit-retention API tests for persistent conditions, publish/list/read/dismiss/history semantics, maintenance independence, provider/capacity/artifact/profile/policy management, and protected active records in `internal/app/notices_test.go` and `tests/contract/admin_operations_api_test.go`
-- [ ] T087 [P] [US3] Write failing UI tests for capacity errors, desired/observed state, destructive modal safe focus/typed name/checkbox, retention warnings, offboarding stop failures, maintenance steps, certificate/storage alerts, and narrow keyboard navigation in `ui/features/workspaces/operations.test.tsx` and `ui/features/admin/maintenance.test.tsx`
+- [X] T087 [P] [US3] Write failing UI tests for capacity errors, desired/observed state, destructive modal safe focus/typed name/checkbox, retention warnings, offboarding stop failures, maintenance steps, certificate/storage alerts, and narrow keyboard navigation in `ui/features/workspaces/operations.test.tsx` and `ui/features/admin/maintenance.test.tsx`
 - [ ] T088 [P] [US3] Write failing Playwright operations journey for hostile preview isolation, cross-origin mutation denial, live revocation, deletion focus/copy, partial cleanup reservation, inactivity, long-stop recovery, and maintenance in `ui/tests/e2e/operations.spec.ts`
 
 ### Models and implementation
@@ -2818,3 +2818,15 @@ This checkpoint does not itself change the goal status.
   PostgreSQL verified both scoped dumps share one cutoff and release the
   write fence before export. The verified age archive contains only the
   management data and protected files on its allowlist.
+
+### Operations regression tests
+
+- T080 verifies supported policy admission and rejects malformed or
+  unsupported rules, including restricted policies with recorded exceptions.
+  A journal and worker test confirms a mismatch prevents the provider from
+  starting the stopped VM. T091 remains open for verification on policy edit.
+- T087 covers capacity, maintenance, offboarding, retention, conditions,
+  and keyboard interaction. The delete dialog now restores focus to its
+  trigger after Escape and requires fresh confirmation each time it opens.
+  TypeScript and 32 workspace, admin, and notices tests passed. T119 remains
+  open for real browser keyboard and narrow viewport evidence.

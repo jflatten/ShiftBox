@@ -15,7 +15,11 @@ const status = {
   provider: { name: 'utm', version: '5.0.8', architecture: 'amd64', networkModes: ['shared'] },
   capacity: { cpuCount: 4, memoryMiB: 8192, diskMiB: 131072 },
   version: 2,
-  conditions: [{ key: 'browser_certificate.expiring', severity: 'warning', active: true, detail: 'Replace the browser certificate before December 14.' }],
+  conditions: [
+    { key: 'browser_certificate.expiring', severity: 'warning', active: true, detail: 'Replace the browser certificate before December 14.' },
+    { key: 'storage.pressure', severity: 'critical', active: true, detail: 'Free space on the workspace storage volume before allocating another workspace.' },
+    { key: 'storage.recovered', severity: 'info', active: false, detail: 'A previous storage warning cleared.' },
+  ],
 };
 
 function json(payload: unknown) {
@@ -23,7 +27,7 @@ function json(payload: unknown) {
 }
 
 // A stale budget write reloads the current version without resending the
-// mutation. Certificate warnings remain visible during the edit.
+// mutation. Active certificate and storage warnings remain visible during the edit.
 test('shows infrastructure warnings and refreshes after a concurrent capacity edit', async () => {
   let capacityChanged = false;
   const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
@@ -52,6 +56,9 @@ test('shows infrastructure warnings and refreshes after a concurrent capacity ed
   await user.click(screen.getByRole('button', { name: 'Save capacity budget' }));
   expect(await screen.findByText('Refresh the capacity budget before updating')).toBeVisible();
   expect(await screen.findByDisplayValue('6')).toBeVisible();
+  expect(within(conditions).getByText('Replace the browser certificate before December 14.')).toBeVisible();
+  expect(within(conditions).getByText('Free space on the workspace storage volume before allocating another workspace.')).toBeVisible();
+  expect(within(conditions).queryByText('A previous storage warning cleared.')).not.toBeInTheDocument();
   expect(fetch.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(1);
   expect(fetch).toHaveBeenCalledWith('/api/v1/admin/capacity', expect.objectContaining({
     method: 'PUT', headers: expect.objectContaining({ 'If-Match': '"2"', 'X-CSRF-Token': 'fixture' }),
