@@ -1,9 +1,13 @@
 import { useRef, useState } from 'react';
-import { Button, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Group, Modal, NativeSelect, Stack, Text, TextInput } from '@mantine/core';
 import { useForm } from '@mantine/form';
+import { useQuery } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
+import type { operations } from '../../lib/api-types';
 import { APIProblemError, readProblem } from '../../lib/api-problem';
 import type { TemplateRevision } from './use-templates';
+
+type TemplateCatalog = operations['listTemplateCatalog']['responses'][200]['content']['application/json'];
 
 export function TemplateRevisionForm({ template, csrfToken, onClose, refresh }: {
   template?: TemplateRevision;
@@ -14,6 +18,16 @@ export function TemplateRevisionForm({ template, csrfToken, onClose, refresh }: 
   const [error, setError] = useState<unknown>();
   const request = useRef<{ body: string; key: string }>(undefined);
   const stale = error instanceof APIProblemError && error.problem.status === 412;
+  const catalog = useQuery<TemplateCatalog>({
+    queryKey: ['template-catalog'],
+    queryFn: async ({ signal }) => {
+      const response = await fetch('/api/v1/templates/catalog', { signal, cache: 'no-store' });
+      if (!response.ok) throw await readProblem(response);
+      return response.json();
+    },
+  });
+  const profiles = catalog.data?.resourceProfiles ?? [];
+  const images = catalog.data?.platformImages ?? [];
   const form = useForm({
     mode: 'uncontrolled',
     initialValues: {
@@ -25,6 +39,10 @@ export function TemplateRevisionForm({ template, csrfToken, onClose, refresh }: 
       platformArtifactId: template?.platformArtifactId ?? '',
       networkPolicyId: template?.networkPolicyId ?? '',
       secretNames: template?.secretNames?.join(', ') ?? '',
+    },
+    validate: {
+      resourceProfileId: value => profiles.some(profile => profile.id === value) ? null : 'Select an available resource profile.',
+      platformArtifactId: value => images.some(image => image.id === value) ? null : 'Select an available platform image.',
     },
   });
 
@@ -61,15 +79,29 @@ export function TemplateRevisionForm({ template, csrfToken, onClose, refresh }: 
           <TextInput label="Repository URL" type="url" required key={form.key('repositoryUrl')} {...form.getInputProps('repositoryUrl')} />
           <TextInput label="Repository ref" key={form.key('repositoryRef')} {...form.getInputProps('repositoryRef')} />
           <TextInput label="Dev Container configuration" required key={form.key('devcontainerPath')} {...form.getInputProps('devcontainerPath')} />
-          <TextInput label="Resource profile ID" required key={form.key('resourceProfileId')} {...form.getInputProps('resourceProfileId')} />
-          <TextInput label="Platform image ID" required key={form.key('platformArtifactId')} {...form.getInputProps('platformArtifactId')} />
+          {catalog.isPending ? <Text role="status">Loading resource profiles and platform images…</Text> : null}
+          {catalog.isError ? <>
+            <APIProblemView error={catalog.error} />
+            <Button variant="default" onClick={() => void catalog.refetch()}>Retry loading choices</Button>
+          </> : null}
+          {catalog.isSuccess ? <>
+            <NativeSelect label="Resource profile" required key={form.key('resourceProfileId')}
+              data={[{ value: '', label: 'Select a resource profile' }, ...profiles.map(({ id, name }) => ({ value: id, label: name }))]}
+              {...form.getInputProps('resourceProfileId')} />
+            <NativeSelect label="Platform image" required key={form.key('platformArtifactId')}
+              data={[{ value: '', label: 'Select a platform image' }, ...images.map(({ id, name }) => ({ value: id, label: name }))]}
+              {...form.getInputProps('platformArtifactId')} />
+            {(!profiles.length || !images.length) ? <Text size="sm">An administrator must configure an available resource profile and platform image.</Text> : null}
+          </> : null}
           <TextInput label="Network policy ID" key={form.key('networkPolicyId')} {...form.getInputProps('networkPolicyId')} />
           <TextInput label="Secret names" description="Separate references with commas." key={form.key('secretNames')} {...form.getInputProps('secretNames')} />
           {error !== undefined ? <APIProblemView error={error} /> : null}
           <Group justify="flex-end">
             <Button variant="default" disabled={form.submitting} onClick={onClose}>Cancel</Button>
             {stale ? <Button onClick={async () => { await refresh(); onClose(); }}>Refresh templates</Button>
-              : <Button type="submit" loading={form.submitting}>{template ? 'Save revision' : 'Create template'}</Button>}
+              : <Button type="submit" loading={form.submitting} disabled={!catalog.isSuccess || !profiles.length || !images.length}>
+                {template ? 'Save revision' : 'Create template'}
+              </Button>}
           </Group>
         </Stack>
       </form>

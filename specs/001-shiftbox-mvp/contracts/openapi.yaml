@@ -420,6 +420,22 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         default: { $ref: '#/components/responses/Error' }
 
+  /templates/catalog:
+    get:
+      tags: [Templates]
+      operationId: listTemplateCatalog
+      responses:
+        '200':
+          description: Available resource profile and platform image choices
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [resourceProfiles, platformImages]
+                properties:
+                  resourceProfiles: { type: array, items: { $ref: '#/components/schemas/TemplateCatalogChoice' } }
+                  platformImages: { type: array, items: { $ref: '#/components/schemas/TemplateCatalogChoice' } }
+        default: { $ref: '#/components/responses/Error' }
   /templates:
     get:
       tags: [Templates]
@@ -1183,6 +1199,12 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
   schemas:
+    TemplateCatalogChoice:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
     SetupStatus:
       type: object
       required: [state, localOnly, completedSteps, availableSteps]

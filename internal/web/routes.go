@@ -35,6 +35,7 @@ func ManagementRoutes() []ManagementRoute {
 		{Method: "GET", Path: "/operations/{operationId}", OperationID: "getOperation", Resolver: "operation_resource"},
 		{Method: "GET", Path: "/operations/{operationId}/events", OperationID: "streamOperationEvents", Resolver: "operation_resource"},
 		{Method: "GET", Path: "/templates", OperationID: "listTemplates", Action: "template.view"},
+		{Method: "GET", Path: "/templates/catalog", OperationID: "listTemplateCatalog", Action: "template.create"},
 		{Method: "POST", Path: "/templates", OperationID: "createTemplate", Action: "template.create"},
 		{Method: "PATCH", Path: "/templates/{templateId}", OperationID: "updateTemplate", Resolver: "template_update"},
 		{Method: "POST", Path: "/templates/{templateId}/revisions", OperationID: "createTemplateRevision", Action: "template.create_revision"},

@@ -41,7 +41,7 @@ func TestManagementServices(t *testing.T) {
 	}
 	for _, id := range []string{"listWorkspaces", "getWorkspace", "launchWorkspace", "requestWorkspaceAction",
 		"createWorkspaceEntryGrant", "listWorkspaceConnectionGrants", "revokeWorkspaceConnectionGrant",
-		"getOperation", "streamOperationEvents", "listTemplates", "createTemplate",
+		"getOperation", "streamOperationEvents", "listTemplates", "listTemplateCatalog", "createTemplate",
 		"createTemplateRevision", "updateTemplate", "grantTemplateLaunch", "revokeTemplateLaunch",
 		"updateCapacityBudget", "createResourceProfile", "getInfrastructureStatus", "replaceBrowserCertificate",
 		"listSecretMetadata", "setSecret", "deleteSecretOverride", "listUsers", "changeOwnPassword", "createLocalUser", "resetLocalUserPassword",

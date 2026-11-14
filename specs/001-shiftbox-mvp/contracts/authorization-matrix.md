@@ -73,6 +73,7 @@ Every OpenAPI operation maps to exactly one action. Grouped operation IDs below 
 | `getOperation`, `streamOperationEvents` | Same permission required to view the operation's bound resource; installation-wide operations require their originating administrative action |
 | `listTemplates` | `template.view` |
 | `createTemplate` | `template.create` |
+| `listTemplateCatalog` | `template.create` |
 | `updateTemplate` | `template.edit` or `template.archive` according to requested fields |
 | `createTemplateRevision` | `template.create_revision` |
 | `grantTemplateLaunch`, `revokeTemplateLaunch` | `template.share` |

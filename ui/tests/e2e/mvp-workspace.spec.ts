@@ -158,8 +158,8 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     await enter(form.getByLabel('Repository URL'), fixture.repositoryURL);
     if (fixture.repositoryRef) await enter(form.getByLabel('Repository ref'), fixture.repositoryRef);
     await enter(form.getByLabel('Dev Container configuration'), fixture.devcontainerPath);
-    await enter(form.getByLabel('Resource profile ID'), fixture.profileID);
-    await enter(form.getByLabel('Platform image ID'), fixture.artifactID);
+    await form.getByRole('combobox', { name: 'Resource profile' }).selectOption(fixture.profileID);
+    await form.getByRole('combobox', { name: 'Platform image' }).selectOption(fixture.artifactID);
     await activate(form.getByRole('button', { name: 'Create template' }));
     await expect(form).toBeHidden({ timeout: 15_000 });
   });

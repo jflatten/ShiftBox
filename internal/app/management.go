@@ -55,6 +55,7 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 	for _, handler := range []web.AuthorizedHandler{
 		listConnectionGrants, revokeConnectionGrant,
 		listWorkspaces, getWorkspace, getOperation, streamEvents, listTemplates, createTemplate, reviseTemplate, budget, resourceProfile,
+		web.TemplateCatalogHandler(db, origin, now, launchPolicy),
 		web.InfrastructureStatusHandler(db, origin, now, launchPolicy.Capabilities),
 		web.NetworkPolicyHandler(db, origin, now, uuid.NewString, launchPolicy.Capabilities),
 		state.browserCertificateHandler(journal, now),

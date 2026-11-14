@@ -6,12 +6,94 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/template"
+	"github.com/jflatten/ShiftBox/internal/workspace"
 )
+
+type templateCatalogChoice struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// TemplateCatalogHandler lists the profile and image choices for template authors.
+func TemplateCatalogHandler(db *sql.DB, origin string, now func() time.Time, policy WorkspaceLaunchPolicy) AuthorizedHandler {
+	return AuthorizedHandler{
+		DB: db, Origin: origin, Now: now,
+		Route: ManagementRoute{Method: http.MethodGet, Path: "/templates/catalog", OperationID: "listTemplateCatalog", Action: "template.create"},
+		Resolve: func(context.Context, *sql.Tx, *http.Request, auth.Principal) (AuthorizationTarget, error) {
+			return AuthorizationTarget{Action: "template.create"}, nil
+		},
+		Apply: func(ctx context.Context, tx *sql.Tx, _ *http.Request, _ auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
+			result := struct {
+				ResourceProfiles []templateCatalogChoice `json:"resourceProfiles"`
+				PlatformImages   []templateCatalogChoice `json:"platformImages"`
+			}{[]templateCatalogChoice{}, []templateCatalogChoice{}}
+			if policy.Capabilities.Create && policy.Capabilities.Start {
+				var err error
+				result.ResourceProfiles, err = templateCatalogProfiles(ctx, tx, policy)
+				if err != nil {
+					return nil, err
+				}
+				result.PlatformImages, err = templateCatalogImages(ctx, tx, policy)
+				if err != nil {
+					return nil, err
+				}
+			}
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(result)
+			}), nil
+		},
+	}
+}
+
+func templateCatalogProfiles(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunchPolicy) ([]templateCatalogChoice, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib FROM resource_profiles
+		WHERE enabled=1 ORDER BY name,id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	choices := []templateCatalogChoice{}
+	for rows.Next() {
+		var item templateCatalogChoice
+		var allocation workspace.Allocation
+		if err := rows.Scan(&item.ID, &item.Name, &allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB); err != nil {
+			return nil, err
+		}
+		if _, err := workspace.ProfileResources(allocation, policy.Capabilities); err == nil {
+			choices = append(choices, item)
+		}
+	}
+	return choices, rows.Err()
+}
+
+func templateCatalogImages(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunchPolicy) ([]templateCatalogChoice, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.release_id,a.protocol_version FROM platform_artifacts a
+		CROSS JOIN installations i WHERE i.singleton=1 AND a.state='available' AND a.architecture=$1
+		AND a.guest_release IN (i.active_release,i.min_guest_release) ORDER BY a.release_id,a.id`, policy.Capabilities.Architecture)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	choices := []templateCatalogChoice{}
+	for rows.Next() {
+		var item templateCatalogChoice
+		var protocol string
+		if err := rows.Scan(&item.ID, &item.Name, &protocol); err != nil {
+			return nil, err
+		}
+		if slices.Contains(policy.Protocols, protocol) {
+			choices = append(choices, item)
+		}
+	}
+	return choices, rows.Err()
+}
 
 // TemplateHandlers serves listing, creation, and immutable template revisions.
 func TemplateHandlers(db *sql.DB, origin string, now func() time.Time, newID func() string) (list, create, revise AuthorizedHandler) {

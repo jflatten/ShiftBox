@@ -381,6 +381,34 @@ for (const [heading, action, endpoint, fields] of [
   });
 }
 
+// Template authors pick readable catalog names while the request retains
+// the resource profile and platform artifact identifiers.
+test('creates a template with named catalog choices', async ({ page }) => {
+  let submitted: Record<string, string> | undefined;
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) return route.fulfill({ json: admin(['template.create']) });
+    if (path.endsWith('/templates/catalog')) return route.fulfill({ json: {
+      resourceProfiles: [{ id: 'profile-fixture', name: 'Small' }],
+      platformImages: [{ id: 'artifact-fixture', name: 'Ubuntu 24.04' }],
+    } });
+    if (path.endsWith('/templates') && route.request().method() === 'POST') {
+      submitted = route.request().postDataJSON();
+      return route.fulfill({ status: 201, json: {} });
+    }
+    if (path.endsWith('/templates')) return route.fulfill({ json: { items: [] } });
+  });
+  await page.goto('/templates/');
+  await activate(page, page.getByRole('button', { name: 'New template' }));
+  const dialog = page.getByRole('dialog', { name: 'New template' });
+  await enter(page, dialog.getByRole('textbox', { name: 'Name', exact: true }), 'Catalog fixture');
+  await enter(page, dialog.getByRole('textbox', { name: 'Repository URL' }), 'https://github.com/example/project');
+  await dialog.getByRole('combobox', { name: 'Resource profile' }).selectOption({ label: 'Small' });
+  await dialog.getByRole('combobox', { name: 'Platform image' }).selectOption({ label: 'Ubuntu 24.04' });
+  await activate(page, dialog.getByRole('button', { name: 'Create template' }));
+  await expect(dialog).toBeHidden();
+  expect(submitted).toMatchObject({ resourceProfileId: 'profile-fixture', platformArtifactId: 'artifact-fixture' });
+});
+
 // A recovery reviewer advances through gated decisions by keyboard and can
 // inspect the completed activation step after authority changes.
 test('recovery review and activation', async ({ page }) => {

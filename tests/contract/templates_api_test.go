@@ -43,6 +43,10 @@ func TestTemplateAPI(t *testing.T) {
 		`INSERT INTO resource_profiles(id,name,cpu_count,memory_mib,disk_mib,enabled,version) VALUES('` + profileID + `','Selected',2,1024,40,1,1)`,
 		`INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state)
 		SELECT '` + artifactID + `','template-api-release',architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,'template-api.utm',imported_by,imported_at,state FROM platform_artifacts WHERE id='artifact'`,
+		`INSERT INTO resource_profiles(id,name,cpu_count,memory_mib,disk_mib,enabled,version)
+		VALUES('disabled','Disabled profile',2,1024,40,0,1),('oversized','Oversized profile',100,1024,40,1,1)`,
+		`INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state)
+		SELECT 'other-protocol','Other protocol',architecture,platform_version,guest_release,'999',owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,'other.utm',imported_by,imported_at,state FROM platform_artifacts WHERE id='artifact'`,
 	} {
 		if _, err := db.ExecContext(ctx, query); err != nil {
 			t.Fatal(err)
@@ -51,6 +55,13 @@ func TestTemplateAPI(t *testing.T) {
 	list, create, revise := web.TemplateHandlers(db, origin, func() time.Time { return now }, uuid.NewString)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/templates", &list)
+	catalog := web.TemplateCatalogHandler(db, origin, func() time.Time { return now }, web.WorkspaceLaunchPolicy{
+		Capabilities: provider.Capabilities{Create: true, Start: true, Architecture: "amd64",
+			Minimum: provider.Resources{CPU: 1, MemoryBytes: 512 << 20, DiskBytes: 1 << 20},
+			Maximum: provider.Resources{CPU: 8, MemoryBytes: 8192 << 20, DiskBytes: 100 << 20}},
+		Protocols: []string{"1"},
+	})
+	mux.Handle("GET /api/v1/templates/catalog", &catalog)
 	mux.Handle("POST /api/v1/templates", &create)
 	mux.Handle("POST /api/v1/templates/{templateId}/revisions", &revise)
 	update := web.TemplateUpdateHandler(db, origin, func() time.Time { return now })
@@ -76,6 +87,20 @@ func TestTemplateAPI(t *testing.T) {
 	request := func(method, path, payload, key, version string, want int) *httptest.ResponseRecorder {
 		t.Helper()
 		return send(token, method, path, payload, key, version, want)
+	}
+	// A member can choose available names without accessing infrastructure
+	// metadata or seeing profiles and releases that cannot be launched.
+	send("", "GET", "/catalog", "", "", "", 401)
+	choices := request("GET", "/catalog", "", "", "", 200).Body.String()
+	for _, want := range []string{`"id":"` + profileID + `","name":"Selected"`, `"id":"` + artifactID + `","name":"template-api-release"`} {
+		if !strings.Contains(choices, want) {
+			t.Errorf("template catalog omitted %s: %s", want, choices)
+		}
+	}
+	for _, excluded := range []string{"Disabled profile", "Oversized profile", "Other protocol", "manifest", "bundle"} {
+		if strings.Contains(choices, excluded) {
+			t.Errorf("template catalog exposed %s: %s", excluded, choices)
+		}
 	}
 	const createKey = "create-template-fixture"
 	const reviseKey = "revise-template-fixture"

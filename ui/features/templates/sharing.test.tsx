@@ -13,11 +13,24 @@ const memberID = 'a1234567-1234-4321-8765-123456789abc';
 const fixture = (role: string, fetch: (path: string, init?: RequestInit) => unknown) => {
   globalThis.fetch = jest.fn(async (path: string, init?: RequestInit) => {
     const data = path === '/api/v1/session'
-      ? { user: { id: 'owner', role }, mode: 'normal', installationState: 'active', permissions: [], csrfToken: 'fixture' }
+      ? { user: { id: 'owner', role }, mode: 'normal', installationState: 'active', permissions: ['template.create'], csrfToken: 'fixture' }
       : fetch(path, init);
     return { ok: true, status: 200, json: async () => data } as Response;
   }) as unknown as typeof globalThis.fetch;
 };
+
+// A new template cannot be submitted until the installation has both choices.
+test('explains when no platform image is available', async () => {
+  fixture('member', path => path === '/api/v1/templates/catalog'
+    ? { resourceProfiles: [{ id: 'small', name: 'Small' }], platformImages: [] }
+    : { items: [] });
+  const user = userEvent.setup();
+  render(<Providers><Templates /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'New template' }));
+  const dialog = screen.getByRole('dialog', { name: 'New template' });
+  expect(await within(dialog).findByText(/an administrator must configure/i)).toBeVisible();
+  expect(within(dialog).getByRole('button', { name: 'Create template' })).toBeDisabled();
+});
 
 // A template owner must explicitly acknowledge project secret access
 // before a grant can be submitted. Members never get the archive filter.
@@ -72,6 +85,10 @@ test('filters archived templates and restores with the reviewed version', async 
 test('creates a new revision from the reviewed template', async () => {
   let current = project;
   fixture('member', (path, init) => {
+    if (path === '/api/v1/templates/catalog') return {
+      resourceProfiles: [{ id: 'small', name: 'Small' }],
+      platformImages: [{ id: 'platform', name: 'Ubuntu release' }, { id: 'next-platform', name: 'Next Ubuntu release' }],
+    };
     if (path.endsWith('/revisions') && init?.method === 'POST') {
       current = { ...project, currentRevision: 3 };
       return current;
@@ -83,12 +100,19 @@ test('creates a new revision from the reviewed template', async () => {
   await user.click(await screen.findByRole('button', { name: 'New revision' }));
   const dialog = screen.getByRole('dialog', { name: 'New revision' });
   expect(within(dialog).getByLabelText(/^Repository URL/)).toHaveValue(project.repositoryUrl);
+  const profile = await within(dialog).findByRole('combobox', { name: 'Resource profile' });
+  const image = within(dialog).getByRole('combobox', { name: 'Platform image' });
+  expect(await within(profile).findByRole('option', { name: 'Small' })).toHaveProperty('selected', true);
+  expect(within(image).getByRole('option', { name: 'Ubuntu release' })).toHaveProperty('selected', true);
+  await user.selectOptions(image, within(image).getByRole('option', { name: 'Next Ubuntu release' }));
   await user.type(within(dialog).getByLabelText('Repository ref'), 'next');
   await user.click(within(dialog).getByRole('button', { name: 'Save revision' }));
   expect(await screen.findByRole('cell', { name: '3' })).toBeVisible();
   expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/templates/template/revisions', expect.objectContaining({
     method: 'POST', headers: expect.objectContaining({ 'If-Match': '"4"', 'Idempotency-Key': expect.any(String) }),
   }));
+  const body = (globalThis.fetch as jest.Mock).mock.calls.find(([, init]) => init?.method === 'POST')?.[1]?.body;
+  expect(JSON.parse(body)).toMatchObject({ resourceProfileId: 'small', platformArtifactId: 'next-platform' });
 });
 
 // A template manager can revoke a previously granted user's access from
