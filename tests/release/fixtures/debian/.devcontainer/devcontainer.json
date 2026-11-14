@@ -1,0 +1,11 @@
+{
+  "name": "ShiftBox Debian prebuilt fixture",
+  "image": "docker.io/library/debian@sha256:c67e92c8099ba22853ab4cfda7cfb494d253d6012ca82dee98ba8976772af018",
+  "runArgs": ["--platform=linux/amd64"],
+  "features": { "./local-feature": {} },
+  "mounts": ["type=volume,source=${localEnv:SHIFTBOX_FIXTURE_VOLUME},target=/var/lib/shiftbox-fixture"],
+  "waitFor": "postCreateCommand",
+  "onCreateCommand": "test -f /usr/local/share/shiftbox-fixture-feature && getconf GNU_LIBC_VERSION && test $(uname -m) = x86_64",
+  "postCreateCommand": "test ! -f fail-hook && touch ready",
+  "postStartCommand": "echo later > later"
+}
