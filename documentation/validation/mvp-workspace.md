@@ -75,6 +75,11 @@ against the same binary and installation. The workspace run resumed at this
 handoff and reached GitHub sign-in for the fixture App. The candidate's
 workspace and journal checks are still pending.
 
+The running candidate created and verified an encrypted management backup
+before the workspace launch. The check-only `migrate preflight` command
+returned ready with zero blockers against the candidate's manifest. The
+retained-guest gate still needs evidence with a real workspace on this build.
+
 Run the browser spec with `SHIFTBOX_MVP_FIXTURE` pointing at a fresh local
 fixture and with the same valid certificate trust available to Chrome and the
 test runner. With Node 26, `NODE_USE_SYSTEM_CA=1` lets the test runner use
