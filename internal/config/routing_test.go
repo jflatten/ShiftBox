@@ -12,7 +12,14 @@ func TestServiceRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, service := range []string{"ide", "preview-8080", "my--service"} {
+	// Repair has a dedicated origin, and the preview namespace cannot alias it.
+	if got, err := hosts.Hostname(workspace, "repair"); err != nil || got != workspace+".repair.test" {
+		t.Fatalf("repair hostname = %q, %v, want the dedicated repair hostname", got, err)
+	}
+	if _, _, ok := hosts.Resolve("repair--" + workspace + ".preview.test"); ok {
+		t.Fatal("preview hostname accepted the reserved repair service")
+	}
+	for _, service := range []string{"ide", "repair", "preview-8080", "my--service"} {
 		hostname, err := hosts.Hostname(workspace, service)
 		if err != nil {
 			t.Fatal(err)

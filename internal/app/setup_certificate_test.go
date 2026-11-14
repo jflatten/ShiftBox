@@ -66,7 +66,7 @@ func TestSetupCertificateUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert := &x509.Certificate{NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
-		DNSNames: []string{"management.test", "*.ide.test", "*.preview.test"}, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+		DNSNames: []string{"management.test", "*.ide.test", "*.preview.test", "*.repair.test"}, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, cert, cert, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)

@@ -199,7 +199,7 @@ func browserCertificateFixture(t *testing.T, roots *x509.CertPool, now time.Time
 		t.Fatal(err)
 	}
 	certificate := &x509.Certificate{NotBefore: now.Add(-time.Minute), NotAfter: now.Add(lifetime),
-		DNSNames: []string{"management.test", "*.ide.test", "*.preview.test"}, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+		DNSNames: []string{"management.test", "*.ide.test", "*.preview.test", "*.repair.test"}, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, certificate, certificate, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)

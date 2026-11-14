@@ -105,7 +105,7 @@ func serveTunnelStream(ctx context.Context, stream *yamux.Stream, generation int
 	dialer := net.Dialer{Timeout: 5 * time.Second}
 	target := targets[header.ServiceKey]
 	network := "tcp"
-	if header.ServiceKey == "ide" && target == proxy.IDESocket {
+	if proxy.IsWorkbenchSocket(header.ServiceKey, target) {
 		network = "unix"
 	}
 	local, err := dialer.DialContext(ctx, network, target)

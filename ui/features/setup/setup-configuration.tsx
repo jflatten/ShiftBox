@@ -143,7 +143,7 @@ export function CertificateForm(props: SetupFormProps) {
           key={form.key('ideSuffix')} {...form.getInputProps('ideSuffix')} />
         <TextInput label="Preview domain suffix" placeholder="preview.example.com" required
           key={form.key('previewSuffix')} {...form.getInputProps('previewSuffix')} />
-        <Text size="sm">Use a trusted certificate covering the management address and a wildcard for each domain suffix.</Text>
+        <Text size="sm">Use a trusted certificate covering the management address and the IDE, preview, and repair wildcards. For ide.example.com, the repair wildcard is *.repair.example.com.</Text>
         <FileInput label="Certificate chain" accept=".pem,.crt" withAsterisk
           key={form.key('chain')} {...form.getInputProps('chain')} />
         <FileInput label="Private key" accept=".pem,.key" withAsterisk

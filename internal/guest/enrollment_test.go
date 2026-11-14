@@ -598,6 +598,41 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	// Repair uses its own command and report, with no repository arguments
+	// and no assertion that the development container reached waitFor.
+	t.Run("guest repair entry", func(t *testing.T) {
+		const repairID = "99999999-0000-4000-8000-000000000015"
+		for _, query := range []string{
+			`INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,current_step,created_at,version,originating_action)
+			 VALUES($1,'work','repair',1,'owner','fixture-repair','waiting','repair_enter','now',9,'workspace.repair')`,
+			`INSERT INTO operation_steps(operation_id,step_index,step_key,label,status) VALUES($1,0,'repair_enter','Repair','active')`,
+		} {
+			if _, err := db.Exec(query, repairID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		code, body := pollResponse(hello)
+		var repair struct{ Operation guest.PollOperation }
+		if code != 200 || json.Unmarshal([]byte(body), &repair) != nil || repair.Operation.ID != repairID ||
+			repair.Operation.Command != "enter-repair" || repair.Operation.Arguments.RepositoryURL != "" ||
+			repair.Operation.Arguments.RepositoryRef != "" || repair.Operation.Arguments.Devcontainer != "" {
+			t.Fatalf("repair poll = %d %s, want enter-repair without project arguments", code, body)
+		}
+		report := `{"protocolVersion":"1","guestRelease":"test","lastOperationId":"` + repairID + `","lastOperationVersion":9,
+			"operationReport":{"operationId":"` + repairID + `","workspaceGeneration":1,"status":"succeeded",
+			"step":"repair.enter","attempt":1,"evidence":{"containerId":"` + containerID + `","waitForReached":false}}}`
+		if code := poll(strings.Replace(report, "repair.enter", "devcontainer.lifecycle", 1)); code != 409 {
+			t.Fatalf("wrong repair report step = %d, want 409", code)
+		}
+		for range 2 {
+			if code, body := pollResponse(report); code != 200 || !strings.Contains(body, `"operation":null`) {
+				t.Fatalf("repair report or replay = %d %s, want accepted with no new dispatch", code, body)
+			}
+		}
+		if _, err := db.Exec("UPDATE operations SET status='succeeded' WHERE id=$1", repairID); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("guest workload shutdown", func(t *testing.T) {
 		const stopID = "99999999-0000-4000-8000-000000000003"
 		if _, err := db.Exec("UPDATE workspaces SET desired_state='stopped' WHERE id='work'"); err != nil {

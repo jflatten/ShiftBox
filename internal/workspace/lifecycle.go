@@ -36,6 +36,8 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		desired, label = "stopped", "Stop workspace"
 	case "rebuild":
 		desired, label = "running", "Rebuild the development container"
+	case "repair":
+		desired, label = "running", "Start the repair environment"
 	default:
 		return operation.Operation{}, provider.ErrInvalidState
 	}
@@ -89,8 +91,17 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 	if current == "deleted" || observed == "deleted" || instance == "" {
 		return operation.Operation{}, provider.ErrInvalidState
 	}
-	if intent.Action == "rebuild" && (current != "running" || observed != "running") {
+	if (intent.Action == "rebuild" || intent.Action == "repair") && (current != "running" || observed != "running") {
 		return operation.Operation{}, provider.ErrInvalidState
+	}
+	if intent.Action == "repair" {
+		eligible, err := RepairAvailable(ctx, tx, intent.WorkspaceID, generation, now)
+		if err != nil {
+			return operation.Operation{}, err
+		}
+		if !eligible {
+			return operation.Operation{}, provider.ErrInvalidState
+		}
 	}
 	result, err = tx.ExecContext(ctx, `UPDATE workspaces SET desired_state=$2,updated_at=$3,version=version+1
 		WHERE id=$1 AND version=$4`, intent.WorkspaceID, desired, now.UTC().Format(time.RFC3339Nano), version)
@@ -113,11 +124,27 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		steps = append([]operation.Step{{Key: "start", Label: label}}, developmentSteps("Start the development container")...)
 	case "rebuild":
 		steps = developmentSteps(label)
+	case "repair":
+		steps = []operation.Step{{Key: "repair_enter", Label: label}, {Key: "verify_repair", Label: "Verify the repair IDE"}}
 	}
 	return journal.CreateInTx(ctx, tx, operation.Request{
 		Actor: intent.ActorID, Key: intent.RequestKey, Type: intent.Action, OriginatingAction: "workspace." + intent.Action,
 		WorkspaceID: &intent.WorkspaceID, Generation: generation, Steps: steps,
 	})
+}
+
+// RepairAvailable checks for a failed setup step and recent authenticated guest contact.
+func RepairAvailable(ctx context.Context, tx *sql.Tx, id string, generation int64, now time.Time) (bool, error) {
+	var eligible bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM operations o JOIN operation_steps s ON s.operation_id=o.id AND s.step_key=o.current_step
+			JOIN guest_registrations g ON g.workspace_id=o.workspace_id AND g.generation=o.generation
+			WHERE o.id=(SELECT id FROM operations WHERE workspace_id=$1 AND generation=$2
+				AND type IN ('provision','start','rebuild','repair') ORDER BY created_at DESC,id DESC LIMIT 1)
+			AND o.status='failed' AND s.step_key IN ('configure','verify_ide','repair_enter','verify_repair')
+			AND g.state='active' AND g.last_authenticated_at >= $3 AND g.certificate_not_after > $4
+		)`, id, generation, now.UTC().Add(-90*time.Second).Format(time.RFC3339Nano), now.UTC().Format(time.RFC3339Nano)).Scan(&eligible)
+	return eligible, err
 }
 
 func developmentSteps(label string) []operation.Step {

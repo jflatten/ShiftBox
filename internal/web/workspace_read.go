@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/auth"
+	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 type workspaceView struct {
@@ -80,7 +81,16 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 			if err != nil {
 				return nil, err
 			}
+			repairResource, _, err := serviceWorkspace(ctx, tx, view.ID, "repair")
+			if err != nil {
+				return nil, err
+			}
+			repairEntry, err := serviceEntryTarget(ctx, tx, store, principal, repairResource)
+			if err != nil {
+				return nil, err
+			}
 			var lastFailedID *string
+			var canStartRepair bool
 			if view.CurrentOperationID == nil {
 				// A later successful workflow supersedes an older failure.
 				err := tx.QueryRowContext(ctx, `SELECT CASE WHEN status='failed' THEN id END
@@ -89,16 +99,27 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 				if err != nil && !errors.Is(err, sql.ErrNoRows) {
 					return nil, err
 				}
+				if lastFailedID != nil && view.DesiredState == "running" && view.ObservedState == "running" &&
+					auth.Authorize(principal, "workspace.repair", target.Resource, nil, now()).Allowed {
+					canStartRepair, err = workspace.RepairAvailable(ctx, tx, view.ID, view.Generation, now())
+					if err != nil {
+						return nil, err
+					}
+				}
 			}
 			// Expose the current entry decision without issuing a grant.
 			response := struct {
 				workspaceView
 				CanOpenIDE            bool                      `json:"canOpenIde"`
+				CanOpenRepair         bool                      `json:"canOpenRepair"`
+				CanStartRepair        bool                      `json:"canStartRepair"`
 				LastFailedOperationID *string                   `json:"lastFailedOperationId"`
 				Retention             *WorkspaceRetentionStatus `json:"retention,omitempty"`
 			}{
 				workspaceView:         view,
 				CanOpenIDE:            auth.Authorize(principal, entry.Action, entry.Resource, entry.Grants, now()).Allowed,
+				CanOpenRepair:         auth.Authorize(principal, repairEntry.Action, repairEntry.Resource, repairEntry.Grants, now()).Allowed,
+				CanStartRepair:        canStartRepair,
 				LastFailedOperationID: lastFailedID,
 			}
 			if retention != nil && view.RetentionDeadline != nil {

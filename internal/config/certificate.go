@@ -48,13 +48,13 @@ func ValidateBrowserCertificate(chainPEM, keyPEM []byte, hostnames []string, roo
 }
 
 // ValidateCertificate verifies the configured management hostname and requires
-// wildcard SANs for both service namespaces, including workspaces created later.
+// wildcard SANs for each service namespace, including workspaces created later.
 // Trust roots remain an explicit activation input; uploaded keys are not stored.
 func (h *ServiceHosts) ValidateCertificate(chainPEM, keyPEM []byte, roots *x509.CertPool, now time.Time) (tls.Certificate, error) {
 	if h == nil {
 		return tls.Certificate{}, ErrInvalidBrowserCertificate
 	}
-	wildcards := []string{"*" + h.ideSuffix, "*" + h.previewSuffix}
+	wildcards := []string{"*" + h.ideSuffix, "*" + h.previewSuffix, "*" + h.repairSuffix}
 	pair, err := ValidateBrowserCertificate(chainPEM, keyPEM, append([]string{h.management}, wildcards...), roots, now)
 	if err != nil {
 		return tls.Certificate{}, err

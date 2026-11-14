@@ -23,8 +23,16 @@ const (
 	maxTunnelFrame         = 16 << 10
 )
 
-// IDESocket is the only Unix socket the guest tunnel may serve.
+// IDESocket serves the normal workspace workbench.
 const IDESocket = "/run/shiftbox-ide/code-server.sock"
+
+// RepairSocket serves the independent repair workbench.
+const RepairSocket = "/run/shiftbox-repair/repair.sock"
+
+// IsWorkbenchSocket binds each workbench service to its private socket.
+func IsWorkbenchSocket(service, target string) bool {
+	return service == "ide" && target == IDESocket || service == "repair" && target == RepairSocket
+}
 
 var tunnelServiceKey = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
@@ -227,8 +235,7 @@ func ValidateTunnelServices(input []TunnelService) ([]Service, error) {
 	for _, service := range input {
 		target, err := netip.ParseAddrPort(service.Target)
 		local := err == nil && target.Addr().IsLoopback() && target.Port() != 0
-		ideSocket := service.Key == "ide" && service.Target == IDESocket
-		if (!local && !ideSocket) ||
+		if (!local && !IsWorkbenchSocket(service.Key, service.Target) || service.Key == "repair" && target.IsValid()) ||
 			len(service.Key) > 63 || !tunnelServiceKey.MatchString(service.Key) || len(service.Protocols) > 2 {
 			return nil, errors.New("invalid guest tunnel service")
 		}

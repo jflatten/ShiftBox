@@ -16,16 +16,20 @@ var errGuestShutdownPending = errors.New("waiting for guest workload shutdown")
 
 // PowerExecutor reconciles start, graceful stop, and container rebuild on a VM.
 type PowerExecutor struct {
-	store    *Store
-	provider provider.Provider
-	now      func() time.Time
-	probeIDE IDEProbe
+	store       *Store
+	provider    provider.Provider
+	now         func() time.Time
+	probeIDE    IDEProbe
+	probeRepair IDEProbe
 }
 
 // NewPowerExecutor binds retained workspace power operations to the current provider.
 func NewPowerExecutor(store *Store, machines provider.Provider, now func() time.Time, probe IDEProbe) *PowerExecutor {
 	return &PowerExecutor{store: store, provider: machines, now: now, probeIDE: probe}
 }
+
+// SetRepairProbe binds the authenticated repair service readiness check.
+func (e *PowerExecutor) SetRepairProbe(probe IDEProbe) { e.probeRepair = probe }
 
 // Observe inspects the exact VM before any new provider action is attempted.
 func (e *PowerExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
@@ -67,6 +71,13 @@ func (e *PowerExecutor) Observe(ctx context.Context, op operation.Operation, ste
 		evidence, err := verifyIDE(ctx, e.store.db, op, e.probeIDE)
 		return evidence, err == nil, err
 	}
+	if op.Type == "repair" {
+		if got.Power != provider.Running {
+			return "", false, provider.ErrOutcomeUnknown
+		}
+		evidence, err := e.repairEvidence(ctx, op, step)
+		return evidence, err == nil, err
+	}
 	if (got.Power == provider.Running) != (op.Type == "start") {
 		return "", false, nil
 	}
@@ -88,6 +99,9 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 	}
 	if step.Key == "verify_ide" {
 		return verifyIDE(ctx, e.store.db, op, e.probeIDE)
+	}
+	if op.Type == "repair" {
+		return e.repairEvidence(ctx, op, step)
 	}
 	var got provider.Inventory
 	if op.Type == "start" {
@@ -132,7 +146,7 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 		  AND (($6 AND owner.membership_state IN ('pending','disabled')) OR
 		       (NOT $6 AND actor.membership_state='active' AND (actor.id=owner.id OR actor.role='administrator')))
 		  AND (($4='stop' AND w.desired_state='stopped') OR
-		       ($4 IN ('start','rebuild') AND w.desired_state='running' AND owner.membership_state='active'
+		       ($4 IN ('start','rebuild','repair') AND w.desired_state='running' AND owner.membership_state='active'
 		        AND ($4='start' OR w.observed_state='running')
 		        AND EXISTS (SELECT 1 FROM reservations r WHERE r.workspace_id=w.id
 		                     AND r.cpu_memory_state='reserved' AND r.disk_state='reserved')))`,
@@ -152,6 +166,9 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 }
 
 func validPowerStep(action, step string) bool {
+	if action == "repair" {
+		return step == "repair_enter" || step == "verify_repair"
+	}
 	if action == "stop" {
 		return step == "stop" || step == "shutdown"
 	}
@@ -159,6 +176,30 @@ func validPowerStep(action, step string) bool {
 		return true
 	}
 	return (action == "start" || action == "rebuild") && (step == "configure" || step == "verify_ide" || step == "finish_setup")
+}
+
+func (e *PowerExecutor) repairEvidence(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
+	var status, id string
+	err := e.store.db.QueryRowContext(ctx, "SELECT status,container_id FROM guest_dispatches WHERE operation_id=$1", op.ID).Scan(&status, &id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	if status == "failed" {
+		return "", &operation.StepFailure{Detail: "The guest could not start the preloaded repair environment."}
+	}
+	if status != "succeeded" || id == "" {
+		return "", errGuestConfigurationPending
+	}
+	if step.Key == "verify_repair" {
+		if e.probeRepair == nil {
+			return "", provider.ErrInvalidState
+		}
+		if err := e.probeRepair(ctx, *op.WorkspaceID, op.Generation); err != nil {
+			return "", errors.Join(errIDEProbePending, err)
+		}
+		return "The authenticated tunnel returned the repair workbench.", nil
+	}
+	return "The guest started the preloaded repair environment.", nil
 }
 
 func (e *PowerExecutor) shutdownEvidence(ctx context.Context, op operation.Operation) (string, error) {

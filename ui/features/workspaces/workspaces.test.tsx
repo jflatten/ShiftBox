@@ -26,6 +26,30 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
+// Repair is only offered with the controller's readiness decision and opens
+// through a grant scoped to the repair service.
+test('requests a repair entry grant for a verified repair workspace', async () => {
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces/workspace-one') return json({
+      ...workspace, observedState: 'running', currentOperationId: null, canOpenRepair: true,
+    });
+    if (input === '/api/v1/workspaces/workspace-one/entry-grants' && init?.method === 'POST') return {
+      ok: false, status: 403, headers: new Headers({ 'Content-Type': 'application/problem+json' }),
+      json: async () => ({ type: 'about:blank', title: 'Workspace service access denied', status: 403,
+        code: 'workspace.entry_denied', requestId: 'fixture' }),
+    } as Response;
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Open repair IDE' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Workspace service access denied');
+  expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces/workspace-one/entry-grants', expect.objectContaining({
+    method: 'POST', body: '{"service":"repair"}',
+  }));
+});
+
 // Workspace detail keeps requested power separate from provider observations
 // and shows the operation step and retained-data guidance.
 test('shows the saved workspace state and workflow', async () => {

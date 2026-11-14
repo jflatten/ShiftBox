@@ -8,7 +8,7 @@ import { useOperation } from '../../lib/use-operation';
 import { workspaceState, type Workspace } from './workspace';
 import { RetentionWarning } from './retention';
 
-type WorkspaceAction = 'start' | 'stop' | 'rebuild';
+type WorkspaceAction = 'start' | 'stop' | 'rebuild' | 'repair';
 
 export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: string }) {
   const workspace = useQuery<Workspace>({
@@ -93,6 +93,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
           <Text size="sm">Stop and start preserve project files, the developer home, and named application volumes. Rebuilding also preserves this data and replaces the container’s writable layer.</Text>
           {error !== undefined ? <APIProblemView error={error} /> : null}
           {data.canOpenIde ? <OpenIDE id={id} csrfToken={csrfToken} /> : null}
+          {data.canOpenRepair ? <OpenIDE id={id} csrfToken={csrfToken} service="repair" /> : null}
           {action ? (
             <Group>
               <Button loading={submitting === action} disabled={!!data.currentOperationId || operationBusy || !!submitting}
@@ -103,6 +104,12 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
                 <Button variant="default" loading={submitting === 'rebuild'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
                   onClick={() => void requestAction('rebuild')}>
                   Rebuild container
+                </Button>
+              ) : null}
+              {data.canStartRepair ? (
+                <Button variant="default" loading={submitting === 'repair'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
+                  onClick={() => void requestAction('repair')}>
+                  Start repair
                 </Button>
               ) : null}
             </Group>
@@ -121,7 +128,7 @@ function WorkspaceTime({ value, fallback }: { value: string | null; fallback: st
   return <time dateTime={value}>{date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>;
 }
 
-function OpenIDE({ id, csrfToken }: { id: string; csrfToken: string }) {
+function OpenIDE({ id, csrfToken, service = 'ide' }: { id: string; csrfToken: string; service?: 'ide' | 'repair' }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<unknown>();
 
@@ -133,7 +140,7 @@ function OpenIDE({ id, csrfToken }: { id: string; csrfToken: string }) {
       const response = await fetch(`/api/v1/workspaces/${encodeURIComponent(id)}/entry-grants`, {
         method: 'POST', cache: 'no-store',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-        body: JSON.stringify({ service: 'ide' }),
+        body: JSON.stringify({ service }),
       });
       if (!response.ok) throw await readProblem(response);
       const { exchangeUrl } = await response.json();
@@ -155,7 +162,7 @@ function OpenIDE({ id, csrfToken }: { id: string; csrfToken: string }) {
 
   return (
     <Stack align="flex-start" gap="xs">
-      <Button loading={submitting} onClick={() => void open()}>Open IDE</Button>
+      <Button loading={submitting} onClick={() => void open()}>{service === 'repair' ? 'Open repair IDE' : 'Open IDE'}</Button>
       {error !== undefined ? <APIProblemView error={error} /> : null}
     </Stack>
   );

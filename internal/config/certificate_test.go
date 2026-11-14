@@ -81,7 +81,7 @@ func browserCertificateFixture(t *testing.T, usage x509.ExtKeyUsage, names ...st
 		t.Fatal(err)
 	}
 	if len(names) == 0 {
-		names = []string{"management.test", "*.ide.test", "*.preview.test"}
+		names = []string{"management.test", "*.ide.test", "*.repair.test", "*.preview.test"}
 	}
 	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), DNSNames: names, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{usage}}
 	der, err := x509.CreateCertificate(rand.Reader, leaf, root, &key.PublicKey, rootKey)
@@ -108,7 +108,8 @@ func TestConfiguredCertificateCoverage(t *testing.T) {
 		names     []string
 		wantError bool
 	}{
-		{[]string{"management.test", "*.ide.test", "*.preview.test"}, false},
+		{[]string{"management.test", "*.ide.test", "*.repair.test", "*.preview.test"}, false},
+		{[]string{"management.test", "*.ide.test", "*.preview.test"}, true},
 		{[]string{"management.test", "00000000-0000-4000-8000-000000000001.ide.test", "*.preview.test"}, true},
 		{[]string{"management.test", "*.ide.test", "web--00000000-0000-4000-8000-000000000001.preview.test"}, true},
 		{[]string{"management.test", "*.test"}, true},

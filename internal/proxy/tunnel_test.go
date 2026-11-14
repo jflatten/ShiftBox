@@ -41,6 +41,12 @@ func TestTunnelServicesRejectRemoteTargets(t *testing.T) {
 	if _, err := ValidateTunnelServices([]TunnelService{{Key: "ide", Target: IDESocket, Protocols: []string{"http", "websocket"}}}); err != nil {
 		t.Errorf("ValidateTunnelServices(IDE socket) = %v, want success", err)
 	}
+	if _, err := ValidateTunnelServices([]TunnelService{{Key: "repair", Target: "/run/shiftbox-repair/repair.sock", Protocols: []string{"http", "websocket"}}}); err != nil {
+		t.Errorf("ValidateTunnelServices(repair socket) = %v, want success", err)
+	}
+	if _, err := ValidateTunnelServices([]TunnelService{{Key: "ide", Target: "/run/shiftbox-repair/repair.sock", Protocols: []string{"http"}}}); err == nil {
+		t.Error("ValidateTunnelServices(IDE pointing to repair socket) = nil, want rejection")
+	}
 	if _, err := ValidateTunnelServices([]TunnelService{{Key: "preview", Target: IDESocket, Protocols: []string{"http"}}}); err == nil {
 		t.Error("ValidateTunnelServices(preview pointing to IDE socket) = nil, want rejection")
 	}

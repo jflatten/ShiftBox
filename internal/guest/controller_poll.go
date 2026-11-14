@@ -109,9 +109,9 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 		return nil, nil
 	}
 	// The worker records the active step before the poll can dispatch it.
-	rows, err := tx.QueryContext(ctx, `SELECT o.id,o.type,o.version,w.repository_url,COALESCE(w.repository_ref,''),w.devcontainer_path
+	rows, err := tx.QueryContext(ctx, `SELECT o.id,o.type,o.version,w.repository_url,COALESCE(w.repository_ref,''),w.devcontainer_path,s.step_key
 		FROM operations o JOIN workspaces w ON w.id=o.workspace_id
-		JOIN operation_steps s ON s.operation_id=o.id AND s.step_key=$3
+		JOIN operation_steps s ON s.operation_id=o.id AND (s.step_key=$3 OR ($4='running' AND s.step_key='repair_enter'))
 		LEFT JOIN guest_dispatches g ON g.operation_id=o.id
 		WHERE w.id=$1 AND w.generation=$2 AND o.generation=$2
 		  AND (w.observed_state='running' OR ($4='deleted' AND w.observed_state IN ('stopped','unreachable')))
@@ -121,24 +121,28 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 		      AND w.deletion_commit_at IS NOT NULL)
 		    OR (($3='shutdown' AND $4='stopped' AND o.type='stop' AND o.originating_action='workspace.stop'
 		      OR $3='configure' AND o.type='start' AND o.originating_action='workspace.start'
+		      OR s.step_key='repair_enter' AND o.type='repair' AND o.originating_action='workspace.repair'
+		        AND EXISTS (SELECT 1 FROM reservations r WHERE r.workspace_id=w.id
+		                    AND r.cpu_memory_state='reserved' AND r.disk_state='reserved')
 		      OR $3='configure' AND o.type='rebuild' AND o.originating_action='workspace.rebuild'
 		        AND EXISTS (SELECT 1 FROM reservations r WHERE r.workspace_id=w.id
 		                    AND r.cpu_memory_state='reserved' AND r.disk_state='reserved'))
 		      AND EXISTS(SELECT 1 FROM users actor WHERE actor.id=o.requested_by AND actor.membership_state='active'
 		        AND (actor.id=w.owner_user_id OR actor.role='administrator'))))
 		  AND o.status IN ('running','waiting')
-		  AND ((o.current_step=$3 AND s.status='active')
-		    OR ($3='configure' AND o.current_step IN ('verify_ide','finish_setup')
+		  AND ((o.current_step=s.step_key AND s.status='active')
+		    OR (s.step_key='configure' AND o.current_step IN ('verify_ide','finish_setup')
 		        AND s.status='succeeded' AND g.status='running'))
 		  AND (g.status IS NULL OR g.status IN ('pending','running')) LIMIT 2`, contact.WorkspaceID, contact.Generation, step, contact.DesiredState)
 	if err != nil {
 		return nil, err
 	}
 	var count int
+	var dispatchStep string
 	for rows.Next() {
 		count++
 		if err = rows.Scan(&dispatch.ID, &dispatch.Type, &dispatch.Version,
-			&dispatch.Arguments.RepositoryURL, &dispatch.Arguments.RepositoryRef, &dispatch.Arguments.Devcontainer); err != nil {
+			&dispatch.Arguments.RepositoryURL, &dispatch.Arguments.RepositoryRef, &dispatch.Arguments.Devcontainer, &dispatchStep); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -146,14 +150,17 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil || count == 0 {
 		return nil, err
 	}
-	if count != 1 || step == "configure" && !template.ValidSource(dispatch.Arguments.RepositoryURL, dispatch.Arguments.Devcontainer) {
+	if count != 1 || dispatchStep == "configure" && !template.ValidSource(dispatch.Arguments.RepositoryURL, dispatch.Arguments.Devcontainer) {
 		return nil, ErrGuestReportConflict
 	}
 	dispatch.Arguments.RetainedMounts = []string{}
 	if dispatch.Type == "rebuild" {
 		dispatch.Command = rebuildDevelopmentCommand
 	}
-	if step == "shutdown" {
+	if dispatchStep == "repair_enter" {
+		dispatch.Command = enterRepairCommand
+	}
+	if dispatchStep != "configure" {
 		dispatch.Arguments = pollArguments{RetainedMounts: []string{}}
 	}
 	// Freeze the dispatched version across worker journal and lease updates.
@@ -175,8 +182,10 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 		return nil
 	}
 	shutdown := report.Step == "workload.shutdown"
+	repair := report.Step == "repair.enter"
 	if len(report.ID) != 36 || report.Attempt != 1 || report.ID != input.LastOperationID || input.Version < 1 ||
-		report.Generation != contact.Generation || shutdown && !validShutdownReport(*report) || !shutdown && !validConfigurationReport(*report) {
+		report.Generation != contact.Generation || shutdown && !validShutdownReport(*report) ||
+		repair && !validRepairReport(*report) || !shutdown && !repair && !validConfigurationReport(*report) {
 		return ErrGuestReportConflict
 	}
 	var status, container, problem, workflow, step, kind string
@@ -190,13 +199,17 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 	if err != nil {
 		return err
 	}
-	if (shutdown && kind != "stop" && kind != "delete") || (!shutdown && kind != "provision" && kind != "start" && kind != "rebuild") {
+	if (shutdown && kind != "stop" && kind != "delete") || repair != (kind == "repair") ||
+		(!shutdown && !repair && kind != "provision" && kind != "start" && kind != "rebuild") {
 		return ErrGuestReportConflict
 	}
 	if status == report.Status && container == report.Evidence.ContainerID && problem == report.Problem {
 		return nil
 	}
 	expectedStep, expectedDesired := "configure", "running"
+	if repair {
+		expectedStep = "repair_enter"
+	}
 	if shutdown {
 		expectedStep, expectedDesired = "shutdown", "stopped"
 		if kind == "delete" {
@@ -204,7 +217,7 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 		}
 	}
 	inStage := step == expectedStep ||
-		!shutdown && status == "running" && (step == "verify_ide" || step == "finish_setup")
+		!shutdown && !repair && status == "running" && (step == "verify_ide" || step == "finish_setup")
 	if status == "failed" || status == "succeeded" || workflow != "running" && workflow != "waiting" ||
 		!inStage || contact.DesiredState != expectedDesired ||
 		status == "running" && container != report.Evidence.ContainerID {
@@ -216,6 +229,12 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 	_, err = tx.ExecContext(ctx, `UPDATE guest_dispatches SET status=$1,container_id=$2,problem=$3 WHERE operation_id=$4`,
 		report.Status, report.Evidence.ContainerID, report.Problem, report.ID)
 	return err
+}
+
+func validRepairReport(report OperationReport) bool {
+	return !report.Evidence.WaitForReached &&
+		(report.Status == "succeeded" && report.Problem == "" && dockerContainerID.MatchString(report.Evidence.ContainerID) ||
+			report.Status == "failed" && report.Problem == problemRepairFailed && report.Evidence.ContainerID == "")
 }
 
 func validShutdownReport(report OperationReport) bool {

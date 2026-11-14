@@ -119,7 +119,7 @@ func configureActivationCertificate(t *testing.T, db *sql.DB, cipher *cryptostor
 		t.Fatal(err)
 	}
 	template := &x509.Certificate{NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
-		DNSNames:    []string{"management.test", "*.ide.test", "*.preview.test"},
+		DNSNames:    []string{"management.test", "*.ide.test", "*.preview.test", "*.repair.test"},
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {

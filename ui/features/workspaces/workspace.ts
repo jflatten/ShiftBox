@@ -9,6 +9,8 @@ export interface Workspace {
   currentOperationId: string | null;
   lastFailedOperationId?: string | null;
   canOpenIde?: boolean;
+  canOpenRepair?: boolean;
+  canStartRepair?: boolean;
   lastActivityAt: string | null;
   retentionDeadline: string | null;
   retention?: { state: 'disabled' | 'paused' | 'grace' | 'ready'; graceUntil?: string };

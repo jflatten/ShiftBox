@@ -26,7 +26,7 @@ func WorkspacePowerHandler(db *sql.DB, origin string, now func() time.Time, jour
 				return AuthorizationTarget{}, err
 			}
 			action := r.PathValue("action")
-			if action != "start" && action != "stop" && action != "rebuild" {
+			if action != "start" && action != "stop" && action != "rebuild" && action != "repair" {
 				return AuthorizationTarget{}, Problem{Status: 400, Code: "workspace.invalid_action", Title: "Choose a supported workspace action"}
 			}
 			return (WorkspaceAuthorization{Workspace: target.Resource}).Action(actor, action)

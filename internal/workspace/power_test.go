@@ -168,6 +168,28 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	run(rebuild, nil)
 	checkState(rebuild, "running", "succeeded")
 	checkReservation(t, db, id, "reserved", "reserved")
+
+	// Repair is available after failed development setup. Its worker waits
+	// for a separate guest command and an authenticated repair IDE probe.
+	exec("UPDATE operations SET status='failed',current_step='configure' WHERE id=$1", rebuild.ID)
+	exec("UPDATE operation_steps SET status='failed' WHERE operation_id=$1 AND step_key='configure'", rebuild.ID)
+	exec("UPDATE guest_registrations SET last_authenticated_at=$1 WHERE workspace_id=$2", time.Now().UTC().Format(time.RFC3339Nano), id)
+	repair := admit("repair")
+	run(repair, errGuestConfigurationPending)
+	exec("INSERT INTO guest_dispatches(operation_id,dispatch_version,status,container_id) VALUES($1,1,'succeeded','repair-container')", repair.ID)
+	run(repair, nil)
+	repairExecutor := NewPowerExecutor(store, machines, time.Now, probe)
+	repairExecutor.probeRepair = func(_ context.Context, workspace string, generation int64) error {
+		if workspace != id || generation != 1 {
+			t.Errorf("repair probe scope = %s/%d, want %s/1", workspace, generation, id)
+		}
+		return nil
+	}
+	if err := NewWorker(journal, nil, repairExecutor).RunOnce(ctx, repair.ID); err != nil {
+		t.Fatal(err)
+	}
+	checkState(repair, "running", "succeeded")
+	checkReservation(t, db, id, "reserved", "reserved")
 	if machines.starts != 1 || machines.stops != 1 {
 		t.Fatalf("provider calls = %d starts and %d stops, want one per operation", machines.starts, machines.stops)
 	}

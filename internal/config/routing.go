@@ -19,6 +19,7 @@ type ServiceHosts struct {
 	port          string
 	ideSuffix     string
 	previewSuffix string
+	repairSuffix  string
 }
 
 // NewServiceHosts validates configured origins and the approved fixed templates.
@@ -32,6 +33,14 @@ func NewServiceHosts(managementOrigin, idePattern, previewPattern string) (*Serv
 	origin, _ := url.Parse(managementOrigin)
 	hosts := &ServiceHosts{management: origin.Hostname(), authority: origin.Host, port: origin.Port(),
 		ideSuffix: strings.TrimPrefix(idePattern, "{workspace}"), previewSuffix: strings.TrimPrefix(previewPattern, "{service}--{workspace}")}
+	suffix := hosts.ideSuffix
+	if domain, ok := strings.CutPrefix(suffix, ".ide."); ok {
+		suffix = "." + domain
+	}
+	hosts.repairSuffix = ".repair" + suffix
+	if len(hosts.repairSuffix)+36 > 253 {
+		return nil, errors.New("repair hostname exceeds the DNS length limit")
+	}
 	// Host-scoped cookies do not isolate ports, so a different port cannot make
 	// a management hostname safe to reuse for guest content.
 	if _, _, ok := hosts.Resolve(hosts.management); ok {
@@ -81,6 +90,9 @@ func (h *ServiceHosts) Hostname(workspace, service string) (string, error) {
 	if service == "ide" {
 		return workspace + h.ideSuffix, nil
 	}
+	if service == "repair" {
+		return workspace + h.repairSuffix, nil
+	}
 	return service + "--" + workspace + h.previewSuffix, nil
 }
 
@@ -93,6 +105,9 @@ func (h *ServiceHosts) Resolve(hostname string) (workspace, service string, ok b
 	if label, found := strings.CutSuffix(hostname, h.ideSuffix); found && workspaceLabel.MatchString(label) {
 		return label, "ide", true
 	}
+	if label, found := strings.CutSuffix(hostname, h.repairSuffix); found && workspaceLabel.MatchString(label) {
+		return label, "repair", true
+	}
 	label, found := strings.CutSuffix(hostname, h.previewSuffix)
 	// Read the fixed-width UUID from the end so hyphens inside service keys
 	// (including consecutive hyphens) cannot change the workspace mapping.
@@ -101,7 +116,7 @@ func (h *ServiceHosts) Resolve(hostname string) (workspace, service string, ok b
 	}
 	boundary := len(label) - 38
 	workspace, service = label[boundary+2:], label[:boundary]
-	if label[boundary:boundary+2] != "--" || !workspaceLabel.MatchString(workspace) || !serviceLabel.MatchString(service) || service == "ide" {
+	if label[boundary:boundary+2] != "--" || !workspaceLabel.MatchString(workspace) || !serviceLabel.MatchString(service) || service == "ide" || service == "repair" {
 		return "", "", false
 	}
 	return workspace, service, true

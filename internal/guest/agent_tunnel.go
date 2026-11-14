@@ -65,7 +65,10 @@ func (t *agentTunnel) update(ctx context.Context, offer tunnelOffer) {
 	t.offer, t.cancel, t.done = offer, cancel, done
 	go func() {
 		defer close(done)
-		services := []proxy.TunnelService{{Key: "ide", Target: proxy.IDESocket, Protocols: []string{"http", "websocket"}}}
+		services := []proxy.TunnelService{
+			{Key: "ide", Target: proxy.IDESocket, Protocols: []string{"http", "websocket"}},
+			{Key: "repair", Target: proxy.RepairSocket, Protocols: []string{"http", "websocket"}},
+		}
 		for runCtx.Err() == nil {
 			_ = t.serve(runCtx, offer.address, t.tls, t.protocol, offer.generation, services)
 			timer := time.NewTimer(t.retry)

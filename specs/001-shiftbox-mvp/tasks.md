@@ -2495,3 +2495,17 @@ This checkpoint does not itself change the goal status.
   test verified repair HTTP health and an edited file after exit.
 - T052 and T055 remain open for controller dispatch and access, repair
   workflow validation, and native UTM acceptance.
+
+### Controller repair entry
+
+- T055 admits repair after a failed development setup step and recent
+  authenticated guest contact. The existing VM and reservation stay in
+  place. The controller dispatches the fixed guest entry command and
+  probes the repair workbench through its dedicated tunnel service.
+- Repair browser access requires its own verified step, origin, and
+  scoped entry grant. For an IDE suffix of `ide.example.com`, the
+  browser certificate must also cover `*.repair.example.com`. The
+  management UI displays the repair workflow and opens the verified IDE.
+- The approved combined exit and retry action still needs controller
+  dispatch, setup reconciliation, and UI wiring. Native UTM and browser
+  repair acceptance remain open.

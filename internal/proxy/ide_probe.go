@@ -18,6 +18,15 @@ const maxIDEProbeDocument = 512 << 10
 // ProbeIDE requests the workbench on the same tunnel service used by browsers.
 // It checks the workspace tunnel independently of waitFor.
 func (t *Tunnels) ProbeIDE(ctx context.Context, workspace string, generation int64, host string) error {
+	return t.probeWorkbench(ctx, workspace, generation, host, "ide")
+}
+
+// ProbeRepair checks the independently registered repair workbench service.
+func (t *Tunnels) ProbeRepair(ctx context.Context, workspace string, generation int64, host string) error {
+	return t.probeWorkbench(ctx, workspace, generation, host, "repair")
+}
+
+func (t *Tunnels) probeWorkbench(ctx context.Context, workspace string, generation int64, host, service string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+tunnelHTTPHost+"/", nil)
@@ -26,7 +35,7 @@ func (t *Tunnels) ProbeIDE(ctx context.Context, workspace string, generation int
 	}
 	req.Host = host
 	transport := tunnelTransport(t.Open, workspace, generation, StreamHeader{
-		ServiceKey: "ide", RequestID: "ide-readiness", Protocol: "http",
+		ServiceKey: service, RequestID: "ide-readiness", Protocol: "http",
 	})
 	defer transport.CloseIdleConnections()
 	response, err := transport.RoundTrip(req)

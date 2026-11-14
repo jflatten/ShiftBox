@@ -18,7 +18,7 @@ import (
 const serviceEntryPath = "/_shiftbox/entry"
 const serviceCookie = "__Host-shiftbox_origin"
 
-// ServiceProxyHandler serves only configured IDE and preview origins. Forward
+// ServiceProxyHandler serves configured IDE, preview, and repair origins. Forward
 // receives requests whose service credential and current authority were checked.
 func ServiceProxyHandler(db *sql.DB, hosts *config.ServiceHosts, registry *proxy.Registry, now func() time.Time,
 	forward func(http.ResponseWriter, *http.Request, string, int64, string, string),
@@ -89,7 +89,7 @@ func (s serviceProxy) serve(w http.ResponseWriter, r *http.Request) {
 	active, cancel := context.WithTimeout(ctx, deadline.Sub(s.now()))
 	defer cancel()
 	unregister, err := s.registry.Register(proxy.Scope{UserID: authority.UserID, SessionID: authority.SessionID,
-		WorkspaceID: workspace, GrantID: authority.ResourceGrantID, IDE: service == "ide"}, func() error {
+		WorkspaceID: workspace, GrantID: authority.ResourceGrantID, IDE: service == "ide" || service == "repair"}, func() error {
 		current, currentDeadline, err := lookup(active)
 		if err == nil && (current != authority || currentDeadline.Before(deadline)) {
 			return proxy.ErrOriginGrant
@@ -267,12 +267,13 @@ func serviceWorkspace(ctx context.Context, tx *sql.Tx, workspace, service string
 	var generation int64
 	err := tx.QueryRowContext(ctx, `SELECT w.owner_user_id,w.generation,
 		(w.desired_state='running' AND w.observed_state='running' AND i.state='active'
-		AND owner.membership_state='active' AND ($2<>'ide' OR EXISTS (
+		AND owner.membership_state='active' AND ($2 NOT IN ('ide','repair') OR EXISTS (
 		 SELECT 1 FROM operation_steps s
-		 WHERE s.step_key='verify_ide' AND s.status='succeeded' AND s.operation_id=(
+		 WHERE s.step_key=CASE WHEN $2='repair' THEN 'verify_repair' ELSE 'verify_ide' END
+		 AND s.status='succeeded' AND s.operation_id=(
 		  SELECT o.id FROM operations o
 		  WHERE o.workspace_id=w.id AND o.generation=w.generation
-		    AND o.originating_action IN ('workspace.launch','workspace.start','workspace.rebuild')
+		    AND o.originating_action IN ('workspace.launch','workspace.start','workspace.rebuild','workspace.repair')
 		  ORDER BY o.created_at DESC,o.id DESC LIMIT 1
 		 )
 		)))

@@ -49,9 +49,17 @@ func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfi
 		return listeners.Tunnels.ProbeIDE(ctx, id, generation, host)
 	}
 	store := workspace.NewStore(state.DB)
+	power := workspace.NewPowerExecutor(store, machines, now, probe)
+	power.SetRepairProbe(func(ctx context.Context, id string, generation int64) error {
+		host, err := hosts.ServiceAuthority(id, "repair")
+		if err != nil {
+			return err
+		}
+		return listeners.Tunnels.ProbeRepair(ctx, id, generation, host)
+	})
 	worker := workspace.NewWorker(journal,
 		workspace.NewLaunchExecutor(store, machines, enrollment, mediaRoot, endpoints.EnrollURL, endpoints.PollURL, now, probe),
-		workspace.NewPowerExecutor(store, machines, now, probe))
+		power)
 	return &WorkspaceRuntime{listeners: endpoints, worker: worker,
 		retention: newWorkspaceRetention(state, store, machines, journal, listeners.Tunnels.Registry, now)}, nil
 }

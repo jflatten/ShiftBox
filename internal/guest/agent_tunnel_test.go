@@ -20,8 +20,9 @@ func TestAgentTunnelReconnectAndStop(t *testing.T) {
 	supervisor := agentTunnel{
 		retry: time.Millisecond,
 		serve: func(ctx context.Context, address string, _ *tls.Config, _ string, generation int64, services []proxy.TunnelService) error {
-			if len(services) != 1 || services[0].Key != "ide" || services[0].Target != "/run/shiftbox-ide/code-server.sock" {
-				t.Error("supervisor did not advertise the private browser IDE socket")
+			if len(services) != 2 || services[0].Key != "ide" || services[0].Target != "/run/shiftbox-ide/code-server.sock" ||
+				services[1].Key != "repair" || services[1].Target != "/run/shiftbox-repair/repair.sock" {
+				t.Error("supervisor did not advertise distinct development and repair IDE sockets")
 			}
 			started <- tunnelOffer{address: address, generation: generation}
 			select {

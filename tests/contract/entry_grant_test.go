@@ -136,6 +136,26 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A newer repair workflow closes normal IDE admission and only opens the
+	// dedicated repair origin after its own verification step succeeds.
+	bootTime = now.Add(time.Second)
+	id := workspace
+	repair, err := journal.Create(ctx, operation.Request{Actor: "member", Key: "workspace-repair-fixture", Type: "repair",
+		OriginatingAction: "workspace.repair", WorkspaceID: &id, Generation: 1,
+		Steps: []operation.Step{{Key: "verify_repair", Label: "Verify repair IDE"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(workspace, "ide", csrf, 403)
+	request(workspace, "repair", csrf, 403)
+	verifyBoot(repair)
+	request(workspace, "ide", csrf, 403)
+	response := request(workspace, "repair", csrf, 201)
+	var repairGrant struct{ ExchangeURL string }
+	if err := json.Unmarshal(response.Body.Bytes(), &repairGrant); err != nil ||
+		!strings.HasPrefix(repairGrant.ExchangeURL, "https://"+workspace+".repair.test/_shiftbox/entry?grant=") {
+		t.Fatalf("repair entry response = %s, %v, want a grant for the repair hostname", response.Body, err)
+	}
 	forwarded := 0
 	registry := &proxy.Registry{}
 	streamStarted := make(chan struct{})
