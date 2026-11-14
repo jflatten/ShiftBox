@@ -117,7 +117,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T052 [US1] Implement the fixed approved guest command executor for repository preparation, prebuilt-image and Dockerfile/build-definition Dev Containers, declared features, lifecycle hooks, declared connection-ready stage, rebuild, IDE verification, repair entry/exit, and graceful shutdown proven by T037 in `internal/guest/executor.go`, `internal/guest/devcontainer.go`, and `internal/guest/repair.go`
 - [X] T053 [US1] Implement guest-initiated mTLS Yamux registration, one stream per HTTP/WebSocket request, service allowlisting, heartbeats, and expiry/revocation closure in `internal/guest/tunnel.go` and `internal/proxy/tunnel.go`
 - [X] T054 [US1] Implement template creation/revision validation and workspace admission that snapshots owner, template revision, repository, resources, platform, network policy, and secret references before reserving capacity in `internal/template/service.go` and `internal/workspace/launch.go`
-- [ ] T055 [US1] Implement provision/start/stop/rebuild/repair/open-IDE reconciliation with inspect-before-retry, desired/observed separation, durable steps, readiness evidence, and reservation release rules in `internal/workspace/reconciler.go` and `internal/workspace/lifecycle.go`
+- [X] T055 [US1] Implement provision/start/stop/rebuild/repair/open-IDE reconciliation with inspect-before-retry, desired/observed separation, durable steps, readiness evidence, and reservation release rules in `internal/workspace/reconciler.go` and `internal/workspace/lifecycle.go`
 - [X] T056 [US1] Implement the setup, template, workspace, operation, event, and entry-grant OpenAPI routes proven by T030 and T036 in `internal/web/setup_routes.go`, `internal/web/template_routes.go`, `internal/web/workspace_routes.go`, and `internal/web/operation_routes.go`
 - [X] T057 [US1] Implement owner/audited-admin IDE and preview routing that exchanges a short-lived exact-origin grant for a separate host-only cookie and never forwards management authority in `internal/proxy/grants.go`, `internal/proxy/router.go`, and `internal/web/proxy_routes.go`
 - [X] T058 [US1] Implement the keyboard-accessible Mantine setup Stepper and forms, including one-time password acknowledgement, profile/certificate/provider validation, activation warning, and fresh sign-in in `ui/features/setup/setup-flow.tsx` and `ui/app/setup/page.tsx`
@@ -2885,6 +2885,10 @@ This checkpoint does not itself change the goal status.
 - Guest, authenticated polling, API, worker, and UI tests cover the
   combined action. A release artifact and full UTM browser journey
   remain to be exercised under T039 and T061.
+- T055 passed the workspace, guest, API and restart tests under the race
+  detector. The retained UTM fixture verified native stop/start, rebuild,
+  failed setup, repair IDE readiness and authenticated retry on the same
+  workspace generation. The frozen-candidate journey remains T061 work.
 
 ### Guest executor coverage
 
