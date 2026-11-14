@@ -1310,3 +1310,15 @@ This checkpoint does not itself change the goal status.
 - Guest, workspace and contract race tests and dual-dialect migration
   checks passed. Provider delivery orchestration, the enrollment HTTP
   endpoint, renewal, and authenticated guest boot remain pending.
+
+### Internal guest enrollment endpoint
+
+- Added the server-authenticated TLS 1.3 enrollment listener and a bounded
+  JSON route for grant and CSR submission. The route validates protocol and
+  current/previous guest release before consuming a grant.
+- A live local HTTPS test verifies the server against the installation CA,
+  submits a real grant and CSR, and receives the issued leaf. Contract tests
+  cover plaintext, incompatible releases, and unknown input fields.
+- Enrollment media and controller listener composition are still pending.
+  The polling and tunnel listeners continue to require verified client
+  certificates.

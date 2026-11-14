@@ -23,3 +23,13 @@ func ClientTLS(certificate tls.Certificate, authority *Authority, serverName str
 		ServerName:   serverName,
 	}
 }
+
+// EnrollmentTLS authenticates the controller to a guest that has yet to
+// receive its client certificate. Mount only the enrollment route here.
+func EnrollmentTLS(certificate tls.Certificate) *tls.Config {
+	return &tls.Config{
+		MinVersion:             tls.VersionTLS13,
+		Certificates:           []tls.Certificate{certificate},
+		SessionTicketsDisabled: true,
+	}
+}

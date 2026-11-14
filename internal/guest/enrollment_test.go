@@ -6,9 +6,14 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,6 +21,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/web"
 	_ "modernc.org/sqlite"
 )
 
@@ -47,7 +53,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certPEM, keyPEM, _, issuer := authorityFixture(t)
+	certPEM, keyPEM, issuerKey, issuer := authorityFixture(t)
 	now := time.Now().UTC()
 	ca, err := guest.LoadCA(certPEM, keyPEM, now)
 	if err != nil {
@@ -75,10 +81,7 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 		t.Fatalf("stored grant ID length = %d, %v, want digest", len(digest), err)
 	}
 	csr := fixtureCSR(t)
-	first, err := enrollment.Enroll(ctx, token, csr, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := enrollOverTLS(t, ca, leafFixture(t, issuerKey, issuer, false), enrollment, token, csr, now)
 	leaf, err := x509.ParseCertificate(first)
 	if err != nil {
 		t.Fatal(err)
@@ -104,6 +107,46 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	if _, err := enrollment.Enroll(ctx, token, csr, now); !errors.Is(err, guest.ErrEnrollmentDenied) {
 		t.Errorf("revoked registration replay = %v, want denial", err)
 	}
+}
+
+func enrollOverTLS(t *testing.T, ca *guest.Authority, serverLeaf tls.Certificate, enrollment *guest.Enrollment, token string, csr []byte, now time.Time) []byte {
+	t.Helper()
+	handler := web.GuestEnrollmentHandler(web.GuestCompatibility{Protocol: "1", CurrentRelease: "test"},
+		enrollment.Enroll, func() time.Time { return now })
+	server := httptest.NewUnstartedServer(handler)
+	server.TLS = guest.EnrollmentTLS(serverLeaf)
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	client := server.Client()
+	transport := client.Transport.(*http.Transport)
+	noClientCert := guest.ClientTLS(tls.Certificate{}, ca, "controller.test")
+	noClientCert.Certificates = nil
+	transport.TLSClientConfig = noClientCert
+	serverCertRequest := map[string]string{"protocolVersion": "1", "guestRelease": "test", "grant": token,
+		"csrPem": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr}))}
+	body, err := json.Marshal(serverCertRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Post(server.URL+"/internal/v1/enroll", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("real enrollment returned HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		CertificatePEM string `json:"certificatePem"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	cert, _ := pem.Decode([]byte(result.CertificatePEM))
+	if cert == nil || cert.Type != "CERTIFICATE" {
+		t.Fatal("enrollment response omitted the certificate")
+	}
+	return cert.Bytes
 }
 
 func fixtureCSR(t *testing.T) []byte {
