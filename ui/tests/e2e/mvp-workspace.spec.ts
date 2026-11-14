@@ -209,6 +209,9 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     const normalOrigin = await openIDE(page, 'Open IDE', managementOrigin);
     const markerEditor = await openFile(page, fixture.markerFile);
     await writeEditor(page, markerEditor, marker);
+    // Reload the workbench to prove the marker was saved before testing VM retention.
+    await page.reload();
+    await expect((await openFile(page, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
     await page.goto(workspaceURL);
     await activate(page.getByRole('button', { name: 'Stop workspace' }));
     await stepCompleted(page, 'Stop workspace');
@@ -216,13 +219,13 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     await activate(page.getByRole('button', { name: 'Start workspace' }));
     await stepCompleted(page, 'Finish remaining setup hooks');
     expect(await openIDE(page, 'Open IDE', managementOrigin)).toBe(normalOrigin);
-    await expect((await openFile(page, fixture.markerFile)).getByText(marker, { exact: true })).toBeVisible();
+    await expect((await openFile(page, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
     await page.goto(workspaceURL);
     await activate(page.getByRole('button', { name: 'Rebuild container' }));
     await stepCompleted(page, 'Rebuild the development container');
     await stepCompleted(page, 'Finish remaining setup hooks');
     expect(await openIDE(page, 'Open IDE', managementOrigin)).toBe(normalOrigin);
-    await expect((await openFile(page, fixture.markerFile)).getByText(marker, { exact: true })).toBeVisible();
+    await expect((await openFile(page, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
   });
 
   await test.step('Repair a broken project and retry setup', async () => {
@@ -237,7 +240,7 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     await stepCompleted(page, 'Verify the repair IDE');
     const repairOrigin = await openIDE(page, 'Open repair IDE', managementOrigin);
     expect(new URL(repairOrigin).hostname).toMatch(/^[a-f0-9-]+\.repair\./);
-    await expect((await openFile(page, fixture.markerFile)).getByText(marker, { exact: true })).toBeVisible();
+    await expect((await openFile(page, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
     // The fixture is plain JSON. Restore the equivalent configuration as
     // one line so the editor's automatic indentation cannot change it.
     await writeEditor(page, await openFile(page, fixture.devcontainerPath), JSON.stringify(JSON.parse(savedConfig)));
@@ -247,7 +250,7 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     await stepCompleted(page, 'Verify the browser IDE');
     await stepCompleted(page, 'Finish remaining setup hooks');
     expect(await openIDE(page, 'Open IDE', managementOrigin)).not.toBe(repairOrigin);
-    await expect((await openFile(page, fixture.markerFile)).getByText(marker, { exact: true })).toBeVisible();
+    await expect((await openFile(page, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
   });
 });
 
@@ -316,6 +319,11 @@ async function writeEditor(page: Page, editor: Locator, content: string) {
   await page.keyboard.press('Backspace');
   await expect(editor.locator('.view-lines')).toHaveText(/^\s*$/);
   await page.keyboard.insertText(content);
-  await page.keyboard.press('ControlOrMeta+s');
+  await expect(editor.locator('.view-lines')).toHaveText(content);
+  // Pressing the Save command in the workbench avoids host shortcut handling.
+  await page.keyboard.press('F1');
+  const commands = page.locator('.quick-input-widget:visible');
+  await commands.getByRole('textbox').fill('> File: Save');
+  await commands.locator('a').filter({ hasText: /^File: Save$/ }).click();
   await expect(page.locator('.tabs-container .tab.active')).not.toHaveClass(/\bdirty\b/);
 }

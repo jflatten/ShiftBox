@@ -26,6 +26,17 @@ that local binary. The companion UTM export's artifact manifest SHA-256 was
 | Retained workspace restart | Chrome saved the marker file and the controller recorded a graceful VM stop. UTM 5.0.8 refused the subsequent boot because its removable drive still referenced the removed enrollment ISO. The cleanup regression now verifies that consumed media becomes a credential-free ISO at the same path. Native restart, rebuild, and repair still require verification. |
 | Go workspace journal check | Pending a completed workspace journey. |
 
+## November 14 retained-workspace rerun
+
+After restarting UTM, the rebuilt controller resumed the pending start
+against a private, current-schema copy of the test database. The guest
+authenticated and the controller reached IDE readiness. The resumed browser
+journey then completed another graceful stop and authenticated start and
+reopened the same IDE. The marker check failed. A follow-up test read the
+editor text, invoked File: Save, and reopened the file before requesting a
+stop. It read an older marker, so the failure can occur without a VM restart.
+Repair and the final Go journal check remain pending.
+
 Run the browser spec with `SHIFTBOX_MVP_FIXTURE` pointing at a fresh local
 fixture and with the same valid certificate trust available to Chrome and the
 test runner. With Node 26, `NODE_USE_SYSTEM_CA=1` lets the test runner use
