@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
+	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/web"
@@ -26,6 +27,7 @@ type SetupHTTP struct {
 	Admin            PasswordAdministrator
 	Login            *SetupLogin
 	CertificateRoots *x509.CertPool
+	Postgres         *PostgresProfileSetup
 	Journal          *operation.Journal
 	Now              func() time.Time
 	NewID            func() string
@@ -47,7 +49,7 @@ func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 		mux.HandleFunc("GET /auth/callback", flow.finish)
 		sessions := setup.sessionHandler()
 		mux.Handle("/api/v1/session", sessions)
-		mux.Handle("PUT /api/v1/setup/data-profile", setup.profileHandler())
+		mux.Handle("PUT /api/v1/setup/data-profile", setup.profileHandler(database.PreflightPostgresSetup))
 		mux.Handle("PUT /api/v1/setup/certificate", setup.certificateHandler())
 		mux.Handle("POST /api/v1/setup/activate", setup.activationHandler())
 		if passwords, ok := setup.Admin.(setupPasswords); ok {
@@ -69,9 +71,9 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 	err := s.DB.QueryRowContext(r.Context(), `SELECT i.state,b.user_id,b.credential_ready,u.must_change_password, EXISTS (
 		SELECT 1 FROM operations o JOIN operation_steps step ON step.operation_id=o.id
 		WHERE o.requested_by=b.user_id AND o.type='setup' AND o.status='succeeded'
-		AND step.step_key=$2 AND step.status='succeeded'
+		AND step.step_key IN ($2,$3) AND step.status='succeeded'
 	),
-		EXISTS (SELECT 1 FROM browser_certificates WHERE state='active') FROM installations i LEFT JOIN bootstrap_administrator b ON b.installation_id=i.id LEFT JOIN users u ON u.id=b.user_id WHERE i.id=$1`, s.InstallationID, profileStep).Scan(&state, &userID, &ready, &change, &profileSelected, &certificateConfigured)
+		EXISTS (SELECT 1 FROM browser_certificates WHERE state='active') FROM installations i LEFT JOIN bootstrap_administrator b ON b.installation_id=i.id LEFT JOIN users u ON u.id=b.user_id WHERE i.id=$1`, s.InstallationID, profileStep, postgresProfileStep).Scan(&state, &userID, &ready, &change, &profileSelected, &certificateConfigured)
 	if err != nil {
 		setupProblem(w, r, err)
 		return

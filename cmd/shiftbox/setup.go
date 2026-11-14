@@ -32,6 +32,7 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	dir := flags.String("installation-dir", "", "")
 	email := flags.String("administrator-email", "", "")
 	dex := flags.String("dex-binary", "", "")
+	postgresPath := flags.String("postgres-identity-config", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(*dir) {
 		return errors.New("setup requires an absolute installation directory and administrator email")
 	}
@@ -49,6 +50,10 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	}
 	if !filepath.IsAbs(*dex) {
 		return errors.New("Dex binary path must be absolute")
+	}
+	postgres, err := readSetupPostgresProfile(*postgresPath)
+	if err != nil {
+		return err
 	}
 	lock, err := lockSetup(*dir)
 	if err != nil {
@@ -93,7 +98,7 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 			return nil, err
 		}
 		dexDone, closeDex = done, cleanup
-		setup = app.SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Admin: admin, Login: login, CertificateRoots: roots,
+		setup = app.SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Admin: admin, Login: login, CertificateRoots: roots, Postgres: postgres,
 			Journal: operation.NewJournal(db, time.Now, uuid.NewString), Now: time.Now, NewID: uuid.NewString}
 		handler, err := app.NewSetupHandler(setup)
 		if err != nil {

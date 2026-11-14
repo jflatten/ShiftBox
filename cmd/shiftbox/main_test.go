@@ -45,6 +45,17 @@ func TestSetupCommandResumes(t *testing.T) {
 	}
 	dir := filepath.Join(t.TempDir(), "installation")
 	args := []string{"setup", "--installation-dir", dir, "--administrator-email", "owner@example.test", "--dex-binary", binary}
+	if dexURI := os.Getenv("SHIFTBOX_TEST_SETUP_DEX_URI"); dexURI != "" && os.Getenv("SHIFTBOX_TEST_SETUP_APP_URI") != "" {
+		configPath := filepath.Join(t.TempDir(), "identity.json")
+		raw, err := json.Marshal(map[string]string{"dexUri": dexURI, "caFile": os.Getenv("SHIFTBOX_TEST_SETUP_CA")})
+		if err != nil {
+			t.Fatal("cannot encode identity fixture")
+		}
+		if err := os.WriteFile(configPath, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		args = append(args, "--postgres-identity-config", configPath)
+	}
 	var firstPassword string
 	var firstCA []byte
 	for attempt := 0; attempt < 2; attempt++ {
@@ -254,11 +265,6 @@ func (w *stopOnSetupURL) probe(origin string) error {
 	if err := db.QueryRow("SELECT user_id FROM bootstrap_administrator").Scan(&ownerID); err != nil {
 		return err
 	}
-	dexPath := filepath.Join(w.dir, "dex.db")
-	if err := verifyCredentialTransfer(w.dir, origin, dexPath, ownerID, current, replacement); err != nil {
-		return err
-	}
-
 	result, err := client.Get(origin + "/api/v1/session")
 	if err != nil {
 		return err
@@ -291,6 +297,30 @@ func (w *stopOnSetupURL) probe(origin string) error {
 		return fmt.Errorf("fresh sign-in did not unlock setup")
 	}
 	if err := json.Unmarshal(body, &session); err != nil {
+		return err
+	}
+	if appURI := os.Getenv("SHIFTBOX_TEST_SETUP_APP_URI"); appURI != "" && os.Getenv("SHIFTBOX_TEST_SETUP_DEX_URI") != "" {
+		raw, err := json.Marshal(map[string]string{"profile": "postgres", "connectionUri": appURI, "tlsMode": "verify-full"})
+		if err != nil {
+			return fmt.Errorf("cannot encode profile fixture")
+		}
+		req, err := http.NewRequest(http.MethodPut, origin+"/api/v1/setup/data-profile", bytes.NewReader(raw))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Origin", origin)
+		req.Header.Set("X-CSRF-Token", session.CSRFToken)
+		req.Header.Set("Idempotency-Key", "choose-postgres-0001")
+		res, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusAccepted {
+			return fmt.Errorf("PostgreSQL profile status = %d, want 202", res.StatusCode)
+		}
+	}
+	if err := verifyCredentialTransfer(w.dir, origin, filepath.Join(w.dir, "dex.db"), ownerID, current, replacement); err != nil {
 		return err
 	}
 	if _, err := selectProfile("https://other.example", http.StatusForbidden); err != nil {

@@ -40,6 +40,14 @@ func (s SetupHTTP) activationHandler() http.Handler {
 // and records the completed activation in the caller's setup transaction.
 func (s SetupHTTP) activateSQLiteSetup(ctx context.Context, tx *sql.Tx, actor, key string, now time.Time,
 ) (operation.Operation, error) {
+	var postgresSelected bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM protected_values WHERE id=$1)",
+		s.pendingPostgresContext().RecordID).Scan(&postgresSelected); err != nil {
+		return operation.Operation{}, err
+	}
+	if postgresSelected {
+		return operation.Operation{}, ErrSetupConflict
+	}
 	installationID := s.InstallationID
 	var generation int64
 	var snapshot string

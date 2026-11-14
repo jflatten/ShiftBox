@@ -1547,3 +1547,18 @@ This checkpoint does not itself change the goal status.
   readiness validation, replay, and selection by the runtime DB opener.
 - Protected setup still needs to orchestrate profile selection, Dex
   transfer, cutover, and restart recovery from the command and HTTP routes.
+
+### PostgreSQL profile selection in local setup
+
+- The protected profile endpoint validates scoped schema ownership and
+  PostgreSQL TLS before saving encrypted pending credentials. It rechecks
+  current session authority and the installation version before commit.
+- The local command accepts the Dex connection through a private
+  `--postgres-identity-config` JSON file with `dexUri` and optional
+  `caFile`. The browser request carries the scoped application URI.
+- The native setup HTTPS test selects PostgreSQL against disposable
+  isolated schemas. Tests cover replay, redaction, and refusal of SQLite
+  activation while PostgreSQL is selected.
+- This path accepts pre-provisioned schemas and roles. The setup
+  activation endpoint still needs to stage the target, transfer the
+  Dex credential, and invoke and resume the authority switch.

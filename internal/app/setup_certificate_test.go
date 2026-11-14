@@ -90,7 +90,7 @@ func TestSetupCertificateUpload(t *testing.T) {
 	setup := SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, CertificateRoots: roots,
 		Now: func() time.Time { return now }, NewID: uuid.NewString, Journal: operation.NewJournal(db, time.Now, uuid.NewString)}
 	mux := http.NewServeMux()
-	mux.Handle("PUT /profile", setup.profileHandler())
+	mux.Handle("PUT /profile", setup.profileHandler(database.PreflightPostgresSetup))
 	mux.Handle("PUT /certificate", setup.certificateHandler())
 	mux.Handle("POST /activate", setup.activationHandler())
 	handler, err := ProtectBootstrap(origin, mux)
@@ -159,6 +159,15 @@ func TestSetupCertificateUpload(t *testing.T) {
 	}
 	if _, err := db.Exec(`INSERT INTO capacity_budgets(installation_id,cpu_limit,memory_mib_limit,disk_mib_limit,updated_by,updated_at,version)
 		VALUES($1,4,4096,10240,$2,$3,1)`, id, owner, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		return setup.savePendingPostgres(ctx, tx, selectedPostgresProfile{RequestKey: "test-postgres-selection"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request("/activate", "setup-activate-0001", nil, 409)
+	if _, err := db.Exec("DELETE FROM protected_values WHERE id=$1", setup.pendingPostgresContext().RecordID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`CREATE TRIGGER prevent_session_retirement BEFORE UPDATE OF revoked_at ON sessions

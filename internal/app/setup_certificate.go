@@ -34,8 +34,8 @@ func (s SetupHTTP) certificateHandler() http.Handler {
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM operations o JOIN operation_steps step ON step.operation_id=o.id
 			WHERE o.requested_by=$1 AND o.type='setup' AND o.status='succeeded'
-			AND step.step_key=$2 AND step.status='succeeded'
-		)`, p.User.ID, profileStep).Scan(&selected); err != nil {
+			AND step.step_key IN ($2,$3) AND step.status='succeeded'
+		)`, p.User.ID, profileStep, postgresProfileStep).Scan(&selected); err != nil {
 			return nil, err
 		}
 		if !selected || p.InstallationState != "configuring" {
