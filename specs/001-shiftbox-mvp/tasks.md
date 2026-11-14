@@ -1248,3 +1248,14 @@ This checkpoint does not itself change the goal status.
   capacity refusal. Management and contract race tests passed.
 - Controller composition and execution of provisioning, enrollment and
   readiness steps remain pending.
+
+### Workspace VM provisioning reconciliation
+
+- The provisioning worker reads the committed launch and reservation, then
+  inspects before creating or retrying a VM. It records the exact instance,
+  stopped state and owned/shared resource inventory in one transaction.
+- The worker rejects mismatched ownership, pinned settings, unknown disk
+  capacity and omitted tracked resources. A fake-provider test loses the
+  create response and confirms retry uses the same VM before enrollment.
+- Native UTM still needs effective disk-capacity evidence and provider
+  composition. Enrollment and the later workflow steps remain pending.

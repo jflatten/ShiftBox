@@ -137,3 +137,16 @@ ON workspaces FOR EACH ROW EXECUTE FUNCTION reject_workspace_snapshot_update();
 CREATE TRIGGER terminal_workspace_desired_state BEFORE UPDATE OF desired_state ON workspaces
 FOR EACH ROW WHEN (OLD.desired_state = 'deleted' AND NEW.desired_state <> OLD.desired_state)
 EXECUTE FUNCTION reject_workspace_snapshot_update();
+
+CREATE TABLE provider_resources (
+ workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+ provider_resource_id TEXT NOT NULL CHECK (length(provider_resource_id) > 0),
+ -- `vm`, `disk`, `media`, `network`, or adapter-defined owned type
+ resource_type TEXT NOT NULL CHECK (length(resource_type) > 0),
+ generation BIGINT NOT NULL CHECK (generation > 0),
+ observed_json TEXT NOT NULL,
+ ownership_proof TEXT NOT NULL,
+ last_observed_at TEXT NOT NULL,
+ deleted_at TEXT,
+ PRIMARY KEY (workspace_id, provider_resource_id)
+);

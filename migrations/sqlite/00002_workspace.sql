@@ -134,3 +134,16 @@ BEGIN
  SELECT RAISE(ABORT, 'workspace deletion is terminal');
 END;
 -- +goose StatementEnd
+
+CREATE TABLE provider_resources (
+ workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+ provider_resource_id TEXT NOT NULL CHECK (length(provider_resource_id) > 0),
+ -- `vm`, `disk`, `media`, `network`, or adapter-defined owned type
+ resource_type TEXT NOT NULL CHECK (length(resource_type) > 0),
+ generation BIGINT NOT NULL CHECK (generation > 0),
+ observed_json TEXT NOT NULL,
+ ownership_proof TEXT NOT NULL,
+ last_observed_at TEXT NOT NULL,
+ deleted_at TEXT,
+ PRIMARY KEY (workspace_id, provider_resource_id)
+);
