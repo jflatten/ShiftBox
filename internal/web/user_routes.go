@@ -11,6 +11,7 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/audit"
 	"github.com/jflatten/ShiftBox/internal/auth"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 )
 
 type membershipChange struct {
@@ -18,12 +19,20 @@ type membershipChange struct {
 	State *string `json:"membershipState"`
 }
 
-// UpdateMembershipHandler approves a pending membership with the selected role.
-func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time) AuthorizedHandler {
+// UpdateMembershipHandler approves pending accounts and changes active roles.
+func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time, registry *proxy.Registry) AuthorizedHandler {
 	store := auth.NewStore(db)
 	return AuthorizedHandler{
 		DB: db, Origin: origin, Now: now,
 		Route: ManagementRoute{Method: http.MethodPatch, Path: "/admin/users/{userId}", OperationID: "updateMembership", Resolver: "membership_update"},
+		Lookup: func(ctx context.Context, tx *sql.Tx, token string) (auth.Principal, error) {
+			// Serialize role changes before reading actor authority or checking
+			// that an administrator will remain available.
+			if _, err := tx.ExecContext(ctx, "UPDATE installations SET version=version WHERE singleton=1"); err != nil {
+				return auth.Principal{}, err
+			}
+			return store.Principal(ctx, tx, token)
+		},
 		Resolve: func(_ context.Context, _ *sql.Tx, r *http.Request, _ auth.Principal) (AuthorizationTarget, error) {
 			id := r.PathValue("userId")
 			if !ValidUUID(id) {
@@ -38,7 +47,7 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time) Au
 			return target, err
 		},
 		Apply: func(ctx context.Context, tx *sql.Tx, r *http.Request, actor auth.Principal, target AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
-			if target.Action != "user.approve" {
+			if target.Action == "user.disable" {
 				return nil, Problem{Status: 409, Code: "user.change_unavailable", Title: "This membership change is unavailable"}
 			}
 			change := target.membershipChange
@@ -57,16 +66,38 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time) Au
 			if err != nil {
 				return nil, err
 			}
-			stale := Problem{Status: 412, Code: "request.version_mismatch", Title: "Refresh the membership before approving"}
+			stale := Problem{Status: 412, Code: "request.version_mismatch", Title: "Refresh the membership before saving changes"}
 			if user.Version != version {
 				return nil, stale
 			}
-			if user.MembershipState != "pending" {
-				return nil, Problem{Status: 409, Code: "user.approval_unavailable", Title: "Only pending memberships can be approved"}
+			nextState, reason := user.MembershipState, "role_changed"
+			if target.Action == "user.approve" {
+				if user.MembershipState != "pending" {
+					return nil, Problem{Status: 409, Code: "user.approval_unavailable", Title: "Only pending memberships can be approved"}
+				}
+				nextState, reason = "active", "membership_approved"
+			} else if user.MembershipState != "active" {
+				return nil, Problem{Status: 409, Code: "user.change_unavailable", Title: "Only active accounts can change roles"}
+			} else if user.Role == *change.Role {
+				return membershipResponse(user), nil
+			}
+			demotion := user.Role == "administrator" && *change.Role == "member" && user.MembershipState == "active"
+			if demotion {
+				if registry == nil {
+					return nil, errors.New("connection registry is unavailable")
+				}
+				var another bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id<>$1 AND role='administrator'
+					AND membership_state='active' AND must_change_password=0)`, id).Scan(&another); err != nil {
+					return nil, err
+				}
+				if !another {
+					return nil, Problem{Status: 409, Code: "user.last_administrator", Title: "Keep at least one active administrator with sign-in access"}
+				}
 			}
 			stamp := now()
-			result, err := tx.ExecContext(ctx, `UPDATE users SET role=$1,membership_state='active',version=version+1,updated_at=$2
-				WHERE id=$3 AND version=$4 AND membership_state='pending'`, *change.Role, stamp.UTC().Format(time.RFC3339Nano), id, version)
+			result, err := tx.ExecContext(ctx, `UPDATE users SET role=$1,membership_state=$2,version=version+1,updated_at=$3
+				WHERE id=$4 AND version=$5`, *change.Role, nextState, stamp.UTC().Format(time.RFC3339Nano), id, version)
 			if err != nil {
 				return nil, err
 			}
@@ -79,18 +110,33 @@ func UpdateMembershipHandler(db *sql.DB, origin string, now func() time.Time) Au
 			}
 			if _, err := audit.Append(ctx, tx, audit.Event{
 				OccurredAt: stamp, ActorType: "user", ActorID: actor.User.ID, Action: target.Action,
-				ResourceType: "user", ResourceID: id, Outcome: "allowed", ReasonCode: "membership_approved",
+				ResourceType: "user", ResourceID: id, Outcome: "allowed", ReasonCode: reason,
 			}); err != nil {
 				return nil, err
 			}
-			user.Role, user.MembershipState, user.Version = *change.Role, "active", version+1
+			user.Role, user.MembershipState, user.Version = *change.Role, nextState, version+1
+			response := membershipResponse(user)
+			if !demotion {
+				return response, nil
+			}
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(user.Version, 10)))
-				_ = json.NewEncoder(w).Encode(user)
+				if err := registry.CloseMatching(func(scope proxy.Scope) bool { return scope.UserID == id }); err != nil {
+					WriteProblem(w, RequestID(r.Context()), Problem{Status: 503, Code: "user.connection_closure_pending",
+						Title: "Role changed but some connections could not be closed"})
+					return
+				}
+				response.ServeHTTP(w, r)
 			}), nil
 		},
 	}
+}
+
+func membershipResponse(user auth.User) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(user.Version, 10)))
+		_ = json.NewEncoder(w).Encode(user)
+	})
 }
 
 // ListUsersHandler returns membership records to authorized administrators.

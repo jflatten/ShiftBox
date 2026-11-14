@@ -1892,3 +1892,13 @@ This checkpoint does not itself change the goal status.
 - Contract and UI tests cover explicit role selection, authorization,
   CSRF, and stale requests. Web, app and contract race suites and all
   37 UI tests passed. Offboarding and role-only changes remain open.
+
+### Active membership role changes
+
+- People now supports versioned role changes for active accounts. The
+  controller serializes membership updates and prevents demoting the
+  last active administrator with a completed password setup. Demotion
+  closes tracked connections after the role and audit event commit.
+- Contract tests cover a member's denial, rejected self-demotion, and
+  post-commit closure. Web, app and contract race suites, all 38 UI tests,
+  and the production build passed. Offboarding remains open.

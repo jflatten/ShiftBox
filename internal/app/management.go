@@ -49,7 +49,7 @@ func NewManagementServices(db *sql.DB, settings config.InstallationSettings, jou
 		listWorkspaces, getWorkspace, getOperation, streamEvents, listTemplates, createTemplate, reviseTemplate, budget, resourceProfile,
 		web.InfrastructureStatusHandler(db, origin, now, launchPolicy.Capabilities),
 		web.ListUsersHandler(db, origin, now),
-		web.UpdateMembershipHandler(db, origin, now),
+		web.UpdateMembershipHandler(db, origin, now, registry),
 		web.TemplateUpdateHandler(db, origin, now), grantTemplate, revokeTemplate,
 		web.WorkspaceLaunchHandler(db, origin, now, journal, launchPolicy),
 		web.WorkspacePowerHandler(db, origin, now, journal),

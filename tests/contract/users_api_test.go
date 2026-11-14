@@ -1,6 +1,7 @@
 package contract_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -36,7 +38,7 @@ func TestApprovePendingMember(t *testing.T) {
 		VALUES($1,'pending@example.test','member','pending','external','owner','now','now',1)`, id); err != nil {
 		t.Fatal(err)
 	}
-	handler := web.UpdateMembershipHandler(db, origin, func() time.Time { return now })
+	handler := web.UpdateMembershipHandler(db, origin, func() time.Time { return now }, &proxy.Registry{})
 	send := func(body, version, csrf string, want int) *httptest.ResponseRecorder {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodPatch, origin+"/api/v1/admin/users/"+id, strings.NewReader(body))
@@ -73,6 +75,82 @@ func TestApprovePendingMember(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE action='user.approve' AND actor_id='member' AND resource_id=$1`, id).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("approval audit count = %d (%v), want 1", count, err)
 	}
+}
+
+// TestDemoteAdministrator verifies the last-administrator guard and closes
+// the former administrator's open streams after a committed demotion.
+func TestDemoteAdministrator(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "roles.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	token := strings.Repeat("A", 43)
+	seedWorkspaceLaunch(t, db, uuid.NewString(), token, now)
+	id := uuid.NewString()
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
+		VALUES($1,'second@example.test','administrator','active','local','owner','now','now',1)`, id); err != nil {
+		t.Fatal(err)
+	}
+	registry := &proxy.Registry{}
+	closed := false
+	unregister, err := registry.Register(proxy.Scope{UserID: id}, func() error { return nil }, func() error {
+		var role string
+		err := db.QueryRowContext(ctx, "SELECT role FROM users WHERE id=$1", id).Scan(&role)
+		closed = err == nil && role == "member"
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(unregister)
+	const origin = "https://management.test"
+	handler := web.UpdateMembershipHandler(db, origin, func() time.Time { return now }, registry)
+	demote := func(want int) {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPatch, origin+"/api/v1/admin/users/"+id, strings.NewReader(`{"role":"member"}`))
+		request.SetPathValue("userId", id)
+		request.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		request.Header.Set("Origin", origin)
+		request.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+		request.Header.Set("If-Match", `"1"`)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != want {
+			t.Fatalf("PATCH role = %d %s, want %d", response.Code, response.Body, want)
+		}
+	}
+	demote(403)
+	if _, err := db.ExecContext(ctx, "UPDATE users SET must_change_password=1 WHERE id='owner'"); err != nil {
+		t.Fatal(err)
+	}
+	self, selfToken, err := auth.NewSession("second-session", id, "normal", now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error { return auth.NewStore(db).SaveSession(ctx, tx, self) }); err != nil {
+		t.Fatal(err)
+	}
+	memberToken := token
+	token = selfToken
+	demote(409)
+	if closed {
+		t.Fatal("rejected demotion closed a connection")
+	}
+	token = memberToken
+	if _, err := db.ExecContext(ctx, "UPDATE users SET role='administrator' WHERE id='member'"); err != nil {
+		t.Fatal(err)
+	}
+	demote(200)
+	if !closed {
+		t.Fatal("demotion did not close the affected user's connections after commit")
+	}
+	demote(412)
 }
 
 // TestListUsersShowsCurrentMembership checks that the People view shows

@@ -91,3 +91,30 @@ test('approves a pending account with an explicitly selected role', async () => 
     body: JSON.stringify({ membershipState: 'active', role: 'administrator' }),
   }));
 });
+
+// The role form sends only the changed role, and shows a controller refusal
+// without visually demoting the account.
+test('keeps the role unchanged when the controller protects the last administrator', async () => {
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json({ ...session, permissions: ['user.list', 'user.change_role'] });
+    if (input === '/api/v1/admin/users') return json([{ id: 'operator', primaryEmail: 'admin@example.test',
+      membershipState: 'active', credentialMode: 'local', role: 'administrator', version: 1 }]);
+    if (input === '/api/v1/admin/users/operator' && init?.method === 'PATCH') return {
+      ok: false, status: 409, headers: new Headers({ 'Content-Type': 'application/problem+json' }),
+      json: async () => ({ type: 'about:blank', title: 'Keep at least one active administrator with sign-in access',
+        code: 'user.last_administrator', status: 409, requestId: 'ref' }),
+    } as Response;
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><People /></Providers>);
+  const row = await screen.findByRole('row', { name: /admin@example.test/ });
+  await user.selectOptions(within(row).getByRole('combobox', { name: /Role for/ }), 'member');
+  await user.click(within(row).getByRole('button', { name: 'Save role' }));
+  expect(await within(row).findByRole('alert')).toHaveTextContent('Keep at least one active administrator');
+  expect(within(row).getByRole('cell', { name: 'Administrator' })).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/admin/users/operator', expect.objectContaining({
+    method: 'PATCH', body: '{"role":"member"}',
+  }));
+});
