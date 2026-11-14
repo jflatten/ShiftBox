@@ -71,7 +71,7 @@ function WorkspaceList({ ownerId }: { ownerId?: string | null }) {
             <Table.Tbody>
               {data.items.map(workspace => (
                 <Table.Tr key={workspace.id}>
-                  <Table.Td><Anchor href={`/workspaces/?id=${encodeURIComponent(workspace.id)}`}>{workspace.id}</Anchor></Table.Td>
+                  <Table.Td><Anchor href={`/workspaces/?id=${encodeURIComponent(workspace.id)}`}>{workspace.name || workspace.id}</Anchor></Table.Td>
                   <Table.Td>{workspaceState(workspace.desiredState)}</Table.Td>
                   <Table.Td>{workspaceState(workspace.observedState)}</Table.Td>
                 </Table.Tr>

@@ -178,7 +178,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T083 [P] [US3] Write failing maintenance tests for deadlines, warnings, capacity, safe activation boundaries, no maintenance force-kill, verification/rollback evidence, prior stopped-state restoration, and compatibility blocking in `internal/workspace/maintenance_test.go`
 - [ ] T084 [P] [US3] Write failing long-stop recovery tests for exact provider instance/ownership/generation, one-use delivery, preserved disks/drive lists, and denial of revoked/deleted/unknown/cloned/mismatched identities in `tests/integration/long_stop_recovery_test.go`
 - [X] T085 [P] [US3] Write failing certificate/release/preflight API and CLI tests for 30-day browser warnings, independent internal PKI, invalid replacement rejection, no plaintext fallback, N/N−1 guest support, retained-workspace gate, backup/key/certificate/provider/tool checks, stable exits, and actionable blocks in `internal/release/preflight_test.go` and `cmd/shiftbox/migrate_test.go`
-- [ ] T086 [P] [US3] Write failing notice, infrastructure, maintenance, and audit-retention API tests for persistent conditions, publish/list/read/dismiss/history semantics, maintenance independence, provider/capacity/artifact/profile/policy management, and protected active records in `internal/app/notices_test.go` and `tests/contract/admin_operations_api_test.go`
+- [X] T086 [P] [US3] Write failing notice, infrastructure, maintenance, and audit-retention API tests for persistent conditions, publish/list/read/dismiss/history semantics, maintenance independence, provider/capacity/artifact/profile/policy management, and protected active records in `internal/app/notices_test.go` and `tests/contract/admin_operations_api_test.go`
 - [X] T087 [P] [US3] Write failing UI tests for capacity errors, desired/observed state, destructive modal safe focus/typed name/checkbox, retention warnings, offboarding stop failures, maintenance steps, certificate/storage alerts, and narrow keyboard navigation in `ui/features/workspaces/operations.test.tsx` and `ui/features/admin/maintenance.test.tsx`
 - [ ] T088 [P] [US3] Write failing Playwright operations journey for hostile preview isolation, cross-origin mutation denial, live revocation, deletion focus/copy, partial cleanup reservation, inactivity, long-stop recovery, and maintenance in `ui/tests/e2e/operations.spec.ts`
 
@@ -195,7 +195,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [ ] T097 [US3] Implement current/N−1 compatibility evaluation and irreversible migration preflight requiring verified backup, guest gate, tools, keys, provider, database ownership, certificate, and CA lifetime in `internal/release/compatibility.go`, `internal/release/preflight.go`, and `cmd/shiftbox/migrate.go`
 - [ ] T098 [US3] Implement system notices, receipts, condition persistence, dismissal/history, and protected retention pruning proven by T086 in `internal/app/notices.go` and `internal/app/retention.go`
 - [ ] T099 [US3] Implement workspace policy/action, user disable, notice publish/list/receipt, infrastructure status, browser-certificate replacement, platform artifact, resource profile, capacity, network policy, maintenance, and migration-preflight handlers from the OpenAPI and authorization-matrix contracts in `internal/web/workspace_policy_routes.go`, `internal/web/admin_routes.go`, `internal/web/notice_routes.go`, `internal/web/infrastructure_routes.go`, and `internal/web/maintenance_routes.go`
-- [ ] T100 [US3] Implement the accessible destructive workspace Modal with initial focus on Cancel, typed workspace name, “I have pushed work I need to keep” acknowledgement, retained-path list, and management-backup exclusion in `ui/features/workspaces/delete-workspace-modal.tsx`
+- [X] T100 [US3] Implement the accessible destructive workspace Modal with initial focus on Cancel, typed workspace name, “I have pushed work I need to keep” acknowledgement, retained-path list, and management-backup exclusion in `ui/features/workspaces/delete-workspace-modal.tsx`
 - [ ] T101 [US3] Implement Mantine Infrastructure, People offboarding, Notices, Retention, and Maintenance screens with server-driven Steppers and actionable persistent conditions in `ui/features/admin/infrastructure.tsx`, `ui/features/admin/offboarding.tsx`, `ui/features/notices/notices.tsx`, `ui/features/workspaces/retention.tsx`, and `ui/features/admin/maintenance.tsx`
 - [ ] T102 [US3] Implement `shiftbox recover-admin` and `shiftbox migrate preflight` human/JSON output, stable exit codes, secret-safe arguments, and audit behavior in `cmd/shiftbox/recover_admin.go`, `cmd/shiftbox/migrate.go`, and `cmd/shiftbox/output.go`
 - [ ] T103 [US3] Add and run the Go operations acceptance test together with the T088 Playwright journey, then record separate evidence for capacity, revocation, destructive clarity, recovery denial, and maintenance authority in `tests/acceptance/workspace_operations_test.go` and `documentation/validation/workspace-operations.md`
@@ -2864,3 +2864,16 @@ This checkpoint does not itself change the goal status.
   prerequisites, exit statuses, N/N−1 handling, and refusal to fall back
   to plaintext after browser certificate expiry. The focused race suite
   passed. T097 still owns live migration and update gates.
+
+### Notice retention and workspace deletion confirmation
+
+- T086 passed the admin contracts and the SQLite/PostgreSQL retention
+  checks. Dismissal, expiry, restart, and pruning preserve current notices,
+  certificate warnings, maintenance, live grants, and workspace provenance.
+  T096 still owns the remaining operational conditions.
+- T100 adds an entered workspace name to launch and uses it for exact
+  deletion confirmation. Older unnamed workspaces display their ID.
+  Cancel receives focus first and Escape restores focus. The modal
+  explains the retained data loss and management backup exclusion, and
+  requires acknowledging that needed work has been pushed.
+- Workspace API, migration parity, TypeScript and all 84 UI tests passed.

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,9 +28,10 @@ type WorkspaceLaunchPolicy struct {
 }
 
 type workspaceLaunchRequest struct {
-	TemplateID       string `json:"templateId"`
-	TemplateRevision int64  `json:"templateRevision"`
-	RetentionSeconds *int64 `json:"retentionSeconds"`
+	TemplateID       string  `json:"templateId"`
+	TemplateRevision int64   `json:"templateRevision"`
+	Name             *string `json:"name"`
+	RetentionSeconds *int64  `json:"retentionSeconds"`
 	key              string
 	revision         template.LaunchRevision
 }
@@ -66,6 +68,13 @@ func resolveWorkspaceLaunch(ctx context.Context, tx *sql.Tx, r *http.Request, ac
 	if !ValidUUID(input.TemplateID) || input.TemplateRevision < 1 || (input.RetentionSeconds != nil && *input.RetentionSeconds < 1) {
 		return AuthorizationTarget{}, invalidAuthorizationFields()
 	}
+	if input.Name != nil {
+		name := strings.TrimSpace(*input.Name)
+		if name == "" || !workspace.ValidName(name) {
+			return AuthorizationTarget{}, invalidAuthorizationFields()
+		}
+		input.Name = &name
+	}
 	key, err := IdempotencyKey(r)
 	if err != nil {
 		return AuthorizationTarget{}, err
@@ -92,6 +101,9 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 	intent := workspace.LaunchIntent{
 		InstallationID: installation, OwnerID: actor, RequestKey: input.key,
 		TemplateID: input.TemplateID, TemplateRevision: input.TemplateRevision, RetentionSeconds: input.RetentionSeconds,
+	}
+	if input.Name != nil {
+		intent.Name = *input.Name
 	}
 	if op, found, err := workspace.FindLaunch(ctx, tx, journal, intent); found || err != nil {
 		return op, launchAdmissionProblem(err)

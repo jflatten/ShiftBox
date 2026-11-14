@@ -16,6 +16,7 @@ import (
 
 type workspaceView struct {
 	ID                 string             `json:"id"`
+	Name               string             `json:"name"`
 	OwnerID            string             `json:"ownerId"`
 	TemplateID         string             `json:"templateId"`
 	TemplateRevision   int64              `json:"templateRevision"`
@@ -41,7 +42,7 @@ const workspaceProjection = `w.id,w.owner_user_id,w.template_id,w.template_revis
 	w.desired_state,w.observed_state,w.generation,w.cpu_count,w.memory_mib,w.disk_mib,
 	(SELECT o.id FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
 	   AND o.status IN ('pending','running','waiting') ORDER BY o.created_at DESC,o.id DESC LIMIT 1),
-	w.last_activity_at,w.retention_deadline,w.version,w.preview_ports_json`
+	w.last_activity_at,w.retention_deadline,w.version,w.preview_ports_json,COALESCE(NULLIF(w.name,''),w.id)`
 
 const workspaceFrom = ` FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id`
 
@@ -220,7 +221,7 @@ func scanWorkspace(row interface{ Scan(...any) error }) (workspaceView, error) {
 	err := row.Scan(&view.ID, &view.OwnerID, &view.TemplateID, &view.TemplateRevision, &view.PlatformRelease,
 		&view.DesiredState, &view.ObservedState, &view.Generation,
 		&view.Resources.CPUCount, &view.Resources.MemoryMiB, &view.Resources.DiskMiB,
-		&view.CurrentOperationID, &view.LastActivityAt, &view.RetentionDeadline, &view.Version, &previewJSON)
+		&view.CurrentOperationID, &view.LastActivityAt, &view.RetentionDeadline, &view.Version, &previewJSON, &view.Name)
 	if err != nil {
 		return view, err
 	}

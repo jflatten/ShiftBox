@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Anchor, Button, Group, Radio, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Button, Group, Radio, Stack, Text, TextInput, Title } from '@mantine/core';
 import { APIProblemView } from '../../components/api-problem';
 import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
@@ -14,6 +14,7 @@ interface AcceptedLaunch {
 export function LaunchFlow({ csrfToken, userID, admin }: { csrfToken: string; userID: string; admin: boolean }) {
   const [cursors, setCursors] = useState<string[]>([]);
   const [selected, setSelected] = useState('');
+  const [name, setName] = useState('');
   const [review, setReview] = useState<TemplateRevision>();
   const [accepted, setAccepted] = useState<AcceptedLaunch>();
   const [error, setError] = useState<unknown>();
@@ -25,17 +26,17 @@ export function LaunchFlow({ csrfToken, userID, admin }: { csrfToken: string; us
   const chosen = data?.items.find(item => templateKey(item) === selected);
 
   const begin = async () => {
-    if (!review || submitting) return;
+    if (!review || !name.trim() || submitting) return;
     setSubmitting(true);
     setError(undefined);
     try {
-      const revision = templateKey(review);
+      const revision = JSON.stringify([templateKey(review), name.trim()]);
       const key = requestKeys.current.get(revision) ?? crypto.randomUUID();
       requestKeys.current.set(revision, key);
       const response = await fetch('/api/v1/workspaces', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'Idempotency-Key': key },
-        body: JSON.stringify({ templateId: review.id, templateRevision: review.currentRevision }),
+        body: JSON.stringify({ templateId: review.id, templateRevision: review.currentRevision, name: name.trim() }),
       });
       if (!response.ok) throw await readProblem(response);
       setAccepted(await response.json());
@@ -53,6 +54,8 @@ export function LaunchFlow({ csrfToken, userID, admin }: { csrfToken: string; us
       {accepted ? <LaunchProgress accepted={accepted} /> : review ? (
         <Stack>
           <Title order={2}>{review.name} · Revision {review.currentRevision}</Title>
+          <TextInput label="Workspace name" required maxLength={120} value={name} disabled={submitting}
+            onChange={event => setName(event.currentTarget.value)} />
           <dl>
             <Text component="dt" size="sm" c="dimmed">Repository</Text>
             <Text component="dd" ml={0} mb="sm" style={{ overflowWrap: 'anywhere' }}>{review.repositoryUrl}</Text>
@@ -71,7 +74,7 @@ export function LaunchFlow({ csrfToken, userID, admin }: { csrfToken: string; us
           </dl>
           {error !== undefined ? <APIProblemView error={error} /> : null}
           <Group>
-            <Button loading={submitting} onClick={() => void begin()}>Launch workspace</Button>
+            <Button disabled={!name.trim()} loading={submitting} onClick={() => void begin()}>Launch workspace</Button>
             <Button variant="default" disabled={submitting} onClick={() => {
               setReview(undefined);
               setError(undefined);

@@ -187,7 +187,7 @@ test('submits stop with CSRF and the workspace version', async () => {
   expect(screen.getAllByText('Running', { exact: true })).toHaveLength(2);
 });
 
-// Permanent deletion requires the exact workspace ID and explicit consent,
+// Permanent deletion requires the exact workspace name and explicit consent,
 // then displays the provider verification step without changing observed state.
 test('confirms workspace deletion and follows its durable operation', async () => {
   class OperationStream extends EventTarget { close() {} }
@@ -197,7 +197,7 @@ test('confirms workspace deletion and follows its durable operation', async () =
   const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/workspaces/workspace-one') return json({
-      ...workspace, desiredState: deleting ? 'deleted' : 'stopped', currentOperationId: deleting ? 'delete-op' : null,
+      ...workspace, name: 'My Workspace', desiredState: deleting ? 'deleted' : 'stopped', currentOperationId: deleting ? 'delete-op' : null,
     });
     if (input === endpoint && init?.method === 'POST') {
       deleting = true;
@@ -216,16 +216,17 @@ test('confirms workspace deletion and follows its durable operation', async () =
   const dialog = within(await screen.findByRole('dialog', { name: 'Delete workspace' }));
   await waitFor(() => expect(dialog.getByRole('button', { name: 'Cancel' })).toHaveFocus());
   expect(dialog.getByText(/permanently delete/i)).toBeVisible();
+  expect(dialog.getByText('Management backups exclude workspace VM disks.')).toBeVisible();
   const confirm = dialog.getByRole('button', { name: 'Delete permanently' });
-  const typedID = dialog.getByRole('textbox', { name: /workspace id/i });
-  await user.type(typedID, workspace.id.toUpperCase());
-  await user.click(dialog.getByRole('checkbox', { name: /permanent/i }));
+  const typedName = dialog.getByRole('textbox', { name: /workspace name/i });
+  await user.type(typedName, workspace.id);
+  await user.click(dialog.getByRole('checkbox', { name: 'I have pushed work I need to keep.' }));
   expect(confirm).toBeDisabled();
-  await user.click(dialog.getByRole('checkbox', { name: /permanent/i }));
-  await user.clear(typedID);
-  await user.type(typedID, workspace.id);
+  await user.click(dialog.getByRole('checkbox', { name: 'I have pushed work I need to keep.' }));
+  await user.clear(typedName);
+  await user.type(typedName, 'My Workspace');
   expect(confirm).toBeDisabled();
-  await user.click(dialog.getByRole('checkbox', { name: /permanent/i }));
+  await user.click(dialog.getByRole('checkbox', { name: 'I have pushed work I need to keep.' }));
   await user.click(confirm);
   expect(fetch).toHaveBeenCalledWith(endpoint, expect.objectContaining({
     method: 'POST', body: JSON.stringify({ confirmDataLoss: true }),
@@ -326,6 +327,7 @@ test('reviews a template revision and reports a capacity refusal', async () => {
   expect(screen.getByText('https://github.com/example/project')).toBeVisible();
   expect(screen.getByText('API_KEY')).toBeVisible();
   expect(fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  await user.type(screen.getByRole('textbox', { name: /workspace name/i }), 'My development workspace');
   await user.click(screen.getByRole('button', { name: 'Launch workspace' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('insufficient CPU capacity');
   await user.click(screen.getByRole('button', { name: 'Back to templates' }));
@@ -333,7 +335,7 @@ test('reviews a template revision and reports a capacity refusal', async () => {
   await user.click(screen.getByRole('button', { name: 'Launch workspace' }));
   const submitted = fetch.mock.calls.filter(([, init]) => init?.method === 'POST');
   expect(submitted).toHaveLength(2);
-  expect(submitted[0][1]?.body).toBe('{"templateId":"template-one","templateRevision":2}');
+  expect(submitted[0][1]?.body).toBe('{"templateId":"template-one","templateRevision":2,"name":"My development workspace"}');
   expect(submitted[1][1]?.headers).toEqual(submitted[0][1]?.headers);
 });
 
@@ -354,6 +356,7 @@ test('shows the server operation after accepting a workspace launch', async () =
   render(<Providers><Workspaces workspaceId={null} launch /></Providers>);
   await user.click(await screen.findByRole('radio', { name: /Example project/ }));
   await user.click(screen.getByRole('button', { name: 'Review launch' }));
+  await user.type(screen.getByRole('textbox', { name: /workspace name/i }), 'My development workspace');
   await user.click(screen.getByRole('button', { name: 'Launch workspace' }));
   expect(await screen.findByText('Failed — Boot workspace')).toBeVisible();
   expect(screen.getByRole('link', { name: 'View workspace' })).toHaveAttribute('href', '/workspaces/?id=workspace-one');

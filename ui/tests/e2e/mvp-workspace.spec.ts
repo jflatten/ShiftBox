@@ -180,6 +180,7 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     await activate(page.getByRole('radio', { name: `${templateName} · Revision 1` }), 'Space');
     await activate(page.getByRole('button', { name: 'Review launch' }));
     await expect(page.getByRole('heading', { name: `${templateName} · Revision 1` })).toBeVisible();
+    await enter(page.getByRole('textbox', { name: /workspace name/i }), templateName);
     await activate(page.getByRole('button', { name: 'Launch workspace' }));
     const details = page.getByRole('link', { name: 'View workspace' });
     await expect(details).toBeVisible();

@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
@@ -22,6 +25,7 @@ var ErrLaunchConflict = errors.New("workspace launch intent conflict")
 type LaunchIntent struct {
 	InstallationID, WorkspaceID, OwnerID, RequestKey string
 	TemplateID, ArtifactID                           string
+	Name                                             string
 	TemplateRevision                                 int64
 	RepositoryURL, DevcontainerPath                  string
 	RepositoryRef                                    *string
@@ -62,12 +66,12 @@ func AdmitLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, la
 	result, err = tx.ExecContext(ctx, `INSERT INTO workspaces
 		(id,installation_id,owner_user_id,template_id,template_revision,platform_artifact_id,
 		repository_url,repository_ref,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,
-		secret_names_json,retention_seconds,launch_retention_seconds,desired_state,observed_state,generation,ownership_marker,created_at,updated_at,version,retention_deadline)
-		SELECT $1,$2,$3,$4,$5,id,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,'running','unknown',1,$16,$17,$17,1,$18
+		secret_names_json,retention_seconds,launch_retention_seconds,desired_state,observed_state,generation,ownership_marker,created_at,updated_at,version,retention_deadline,name)
+		SELECT $1,$2,$3,$4,$5,id,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,'running','unknown',1,$16,$17,$17,1,$18,$19
 		FROM platform_artifacts WHERE id=$6 AND state='available'`,
 		launch.WorkspaceID, launch.InstallationID, launch.OwnerID, launch.TemplateID, launch.TemplateRevision, launch.ArtifactID,
 		launch.RepositoryURL, launch.RepositoryRef, launch.DevcontainerPath, launch.CPU, launch.MemoryMiB, launch.DiskMiB,
-		launch.NetworkPolicyJSON, string(secretNames), launch.RetentionSeconds, launch.OwnershipMarker, stamp, deadline)
+		launch.NetworkPolicyJSON, string(secretNames), launch.RetentionSeconds, launch.OwnershipMarker, stamp, deadline, launch.Name)
 	if err := capacityWrite(result, err); err != nil {
 		return operation.Operation{}, err
 	}
@@ -121,8 +125,8 @@ func replayLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, i
 	var matching bool
 	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM workspaces
 		WHERE id=$1 AND installation_id=$2 AND owner_user_id=$3 AND template_id=$4 AND template_revision=$5
-		AND COALESCE(launch_retention_seconds,0)=COALESCE(CAST($6 AS BIGINT),0))`,
-		*op.WorkspaceID, launch.InstallationID, launch.OwnerID, launch.TemplateID, launch.TemplateRevision, launch.RetentionSeconds).Scan(&matching)
+		AND COALESCE(launch_retention_seconds,0)=COALESCE(CAST($6 AS BIGINT),0) AND name=$7)`,
+		*op.WorkspaceID, launch.InstallationID, launch.OwnerID, launch.TemplateID, launch.TemplateRevision, launch.RetentionSeconds, launch.Name).Scan(&matching)
 	if err != nil {
 		return operation.Operation{}, err
 	}
@@ -137,8 +141,15 @@ func (launch LaunchIntent) valid(now time.Time) bool {
 	return !now.IsZero() && launch.InstallationID != "" && launch.WorkspaceID != "" && launch.OwnerID != "" &&
 		launch.TemplateID != "" && launch.TemplateRevision > 0 && launch.ArtifactID != "" && launch.OwnershipMarker != "" &&
 		len(launch.RequestKey) >= 16 && len(launch.RequestKey) <= 128 && launch.Allocation.positive() &&
+		(launch.Name == "" || ValidName(launch.Name)) &&
 		(launch.RetentionSeconds == nil || RetentionDeadline(now, launch.RetentionSeconds) != nil) &&
 		(launch.RepositoryRef == nil || template.ValidRepositoryRef(*launch.RepositoryRef)) &&
 		template.ValidSource(launch.RepositoryURL, launch.DevcontainerPath) &&
 		json.Unmarshal([]byte(launch.NetworkPolicyJSON), &network) == nil && len(network) != 0
+}
+
+// ValidName reports whether a normalized workspace display name is usable.
+func ValidName(name string) bool {
+	return name != "" && name == strings.TrimSpace(name) && utf8.RuneCountInString(name) <= 120 &&
+		!strings.ContainsFunc(name, unicode.IsControl)
 }

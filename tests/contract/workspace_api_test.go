@@ -36,7 +36,7 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	}
 	const origin = "https://management.test"
 	const templateID = "00000000-0000-4000-8000-000000000003"
-	const body = `{"templateId":"` + templateID + `","templateRevision":1}`
+	const body = `{"templateId":"` + templateID + `","templateRevision":1,"name":"MVP development"}`
 	token := strings.Repeat("A", 43)
 	now := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
 	seedWorkspaceLaunch(t, db, templateID, token, now)
@@ -107,6 +107,11 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	}
 	replayed := request(selectedBody, key, csrf)
 	check(replayed, 202, "")
+	check(request(strings.Replace(selectedBody, "MVP development", "Other workspace", 1), key, csrf), 409, "workspace.launch_conflict")
+	var savedName string
+	if err := db.QueryRowContext(ctx, "SELECT name FROM workspaces WHERE id=$1", *op.WorkspaceID).Scan(&savedName); err != nil || savedName != "MVP development" {
+		t.Fatalf("stored workspace name = %q (%v), want MVP development", savedName, err)
+	}
 	if replayed.Body.String() != accepted.Body.String() {
 		t.Error("retry returned a different operation")
 	}

@@ -1,5 +1,6 @@
 export interface Workspace {
   id: string;
+  name?: string;
   ownerId: string;
   templateId: string;
   templateRevision: number;

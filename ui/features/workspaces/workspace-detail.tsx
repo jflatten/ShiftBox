@@ -73,6 +73,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
       {workspace.isPending ? <Text role="status">Loading workspace…</Text> : null}
       {data ? (
         <Stack gap="lg">
+          {data.name && data.name !== data.id ? <Text fw={600}>{data.name}</Text> : null}
           <Text size="sm" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{data.id}</Text>
           <Group gap="xl" align="flex-start">
             <Stack gap={2}><Text size="sm" c="dimmed">Desired state</Text><Text fw={600}>{workspaceState(data.desiredState)}</Text></Stack>
@@ -142,7 +143,7 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
             <Button variant="subtle" color="red" disabled={busy} style={{ alignSelf: 'flex-start' }}
               onClick={() => { setError(undefined); setConfirmDelete(true); }}>Delete workspace</Button>
           ) : null}
-          <DeleteWorkspaceDialog id={id} opened={confirmDelete} busy={busy} submitting={submitting === 'delete'} error={error}
+          <DeleteWorkspaceDialog name={data.name || id} opened={confirmDelete} busy={busy} submitting={submitting === 'delete'} error={error}
             cancel={() => setConfirmDelete(false)} confirm={() => void requestAction('delete')} />
           {displayedOperation ? <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation} onFinished={setOperationBusy} /> : null}
         </Stack>
@@ -151,8 +152,8 @@ export function WorkspaceDetail({ id, csrfToken }: { id: string; csrfToken: stri
   );
 }
 
-function DeleteWorkspaceDialog({ id, opened, busy, submitting, error, cancel, confirm }: {
-  id: string;
+function DeleteWorkspaceDialog({ name, opened, busy, submitting, error, cancel, confirm }: {
+  name: string;
   opened: boolean;
   busy: boolean;
   submitting: boolean;
@@ -160,20 +161,21 @@ function DeleteWorkspaceDialog({ id, opened, busy, submitting, error, cancel, co
   cancel: () => void;
   confirm: () => void;
 }) {
-  const [typedID, setTypedID] = useState('');
+  const [typedName, setTypedName] = useState('');
   const [accepted, setAccepted] = useState(false);
-  const enabled = typedID === id && accepted && !busy;
+  const enabled = typedName === name && accepted && !busy;
   return (
-    <Modal opened={opened} onClose={cancel} onExitTransitionEnd={() => { setTypedID(''); setAccepted(false); }}
+    <Modal opened={opened} onClose={cancel} onExitTransitionEnd={() => { setTypedName(''); setAccepted(false); }}
       title="Delete workspace" closeOnClickOutside={false} closeOnEscape={!submitting} withCloseButton={!submitting}
       transitionProps={{ duration: 0 }}>
       <form onSubmit={event => { event.preventDefault(); if (enabled) confirm(); }}>
         <Stack>
           <Text>Permanently delete this workspace, including project files, the developer home, and named application volumes.</Text>
-          <Text size="sm">Workspace ID <Text span fw={600}>{id}</Text></Text>
-          <TextInput label="Type the workspace ID" value={typedID} onChange={event => setTypedID(event.currentTarget.value)}
+          <Text size="sm">Management backups exclude workspace VM disks.</Text>
+          <Text size="sm">Workspace name <Text span fw={600}>{name}</Text></Text>
+          <TextInput label="Type the workspace name" value={typedName} onChange={event => setTypedName(event.currentTarget.value)}
             disabled={submitting} autoComplete="off" />
-          <Checkbox label="I understand that deletion is permanent" checked={accepted}
+          <Checkbox label="I have pushed work I need to keep." checked={accepted}
             onChange={event => setAccepted(event.currentTarget.checked)} disabled={submitting} />
           {error !== undefined ? <APIProblemView error={error} /> : null}
           <Group justify="flex-end">
