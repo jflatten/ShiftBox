@@ -1669,6 +1669,11 @@ This checkpoint does not itself change the goal status.
 
 ### Active platform import
 
+- T120 reopens the controller database after admission and during an
+  interrupted import. The worker respects the outstanding lease and retries
+  with the original operation ID and folder. After validation commits,
+  catalog replay uses the verified managed files without booting again.
+
 - T099 wires administrator platform import to the controller. The
   request contains an absolute local folder and an optional default
   selection. Its actor-scoped key binds both values to a durable

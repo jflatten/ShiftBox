@@ -3,12 +3,14 @@ package release_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/release"
 	"github.com/jflatten/ShiftBox/internal/testsupport"
 )
@@ -55,20 +57,56 @@ func TestCatalogImportsLocalFolder(t *testing.T) {
 }
 
 // TestManagedCatalogRestoresPublishedArtifact checks that a restarted catalog
-// can stage a validated release after the original import source disappears.
+// resumes pending boot validation and reuses an available release without
+// starting another boot when the import completion reply was lost.
 func TestManagedCatalogRestoresPublishedArtifact(t *testing.T) {
-	ctx := context.Background()
-	db := openCatalogDatabase(t, "sqlite")
+	ctx := t.Context()
+	cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "catalog.db")}
+	open := func() *sql.DB {
+		t.Helper()
+		db, err := database.Open(ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return db
+	}
+	db := open()
+	if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
+		t.Fatal(err)
+	}
 	root, manifest := artifactFixture(t)
 	storage := t.TempDir()
 	catalog := release.NewCatalog(release.NewStore(db), storage)
+	restart := func() {
+		t.Helper()
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		db = open()
+		catalog = release.NewCatalog(release.NewStore(db), storage)
+	}
 	id, actor := testsupport.ID(201), testsupport.ID(1)
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
+		VALUES($1,'owner@example.test','administrator','active','local','setup','now','now',1)`, actor); err != nil {
+		t.Fatal(err)
+	}
 	entry, err := catalog.Import(ctx, id, actor, time.Now(), root, bytes.NewReader(manifest))
 	if err != nil || entry.State != "validating" {
 		t.Fatalf("catalog import = %+v, %v, want validating", entry, err)
 	}
 	if _, err := catalog.Stage(ctx, id, t.TempDir(), "workspace.utm"); !errors.Is(err, release.ErrCatalogConflict) {
 		t.Errorf("stage unvalidated artifact = %v, want catalog conflict", err)
+	}
+	uncertain := errors.New("lost boot result")
+	if err := catalog.ValidateImport(ctx, id, func(context.Context, release.Artifact) error { return uncertain }); !errors.Is(err, uncertain) {
+		t.Fatalf("interrupted boot validation = %v, want unknown boot result", err)
+	}
+	restart()
+	pending, err := release.NewStore(db).Get(ctx, id)
+	if err != nil || pending.State != "validating" || pending.IsDefault {
+		t.Fatalf("catalog entry after interrupted validation = %s, default=%t (%v), want validating and unavailable",
+			pending.State, pending.IsDefault, err)
 	}
 	if err := catalog.ValidateImport(ctx, id, func(_ context.Context, artifact release.Artifact) error {
 		if artifact.ManifestSHA256 != entry.Artifact.ManifestSHA256 || !filepath.IsAbs(artifact.Bundle) {
@@ -81,7 +119,13 @@ func TestManagedCatalogRestoresPublishedArtifact(t *testing.T) {
 	if err := os.RemoveAll(root); err != nil {
 		t.Fatal(err)
 	}
-	catalog = release.NewCatalog(release.NewStore(db), storage)
+	restart()
+	if err := catalog.ValidateImport(ctx, id, func(context.Context, release.Artifact) error {
+		t.Fatal("replaying a committed catalog validation started another boot")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	staged, err := catalog.Stage(ctx, id, t.TempDir(), "workspace.utm")
 	if err != nil {
 		t.Fatal(err)
