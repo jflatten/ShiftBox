@@ -3,7 +3,7 @@ import type { ShellSession } from '../components/app-shell';
 import { readProblem } from './api-problem';
 
 interface SessionView extends Omit<ShellSession, 'role'> {
-  user: { id: string; role: ShellSession['role'] };
+  user: { id: string; role: ShellSession['role']; mustChangePassword?: boolean };
   csrfToken: string;
 }
 
@@ -18,6 +18,10 @@ export function useSession() {
       return response.json();
     },
   });
-  const session = !query.isError && query.data ? { ...query.data, role: query.data.user.role } : undefined;
+  const session = !query.isError && query.data ? {
+    ...query.data,
+    role: query.data.user.role,
+    mode: query.data.mode === 'normal' && query.data.user.mustChangePassword ? 'password_change' : query.data.mode,
+  } : undefined;
   return { ...query, session };
 }

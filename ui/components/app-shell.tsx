@@ -22,6 +22,8 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
   const scheme = useComputedColorScheme('light');
   const normal = session?.mode === 'normal' && session.installationState === 'active';
   const permitted = (action: string) => session?.permissions.includes(action);
+  const account = (normal && permitted('git.manage')) ||
+    (session?.installationState === 'active' && permitted('session.change_password'));
   return (
     <AppShell header={{ height: 72 }} navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="lg">
       <AppShell.Header>
@@ -34,7 +36,7 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
         {normal ? <NavLink href="/workspaces/" label="Workspaces" /> : null}
         {normal ? <NavLink href="/templates/" label="Templates" /> : null}
         {normal && permitted('notice.list') ? <NavLink href="/notices/" label="Notices" /> : null}
-        {permitted('git.manage') ? <NavLink href="/account/" label="Account" /> : null}
+        {account ? <NavLink href="/account/" label="Account" /> : null}
         {session?.role === 'administrator' && permitted('infrastructure.view') ? <NavLink href="/infrastructure/" label="Infrastructure" /> : null}
         {session?.role === 'administrator' && permitted('user.list') ? <NavLink href="/users/" label="People" /> : null}
         {normal && session?.role === 'administrator' && permitted('audit.list') ? <NavLink href="/audit/" label="Audit" /> : null}

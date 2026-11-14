@@ -2061,3 +2061,13 @@ This checkpoint does not itself change the goal status.
   contract tests passed. The pinned Dex test verified changing a password
   from a restricted session and signing in with the replacement. The active
   browser form and administrator-created accounts remain open under T070.
+
+### Browser password changes
+
+- The active sign-in landing page shows the shared Mantine password form
+  when a change is required. Active local users can also change their
+  password from Account. Success clears the browser's session view and
+  offers fresh sign-in.
+- All 50 UI tests and the production build passed. Chrome verified first-login
+  keyboard validation and the sign-in prompt using fixture responses. Account
+  creation and production startup remain open.
