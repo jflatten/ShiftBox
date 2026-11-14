@@ -1322,3 +1322,16 @@ This checkpoint does not itself change the goal status.
 - Enrollment media and controller listener composition are still pending.
   The polling and tunnel listeners continue to require verified client
   certificates.
+
+### Enrollment recovery-media handoff
+
+- The enrollment service makes a private, per-attempt ISO containing a grant,
+  HTTPS enrollment endpoint and public installation CA. It submits the exact
+  stopped instance and operation to the provider and checks the returned
+  attachment evidence.
+- A failed attachment invalidates the grant before removing the image. A
+  confirmed attachment retains the ISO for boot. The native macOS tests
+  cover lost replies, private media and redemption of the ISO's grant over
+  authenticated HTTPS.
+- Durable delivery tracking, cleanup after guest consumption, and the actual
+  Ubuntu boot-time reader remain pending.

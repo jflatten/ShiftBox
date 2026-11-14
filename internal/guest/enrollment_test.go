@@ -14,6 +14,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -75,6 +76,53 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	token, err := enrollment.Mint(ctx, "op", inventory, now)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if os.Getenv("SHIFTBOX_TEST_ENROLLMENT_MEDIA") != "" {
+		root := t.TempDir()
+		failure := errors.New("provider lost delivery reply")
+		_, err := enrollment.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll",
+			func(_ context.Context, req provider.EnrollmentRequest) (provider.DeliveryResult, error) {
+				if req.Ref != ref || req.OperationID != "op" || !req.Eligible {
+					t.Error("delivery did not use the verified operation and instance")
+				}
+				if _, err := os.Stat(req.MediaPath); err != nil {
+					t.Errorf("delivery image unavailable to provider: %v", err)
+				}
+				return provider.DeliveryResult{}, failure
+			})
+		if !errors.Is(err, failure) {
+			t.Fatalf("lost media delivery = %v, want provider error", err)
+		}
+		if files, err := os.ReadDir(root); err != nil || len(files) != 0 {
+			t.Fatalf("invalidated attempt left files: %v, %v", files, err)
+		}
+		var issued int
+		if err := db.QueryRow("SELECT COUNT(*) FROM enrollment_grants WHERE state='issued'").Scan(&issued); err != nil || issued != 0 {
+			t.Fatalf("issued grants after failed delivery = %d, %v", issued, err)
+		}
+		if _, err := db.Exec("DELETE FROM enrollment_grants WHERE state='invalidated'"); err != nil {
+			t.Fatal(err)
+		}
+		image, err := enrollment.Deliver(ctx, "op", inventory, now, root, "https://internal.test/internal/v1/enroll",
+			func(_ context.Context, req provider.EnrollmentRequest) (provider.DeliveryResult, error) {
+				data, err := os.ReadFile(req.MediaPath)
+				if err != nil {
+					return provider.DeliveryResult{}, err
+				}
+				field := []byte(`"grant":"`)
+				start := bytes.Index(data, field)
+				if start < 0 || start+len(field)+43 > len(data) {
+					t.Fatal("delivery media omitted the grant")
+				}
+				token = string(data[start+len(field) : start+len(field)+43])
+				return provider.DeliveryResult{Inventory: inventory, MediaID: "vm/recovery"}, nil
+			})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(image); err != nil {
+			t.Fatalf("successful delivery did not retain the image: %v", err)
+		}
 	}
 	var digest string
 	if err := db.QueryRow("SELECT id FROM enrollment_grants").Scan(&digest); err != nil || len(digest) != 64 || digest == token {
