@@ -3,7 +3,9 @@ package acceptance_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -18,9 +20,120 @@ import (
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/provider/fake"
+	"github.com/jflatten/ShiftBox/internal/release"
 	"github.com/jflatten/ShiftBox/internal/web"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
+
+// TestRestartResumesMaintenanceReceipts interrupts the controller after each
+// fixture receipt is persisted and before the worker completes its step.
+func TestRestartResumesMaintenanceReceipts(t *testing.T) {
+	for _, activation := range []string{"succeeded", "failed"} {
+		t.Run(activation, func(t *testing.T) {
+			ctx, now := t.Context(), time.Now().UTC()
+			cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "maintenance.db")}
+			open := func() *sql.DB {
+				t.Helper()
+				db, err := database.Open(ctx, cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = db.Close() })
+				return db
+			}
+			db := open()
+			if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
+				t.Fatal(err)
+			}
+			exec := func(query string, args ...any) {
+				t.Helper()
+				if _, err := db.ExecContext(ctx, query, args...); err != nil {
+					t.Fatal(err)
+				}
+			}
+			clock := func() time.Time { return now }
+			journal := operation.NewJournal(db, clock, uuid.NewString)
+			ref := provider.WorkspaceRef{InstallationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+				Generation: 1, InstanceID: "retained-instance", OwnershipMarker: "fixture-owner"}
+			actor := uuid.NewString()
+			seedRecoveryRestart(t, db, ref, actor, now)
+			exec("UPDATE workspaces SET desired_state='running' WHERE id=$1", ref.WorkspaceID)
+			deadline := now.Add(time.Hour)
+			var campaign operation.Operation
+			if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+				var err error
+				campaign, err = workspace.ScheduleMaintenance(ctx, tx, journal, ref.InstallationID, actor,
+					"maintenance-receipt-restart", "fixture", deadline, now)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			now = deadline
+			store := workspace.NewStore(db)
+			if err := store.PrepareMaintenanceTargets(ctx, journal, ref.InstallationID, campaign.ID, now); err != nil {
+				t.Fatal(err)
+			}
+			var target string
+			if err := db.QueryRowContext(ctx, "SELECT operation_id FROM maintenance_targets WHERE campaign_id=$1", campaign.ID).Scan(&target); err != nil {
+				t.Fatal(err)
+			}
+			metadata := release.GuestUpdateMetadata{Release: "fixture", Protocol: "1", Digest: sha256.Sum256([]byte("pinned restart fixture"))}
+			load := func(context.Context, string) (release.GuestUpdate, error) {
+				return release.GuestUpdate{Metadata: metadata}, nil
+			}
+			interrupt := func(index int, persistReceipt func()) {
+				t.Helper()
+				const lease = time.Minute
+				claim, err := journal.Claim(ctx, target, "interrupted-controller", lease)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := journal.StartStep(ctx, claim, index); err != nil {
+					t.Fatal(err)
+				}
+				persistReceipt()
+				if err := db.Close(); err != nil {
+					t.Fatal(err)
+				}
+				now = now.Add(lease + time.Second)
+				db = open()
+				journal = operation.NewJournal(db, clock, uuid.NewString)
+				store = workspace.NewStore(db)
+				if err := store.MaintenanceUpdateWorker(journal, ref.InstallationID, "1", load).RunOnce(ctx, target); err != nil {
+					t.Fatal(err)
+				}
+			}
+			interrupt(0, func() {
+				exec(`INSERT INTO guest_dispatches(operation_id,dispatch_version,status,update_digest)
+					VALUES($1,1,'succeeded',$2)`, target, hex.EncodeToString(metadata.Digest[:]))
+			})
+			op, err := journal.Get(ctx, target)
+			if err != nil || op.Steps[0].Status != "succeeded" || op.Steps[1].Status != "pending" {
+				t.Fatalf("after staging restart = %+v (%v), want staging complete and activation pending", op, err)
+			}
+			interrupt(1, func() {
+				exec("UPDATE guest_dispatches SET activation_status=$1 WHERE operation_id=$2", activation, target)
+				if activation == "succeeded" {
+					exec("UPDATE workspaces SET guest_release='fixture',protocol_version='1' WHERE id=$1", ref.WorkspaceID)
+				}
+			})
+			if activation == "succeeded" {
+				if err := store.MaintenanceUpdateWorker(journal, ref.InstallationID, "1", load).RunOnce(ctx, target); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := store.MaintenanceCampaignWorker(journal, ref.InstallationID, clock).RunOnce(ctx, campaign.ID); err != nil {
+				t.Fatal(err)
+			}
+			for _, id := range []string{target, campaign.ID} {
+				op, err := journal.Get(ctx, id)
+				if err != nil || op.Status != activation {
+					t.Errorf("operation %s after activation restart = %s (%v), want %s", id, op.Status, err, activation)
+				}
+			}
+		})
+	}
+}
 
 // TestRestartPreservesMaintenanceSchedule reopens the controller database
 // during the warning period, after the deadline, and after preparing work.
