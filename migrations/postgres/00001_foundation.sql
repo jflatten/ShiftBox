@@ -59,6 +59,16 @@ CREATE TABLE users (
  updated_at TEXT NOT NULL,
  version BIGINT NOT NULL CHECK (version > 0)
 );
+-- One initial owner intent survives setup retries without resetting credentials.
+CREATE TABLE bootstrap_administrator (
+ installation_id TEXT PRIMARY KEY REFERENCES installations(id),
+ user_id TEXT NOT NULL UNIQUE REFERENCES users(id),
+ password_hash TEXT NOT NULL,
+ password_ciphertext_id TEXT UNIQUE REFERENCES protected_values(id),
+ credential_ready INTEGER NOT NULL DEFAULT 0 CHECK (credential_ready IN (0,1)),
+ delivered_at TEXT,
+ created_at TEXT NOT NULL
+);
 CREATE TABLE identity_bindings (
  id TEXT PRIMARY KEY,
  user_id TEXT NOT NULL REFERENCES users(id),

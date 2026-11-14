@@ -829,3 +829,20 @@ This checkpoint does not itself change the goal status.
 - Identity race suite and formatting/vet pass. Durable administrator TLS material,
   bootstrap issuance/delivery state, forced change and controller composition
   remain pending; T030/T043 are not yet complete.
+
+### Durable initial-administrator intent
+
+- User approved explicit protected local reset if the temporary password is lost
+  during delivery; ordinary setup retries must not redisplay or reset credentials.
+  The reset flow is authorized but not yet implemented.
+- Added one bootstrap-administrator record per installation, linked to the stable
+  user and an encrypted temporary-password delivery value. Preparing intent
+  atomically creates an active local administrator with forced password change,
+  stores the bcrypt hash, and stores only ciphertext for the delivery copy.
+- Retries return the same user/hash, even if a new candidate ID was generated;
+  different owner email, existing unrelated users, and active installation state
+  fail closed. Dex calls must occur after this transaction commits.
+- SQLite/PostgreSQL tests prove rollback and stable retry behavior. App/config/
+  contract race suites and formatting/vet pass. One-time delivery, Dex readiness
+  reconciliation, explicit local reset, forced-change UI/session transitions,
+  and CLI composition remain pending. T030/T043 remain incomplete.
