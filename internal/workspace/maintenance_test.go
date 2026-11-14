@@ -44,11 +44,31 @@ func TestMaintenanceBlocksControllerAdvance(t *testing.T) {
 	check(0)
 	maintenanceExec(t, db, `UPDATE maintenance_targets SET state='failed' WHERE campaign_id=$1`, campaign.ID)
 	maintenanceExec(t, db, `UPDATE maintenance_campaigns SET state='blocked' WHERE operation_id=$1`, campaign.ID)
+	scheduleNext := func() (operation.Operation, error) {
+		var next operation.Operation
+		err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			var err error
+			next, err = ScheduleMaintenance(ctx, tx, journal, testInstallation, "reservation-owner",
+				"next-maintenance-campaign", "reservation-release", deadline.Add(time.Hour), deadline)
+			return err
+		})
+		return next, err
+	}
 	check(1)
 	maintenanceExec(t, db, `UPDATE workspaces SET desired_state='deleted',deletion_commit_at=$1 WHERE id='retained'`, testStamp)
 	check(1)
+	if _, err := scheduleNext(); !errors.Is(err, ErrMaintenanceUnavailable) {
+		t.Errorf("schedule while removal is unconfirmed = %v, want unavailable", err)
+	}
 	maintenanceExec(t, db, `UPDATE workspaces SET observed_state='deleted' WHERE id='retained'`)
 	check(0)
+	if next, err := scheduleNext(); err != nil || next.ID == campaign.ID || next.Status != "pending" {
+		t.Errorf("schedule after verified removal = %+v (%v), want a distinct pending campaign", next, err)
+	}
+	var previous string
+	if err := db.QueryRow(`SELECT state FROM maintenance_targets WHERE campaign_id=$1`, campaign.ID).Scan(&previous); err != nil || previous != "failed" {
+		t.Errorf("historical maintenance target = %q (%v), want failed", previous, err)
+	}
 }
 
 // TestMaintenanceCampaignWorker confirms that a scheduled campaign waits for

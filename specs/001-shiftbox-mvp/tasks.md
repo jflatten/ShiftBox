@@ -1748,6 +1748,8 @@ This checkpoint does not itself change the goal status.
   development commands, tunnel and preview offers, secrets, and Git
   credentials are withheld. A lost graceful-stop reply keeps reservations
   until a fresh provider observation confirms shutdown.
+  A blocked campaign remains in history after verified retirement of its
+  failed targets, and it no longer prevents scheduling a new campaign.
 
 ### Migration preflight CLI
 

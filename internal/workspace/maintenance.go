@@ -108,7 +108,11 @@ func ScheduleMaintenance(ctx context.Context, tx *sql.Tx, journal *operation.Jou
 	err = tx.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM installations i JOIN platform_artifacts a ON a.release_id=$2 AND a.guest_release=i.active_release
 		WHERE i.id=$1 AND a.state='available' AND NOT EXISTS (
-			SELECT 1 FROM maintenance_campaigns c WHERE c.installation_id=i.id AND c.state IN ('scheduled','active','blocked')
+			SELECT 1 FROM maintenance_campaigns c WHERE c.installation_id=i.id AND (
+				c.state IN ('scheduled','active') OR (c.state='blocked' AND EXISTS (
+					SELECT 1 FROM maintenance_targets t JOIN workspaces w ON w.id=t.workspace_id
+					WHERE t.campaign_id=c.operation_id AND t.state='failed' AND w.installation_id=i.id
+					AND w.generation=t.generation AND w.observed_state<>'deleted')))
 		))`, installation, releaseID).Scan(&available)
 	if err != nil {
 		return operation.Operation{}, err
