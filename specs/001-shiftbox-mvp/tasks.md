@@ -488,3 +488,15 @@ This checkpoint does not itself change the goal status.
   end-to-end controller integration remains pending.
 - Test browser closed. Next dev remains on port 3127 (exec session 91329) for the
   next UI verification loop; inspect the live handle before assuming it remains up.
+
+### Management route contract coverage
+
+- Added a 52-operation management route catalog with exact method/path/operation
+  identities, static action keys, and explicitly named contextual resolver rules.
+- Test-first contract checks compare every catalog entry with OpenAPI and static
+  permissions with the approved authorization matrix. Missing/duplicate/moved
+  routes and changed contract layout fail the checks. Contextual operations have
+  no blanket action key (retry, entry grants, operation views, scope/field updates).
+- Targeted contract tests, formatting, and Go vet pass. The catalog is metadata,
+  not authorization enforcement. Contextual resolution and guarded registration
+  remain unfinished; T013/T014/T025 are still unchecked.
