@@ -1259,3 +1259,14 @@ This checkpoint does not itself change the goal status.
   create response and confirms retry uses the same VM before enrollment.
 - Native UTM still needs effective disk-capacity evidence and provider
   composition. Enrollment and the later workflow steps remain pending.
+
+### Validate staged VM disk capacity
+
+- The UTM import path checks the digest-verified standalone QCOW2 image
+  against the pinned allocation before issuing the import event. Backing
+  images, external data and unsupported image formats are refused.
+- The native UTM 5.0.8 test verifies the exported disk's capacity and
+  confirms an oversized request leaves no VM or bundle.
+- This proves requested capacity at the input boundary. Attached disk
+  capacity still needs provider or authenticated guest evidence. The UTM
+  scripting readback only exposes host allocation on this build.

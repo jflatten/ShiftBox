@@ -37,6 +37,9 @@ func (p *PowerController) ImportCatalogArtifact(ctx context.Context, req provide
 	if artifact.Manifest.ReleaseID != req.Release {
 		return provider.Inventory{}, fmt.Errorf("%w: catalog release does not match workspace", release.ErrInvalidArtifact)
 	}
+	if err := verifyStagedDisk(ctx, artifact, req.Resources.DiskBytes); err != nil {
+		return provider.Inventory{}, err
+	}
 	return p.ImportManagedVM(ctx, req, artifact.Bundle, storage)
 }
 

@@ -109,6 +109,17 @@ func checkLiveImport(t *testing.T, controller *PowerController, root string, fix
 	destination := filepath.Join(root, name)
 	req := provider.CreateRequest{Ref: ref, OperationID: "fixture-create", ArtifactID: "fixture", Release: "fixture",
 		Resources: provider.Resources{CPU: 3, MemoryBytes: 768 << 20, DiskBytes: 64 << 20}, NetworkMode: "shared"}
+	wrongSize := req
+	wrongSize.Resources.DiskBytes *= 2
+	if _, err := controller.ImportCatalogArtifact(context.Background(), wrongSize, sourceRoot, manifest, stageRoot, root); !errors.Is(err, provider.ErrCapabilityUnsupported) {
+		t.Fatalf("import request with oversized disk = %v, want unsupported", err)
+	}
+	if _, err := controller.inspect(context.Background(), ref); !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("inventory after oversized request = %v, want no VM", err)
+	}
+	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bundle after oversized request = %v, want absent", err)
+	}
 	got, err := controller.ImportCatalogArtifact(context.Background(), req, sourceRoot, manifest, stageRoot, root)
 	if got.InstanceID != "" {
 		defer func() {
