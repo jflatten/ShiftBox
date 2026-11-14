@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"database/sql"
 	"errors"
 	"flag"
@@ -65,6 +66,10 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	}
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return errors.New("cannot load system certificate trust")
+	}
 	var setup app.SetupHTTP
 	var dexDone <-chan struct{}
 	closeDex := func() {}
@@ -84,7 +89,7 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 			return nil, err
 		}
 		dexDone, closeDex = done, cleanup
-		setup = app.SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Admin: admin, Login: login,
+		setup = app.SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Admin: admin, Login: login, CertificateRoots: roots,
 			Journal: operation.NewJournal(db, time.Now, uuid.NewString), Now: time.Now, NewID: uuid.NewString}
 		handler, err := app.NewSetupHandler(setup)
 		if err != nil {

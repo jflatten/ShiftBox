@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -18,15 +19,16 @@ import (
 
 // SetupHTTP composes protected local setup with committed database authority.
 type SetupHTTP struct {
-	DB             *sql.DB
-	InstallationID string
-	Origin         string
-	Cipher         *cryptostore.Store
-	Admin          PasswordAdministrator
-	Login          *SetupLogin
-	Journal        *operation.Journal
-	Now            func() time.Time
-	NewID          func() string
+	DB               *sql.DB
+	InstallationID   string
+	Origin           string
+	Cipher           *cryptostore.Store
+	Admin            PasswordAdministrator
+	Login            *SetupLogin
+	CertificateRoots *x509.CertPool
+	Journal          *operation.Journal
+	Now              func() time.Time
+	NewID            func() string
 }
 
 // NewSetupHandler exposes only currently implemented local bootstrap routes.
@@ -44,6 +46,7 @@ func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 		sessions := setup.sessionHandler()
 		mux.Handle("/api/v1/session", sessions)
 		mux.Handle("PUT /api/v1/setup/data-profile", setup.profileHandler())
+		mux.Handle("PUT /api/v1/setup/certificate", setup.certificateHandler())
 		if passwords, ok := setup.Admin.(setupPasswords); ok {
 			mux.Handle("PUT /api/v1/session/password", setup.passwordHandler(sessions, passwords))
 		}
@@ -59,12 +62,13 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 	var state string
 	var userID sql.NullString
 	var ready, change sql.NullBool
-	var profileSelected bool
+	var profileSelected, certificateConfigured bool
 	err := s.DB.QueryRowContext(r.Context(), `SELECT i.state,b.user_id,b.credential_ready,u.must_change_password, EXISTS (
 		SELECT 1 FROM operations o JOIN operation_steps step ON step.operation_id=o.id
 		WHERE o.requested_by=b.user_id AND o.type='setup' AND o.status='succeeded'
 		AND step.step_key=$2 AND step.status='succeeded'
-	) FROM installations i LEFT JOIN bootstrap_administrator b ON b.installation_id=i.id LEFT JOIN users u ON u.id=b.user_id WHERE i.id=$1`, s.InstallationID, profileStep).Scan(&state, &userID, &ready, &change, &profileSelected)
+	),
+		EXISTS (SELECT 1 FROM browser_certificates WHERE state='active') FROM installations i LEFT JOIN bootstrap_administrator b ON b.installation_id=i.id LEFT JOIN users u ON u.id=b.user_id WHERE i.id=$1`, s.InstallationID, profileStep).Scan(&state, &userID, &ready, &change, &profileSelected, &certificateConfigured)
 	if err != nil {
 		setupProblem(w, r, err)
 		return
@@ -81,7 +85,12 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 				completed = append(completed, "password")
 				if profileSelected {
 					completed = append(completed, "data_profile")
-					available = append(available, "certificate")
+					if certificateConfigured {
+						completed = append(completed, "certificate")
+						available = append(available, "provider")
+					} else {
+						available = append(available, "certificate")
+					}
 				} else {
 					available = append(available, "data_profile")
 				}

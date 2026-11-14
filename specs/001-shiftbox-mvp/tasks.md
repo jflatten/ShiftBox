@@ -1012,3 +1012,16 @@ This checkpoint does not itself change the goal status.
   idempotent operation replay, and the next setup step. CLI, app, operation, web,
   and contract race suites pass, as do formatting and vet.
 - PostgreSQL preflight and profile activation remain pending under T044.
+
+### Authenticated browser certificate setup
+
+- The certificate upload uses the same local administrator authorization,
+  Origin and CSRF checks as profile selection and requires a selected profile.
+- It validates service patterns, the matching key and the certificate chain
+  against controller trust, then commits encrypted key storage, the
+  configuration generation and operation evidence in one transaction.
+- The setup test verifies the profile gate, validation failure followed by
+  retry, operation replay, and encrypted storage. CLI, app, config, web and
+  contract race suites, formatting and vet passed.
+- Composition uses system certificate roots. Provider selection, full
+  installation activation and production HTTPS listener wiring remain open.
