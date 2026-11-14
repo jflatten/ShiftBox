@@ -96,6 +96,8 @@ function run(argv) {
     const status = vm.status();
     if (argv[3] === "start" && status === "stopped") {
         utm.start(vm);
+    } else if (argv[3] === "delete" && status === "stopped") {
+        vm.delete();
     } else if ((argv[3] === "request" || argv[3] === "force") && status === "started") {
         utm.stop(vm, {by:argv[3]});
     } else {

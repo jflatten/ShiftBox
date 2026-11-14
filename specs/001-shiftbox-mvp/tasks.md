@@ -1129,3 +1129,17 @@ This checkpoint does not itself change the goal status.
   Provider and contract race tests, formatting and vet passed.
 - Graceful shutdown with the release guest, enrolled start, full provider
   composition and remaining lifecycle operations are still pending.
+
+### Native UTM recovery media and managed bundle deletion
+
+- The stopped-VM recovery update submits every drive ID to UTM and replaces
+  only the designated removable source. Two distinct ISO sizes were observed
+  on UTM 5.0.8 with the persistent disk and drive order preserved. Guest
+  consumption and enrollment remain to be verified.
+- Managed VM deletion checks the exact ownership generation and stopped
+  state, issues UTM's delete event, and checks both registry and bundle
+  absence. The live fixture proved bundle removal and repeat deletion.
+  Unit tests cover lost replies and orphaned bundles.
+- Production provisioning must persist the managed bundle location before
+  wiring this into the provider's delete method. External enrollment images
+  have a separate cleanup lifecycle.

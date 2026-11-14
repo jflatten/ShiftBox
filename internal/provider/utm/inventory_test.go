@@ -123,12 +123,16 @@ end run
 		action = "media"
 		expectedResources++
 	}
-	ref.InstanceID, err = run(action, "ShiftBox-Inventory-"+ref.WorkspaceID)
+	fixtureName := "ShiftBox-Inventory-" + ref.WorkspaceID
+	ref.InstanceID, err = run(action, fixtureName)
 	if err != nil || ref.InstanceID == "" {
 		t.Fatalf("could not create fixture: %v", err)
 	}
 	controller := NewPowerController(version)
 	t.Cleanup(func() {
+		if _, err := (Inspector{Version: version}).Inspect(context.Background(), ref); errors.Is(err, provider.ErrNotFound) {
+			return
+		}
 		if powerTest {
 			_, _ = controller.Stop(context.Background(), provider.StopRequest{Ref: ref, OperationID: "fixture-cleanup", ForceRetentionDelete: true})
 		}
@@ -148,9 +152,17 @@ end run
 	if mediaTest {
 		checkLiveMediaReplacement(t, controller, inventory)
 	}
-	if !powerTest {
-		return
+	if powerTest {
+		checkLivePower(t, controller, ref)
 	}
+	if root := os.Getenv("SHIFTBOX_TEST_UTM_STORAGE"); root != "" {
+		checkLiveDeletion(t, controller, ref, filepath.Join(root, fixtureName+".utm"))
+	}
+}
+
+// checkLivePower starts and stops the blank fixture using real Apple events.
+func checkLivePower(t *testing.T, controller *PowerController, ref provider.WorkspaceRef) {
+	t.Helper()
 	// Blank fixture exercises hypervisor power only. Force is confined to this
 	// disposable fixture, which has no OS to acknowledge a shutdown request.
 	start := provider.StartRequest{Ref: ref, OperationID: "fixture-start", NetworkMode: "shared"}
@@ -163,6 +175,22 @@ end run
 	stopped, err := controller.Stop(context.Background(), provider.StopRequest{Ref: ref, OperationID: "fixture-stop", ForceRetentionDelete: true})
 	if err != nil || stopped.Power != provider.Stopped {
 		t.Fatalf("native stop: %s, %v", stopped.Power, err)
+	}
+}
+
+// checkLiveDeletion verifies bundle removal and idempotent repeat deletion
+// through the adapter on a disposable fixture with known storage.
+func checkLiveDeletion(t *testing.T, controller *PowerController, ref provider.WorkspaceRef, bundlePath string) {
+	t.Helper()
+	if info, err := os.Lstat(bundlePath); err != nil || !info.IsDir() {
+		t.Fatalf("locate disposable fixture bundle: %v", err)
+	}
+	req := provider.DeleteRequest{Ref: ref, OperationID: "fixture-delete"}
+	for range 2 {
+		after, err := controller.DeleteManagedVM(context.Background(), req, bundlePath)
+		if err != nil || after.Power != provider.Deleted || len(after.Resources) != 0 {
+			t.Fatalf("DeleteManagedVM(%s) = %s, %v, want confirmed deletion", ref.InstanceID, after.Power, err)
+		}
 	}
 }
 
