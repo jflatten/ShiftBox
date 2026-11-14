@@ -3,7 +3,9 @@
 T124 remains open. `development-repair` has native stop/start, rebuild, and
 repair evidence. The newer `mvp-rc1` build has completed native image
 validation, protected setup, fresh administrator sign-in, and a verified
-prelaunch management backup. Its workspace run is awaiting GitHub consent.
+prelaunch management backup. The workspace run completed GitHub consent,
+private checkout, and initial browser IDE verification. Its retained-file
+lifecycle checks are in progress.
 See [MVP workspace validation](mvp-workspace.md) for both sets of results.
 Run the release gates against one frozen candidate and record its component
 versions and hashes in `platform/manifests/release.json` before marking a
@@ -14,7 +16,7 @@ gate passed.
 | V1 Platform and provider | Pinned Packer build and disposable native UTM boot, stop, and removal | Complete distinct clone identity and owned-disk lifecycle checks on the frozen candidate |
 | V2 Enrollment delivery | Native initial enrollment. Controller tests prove fresh delivery before power-on after expiry and lost-reply reconciliation. | Native prolonged-stop re-enrollment and drive preservation |
 | V3 Certificates | Rotation, expired-leaf rejection, and local TLS revocation tests | Native clock, long-offline, and CA failure cases on the pinned stack |
-| V4 Compatibility | Current and previous guest admission, retained-guest blocking, migration preflight, and a complete controller campaign over mutual TLS with a fixture guest client | Verified signed update and rollback including a previously stopped UTM guest |
+| V4 Compatibility | Current and previous guest admission, successful migration preflight with an enrolled `mvp-rc1` UTM workspace, and native signed rollback that restored the stopped guest and blocked the migration gate | Verify successful signed replacement on that native path and confirm the guest gate clears |
 | V5 Networking | Pinned UTM capability and policy rejection tests | Confirm every advertised mode and required exception on the frozen candidate |
 | V6 Work and data | Native browser checks verified a saved file after stop/start, rebuild, repair and retry. Local Dev Container fixtures verified named-volume retention. | Repeat the integrated journey and retained-data checks on the frozen candidate |
 | V7 Reconciliation and deletion | Lost provider replies, capacity, exact inventory, retention of reservations, and verified deletion tests | Full persisted-step restart matrix and native lifecycle evidence |

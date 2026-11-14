@@ -30,6 +30,33 @@ passed in 89.89 seconds against the same pinned export. The fresh clone
 made its authenticated poll after 65 seconds. Offboarding preserved its
 owned disk, and test cleanup confirmed removal of the new clone.
 
+## Signed maintenance fixture
+
+`TestUTMGuestMaintenance` reuses the enrollment fixture and only needs one
+disposable clone. Set the UTM mutation gate, bundle, storage, and guest host
+as for `TestUTMGuestEnrollment`. Set `SHIFTBOX_TEST_UTM_ROLLBACK_RELEASES`
+and `SHIFTBOX_TEST_UTM_UPDATE_RELEASES` to distinct private release catalogs
+signed with the test publisher key baked into that bundle. Each catalog
+must contain the image's guest release ID and protocol. The rollback binary
+is a Linux amd64 program that exits before making an authenticated poll.
+The replacement is a working build of the pinned guest agent with a distinct
+digest from the bundled agent. Use the fixture publisher key for both trials.
+
+Run `go test -tags utm_release ./tests/release -run '^TestUTMGuestMaintenance$'
+-count=1 -v -timeout=20m`. The test stops the enrolled guest through the
+lifecycle journal and checks supervisor rollback, stopped-state restoration,
+and the retained-guest migration gate. It then schedules a replacement campaign
+and checks the authenticated activation, retained disk identity, and migration
+gate again.
+
+On November 14, the `mvp-rc1` UTM guest staged the signed failing fixture
+`a7e6a456b341666ad0b0ea88659434c5dc7f51066f183c1802d1995dbae63c83`,
+reported supervisor rollback over mutual TLS, and returned to stopped with
+its owned disk. The campaign was blocked and the live retained workspace
+appeared in the guest upgrade gate. The replacement campaign exceeded the
+original shared eight-minute test deadline after a slow native boot. Test
+cleanup removed the clone. The replacement outcome remains unverified.
+
 ## Dev Container fixtures
 
 `TestDevContainerReleaseFixtures` passed for the digest-pinned Debian

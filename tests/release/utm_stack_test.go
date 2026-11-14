@@ -35,6 +35,11 @@ import (
 // media, verifies an authenticated guest poll, then checks the offboarding
 // stop and retained disk before deleting the disposable VM.
 func TestUTMGuestEnrollment(t *testing.T) {
+	runUTMGuestFixture(t, nil)
+}
+
+func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture) {
+	t.Helper()
 	if os.Getenv("SHIFTBOX_TEST_UTM_MUTATIONS") != "5.0.8" {
 		t.Skip("set SHIFTBOX_TEST_UTM_MUTATIONS=5.0.8 to enable the disposable VM journey")
 	}
@@ -42,7 +47,12 @@ func TestUTMGuestEnrollment(t *testing.T) {
 	if !filepath.IsAbs(bundle) || !filepath.IsAbs(storage) || host == "" {
 		t.Fatal("set the bundle, UTM storage, and guest-reachable host")
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	// Two maintenance trials each add a native boot and several guest polls.
+	timeout := 8 * time.Minute
+	if maintenance != nil {
+		timeout = 18 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	defer cancel()
 	owner := uuid.NewString()
 	manifest, err := os.ReadFile(filepath.Join(filepath.Dir(bundle), "manifest.json"))
@@ -52,6 +62,9 @@ func TestUTMGuestEnrollment(t *testing.T) {
 	var metadata release.ArtifactManifest
 	if err := json.Unmarshal(manifest, &metadata); err != nil {
 		t.Fatal(err)
+	}
+	if maintenance != nil {
+		maintenance.prepare(t, ctx, metadata)
 	}
 	guestRelease := metadata.Guest.Version
 	dir := t.TempDir()
@@ -105,12 +118,18 @@ func TestUTMGuestEnrollment(t *testing.T) {
 	journal := operation.NewJournal(db, time.Now, uuid.NewString)
 	tunnels := &proxy.Tunnels{Registry: &proxy.Registry{}}
 	state := &app.ControllerState{DB: db, GuestCA: ca}
+	state.Installation.InstallationID = id
 	state.Installation.Settings.ManagementOrigin = "https://management.test"
 	state.Installation.Settings.IDEHostPattern = "{workspace}.ide.test"
 	state.Installation.Settings.PreviewHostPattern = "{service}--{workspace}.preview.test"
-	runtime, err := app.ListenWorkspaceRuntime(state, app.GuestListenerConfig{
+	listeners := app.GuestListenerConfig{
 		EnrollmentAddress: bind, PollAddress: bind, TunnelAddress: bind, PublicHost: host, Tunnels: tunnels,
-	}, web.GuestCompatibility{Protocol: metadata.ProtocolVersion, CurrentRelease: guestRelease}, journal, machines, dir, time.Now)
+	}
+	if maintenance != nil {
+		listeners.GuestUpdates = maintenance.load
+	}
+	runtime, err := app.ListenWorkspaceRuntime(state, listeners,
+		web.GuestCompatibility{Protocol: metadata.ProtocolVersion, CurrentRelease: guestRelease}, journal, machines, dir, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +179,11 @@ func TestUTMGuestEnrollment(t *testing.T) {
 	}
 	before, err := machines.Inspect(ctx, ref)
 	if err != nil || before.Power != provider.Running {
-		t.Fatalf("provider before offboarding = %s (%v), want running", before.Power, err)
+		t.Fatalf("provider after enrollment = %s (%v), want running", before.Power, err)
+	}
+	if maintenance != nil {
+		maintenance.verify(t, ctx, db, journal, machines, before, op.ID, owner, metadata)
+		return
 	}
 	stopID := disableEnrollmentFixtureOwner(t, db, journal, tunnels.Registry, owner, workspaceID)
 	for {
@@ -174,7 +197,7 @@ func TestUTMGuestEnrollment(t *testing.T) {
 			if err != nil || after.Power != provider.Stopped {
 				t.Fatalf("provider after offboarding = %s (%v), want stopped", after.Power, err)
 			}
-			verifyOffboardingDisk(t, before, after)
+			verifyOwnedDisk(t, before, after)
 			var compute, disk string
 			if err := db.QueryRowContext(ctx, "SELECT cpu_memory_state,disk_state FROM reservations WHERE workspace_id=$1",
 				workspaceID).Scan(&compute, &disk); err != nil || compute != "released" || disk != "reserved" {
@@ -227,7 +250,7 @@ func disableEnrollmentFixtureOwner(t *testing.T, db *sql.DB, journal *operation.
 	return result.StopOperations[0].OperationID
 }
 
-func verifyOffboardingDisk(t *testing.T, before, after provider.Inventory) {
+func verifyOwnedDisk(t *testing.T, before, after provider.Inventory) {
 	t.Helper()
 	disks := make(map[string]provider.OwnedResource)
 	for _, resource := range before.Resources {
@@ -236,7 +259,7 @@ func verifyOffboardingDisk(t *testing.T, before, after provider.Inventory) {
 		}
 	}
 	if len(disks) == 0 {
-		t.Fatal("provider did not identify an owned disk before offboarding")
+		t.Fatal("provider did not identify an owned disk before shutdown")
 	}
 	for _, resource := range after.Resources {
 		if previous, ok := disks[resource.ID]; ok && resource.OwnershipMarker == previous.OwnershipMarker &&
@@ -245,7 +268,7 @@ func verifyOffboardingDisk(t *testing.T, before, after provider.Inventory) {
 		}
 	}
 	if len(disks) != 0 {
-		t.Errorf("offboarding lost owned disk identity: %v", disks)
+		t.Errorf("shutdown lost owned disk identity: %v", disks)
 	}
 }
 

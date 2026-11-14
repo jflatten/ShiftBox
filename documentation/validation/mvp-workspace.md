@@ -72,13 +72,18 @@ Chrome completed protected setup with the approved loopback certificate,
 rotated the fixture password, and activated SQLite after the native image
 boot check. A separate Chrome context verified fresh administrator sign-in
 against the same binary and installation. The workspace run resumed at this
-handoff and reached GitHub sign-in for the fixture App. The candidate's
-workspace and journal checks are still pending.
+handoff and reached GitHub sign-in for the fixture App. The November 14
+retry completed authorization, created a workspace, and recorded an
+authenticated poll from the candidate's native UTM guest. The private
+checkout, initial browser IDE verification, and remaining setup hooks
+passed. The retained-file lifecycle checks were still running at this
+observation.
 
 The running candidate created and verified an encrypted management backup
 before the workspace launch. The check-only `migrate preflight` command
 returned ready with zero blockers against the candidate's manifest. The
-retained-guest gate still needs evidence with a real workspace on this build.
+same command returned ready with zero blockers after the retained UTM
+workspace recorded its authenticated `mvp-rc1` guest release and protocol `1`.
 
 Run the browser spec with `SHIFTBOX_MVP_FIXTURE` pointing at a fresh local
 fixture and with the same valid certificate trust available to Chrome and the
