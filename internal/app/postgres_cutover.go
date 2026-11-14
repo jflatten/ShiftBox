@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
@@ -14,10 +15,31 @@ import (
 
 const retireBootstrapStep = "retire_bootstrap_database"
 
+// ResumePostgresActivation reads the durable source receipt and completes the
+// same cutover. Call from the protected local command with the installation lock.
+func (s SetupHTTP) ResumePostgresActivation(ctx context.Context, target *sql.DB) (operation.Operation, error) {
+	var actor, key string
+	err := s.DB.QueryRowContext(ctx, `SELECT o.requested_by,o.request_key FROM installations i
+		JOIN bootstrap_administrator b ON b.installation_id=i.id
+		JOIN operations o ON o.requested_by=b.user_id AND o.generation=i.config_generation
+		JOIN operation_steps step ON step.operation_id=o.id
+		WHERE i.id=$1 AND i.state='blocked' AND i.data_profile='sqlite' AND o.type='setup'
+		  AND o.originating_action='setup.mutate' AND o.status='succeeded'
+		  AND step.step_key=$2 AND step.status='succeeded'`, s.InstallationID, retireBootstrapStep).Scan(&actor, &key)
+	if err != nil {
+		return operation.Operation{}, ErrSetupConflict
+	}
+	return s.ActivatePostgres(ctx, target, actor, key)
+}
+
 // ActivatePostgres switches a staged installation to PostgreSQL. The caller
 // must authenticate the local owner and prove the changed Dex credential was
 // transferred before invoking it. A restart resumes with the same request key.
 func (s SetupHTTP) ActivatePostgres(ctx context.Context, target *sql.DB, actor, key string) (operation.Operation, error) {
+	return s.activatePostgres(ctx, target, actor, key, "", "")
+}
+
+func (s SetupHTTP) activatePostgres(ctx context.Context, target *sql.DB, actor, key, profileKey, token string) (operation.Operation, error) {
 	if s.DB == nil || target == nil || s.DB == target || s.Journal == nil || s.Now == nil || s.NewID == nil ||
 		s.Cipher == nil || s.CertificateRoots == nil {
 		return operation.Operation{}, ErrSetupConflict
@@ -26,7 +48,21 @@ func (s SetupHTTP) ActivatePostgres(ctx context.Context, target *sql.DB, actor, 
 		return operation.Operation{}, ErrSetupConflict
 	}
 	c := postgresCutover{source: s.Journal, target: operation.NewJournal(target, s.Now, s.NewID),
-		id: s.InstallationID, actor: actor, key: key, now: s.Now()}
+		id: s.InstallationID, actor: actor, key: key, now: s.Now(),
+		verifySource: func(ctx context.Context, tx *sql.Tx) error {
+			if profileKey == "" {
+				return nil
+			}
+			selected, err := s.readPendingPostgres(ctx, tx)
+			if err != nil || selected.RequestKey != profileKey {
+				return ErrSetupConflict
+			}
+			principal, err := s.bootstrapPrincipal(ctx, tx, token)
+			if err != nil || principal.User.ID != actor || !auth.Authorize(principal, "setup.mutate", auth.Resource{}, nil, s.Now()).Allowed {
+				return ErrSetupConflict
+			}
+			return nil
+		}}
 	c.validate = func(ctx context.Context, tx *sql.Tx) error {
 		var snapshot string
 		err := tx.QueryRowContext(ctx, `SELECT a.settings_json FROM installations i
@@ -64,6 +100,7 @@ type postgresCutover struct {
 	id, actor, key string
 	now            time.Time
 	validate       func(context.Context, *sql.Tx) error
+	verifySource   func(context.Context, *sql.Tx) error
 }
 
 func (c postgresCutover) run(ctx context.Context, source, target *sql.DB) (operation.Operation, error) {
@@ -180,6 +217,11 @@ func (c postgresCutover) retireSource(ctx context.Context, source *sql.DB, targe
 		}
 		if state != "configuring" || target.Status != "pending" {
 			return ErrSetupConflict
+		}
+		if c.verifySource != nil {
+			if err := c.verifySource(ctx, tx); err != nil {
+				return err
+			}
 		}
 		stamp := c.now.UTC().Format(time.RFC3339Nano)
 		result, err := tx.ExecContext(ctx, `UPDATE installations SET state='blocked',updated_at=$3,version=version+1

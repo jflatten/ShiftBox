@@ -22,6 +22,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/app"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	_ "modernc.org/sqlite"
 )
@@ -75,6 +76,14 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	if err != nil {
 		return errors.New("cannot load system certificate trust")
 	}
+	resumed, err := resumeRetiredSetup(ctx, *dir, cipher, roots)
+	if err != nil {
+		return err
+	}
+	if resumed {
+		_, err := fmt.Fprintln(status, "PostgreSQL installation activated. Start the controller and sign in again.")
+		return err
+	}
 	var setup app.SetupHTTP
 	var dexDone <-chan struct{}
 	closeDex := func() {}
@@ -100,6 +109,14 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 		dexDone, closeDex = done, cleanup
 		setup = app.SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Admin: admin, Login: login, CertificateRoots: roots, Postgres: postgres,
 			Journal: operation.NewJournal(db, time.Now, uuid.NewString), Now: time.Now, NewID: uuid.NewString}
+		setup = setup.WithPostgresTransfer(func(ctx context.Context, storage identity.DexPostgres, email, userID string) error {
+			target, _, _, cleanup, err := startSetupDex(ctx, *dir, *dex, origin, cert, &storage)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			return identity.TransferBootstrapCredential(ctx, filepath.Join(*dir, "dex.db"), email, userID, target)
+		})
 		handler, err := app.NewSetupHandler(setup)
 		if err != nil {
 			db.Close()

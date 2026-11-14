@@ -8,6 +8,10 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"encoding/pem"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -22,6 +26,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	_ "modernc.org/sqlite"
 )
@@ -171,9 +176,6 @@ func TestStagePostgresSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dst.Close()
-	if err := database.Migrate(ctx, dst, "postgres"); err != nil {
-		t.Fatal(err)
-	}
 	now := time.Now().UTC()
 	seed := database.BootstrapSeed{ID: "00000000-0000-4000-8000-000000000001", Organization: "ShiftBox", Origin: "https://management.test", IDEPattern: "{workspace}.ide.test", PreviewPattern: "{service}--{workspace}.preview.test", Release: "development", MinGuestRelease: "development", Now: now}
 	src, id, err := database.OpenBootstrap(ctx, filepath.Join(t.TempDir(), "bootstrap.db"), seed)
@@ -195,7 +197,7 @@ func TestStagePostgresSetup(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	session, _, err := auth.NewSession("source-session", "owner", "bootstrap_restricted", now, time.Hour)
+	session, token, err := auth.NewSession("source-session", "owner", "bootstrap_restricted", now, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,6 +209,46 @@ func TestStagePostgresSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	browserRoots := configureActivationCertificate(t, src, cipher, seed, now)
+	const localOrigin = "https://127.0.0.1:8443"
+	clock := func() time.Time { return now }
+	setup := app.SetupHTTP{DB: src, InstallationID: id, Cipher: cipher, CertificateRoots: browserRoots, Origin: localOrigin,
+		Admin: identity.PasswordAdmin{}, Login: &app.SetupLogin{},
+		Postgres: &app.PostgresProfileSetup{DexURI: dexURI, CAFile: os.Getenv("SHIFTBOX_TEST_SETUP_CA"), Roots: roots},
+		Journal:  operation.NewJournal(src, clock, uuid.NewString), Now: clock, NewID: uuid.NewString}
+	var transfers int
+	transferReady := false
+	setup = setup.WithPostgresTransfer(func(_ context.Context, storage identity.DexPostgres, email, user string) error {
+		transfers++
+		if email != "owner@example.test" || user != "owner" || storage.Password == "" {
+			return fmt.Errorf("wrong identity transfer scope")
+		}
+		if !transferReady {
+			return errors.New("fixture transfer interruption")
+		}
+		return nil
+	})
+	handler, err := app.NewSetupHandler(setup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(method, path, key, body string, want int) {
+		t.Helper()
+		r := httptest.NewRequest(method, localOrigin+"/api/v1/setup/"+path, strings.NewReader(body))
+		r.RemoteAddr = "127.0.0.1:55555"
+		r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		r.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+		r.Header.Set("Origin", localOrigin)
+		r.Header.Set("Idempotency-Key", key)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != want || strings.Contains(w.Body.String(), appURI) || strings.Contains(w.Body.String(), dexURI) {
+			t.Fatalf("%s returned %d, want %d with redacted body", path, w.Code, want)
+		}
+	}
+	request(http.MethodPut, "data-profile", "fixture-postgres-profile", fmt.Sprintf(`{"profile":"postgres","tlsMode":"verify-full","connectionUri":%q}`, appURI), 202)
+	if err := database.Migrate(ctx, dst, "postgres"); err != nil {
+		t.Fatal(err)
+	}
 	var sourceCiphertext string
 	if err := src.QueryRowContext(ctx, "SELECT value_json FROM protected_values WHERE id=$1", activationCertificateID).Scan(&sourceCiphertext); err != nil {
 		t.Fatal(err)
@@ -265,9 +307,6 @@ func TestStagePostgresSetup(t *testing.T) {
 	if _, err := dst.ExecContext(ctx, "UPDATE users SET primary_email='owner@example.test'"); err != nil {
 		t.Fatal(err)
 	}
-	clock := func() time.Time { return now }
-	setup := app.SetupHTTP{DB: src, InstallationID: id, Cipher: cipher, CertificateRoots: browserRoots,
-		Journal: operation.NewJournal(src, clock, uuid.NewString), Now: clock, NewID: uuid.NewString}
 	const key = "postgres-activation-fixture"
 	if _, err := setup.ActivatePostgres(ctx, dst, "owner", key); err == nil {
 		t.Fatal("activation accepted target before artifact and capacity validation")
@@ -284,7 +323,17 @@ func TestStagePostgresSetup(t *testing.T) {
 		VALUES($1,4,4096,10240,'owner','now',1)`, id); err != nil {
 		t.Fatal(err)
 	}
-	first, err := setup.ActivatePostgres(ctx, dst, "owner", key)
+	request(http.MethodPost, "activate", key, "", 500)
+	if err := src.QueryRowContext(ctx, "SELECT state FROM installations").Scan(&state); err != nil || state != "configuring" {
+		t.Fatalf("transfer failure changed source state to %s, error %v", state, err)
+	}
+	transferReady = true
+	request(http.MethodPost, "activate", key, "", 202)
+	if transfers != 2 {
+		t.Fatalf("activation attempted %d identity transfers, want one attempt and one retry", transfers)
+	}
+	request(http.MethodPost, "activate", key, "", 401)
+	first, err := setup.ResumeRetiredPostgresSetup(ctx)
 	if err != nil || first.Status != "succeeded" {
 		t.Fatalf("activation = %s, %v, want succeeded", first.Status, err)
 	}
@@ -315,5 +364,9 @@ func TestStagePostgresSetup(t *testing.T) {
 	if err := src.QueryRowContext(ctx, `SELECT i.state,s.revocation_reason FROM installations i CROSS JOIN sessions s
 		WHERE s.id=$1 AND s.revoked_at IS NOT NULL`, session.ID).Scan(&state, &revoked); err != nil || state != "blocked" || revoked != "setup_activated" {
 		t.Fatalf("source state = %s / %s, %v, want blocked and revoked", state, revoked, err)
+	}
+	recovered, err := setup.ResumePostgresActivation(ctx, dst)
+	if err != nil || recovered.ID != first.ID {
+		t.Fatalf("recovery selected %s, %v, want %s", recovered.ID, err, first.ID)
 	}
 }

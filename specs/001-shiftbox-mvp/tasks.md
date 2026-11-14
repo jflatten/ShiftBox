@@ -1562,3 +1562,17 @@ This checkpoint does not itself change the goal status.
 - This path accepts pre-provisioned schemas and roles. The setup
   activation endpoint still needs to stage the target, transfer the
   Dex credential, and invoke and resume the authority switch.
+
+### PostgreSQL activation through protected setup
+
+- The protected activation endpoint opens the selected target, stages setup
+  records, transfers the changed owner credential through managed Dex,
+  and invokes the cutover. It rechecks the selected profile and the
+  current bootstrap session before retiring the source.
+- Local setup startup can resume the exact recorded cutover from the
+  encrypted selection and retirement receipt before opening its listener.
+- The live PostgreSQL HTTP test covers a failed credential transfer, retry,
+  session retirement, recovery, and runtime selection. It uses an injected
+  transfer callback and seeded provider readiness records. Native Dex
+  transfer has its own integration coverage. Provider setup and the
+  complete product startup remain open.

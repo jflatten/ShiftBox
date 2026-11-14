@@ -28,6 +28,7 @@ type SetupHTTP struct {
 	Login            *SetupLogin
 	CertificateRoots *x509.CertPool
 	Postgres         *PostgresProfileSetup
+	transferPostgres PostgresCredentialTransfer
 	Journal          *operation.Journal
 	Now              func() time.Time
 	NewID            func() string

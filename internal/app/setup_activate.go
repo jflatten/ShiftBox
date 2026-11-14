@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/auth"
@@ -17,10 +18,24 @@ import (
 const activateStep = "activate_installation"
 
 func (s SetupHTTP) activationHandler() http.Handler {
-	return s.setupMethod(http.MethodPost, func(ctx context.Context, tx *sql.Tx, r *http.Request, principal auth.Principal, _ web.AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
+	var activation sync.Mutex
+	handler := s.setupMethod(http.MethodPost, func(ctx context.Context, tx *sql.Tx, r *http.Request, principal auth.Principal, _ web.AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
 		key, err := web.IdempotencyKey(r)
 		if err != nil {
 			return nil, err
+		}
+		if s.transferPostgres != nil {
+			selected, err := s.readPendingPostgres(ctx, tx)
+			if err == nil {
+				token, err := web.SessionToken(r)
+				if err != nil {
+					return nil, err
+				}
+				return s.postgresActivationResponse(principal.User.ID, key, token, selected), nil
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
 		}
 		op, err := s.activateSQLiteSetup(ctx, tx, principal.User.ID, key, s.Now())
 		if errors.Is(err, ErrSetupConflict) || errors.Is(err, operation.ErrConflict) {
@@ -33,6 +48,11 @@ func (s SetupHTTP) activationHandler() http.Handler {
 			web.ClearSessionCookie(w)
 			writeSetupJSON(w, http.StatusAccepted, op)
 		}), nil
+	})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		activation.Lock()
+		defer activation.Unlock()
+		handler.ServeHTTP(w, r)
 	})
 }
 
