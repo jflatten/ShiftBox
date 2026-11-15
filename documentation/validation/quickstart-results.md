@@ -206,6 +206,12 @@ limiting resource and left the running VM unchanged, with no queued
 operations. The launch API contract returned the disk refusal when
 reported free space was below the requested disk allocation.
 
+For section 6, a fixture launch worker exited after native UTM import
+and before recording the provider response. The provisioning journal
+and request key survived. The exact restarted rc2 controller enrolled the
+guest on the original VM and disk. Chrome showed the original provision
+and enrollment steps complete. See [native launch recovery](workspace-operations.md#native-launch-recovery-after-worker-exit).
+
 Chrome and the Go operations acceptance test passed together on the
 rc2 controller. The live preview case used an enrolled loopback guest
 client and real mutual TLS, with two local users. It verified separate

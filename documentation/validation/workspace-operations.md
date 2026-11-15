@@ -50,6 +50,22 @@ The fixture removed the enrolled VM and its disk after the run. The
 GitHub-backed project-container and IDE journey remains in the release
 checks.
 
+## Native launch recovery after worker exit
+
+The disposable rc2 launch worker exited immediately after UTM 5.0.8
+confirmed one stopped VM and its disk. The SQLite journal still showed
+the Provision step as running and had no recorded provider instance.
+Submitting the same launch intent through the controller's admission
+code returned the original operation. The fixture used a short lease on
+the terminated worker to exercise ordinary lease expiry during the run.
+
+The exact `mvp-rc2` controller took over the original operation,
+reconciled the existing VM and disk, and enrolled the packaged agent
+once. The completed provision and enrollment steps appeared in Chrome
+on the original workspace, with IDE entry still gated. The database
+contained one workspace, one provision operation, and one consumed
+enrollment grant. Cleanup verified native VM and disk removal.
+
 ## Native capacity refusal
 
 The race-enabled `TestUTMCapacityRefusesExhaustedResources` passed on
