@@ -116,6 +116,21 @@ survived rollback and cleared after the signed rc2 agent authenticated.
 The fixture called the retained-guest check used by preflight. See
 [UTM validation](utm-stack.md#upgrade-across-release-ids).
 
+## PostgreSQL preflight with a native retained workspace
+
+The exact `mvp-rc2` controller and PostgreSQL schema authenticated an
+`mvp-rc2` native guest and stopped it while retaining its owned disk.
+The fixture stopped after enrollment and before project setup.
+`migrate preflight` against the exact candidate manifest returned exit 7
+with only `migration.backup_required` and no guest blockers. After the
+controller created and verified the PostgreSQL management archive, the
+same command returned exit 0 with zero blockers. UTM still reported the
+original stopped VM and disk. Test cleanup verified deletion.
+
+On the same installation, Chrome checked the active UTM 5.0.8 provider
+capabilities. The controller advertised only shared networking and
+returned HTTP 409 for attempts to add no-network and allowlist policies.
+
 ## Guest CA lifetime preflight
 
 The `mvp-rc2` check-only CLI ran against a private copy of a previously
