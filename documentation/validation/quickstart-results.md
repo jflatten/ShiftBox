@@ -382,5 +382,15 @@ sessions. Its PostgreSQL workspace record and UTM identified the same
 stopped VM and owned disk as before backup. The disposable VM, disk,
 databases, roles, and local installation files were removed.
 
+### Native SQLite backup and recovery
+
+On RC3, Chrome created and validated an encrypted SQLite archive while
+a stopped native workspace was retained. The CLI rejected an invalid
+passphrase, truncated archive, incompatible release, wrong key, and
+nonempty destination before publication. Chrome then completed restricted
+recovery and explicit activation. The original stopped VM and owned disk
+matched the replacement database, and both the copied session and the
+recovery session were denied afterward. See [SQLite recovery evidence](backup-recovery.md#sqlite-recovery-on-mvp-rc3).
+
 T125 remains open. The [release tracker](mvp-v1-v14.md) records the
 remaining live checks.

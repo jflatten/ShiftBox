@@ -81,6 +81,24 @@ checkout, initial browser IDE verification, and remaining setup hooks passed.
 | T039 Playwright workspace journey, Chrome 157.0.8103.51 | Passed in 24.1 minutes after the protected setup handoff. Verified operation-stream reconnect, IDE gating and entry, saved marker after stop/start and rebuild, expected setup failure, separate repair origin, and marker retention after repair and retry. |
 | `TestMVPWorkspaceJournal` and `TestMVPReleaseManifest` | Passed with `-race` against the same active SQLite installation and the frozen manifest. The strict journal check verified one fresh workspace and the exact lifecycle sequence, including the expected failed rebuild. |
 
+The read-only journal for that successful RC1 launch recorded 6 minutes
+to verify the browser IDE and 6 minutes 30 seconds to finish all setup,
+measured from admission of the launch request. This covers one private
+fixture repository on the local Mac. The first verified IDE response was
+recorded by the controller. The separate browser journey duration includes
+subsequent lifecycle actions.
+
+| Completed step | Time in step | Time since launch |
+| --- | ---: | ---: |
+| Provision workspace | 8.4 s | 9.1 s |
+| Enroll guest | 37.9 s | 47.0 s |
+| Configure development container | 306.0 s | 353.7 s |
+| Verify browser IDE | 5.0 s | 359.8 s |
+| Finish remaining setup hooks | 30.0 s | 389.7 s |
+
+RC3's native enrollment tests measured the platform and guest path. The
+end-to-end RC3 private-repository launch still needs a timed run.
+
 The [release manifest](../../platform/manifests/release.json) records the
 controller and guest digests and the existing Dex, UTM, Packer fork, Ubuntu,
 and code-server pins. The active SQLite installation was at schema 27.

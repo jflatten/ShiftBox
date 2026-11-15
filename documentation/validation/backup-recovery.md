@@ -17,6 +17,33 @@ The original controller returned to service after the isolated review. The
 test verified management state and provider observations. Workspace VM disks
 remain outside the archive.
 
+## SQLite recovery on `mvp-rc3`
+
+The exact RC3 controller and guest completed protected SQLite setup in
+Chrome. The first run stopped when the disposable fixture helper lacked
+the SQLite driver. The corrected helper resumed the same installation,
+admitted a native guest, and stopped it after the first authenticated
+poll with its original owned disk retained.
+
+With a second local user and a pre-backup browser session present, Chrome
+created and verified the encrypted archive and validated its replacement.
+The CLI independently refused a wrong passphrase, truncated archive,
+incompatible release, mismatched key, and nonempty replacement directory
+before publishing any replacement. The nonempty directory kept its
+original file.
+
+The protected activation command entered recovery review. Chrome rejected
+the copied session and normal workspace and user mutations, reviewed
+identities and the stopped VM, and explicitly activated. The recovered
+installation retained the local user and required a fresh normal sign-in.
+The database and UTM matched the original workspace generation, provider
+instance, ownership marker, and disk. A read-only check matched the file
+digest and size to the completed source backup and confirmed the restored
+normal and recovery-session revocation records. This fixture stopped at
+enrollment. The RC1 run above also exercised the live IDE and copied
+origin-grant checks. The RC3 VM, owned disk, and disposable files were
+removed after verification.
+
 ## PostgreSQL recovery
 
 On November 14, 2026, the rebuilt `mvp-rc1` controller backed up a
