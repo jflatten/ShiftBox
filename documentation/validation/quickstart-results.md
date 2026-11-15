@@ -161,6 +161,12 @@ grant and kept the disk. Normal deletion verified provider absence, released
 the disk reservation, and left the deleted identity denied. See [the native
 revocation test](utm-stack.md#revoked-native-guest-and-verified-deletion).
 
+The `mvp-rc2` cloned-media run verified one-time enrollment on two native
+UTM VMs. After the first guest authenticated, a fresh VM booted with a
+copy of its enrollment image. The packaged guest agent reported denial,
+the second VM obtained no identity, and the original stopped VM retained
+its certificate binding and disk. See [cloned enrollment media](utm-stack.md#cloned-enrollment-media).
+
 The `mvp-rc2` retention fixture exercised outage grace, fresh activity,
 the full shutdown window, and actual UTM deletion. Simulated partial
 cleanup and a lost provider reply both kept the disk reservation until

@@ -65,6 +65,21 @@ The race-enabled rerun on the `mvp-rc2` image passed in 284.84 seconds.
 The restarted guest used a replacement identity on the same VM and
 owned disk, and the controller cleared the one-use media.
 
+## Cloned enrollment media
+
+`TestUTMClonedEnrollmentMedia` passed with `-race` in 218.46 seconds on
+`mvp-rc2` and UTM 5.0.8. The fixture privately copied the enrollment
+image before the first workspace booted. The original guest authenticated,
+the controller consumed the grant and cleared its media, and the original
+VM stopped with its disk retained.
+
+A second UTM workspace booted the same pinned platform with the copied
+image. The packaged guest agent reported enrollment denied and produced
+no guest identity file. The controller had no registration for the clone
+and retained the original guest certificate, key binding, and owned disk.
+The test removed both disposable VMs and the private image copy. Set
+`SHIFTBOX_TEST_UTM_CLONED_ENROLLMENT=1` with the normal native settings.
+
 ## Controller trust failures
 
 The race-enabled `TestUTMGuestRejectsControllerTrustFailures` passed

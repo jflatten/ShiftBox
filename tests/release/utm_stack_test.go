@@ -65,6 +65,7 @@ const (
 	nativeControllerTrust
 	nativeGuestClock
 	nativeRevokedGuest
+	nativeClonedEnrollment
 	nativeExpiredCA
 	nativeRetention
 	nativeCapacity
@@ -158,9 +159,14 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	}
 	var runtimeProvider provider.Provider = machines
 	var clock *nativeClockFixture
+	var replayMedia string
 	if scenario == nativeGuestClock {
 		clock = startNativeClockFixture(t, host)
-		runtimeProvider = nativeClockProvider{Provider: machines, seed: clock.seed}
+		runtimeProvider = nativeSeedProvider{Provider: machines, seed: clock.seed}
+	}
+	if scenario == nativeClonedEnrollment {
+		replayMedia = filepath.Join(t.TempDir(), "copied-enrollment.iso")
+		runtimeProvider = nativeEnrollmentCapture{Provider: machines, image: replayMedia}
 	}
 	store := workspace.NewStore(db)
 	if err := store.SetCapacityBudget(ctx, id, allocation, 0, owner, time.Now()); err != nil {
@@ -294,6 +300,11 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	}
 	if scenario == nativeRevokedGuest {
 		verifyNativeRevokedGuest(t, ctx, db, journal, machines, before, op.ID, owner, ca)
+		return
+	}
+	if scenario == nativeClonedEnrollment {
+		stopped := stopUTMEnrolledFixture(t, ctx, db, journal, machines, before, op.ID, owner)
+		verifyNativeClonedEnrollment(t, ctx, db, machines, stopped, replayMedia, host)
 		return
 	}
 	if scenario == nativeExpiredLeaf {

@@ -184,14 +184,14 @@ date -u -s "@$seconds" >/dev/null
 curl -fsS --retry 3 --max-time 3 "${base}reset/$(date -u +%s)"
 `
 
-type nativeClockProvider struct {
+type nativeSeedProvider struct {
 	provider.Provider
 	seed string
 }
 
 // Start attaches the fixture seed to the disposable VM only. The provider
 // starts the same imported release disk with its normal enrollment media.
-func (p nativeClockProvider) Start(ctx context.Context, request provider.StartRequest) (provider.Inventory, error) {
+func (p nativeSeedProvider) Start(ctx context.Context, request provider.StartRequest) (provider.Inventory, error) {
 	const script = `on run argv
     tell application "/Applications/UTM.app"
         if UTM version is not "5.0.8" then error "unexpected UTM version"
