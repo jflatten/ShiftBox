@@ -128,6 +128,24 @@ authenticated after activation, returned the same VM to stopped and
 cleared the blocker. The same owned disk survived both trials. These
 two signed builds shared the `mvp-rc2` release ID.
 
+### Upgrade across release IDs
+
+`TestUTMGuestReleaseUpgrade` sets the controller's current release from
+`SHIFTBOX_TEST_UTM_TARGET_BUNDLE` and boots the previous image from
+`SHIFTBOX_TEST_UTM_BUNDLE`. Set the same two signed fixture catalog
+variables as for `TestUTMGuestMaintenance`. The successful update must
+match the SHA-256 digest of the agent bundled in the target image.
+
+The race-enabled test passed in 508.98 seconds using the pinned
+`mvp-rc1` and `mvp-rc2` exports. The controller accepted the previous
+guest, then reported one blocker while it was stopped. The first run
+ended at campaign admission because the isolated test catalog marked the
+target image rejected. On the corrected run, the signed failing update
+rolled the guest back to `mvp-rc1` and the blocker remained. The signed
+`mvp-rc2` agent authenticated after activation and cleared the blocker.
+Both trials restored stopped power on the same owned disk. Cleanup
+removed the disposable VM.
+
 ## Dev Container fixtures
 
 `TestDevContainerReleaseFixtures` passed for the digest-pinned Debian

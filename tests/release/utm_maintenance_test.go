@@ -25,6 +25,24 @@ import (
 // real guest, then a signed replacement settles the stopped workspace and
 // clears the retained-guest gate. Both inputs use the fixture publisher key.
 func TestUTMGuestMaintenance(t *testing.T) {
+	runUTMMaintenance(t, "")
+}
+
+// TestUTMGuestReleaseUpgrade admits a native previous-release guest, rolls
+// back a bad current-release update, and advances only after a verified poll.
+func TestUTMGuestReleaseUpgrade(t *testing.T) {
+	bundle := os.Getenv("SHIFTBOX_TEST_UTM_TARGET_BUNDLE")
+	if bundle == "" {
+		t.Skip("set SHIFTBOX_TEST_UTM_TARGET_BUNDLE to an image with a distinct guest release")
+	}
+	if !filepath.IsAbs(bundle) {
+		t.Fatal("set an absolute target UTM bundle path")
+	}
+	runUTMMaintenance(t, bundle)
+}
+
+func runUTMMaintenance(t *testing.T, targetBundle string) {
+	t.Helper()
 	failing := os.Getenv("SHIFTBOX_TEST_UTM_ROLLBACK_RELEASES")
 	working := os.Getenv("SHIFTBOX_TEST_UTM_UPDATE_RELEASES")
 	if failing == "" && working == "" {
@@ -33,32 +51,36 @@ func TestUTMGuestMaintenance(t *testing.T) {
 	if !filepath.IsAbs(failing) || !filepath.IsAbs(working) || failing == working {
 		t.Fatal("set distinct absolute rollback and update release directories")
 	}
-	runUTMGuestFixture(t, &nativeMaintenanceFixture{failing: failing, working: working}, nativeNormal)
+	runUTMGuestFixture(t, &nativeMaintenanceFixture{failing: failing, working: working, targetBundle: targetBundle}, nativeNormal)
 }
 
 type nativeMaintenanceFixture struct {
 	failing, working string
+	targetBundle     string
 	retry            atomic.Bool
 	protocol         string
 	rollbackDigest   string
 	updateDigest     string
 }
 
-func (f *nativeMaintenanceFixture) prepare(t *testing.T, ctx context.Context, metadata release.ArtifactManifest) {
+func (f *nativeMaintenanceFixture) prepare(t *testing.T, ctx context.Context, source, target release.ArtifactManifest) {
 	t.Helper()
-	f.protocol = metadata.ProtocolVersion
+	f.protocol = target.ProtocolVersion
 	for _, input := range []struct {
 		root   string
 		digest *string
 	}{{f.failing, &f.rollbackDigest}, {f.working, &f.updateDigest}} {
-		update, err := release.ReadLocalGuestUpdate(ctx, input.root, metadata.Guest.Version, f.protocol)
+		update, err := release.ReadLocalGuestUpdate(ctx, input.root, target.Guest.Version, f.protocol)
 		if err != nil {
-			t.Fatalf("read signed update for %s in %s: %v", metadata.Guest.Version, input.root, err)
+			t.Fatalf("read signed update for %s in %s: %v", target.Guest.Version, input.root, err)
 		}
 		*input.digest = hex.EncodeToString(update.Metadata.Digest[:])
 	}
-	if f.rollbackDigest == f.updateDigest || f.rollbackDigest == metadata.Guest.SHA256 || f.updateDigest == metadata.Guest.SHA256 {
+	if f.rollbackDigest == f.updateDigest || f.rollbackDigest == source.Guest.SHA256 || f.updateDigest == source.Guest.SHA256 {
 		t.Fatal("native trials require distinct bytes from each other and the bundled agent")
+	}
+	if f.targetBundle != "" && f.updateDigest != target.Guest.SHA256 {
+		t.Fatal("the successful update must match the target image's bundled agent digest")
 	}
 }
 
@@ -71,11 +93,19 @@ func (f *nativeMaintenanceFixture) load(ctx context.Context, releaseID string) (
 }
 
 func (f *nativeMaintenanceFixture) verify(t *testing.T, ctx context.Context, db *sql.DB, journal *operation.Journal,
-	machines *utm.Provider, before provider.Inventory, provisionID, owner string, metadata release.ArtifactManifest,
+	machines *utm.Provider, before provider.Inventory, provisionID, owner string, source, targetArtifact release.ArtifactManifest,
 ) {
 	t.Helper()
 	ref := before.Ref
 	stopUTMEnrolledFixture(t, ctx, db, journal, machines, before, provisionID, owner)
+	store := release.NewStore(db)
+	if f.targetBundle != "" {
+		blockers, err := store.GuestUpgradeBlockers(ctx, ref.InstallationID, targetArtifact.Guest.Version, targetArtifact.ProtocolVersion)
+		if err != nil || len(blockers) != 1 || blockers[0].WorkspaceID != ref.WorkspaceID || blockers[0].ObservedState != "stopped" {
+			t.Fatalf("previous-release stopped guest blockers = %+v (%v), want the retained workspace", blockers, err)
+		}
+		t.Logf("authenticated previous guest %s blocked advancement to %s while stopped", source.Guest.Version, targetArtifact.Guest.Version)
+	}
 	for _, scenario := range []struct {
 		key, campaign, operation, activation, digest string
 		retry                                        bool
@@ -89,7 +119,7 @@ func (f *nativeMaintenanceFixture) verify(t *testing.T, ctx context.Context, db 
 			now := time.Now()
 			var err error
 			campaign, err = workspace.ScheduleMaintenance(ctx, tx, journal, ref.InstallationID, owner, scenario.key,
-				metadata.ReleaseID, now.Add(2*time.Second), now)
+				targetArtifact.ReleaseID, now.Add(2*time.Second), now)
 			return err
 		}); err != nil {
 			t.Fatalf("schedule %s: %v", scenario.key, err)
@@ -120,20 +150,27 @@ func (f *nativeMaintenanceFixture) verify(t *testing.T, ctx context.Context, db 
 			t.Fatalf("%s provider state = %s/%+v (%v), want stopped/%+v", scenario.key, after.Power, after.Ref, err, ref)
 		}
 		verifyOwnedDisk(t, before, after)
-		var desired, observed, compute, disk string
-		if err := db.QueryRowContext(ctx, `SELECT w.desired_state,w.observed_state,r.cpu_memory_state,r.disk_state
-			FROM workspaces w JOIN reservations r ON r.workspace_id=w.id WHERE w.id=$1`, ref.WorkspaceID).
-			Scan(&desired, &observed, &compute, &disk); err != nil || desired != "stopped" || observed != "stopped" || compute != "released" || disk != "reserved" {
-			t.Fatalf("%s state and reservations = %s/%s, %s/%s (%v), want stopped/stopped, released/reserved", scenario.key, desired, observed, compute, disk, err)
+		wantRelease := source.Guest.Version
+		if scenario.retry {
+			wantRelease = targetArtifact.Guest.Version
 		}
-		blockers, err := release.NewStore(db).GuestUpgradeBlockers(ctx, ref.InstallationID, metadata.Guest.Version, metadata.ProtocolVersion)
+		var desired, observed, compute, disk, deployed string
+		if err := db.QueryRowContext(ctx, `SELECT w.desired_state,w.observed_state,r.cpu_memory_state,r.disk_state,w.guest_release
+			FROM workspaces w JOIN reservations r ON r.workspace_id=w.id WHERE w.id=$1`, ref.WorkspaceID).
+			Scan(&desired, &observed, &compute, &disk, &deployed); err != nil || desired != "stopped" || observed != "stopped" ||
+			compute != "released" || disk != "reserved" || deployed != wantRelease {
+			t.Fatalf("%s state, reservations and release = %s/%s, %s/%s, %s (%v), want stopped/stopped, released/reserved, %s",
+				scenario.key, desired, observed, compute, disk, deployed, err, wantRelease)
+		}
+		blockers, err := store.GuestUpgradeBlockers(ctx, ref.InstallationID, targetArtifact.Guest.Version, targetArtifact.ProtocolVersion)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if scenario.retry && len(blockers) != 0 || !scenario.retry && (len(blockers) != 1 || blockers[0].WorkspaceID != ref.WorkspaceID || blockers[0].ObservedState != "stopped") {
 			t.Fatalf("%s unexpected retained guest blockers: %+v", scenario.key, blockers)
 		}
-		t.Logf("%s: signed digest %s, activation %s, restored stopped state, %d retained guest blockers", scenario.key, stagedDigest, activation, len(blockers))
+		t.Logf("%s: signed digest %s, activation %s, restored stopped state on %s, %d retained guest blockers",
+			scenario.key, stagedDigest, activation, deployed, len(blockers))
 	}
 }
 

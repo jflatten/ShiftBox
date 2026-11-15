@@ -85,23 +85,27 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	defer cancel()
 	owner := uuid.NewString()
-	manifest, err := os.ReadFile(filepath.Join(filepath.Dir(bundle), "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var metadata release.ArtifactManifest
-	if err := json.Unmarshal(manifest, &metadata); err != nil {
-		t.Fatal(err)
+	metadata := readNativeArtifactManifest(t, bundle)
+	target := metadata
+	compatibility := web.GuestCompatibility{Protocol: metadata.ProtocolVersion, CurrentRelease: metadata.Guest.Version}
+	if maintenance != nil && maintenance.targetBundle != "" {
+		target = readNativeArtifactManifest(t, maintenance.targetBundle)
+		if target.Guest.Version == metadata.Guest.Version || target.ReleaseID == metadata.ReleaseID ||
+			target.ProtocolVersion != metadata.ProtocolVersion {
+			t.Fatal("set distinct previous and current guest releases with the same protocol")
+		}
+		compatibility.CurrentRelease = target.Guest.Version
+		compatibility.PreviousRelease = metadata.Guest.Version
 	}
 	if maintenance != nil {
-		maintenance.prepare(t, ctx, metadata)
+		maintenance.prepare(t, ctx, metadata, target)
 	}
 	guestRelease := metadata.Guest.Version
 	dir := t.TempDir()
 	db, id, err := database.OpenBootstrap(ctx, filepath.Join(dir, "fixture.db"), database.BootstrapSeed{
 		ID: uuid.NewString(), Organization: "Fixture", Origin: "https://management.test",
 		IDEPattern: "{workspace}.ide.test", PreviewPattern: "{service}--{workspace}.preview.test",
-		Release: guestRelease, MinGuestRelease: guestRelease, Now: time.Now(),
+		Release: compatibility.CurrentRelease, MinGuestRelease: guestRelease, Now: time.Now(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -125,6 +129,21 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	// production launch path can boot it for validation.
 	if err := catalogStore.CompleteImport(ctx, artifactID, artifact.Artifact.ManifestSHA256, true); err != nil {
 		t.Fatal(err)
+	}
+	if maintenance != nil && maintenance.targetBundle != "" {
+		entry, err := catalog.ImportLocal(ctx, owner, time.Now(), filepath.Dir(maintenance.targetBundle))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entry.Artifact.Bundle != filepath.Base(maintenance.targetBundle) ||
+			entry.Artifact.Manifest.Guest.SHA256 != target.Guest.SHA256 {
+			t.Fatal("the validated target bundle differs from the intended maintenance release")
+		}
+		// The target's boot already passed in the catalog test. Load it in
+		// this isolated catalog so maintenance can resolve the new release.
+		if err := catalogStore.CompleteImport(ctx, entry.ID, entry.Artifact.ManifestSHA256, true); err != nil {
+			t.Fatal(err)
+		}
 	}
 	allocation := workspace.Allocation{CPU: 2, MemoryMiB: 4096, DiskMiB: 32768}
 	resources := provider.Resources{CPU: 2, MemoryBytes: 4096 << 20, DiskBytes: 32768 << 20}
@@ -166,8 +185,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 			listeners.GuestUpdates = maintenance.load
 		}
 		state.GuestCA = authority
-		runtime, err := app.ListenWorkspaceRuntime(state, listeners,
-			web.GuestCompatibility{Protocol: metadata.ProtocolVersion, CurrentRelease: guestRelease}, journal, machines, dir, now)
+		runtime, err := app.ListenWorkspaceRuntime(state, listeners, compatibility, journal, machines, dir, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -232,7 +250,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 		t.Fatalf("provider after enrollment = %s (%v), want running", before.Power, err)
 	}
 	if maintenance != nil {
-		maintenance.verify(t, ctx, db, journal, machines, before, op.ID, owner, metadata)
+		maintenance.verify(t, ctx, db, journal, machines, before, op.ID, owner, metadata, target)
 		return
 	}
 	if scenario == nativeExpiredLeaf {
@@ -288,6 +306,20 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 		case <-ticker.C:
 		}
 	}
+}
+
+// readNativeArtifactManifest reads the releases that the native fixture will admit.
+func readNativeArtifactManifest(t *testing.T, bundle string) release.ArtifactManifest {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(bundle), "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest release.ArtifactManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	return manifest
 }
 
 func disableEnrollmentFixtureOwner(t *testing.T, db *sql.DB, journal *operation.Journal, registry *proxy.Registry, owner, workspaceID string) string {

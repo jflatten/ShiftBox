@@ -110,5 +110,24 @@ controller created and verified an encrypted management archive, preflight
 against the exact `mvp-rc2` manifest returned exit 0 with zero blockers.
 The fixture had no retained workspaces.
 
+The native UTM upgrade from `mvp-rc1` to `mvp-rc2` verified a
+migration blocker for the stopped previous-release guest. The blocker
+survived rollback and cleared after the signed rc2 agent authenticated.
+The fixture called the retained-guest check used by preflight. See
+[UTM validation](utm-stack.md#upgrade-across-release-ids).
+
+## Guest CA lifetime preflight
+
+The `mvp-rc2` check-only CLI ran against a private copy of a previously
+restored SQLite installation. The test presented its retained workspace
+record as stopped and on the previous release. With the original valid
+CA, preflight listed the stopped guest and required a new backup. A
+disposable CA with five hours remaining also produced
+`migration.guest_ca_expiring`. With an expired CA, preflight returned
+`migration.installation_unverified` before producing an assessment.
+All three calls returned exit 7 and left the copied CA file and stopped
+workspace record intact. The test used the stored workspace record
+without starting or changing a VM.
+
 T125 remains open for the outstanding scenarios in sections 3–10. The
 [release tracker](mvp-v1-v14.md) records the remaining live checks.
