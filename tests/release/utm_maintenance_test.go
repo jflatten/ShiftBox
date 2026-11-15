@@ -51,7 +51,8 @@ func runUTMMaintenance(t *testing.T, targetBundle string) {
 	if !filepath.IsAbs(failing) || !filepath.IsAbs(working) || failing == working {
 		t.Fatal("set distinct absolute rollback and update release directories")
 	}
-	runUTMGuestFixture(t, &nativeMaintenanceFixture{failing: failing, working: working, targetBundle: targetBundle}, nativeNormal)
+	runUTMGuestFixture(t, &nativeMaintenanceFixture{failing: failing, working: working, targetBundle: targetBundle,
+		early: os.Getenv("SHIFTBOX_TEST_UTM_EARLY_MAINTENANCE") == "1"}, nativeNormal)
 }
 
 type nativeMaintenanceFixture struct {
@@ -61,6 +62,7 @@ type nativeMaintenanceFixture struct {
 	protocol         string
 	rollbackDigest   string
 	updateDigest     string
+	early            bool
 }
 
 func (f *nativeMaintenanceFixture) prepare(t *testing.T, ctx context.Context, source, target release.ArtifactManifest) {
@@ -115,16 +117,31 @@ func (f *nativeMaintenanceFixture) verify(t *testing.T, ctx context.Context, db 
 	} {
 		f.retry.Store(scenario.retry)
 		var campaign operation.Operation
+		var deadline time.Time
 		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
 			now := time.Now()
+			deadline = now.Add(2 * time.Second)
+			if f.early && scenario.retry {
+				deadline = now.Add(20 * time.Minute)
+			}
 			var err error
 			campaign, err = workspace.ScheduleMaintenance(ctx, tx, journal, ref.InstallationID, owner, scenario.key,
-				targetArtifact.ReleaseID, now.Add(2*time.Second), now)
+				targetArtifact.ReleaseID, deadline, now)
 			return err
 		}); err != nil {
 			t.Fatalf("schedule %s: %v", scenario.key, err)
 		}
 		t.Logf("scheduled %s for the stopped UTM guest", scenario.key)
+		var requested operation.Operation
+		if f.early && scenario.retry {
+			if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+				var err error
+				requested, err = admitUTMFixturePower(ctx, tx, journal, ref.WorkspaceID, owner, "update", time.Now())
+				return err
+			}); err != nil {
+				t.Fatalf("request scheduled update ahead of its deadline: %v", err)
+			}
+		}
 		waitNativeOperation(t, ctx, journal, campaign.ID, scenario.operation)
 		var state, targetID, stagedDigest, activation string
 		if err := db.QueryRowContext(ctx, `SELECT c.state,t.operation_id,g.update_digest,g.activation_status
@@ -135,6 +152,9 @@ func (f *nativeMaintenanceFixture) verify(t *testing.T, ctx context.Context, db 
 		}
 		if state != scenario.campaign || stagedDigest != scenario.digest || activation != scenario.activation {
 			t.Fatalf("%s campaign = %s/%s/%s, want %s/%s/%s", scenario.key, state, stagedDigest, activation, scenario.campaign, scenario.digest, scenario.activation)
+		}
+		if requested.ID != "" && (requested.ID != targetID || !time.Now().Before(deadline)) {
+			t.Fatal("the requested maintenance operation did not complete before the scheduled deadline")
 		}
 		target := waitNativeOperation(t, ctx, journal, targetID, scenario.operation)
 		if len(target.Steps) != 5 || target.Steps[0].Status != "succeeded" || target.Steps[1].Status != "succeeded" ||

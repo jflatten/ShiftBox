@@ -286,6 +286,40 @@ test('shows the scheduled maintenance deadline and target release', async () => 
   expect(warning.querySelector('time')).toHaveAttribute('datetime', '2026-11-15T14:30:00Z');
 });
 
+// An owner can request the scheduled update before the deadline and follow
+// the same durable maintenance steps from workspace detail.
+test('requests a scheduled guest update and shows its progress', async () => {
+  class OperationStream extends EventTarget { close() {} }
+  Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: OperationStream });
+  let accepted = false;
+  globalThis.fetch = jest.fn(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces/workspace-one') return json({
+      ...workspace, desiredState: 'stopped', currentOperationId: accepted ? 'update-op' : null,
+      maintenance: { releaseId: 'update-release', deadline: '2026-11-15T14:30:00Z',
+        state: accepted ? 'waiting_safe' : 'pending', operationId: accepted ? 'update-op' : null },
+    });
+    if (input === '/api/v1/workspaces/workspace-one/actions/update' && init?.method === 'POST') {
+      accepted = true;
+      return json({ id: 'update-op' });
+    }
+    if (input === '/api/v1/operations/update-op') return json({
+      id: 'update-op', version: 1, status: 'running', currentStep: 'maintenance_boot',
+      steps: [{ key: 'maintenance_boot', label: 'Start workspace management services', status: 'active' }],
+    });
+    throw new Error('unexpected request');
+  });
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  const button = await screen.findByRole('button', { name: 'Update now' });
+  await user.click(button);
+  expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/workspaces/workspace-one/actions/update', expect.objectContaining({
+    method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'fixture', 'If-Match': '"4"', 'Idempotency-Key': expect.any(String) }),
+  }));
+  expect(await screen.findByRole('button', { name: 'Start workspace management services: In progress' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Update now' })).not.toBeInTheDocument();
+});
+
 // Rebuild can be requested for a running workspace and displays the durable
 // configuration step while withholding other power actions.
 test('requests a rebuild and shows its progress', async () => {

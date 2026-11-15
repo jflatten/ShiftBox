@@ -288,8 +288,18 @@ test's update request without a scheduled campaign received HTTP 400
 `workspace.invalid_action` where it expected HTTP 409. Explicit deletion
 passed. The release contract lists `update` as a workspace action, and
 the maintenance design lets a workspace owner update before the scheduled
-deadline. T095 is open again. The existing maintenance scheduler and
-signed-update results above cover deadline-driven updates.
+deadline. T095 was reopened and the action was connected to the existing
+maintenance worker. The contract now refuses update without a campaign,
+admits a requested target early, and replays the same operation on retry.
+The scheduler leaves other targets pending before the deadline. Chrome
+verified keyboard access to **Update now** and focus on the operation's
+Stepper. The signed native rerun passed deadline-driven rollback and an
+owner-requested replacement before its deadline. It kept the stopped
+state and original disk. See [native upgrade validation](utm-stack.md#upgrade-across-release-ids).
+
+The full Go race suite, 90 UI unit tests, and the production UI build
+passed after the fix. The controller change still needs to be included in
+the next frozen release candidate.
 
 T125 remains open. The [release tracker](mvp-v1-v14.md) records the
 remaining live checks.

@@ -32,9 +32,6 @@ func WorkspacePowerHandler(db *sql.DB, origin string, now func() time.Time, jour
 				// therefore uses the permission that admitted repair.
 				action = "repair"
 			}
-			if action != "start" && action != "stop" && action != "rebuild" && action != "repair" && action != "delete" {
-				return AuthorizationTarget{}, Problem{Status: 400, Code: "workspace.invalid_action", Title: "Choose a supported workspace action"}
-			}
 			return (WorkspaceAuthorization{Workspace: target.Resource}).Action(actor, action)
 		},
 		Apply: func(ctx context.Context, tx *sql.Tx, r *http.Request, actor auth.Principal, target AuthorizationTarget, _ auth.Decision) (http.Handler, error) {

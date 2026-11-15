@@ -244,6 +244,15 @@ rolled the guest back to `mvp-rc1` and the blocker remained. The signed
 Both trials restored stopped power on the same owned disk. Cleanup
 removed the disposable VM.
 
+The race-enabled `SHIFTBOX_TEST_UTM_EARLY_MAINTENANCE=1` rerun passed in
+505.80 seconds. The first, deadline-driven trial rolled the guest back to
+`mvp-rc1` and preserved the upgrade blocker. The owner then requested the
+replacement update 20 minutes ahead of its scheduled deadline. The same
+native VM authenticated with the signed `mvp-rc2` agent before the deadline,
+returned to stopped on its original disk, and cleared the migration
+blocker. The fixture used the updated controller code and the existing
+pinned rc1 and rc2 guest bundles.
+
 ## Dev Container fixtures
 
 `TestDevContainerReleaseFixtures` passed for the digest-pinned Debian

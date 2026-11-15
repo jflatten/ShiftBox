@@ -217,19 +217,21 @@ test('workspace launch progress', async ({ page }) => {
 for (const [action, button, label] of [
   ['start', 'Start workspace', 'Start guest'], ['stop', 'Stop workspace', 'Stop workload'],
   ['rebuild', 'Rebuild container', 'Rebuild workspace'], ['repair', 'Start repair', 'Open repair environment'],
-  ['retry', 'Exit repair and retry setup', 'Resume workspace setup'],
+  ['retry', 'Exit repair and retry setup', 'Resume workspace setup'], ['update', 'Update now', 'Activate the guest update safely'],
 ]) {
   // Each submitted workspace action moves keyboard focus to its progress
   // when the action button becomes unavailable.
   test(`workspace ${action} progress`, async ({ page }) => {
     const labels: [string, string, string] = ['Check workspace', label, 'Verify result'];
     let started = false;
-    const state = action === 'start' ? 'stopped' : 'running';
+    const state = action === 'start' || action === 'update' ? 'stopped' : 'running';
     await fixture(page, (route, path) => {
       if (path.endsWith('/session')) return route.fulfill({ json: { ...admin([]), user: { id: 'member', role: 'member' } } });
       if (path.endsWith(`/workspaces/${workspaceID}`)) return route.fulfill({ json: {
         id: workspaceID, name: 'Keyboard workspace', resources, desiredState: state, observedState: state, version: 1,
         currentOperationId: started ? operationID : null, canStartRepair: action === 'repair', canRetryAfterRepair: action === 'retry',
+        maintenance: action === 'update' ? { releaseId: 'update-release', deadline: '2026-11-15T14:30:00Z',
+          state: started ? 'waiting_safe' : 'pending', operationId: started ? operationID : null } : undefined,
       } });
       if (path.endsWith(`/actions/${action}`)) {
         started = true;

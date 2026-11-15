@@ -9,7 +9,7 @@ import { workspaceState, type Workspace } from './workspace';
 import { RetentionWarning } from './retention';
 import { WorkspaceConnectionGrants } from './connection-grants';
 
-type WorkspaceAction = 'start' | 'stop' | 'rebuild' | 'repair' | 'retry' | 'delete';
+type WorkspaceAction = 'start' | 'stop' | 'rebuild' | 'repair' | 'retry' | 'delete' | 'update';
 
 export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToken: string; admin: boolean }) {
   const workspace = useQuery<Workspace>({
@@ -35,6 +35,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
   const action = data?.desiredState === 'running' && data.observedState === 'running' ? 'stop' :
     data?.desiredState === 'stopped' && data.observedState === 'stopped' ? 'start' : undefined;
   const busy = !!data?.currentOperationId || operationBusy || !!submitting;
+  const maintenance = data?.maintenance;
 
   useEffect(() => {
     const handoff = progressFocus.current;
@@ -115,8 +116,15 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
             </div>
           </Stack>
           <RetentionWarning workspace={data} />
-          {data.maintenance ? <Alert title="Scheduled maintenance" color={data.maintenance.state === 'failed' ? 'red' : 'yellow'}>
-            Guest release {data.maintenance.releaseId} · Deadline <WorkspaceTime value={data.maintenance.deadline} fallback="Unavailable" />
+          {maintenance ? <Alert title="Scheduled maintenance" color={maintenance.state === 'failed' ? 'red' : 'yellow'}>
+            <Stack align="flex-start" gap="xs">
+              <Text size="sm">Guest release {maintenance.releaseId} · Deadline <WorkspaceTime value={maintenance.deadline} fallback="Unavailable" /></Text>
+              {action && !maintenance.operationId && (maintenance.state === 'pending' || maintenance.state === 'waiting_safe') ? (
+                <Button variant="default" loading={submitting === 'update'} disabled={busy} onClick={() => void requestAction('update')}>
+                  Update now
+                </Button>
+              ) : null}
+            </Stack>
           </Alert> : null}
           <Text size="sm">Stop and start preserve project files, the developer home, and named application volumes. Rebuilding also preserves this data and replaces the container’s writable layer.</Text>
           {data.canStartRepair || data.canOpenRepair || data.canRetryAfterRepair ? (

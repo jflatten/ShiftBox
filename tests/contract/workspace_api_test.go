@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +19,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
+	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 // TestWorkspaceLaunchAPI exercises session and template authorization,
@@ -352,17 +352,7 @@ func TestWorkspaceDeleteAndUpdateAPI(t *testing.T) {
 	token := strings.Repeat("A", 43)
 	now := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
 	seedWorkspaceLaunch(t, db, templateID, token, now)
-	if _, err := db.ExecContext(ctx, `INSERT INTO workspaces(id,installation_id,owner_user_id,template_id,template_revision,
-		platform_artifact_id,repository_url,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,
-		desired_state,observed_state,generation,ownership_marker,provider_instance_id,created_at,updated_at,version)
-		SELECT $1,id,'member',$2,1,'artifact','https://github.com/example/repo','devcontainer.json',2,1024,40,'{"mode":"shared"}',
-		'stopped','stopped',1,'fixture','fixture-vm','now','now',1 FROM installations`, workspaceID, templateID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO reservations(workspace_id,cpu_count,memory_mib,disk_mib,cpu_memory_state,
-		disk_state,reserved_at,cpu_memory_released_at) VALUES($1,2,1024,40,'released','reserved','now','now')`, workspaceID); err != nil {
-		t.Fatal(err)
-	}
+	seedStoppedAPIWorkspace(t, db, templateID, workspaceID)
 	clock := func() time.Time { return now }
 	registry := &proxy.Registry{}
 	closed := false
@@ -395,10 +385,11 @@ func TestWorkspaceDeleteAndUpdateAPI(t *testing.T) {
 		VALUES('delete-fixture','fixture-digest','member','launch-session',$1,1,'ide','https://ide.test','workspace.connect_owner',$2)`, workspaceID, now.Add(time.Minute).Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
-	handler := web.WorkspacePowerHandler(db, origin, clock, operation.NewJournal(db, clock, uuid.NewString), registry)
+	journal := operation.NewJournal(db, clock, uuid.NewString)
+	handler := web.WorkspacePowerHandler(db, origin, clock, journal, registry)
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/workspaces/{workspaceId}/actions/{action}", &handler)
-	request := func(action, body string) *httptest.ResponseRecorder {
+	request := func(workspaceID, action, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, origin+"/api/v1/workspaces/"+workspaceID+"/actions/"+action, strings.NewReader(body))
 		r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
 		r.Header.Set("Origin", origin)
@@ -409,17 +400,19 @@ func TestWorkspaceDeleteAndUpdateAPI(t *testing.T) {
 		mux.ServeHTTP(w, r)
 		return w
 	}
+	// An unscheduled update cannot create a workspace operation.
 	t.Run("update without scheduled maintenance", func(t *testing.T) {
-		if os.Getenv("SHIFTBOX_TEST_WORKSPACE_DELETE_UPDATE") != "1" {
-			t.Skip("set SHIFTBOX_TEST_WORKSPACE_DELETE_UPDATE=1 for the pending T095 update contract")
-		}
-		response := request("update", "")
+		response := request(workspaceID, "update", "")
 		if response.Code != http.StatusConflict {
 			t.Errorf("workspace update without scheduled maintenance returned %d %s, want %d", response.Code, response.Body, http.StatusConflict)
 		}
+		var updates int
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM operations WHERE workspace_id=$1", workspaceID).Scan(&updates); err != nil || updates != 0 {
+			t.Fatalf("workspace update without scheduled maintenance recorded %d operations (%v), want 0", updates, err)
+		}
 	})
 	t.Run("explicit deletion", func(t *testing.T) {
-		withoutConfirmation := request("delete", `{"confirmDataLoss":false}`)
+		withoutConfirmation := request(workspaceID, "delete", `{"confirmDataLoss":false}`)
 		var operationCount int
 		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM operations").Scan(&operationCount); err != nil {
 			t.Fatal(err)
@@ -427,7 +420,7 @@ func TestWorkspaceDeleteAndUpdateAPI(t *testing.T) {
 		if withoutConfirmation.Code < 400 || withoutConfirmation.Code >= 500 || operationCount != 0 {
 			t.Fatalf("unconfirmed deletion returned %d with %d operations, want client rejection without a recorded operation", withoutConfirmation.Code, operationCount)
 		}
-		accepted := request("delete", `{"confirmDataLoss":true}`)
+		accepted := request(workspaceID, "delete", `{"confirmDataLoss":true}`)
 		if accepted.Code != http.StatusAccepted {
 			t.Fatalf("confirmed deletion returned %d %s, want %d", accepted.Code, accepted.Body, http.StatusAccepted)
 		}
@@ -448,11 +441,81 @@ func TestWorkspaceDeleteAndUpdateAPI(t *testing.T) {
 			t.Errorf("deletion admission produced %s/%s with %s disk and commit %t, want deleted/stopped, reserved disk and durable commit", desired, observed, disk, committed)
 		}
 		var replayed operation.Operation
-		replay := request("delete", `{"confirmDataLoss":true}`)
+		replay := request(workspaceID, "delete", `{"confirmDataLoss":true}`)
 		if err := json.Unmarshal(replay.Body.Bytes(), &replayed); replay.Code != http.StatusAccepted || err != nil || replayed.ID != op.ID {
 			t.Errorf("deletion replay returned %d and operation %q (%v), want %d and %q", replay.Code, replayed.ID, err, http.StatusAccepted, op.ID)
 		}
 	})
+	// An owner can request an early update for one stopped workspace and retry
+	// the request without starting duplicate work or touching other targets.
+	t.Run("update before the scheduled deadline", func(t *testing.T) {
+		targetID, otherID := uuid.NewString(), uuid.NewString()
+		seedStoppedAPIWorkspace(t, db, templateID, targetID)
+		seedStoppedAPIWorkspace(t, db, templateID, otherID)
+		var installation string
+		var campaign operation.Operation
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			if err := tx.QueryRowContext(ctx, "SELECT id FROM installations").Scan(&installation); err != nil {
+				return err
+			}
+			var err error
+			campaign, err = workspace.ScheduleMaintenance(ctx, tx, journal, installation, "owner",
+				"early-workspace-update-campaign", "release", now.Add(time.Hour), now)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		response := request(targetID, "update", "")
+		var update operation.Operation
+		if err := json.Unmarshal(response.Body.Bytes(), &update); response.Code != http.StatusAccepted || err != nil ||
+			update.ID == "" || update.Type != "update" || update.WorkspaceID == nil || *update.WorkspaceID != targetID {
+			t.Fatalf("workspace update before the deadline returned %d %s (%v), want a durable workspace update", response.Code, response.Body, err)
+		}
+		if persisted, err := journal.Get(ctx, update.ID); err != nil || persisted.Actor != "member" {
+			t.Errorf("early update recorded actor %q (%v), want the requesting member", persisted.Actor, err)
+		}
+		var operationID, priorPower string
+		if err := db.QueryRowContext(ctx, `SELECT operation_id,prior_desired_state FROM maintenance_targets
+			WHERE campaign_id=$1 AND workspace_id=$2`, campaign.ID, targetID).Scan(&operationID, &priorPower); err != nil ||
+			operationID != update.ID || priorPower != "stopped" {
+			t.Errorf("scheduled target has operation %q and prior power %q (%v), want %q and stopped", operationID, priorPower, err, update.ID)
+		}
+		replay := request(targetID, "update", "")
+		var replayed operation.Operation
+		if err := json.Unmarshal(replay.Body.Bytes(), &replayed); replay.Code != http.StatusAccepted || err != nil || replayed.ID != update.ID {
+			t.Errorf("early update replay returned %d and operation %q (%v), want %d and %q", replay.Code, replayed.ID, err, http.StatusAccepted, update.ID)
+		}
+		var updateCount int
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM operations WHERE workspace_id=$1 AND type='update'", targetID).
+			Scan(&updateCount); err != nil || updateCount != 1 {
+			t.Errorf("early update and replay recorded %d operations (%v), want 1", updateCount, err)
+		}
+		if err := workspace.NewStore(db).PrepareMaintenanceTargets(ctx, journal, installation, campaign.ID, now.Add(30*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		var otherOperation sql.NullString
+		var otherState string
+		if err := db.QueryRowContext(ctx, `SELECT operation_id,state FROM maintenance_targets WHERE campaign_id=$1 AND workspace_id=$2`,
+			campaign.ID, otherID).Scan(&otherOperation, &otherState); err != nil || otherOperation.Valid || otherState != "pending" {
+			t.Errorf("unrequested target has operation %v and state %q (%v), want no operation and pending", otherOperation, otherState, err)
+		}
+	})
+}
+
+func seedStoppedAPIWorkspace(t *testing.T, db *sql.DB, templateID, workspaceID string) {
+	t.Helper()
+	ctx := t.Context()
+	if _, err := db.ExecContext(ctx, `INSERT INTO workspaces(id,installation_id,owner_user_id,template_id,template_revision,
+		platform_artifact_id,repository_url,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,
+		desired_state,observed_state,generation,ownership_marker,provider_instance_id,created_at,updated_at,version)
+		SELECT $1,id,'member',$2,1,'artifact','https://github.com/example/repo','devcontainer.json',2,1024,40,'{"mode":"shared"}',
+		'stopped','stopped',1,'fixture',$3,'now','now',1 FROM installations`, workspaceID, templateID, "fixture-"+workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO reservations(workspace_id,cpu_count,memory_mib,disk_mib,cpu_memory_state,
+		disk_state,reserved_at,cpu_memory_released_at) VALUES($1,2,1024,40,'released','reserved','now','now')`, workspaceID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func seedWorkspaceLaunch(t *testing.T, db *sql.DB, templateID, token string, now time.Time) {

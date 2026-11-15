@@ -10,6 +10,7 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
+	"github.com/jflatten/ShiftBox/internal/provider"
 )
 
 var (
@@ -253,12 +254,13 @@ func (s *Store) PrepareMaintenanceTargets(ctx context.Context, journal *operatio
 		if err != nil {
 			return err
 		}
-		targets, err := readyMaintenanceTargets(ctx, tx, campaign, installation)
+		targets, err := readyMaintenanceTargets(ctx, tx, campaign, installation, "")
 		if err != nil {
 			return err
 		}
 		for _, target := range targets {
-			if err := prepareMaintenanceTarget(ctx, tx, journal, campaign, target, stamp); err != nil {
+			key := fmt.Sprintf("maintenance:%x", sha256.Sum256(fmt.Appendf(nil, "%q/%q/%d", campaign, target.id, target.generation)))
+			if _, err := prepareMaintenanceTarget(ctx, tx, journal, campaign, target, "controller", key, stamp); err != nil {
 				return err
 			}
 		}
@@ -266,20 +268,61 @@ func (s *Store) PrepareMaintenanceTargets(ctx context.Context, journal *operatio
 	})
 }
 
+// requestMaintenanceTarget starts only the requested target. The campaign
+// worker still waits for the deadline before admitting its other targets.
+func requestMaintenanceTarget(ctx context.Context, tx *sql.Tx, journal *operation.Journal, installation string,
+	intent PowerIntent, now time.Time,
+) (operation.Operation, error) {
+	var campaign string
+	err := tx.QueryRowContext(ctx, `SELECT c.operation_id FROM maintenance_campaigns c
+		JOIN maintenance_targets t ON t.campaign_id=c.operation_id
+		JOIN workspaces w ON w.id=t.workspace_id AND w.generation=t.generation AND w.installation_id=c.installation_id
+		JOIN installations i ON i.id=c.installation_id
+		JOIN platform_artifacts a ON a.release_id=c.release_id AND a.guest_release=i.active_release AND a.state='available'
+		WHERE c.installation_id=$1 AND w.id=$2 AND c.state IN ('scheduled','active')`, installation, intent.WorkspaceID).Scan(&campaign)
+	if errors.Is(err, sql.ErrNoRows) {
+		return operation.Operation{}, provider.ErrInvalidState
+	}
+	if err != nil {
+		return operation.Operation{}, err
+	}
+	targets, err := readyMaintenanceTargets(ctx, tx, campaign, installation, intent.WorkspaceID)
+	if err != nil {
+		return operation.Operation{}, err
+	}
+	if len(targets) != 1 {
+		return operation.Operation{}, provider.ErrInvalidState
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE maintenance_campaigns SET state='active' WHERE operation_id=$1 AND state='scheduled'", campaign); err != nil {
+		return operation.Operation{}, err
+	}
+	stamp := now.UTC().Format(maintenanceTime)
+	result, err := tx.ExecContext(ctx, "UPDATE workspaces SET version=version+1, updated_at=$2 WHERE id=$1 AND version=$3",
+		intent.WorkspaceID, stamp, intent.Version)
+	if err := capacityWrite(result, err); err != nil {
+		if errors.Is(err, ErrCapacityConflict) {
+			return operation.Operation{}, ErrVersionMismatch
+		}
+		return operation.Operation{}, err
+	}
+	return prepareMaintenanceTarget(ctx, tx, journal, campaign, targets[0], intent.ActorID, intent.RequestKey, stamp)
+}
+
 type maintenanceTarget struct {
 	id, desired, observed string
 	generation            int64
 }
 
-func readyMaintenanceTargets(ctx context.Context, tx *sql.Tx, campaign, installation string) ([]maintenanceTarget, error) {
+func readyMaintenanceTargets(ctx context.Context, tx *sql.Tx, campaign, installation, workspaceID string) ([]maintenanceTarget, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT w.id,w.desired_state,w.observed_state,w.generation
 		FROM maintenance_targets t JOIN workspaces w ON w.id=t.workspace_id AND w.generation=t.generation
 		JOIN users u ON u.id=w.owner_user_id
-		WHERE t.campaign_id=$1 AND w.installation_id=$2 AND t.state='waiting_safe' AND t.operation_id IS NULL
+		WHERE t.campaign_id=$1 AND w.installation_id=$2 AND ($3='' OR w.id=$3)
+		AND t.state IN ('pending','waiting_safe') AND t.operation_id IS NULL
 		AND w.provider_instance_id IS NOT NULL AND w.deletion_commit_at IS NULL AND u.membership_state='active'
 		AND w.desired_state=w.observed_state AND w.desired_state IN ('running','stopped')
 		AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
-		AND o.status IN ('pending','running','waiting')) ORDER BY w.id`, campaign, installation)
+		AND o.status IN ('pending','running','waiting')) ORDER BY w.id`, campaign, installation, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +338,9 @@ func readyMaintenanceTargets(ctx context.Context, tx *sql.Tx, campaign, installa
 	return targets, rows.Err()
 }
 
-func prepareMaintenanceTarget(ctx context.Context, tx *sql.Tx, journal *operation.Journal, campaign string, target maintenanceTarget, stamp string) error {
+func prepareMaintenanceTarget(ctx context.Context, tx *sql.Tx, journal *operation.Journal, campaign string, target maintenanceTarget,
+	actor, key, stamp string,
+) (operation.Operation, error) {
 	steps := []operation.Step{
 		{Key: "maintenance_stage", Label: "Stage the signed guest update"},
 		{Key: "maintenance_activate", Label: "Activate the guest update safely"},
@@ -305,20 +350,19 @@ func prepareMaintenanceTarget(ctx context.Context, tx *sql.Tx, journal *operatio
 		steps = append([]operation.Step{{Key: "maintenance_boot", Label: "Start workspace management services"}}, steps...)
 		steps = append(steps, operation.Step{Key: "maintenance_restore", Label: "Return workspace to stopped"})
 	}
-	key := fmt.Sprintf("maintenance:%x", sha256.Sum256(fmt.Appendf(nil, "%q/%q/%d", campaign, target.id, target.generation)))
-	op, err := journal.CreateInTx(ctx, tx, operation.Request{Actor: "controller", Key: key, Type: "update",
+	op, err := journal.CreateInTx(ctx, tx, operation.Request{Actor: actor, Key: key, Type: "update",
 		OriginatingAction: maintenanceTargetAction, WorkspaceID: &target.id, Generation: target.generation, Steps: steps})
 	if err != nil {
-		return err
+		return operation.Operation{}, err
 	}
 	if op.WorkspaceID == nil || *op.WorkspaceID != target.id || op.Generation != target.generation || op.OriginatingAction != maintenanceTargetAction {
-		return operation.ErrConflict
+		return operation.Operation{}, operation.ErrConflict
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE maintenance_targets
-		SET operation_id=$1,prior_desired_state=$2,prior_observed_state=$3,updated_at=$4
+		SET operation_id=$1,prior_desired_state=$2,prior_observed_state=$3,updated_at=$4,state='waiting_safe'
 		WHERE campaign_id=$5 AND workspace_id=$6 AND generation=$7 AND operation_id IS NULL`,
 		op.ID, target.desired, target.observed, stamp, campaign, target.id, target.generation)
-	return capacityWrite(result, err)
+	return op, capacityWrite(result, err)
 }
 
 // ListMaintenance returns current and historical campaigns newest first.

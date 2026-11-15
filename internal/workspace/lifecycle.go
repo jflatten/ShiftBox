@@ -38,6 +38,8 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		desired, label = "stopped", "Stop workspace"
 	case "delete":
 		desired = "deleted"
+	case "update":
+		action = maintenanceTargetAction
 	case "rebuild":
 		desired, label = "running", "Rebuild the development container"
 	case "repair":
@@ -84,6 +86,9 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 	}
 	if version != intent.Version {
 		return operation.Operation{}, ErrVersionMismatch
+	}
+	if intent.Action == "update" {
+		return requestMaintenanceTarget(ctx, tx, journal, installation, intent, now)
 	}
 	var active bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
