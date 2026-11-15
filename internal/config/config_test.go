@@ -10,6 +10,43 @@ import (
 	"github.com/jflatten/ShiftBox/internal/config"
 )
 
+// TestUTMGuestDefaults keeps local guest URLs independent of Wi-Fi while
+// preserving installations that explicitly configured a different endpoint.
+func TestUTMGuestDefaults(t *testing.T) {
+	const base = `{"dataProfile":"sqlite","sqlitePath":"/tmp/shiftbox.db","installationDir":"/tmp/shiftbox","managementOrigin":"https://shiftbox.test","runtime":`
+	type endpoints struct{ host, enrollment, poll, tunnel string }
+	for _, tc := range []struct {
+		name, runtime string
+		want          endpoints
+	}{
+		{"omitted guest settings", `{"browserAddress":"127.0.0.1:9443"}`,
+			endpoints{"192.168.64.1", "192.168.64.1:19443", "192.168.64.1:19444", "192.168.64.1:19445"}},
+		{"custom port", `{"browserAddress":"127.0.0.1:9443","pollAddress":"192.168.64.1:20444"}`,
+			endpoints{"192.168.64.1", "192.168.64.1:19443", "192.168.64.1:20444", "192.168.64.1:19445"}},
+		{"explicit guest addresses", `{"browserAddress":"127.0.0.1:9443","guestHost":"host.example.test","enrollmentAddress":":8443","pollAddress":":8444","tunnelAddress":":8445"}`,
+			endpoints{"host.example.test", ":8443", ":8444", ":8445"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(base+tc.runtime+"}"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := cfg.Runtime
+			got := endpoints{r.GuestHost, r.EnrollmentAddress, r.PollAddress, r.TunnelAddress}
+			if got != tc.want {
+				t.Errorf("Load(%s) guest settings = %+v, want %+v", tc.name, got, tc.want)
+			}
+			if r.BrowserAddress != "127.0.0.1:9443" {
+				t.Errorf("Load(%s) browser address = %q, want unchanged loopback bind", tc.name, r.BrowserAddress)
+			}
+		})
+	}
+}
+
 // TestRetentionActivitySelection keeps the default monitors enabled and
 // preserves an operator's explicit decision to turn an individual signal off.
 func TestRetentionActivitySelection(t *testing.T) {

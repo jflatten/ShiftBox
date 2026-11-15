@@ -207,53 +207,59 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     await activate(details);
   });
 
-  await test.step('Save a file and retain it across stop, start, and rebuild', async () => {
-    const normalOrigin = await openIDE(page, 'Open IDE', managementOrigin);
-    const markerEditor = await openFile(page, fixture.markerFile);
-    await writeEditor(page, markerEditor, marker);
-    await verifySavedFile(page, fixture.markerFile, marker);
-    await page.goto(workspaceURL);
+  const rebuiltIDE = await test.step('Save a file and retain it across stop, start, and rebuild', async () => {
+    const ide = await openIDE(page, 'Open IDE', managementOrigin);
+    const normalOrigin = new URL(ide.url()).origin;
+    const markerEditor = await openFile(ide, fixture.markerFile);
+    await writeEditor(ide, markerEditor, marker);
+    await verifySavedFile(ide, fixture.markerFile, marker);
+    await ide.close();
     await activate(page.getByRole('button', { name: 'Stop workspace' }));
     await stepCompleted(page, 'Stop workspace');
     await expect(page.getByRole('button', { name: 'Open IDE', exact: true })).toHaveCount(0);
     await activate(page.getByRole('button', { name: 'Start workspace' }));
     await stepCompleted(page, 'Finish remaining setup hooks');
-    expect(await openIDE(page, 'Open IDE', managementOrigin)).toBe(normalOrigin);
-    await expect((await openFile(page, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
-    await page.goto(workspaceURL);
+    const restartedIDE = await openIDE(page, 'Open IDE', managementOrigin);
+    expect(new URL(restartedIDE.url()).origin).toBe(normalOrigin);
+    await expect((await openFile(restartedIDE, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
+    await restartedIDE.close();
     await activate(page.getByRole('button', { name: 'Rebuild container' }));
     await stepCompleted(page, 'Rebuild the development container');
     await stepCompleted(page, 'Finish remaining setup hooks');
-    expect(await openIDE(page, 'Open IDE', managementOrigin)).toBe(normalOrigin);
-    await expect((await openFile(page, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
+    const rebuiltIDE = await openIDE(page, 'Open IDE', managementOrigin);
+    expect(new URL(rebuiltIDE.url()).origin).toBe(normalOrigin);
+    await expect((await openFile(rebuiltIDE, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
+    return rebuiltIDE;
   });
 
   await test.step('Repair a broken project and retry setup', async () => {
     const broken = '{"image":"invalid image reference for repair fixture"}';
-    await writeEditor(page, await openFile(page, fixture.devcontainerPath), broken);
-    await verifySavedFile(page, fixture.devcontainerPath, broken);
-    await page.goto(workspaceURL);
+    await writeEditor(rebuiltIDE, await openFile(rebuiltIDE, fixture.devcontainerPath), broken);
+    await verifySavedFile(rebuiltIDE, fixture.devcontainerPath, broken);
+    await rebuiltIDE.close();
     await activate(page.getByRole('button', { name: 'Rebuild container' }));
     await expect(page.getByRole('button', { name: 'Rebuild the development container: Failed' }))
       .toBeVisible({ timeout: startupTimeout });
     await expect(page.getByRole('button', { name: 'Open IDE', exact: true })).toHaveCount(0);
     await activate(page.getByRole('button', { name: 'Start repair' }));
     await stepCompleted(page, 'Verify the repair IDE');
-    const repairOrigin = await openIDE(page, 'Open repair IDE', managementOrigin);
+    const repairIDE = await openIDE(page, 'Open repair IDE', managementOrigin);
+    const repairOrigin = new URL(repairIDE.url()).origin;
     expect(new URL(repairOrigin).hostname).toMatch(/^[a-f0-9-]+\.repair\./);
-    await expect((await openFile(page, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
+    await expect((await openFile(repairIDE, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
     // The fixture is plain JSON. Restore the equivalent configuration as
     // one line so the editor's automatic indentation cannot change it.
     const restored = JSON.stringify(JSON.parse(savedConfig));
-    await writeEditor(page, await openFile(page, fixture.devcontainerPath), restored);
-    await verifySavedFile(page, fixture.devcontainerPath, restored);
-    await page.goto(workspaceURL);
+    await writeEditor(repairIDE, await openFile(repairIDE, fixture.devcontainerPath), restored);
+    await verifySavedFile(repairIDE, fixture.devcontainerPath, restored);
+    await repairIDE.close();
     await activate(page.getByRole('button', { name: 'Exit repair and retry setup' }));
     await stepCompleted(page, 'Exit repair and retry development setup');
     await stepCompleted(page, 'Verify the browser IDE');
     await stepCompleted(page, 'Finish remaining setup hooks');
-    expect(await openIDE(page, 'Open IDE', managementOrigin)).not.toBe(repairOrigin);
-    await expect((await openFile(page, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
+    const ide = await openIDE(page, 'Open IDE', managementOrigin);
+    expect(new URL(ide.url()).origin).not.toBe(repairOrigin);
+    await expect((await openFile(ide, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
   });
 });
 
@@ -277,23 +283,23 @@ test('retains the developer home and named volume on UTM', async ({ page }) => {
   await page.goto(new URL('/auth/login', managementOrigin).href);
   await passwordLogin(page, installation.administratorEmail, installation.password);
   await page.goto(workspaceURL);
-  await openIDE(page, 'Open IDE', managementOrigin);
-  await persistenceTerminalCheck(page, `mountpoint -q /var/lib/shiftbox-fixture && ` +
+  const ide = await openIDE(page, 'Open IDE', managementOrigin);
+  await persistenceTerminalCheck(ide, `mountpoint -q /var/lib/shiftbox-fixture && ` +
     `printf '%s' '${marker}' > "$HOME/${name}" && printf '%s' '${marker}' | sudo -n tee '${volume}' >/dev/null && ${verify}`);
+  await ide.close();
 
-  await page.goto(workspaceURL);
   await activate(page.getByRole('button', { name: 'Stop workspace' }));
   await stepCompleted(page, 'Stop workspace');
   await activate(page.getByRole('button', { name: 'Start workspace' }));
   await stepCompleted(page, 'Finish remaining setup hooks');
-  await openIDE(page, 'Open IDE', managementOrigin);
-  await persistenceTerminalCheck(page, verify);
+  const restartedIDE = await openIDE(page, 'Open IDE', managementOrigin);
+  await persistenceTerminalCheck(restartedIDE, verify);
+  await restartedIDE.close();
 
-  await page.goto(workspaceURL);
   await activate(page.getByRole('button', { name: 'Rebuild container' }));
   await stepCompleted(page, 'Finish remaining setup hooks');
-  await openIDE(page, 'Open IDE', managementOrigin);
-  await persistenceTerminalCheck(page, `${verify} && rm -- "$HOME/${name}" && sudo -n rm -- '${volume}'`);
+  const rebuiltIDE = await openIDE(page, 'Open IDE', managementOrigin);
+  await persistenceTerminalCheck(rebuiltIDE, `${verify} && rm -- "$HOME/${name}" && sudo -n rm -- '${volume}'`);
 });
 
 async function persistenceTerminalCheck(page: Page, check: string) {
@@ -357,12 +363,15 @@ async function stepCompleted(page: Page, label: string, timeout = startupTimeout
   await expect(page.getByRole('button', { name: `${label}: Completed`, exact: true })).toBeVisible({ timeout });
 }
 
-async function openIDE(page: Page, button: string, managementOrigin: string) {
-  await activate(page.getByRole('button', { name: button, exact: true }));
-  await page.waitForURL(url => url.protocol === 'https:' && url.origin !== managementOrigin, { timeout: workbenchTimeout });
-  await expect(page.locator('.monaco-workbench')).toBeVisible({ timeout: workbenchTimeout });
-  await dismissFixtureTrust(page);
-  return new URL(page.url()).origin;
+async function openIDE(page: Page, button: 'Open IDE' | 'Open repair IDE', managementOrigin: string) {
+  const consoleURL = page.url();
+  const control = page.getByRole('button', { name: button, exact: true });
+  const [ide] = await Promise.all([page.context().waitForEvent('page'), activate(control)]);
+  await ide.waitForURL(url => url.protocol === 'https:' && url.origin !== managementOrigin, { timeout: workbenchTimeout });
+  await expect(ide.locator('.monaco-workbench')).toBeVisible({ timeout: workbenchTimeout });
+  await expect(page).toHaveURL(consoleURL);
+  await dismissFixtureTrust(ide);
+  return ide;
 }
 
 async function dismissFixtureTrust(page: Page) {

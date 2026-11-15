@@ -31,7 +31,7 @@ the developer and AI development agents.
   look for a relevant skill before proceeding.
 
   Never edit or change the documents in `documentation/architecture`.  These are reference only
-  documents that require human oversight. 
+  documents that require human oversight.
 
 ## Architecture and Guiding Principles
 
@@ -41,7 +41,7 @@ the developer and AI development agents.
   as it relates to the application as a whole.
 - Workflows are always expressed visually in our UI in realtime using Mantine Stepper.
 - Always use Mantine controls for our UI. Reference: <https://mantine.dev/llms.txt>
-- Always use IBM's Carbon Design System for our UI. Reference: <https://www.carbondesignsystem.com/> 
+- Always use IBM's Carbon Design System for our UI. Reference: <https://www.carbondesignsystem.com/>
 - Always use the mantine MCP server when selecting components.
 - Always apply our branding standard with the artifacts located in the `branding/` directory.
 

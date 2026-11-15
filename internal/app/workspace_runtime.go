@@ -22,8 +22,8 @@ type WorkspaceRuntime struct {
 	maintenance []*operation.Worker
 }
 
-// ListenWorkspaceRuntime binds guest endpoints before constructing the worker
-// so enrollment media advertises the actual listener addresses.
+// ListenWorkspaceRuntime prepares guest endpoints before constructing the worker
+// so enrollment media advertises the same addresses the listeners will use.
 func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfig, compatibility web.GuestCompatibility,
 	journal *operation.Journal, machines provider.Provider, mediaRoot string, now func() time.Time,
 ) (*WorkspaceRuntime, error) {

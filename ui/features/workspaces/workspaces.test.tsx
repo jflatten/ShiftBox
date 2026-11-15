@@ -22,6 +22,7 @@ const originalFetch = globalThis.fetch;
 const originalEventSource = Object.getOwnPropertyDescriptor(globalThis, 'EventSource');
 
 afterEach(() => {
+  jest.restoreAllMocks();
   globalThis.fetch = originalFetch;
   if (originalEventSource) Object.defineProperty(globalThis, 'EventSource', originalEventSource);
   else Reflect.deleteProperty(globalThis, 'EventSource');
@@ -159,8 +160,10 @@ test('explains repair before starting it and renders the server workflow', async
 });
 
 // Repair is only offered with the controller's readiness decision and opens
-// through a grant scoped to the repair service.
+// through a grant scoped to the repair service. Denied entry closes its tab.
 test('requests a repair entry grant for a verified repair workspace', async () => {
+  const close = jest.fn();
+  jest.spyOn(window, 'open').mockReturnValue({ close } as unknown as Window);
   const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/workspaces/workspace-one') return json({
@@ -181,6 +184,7 @@ test('requests a repair entry grant for a verified repair workspace', async () =
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
   await userEvent.setup().click(await screen.findByRole('button', { name: 'Open repair IDE' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Workspace service access denied');
+  expect(close).toHaveBeenCalledTimes(1);
   expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces/workspace-one/entry-grants', expect.objectContaining({
     method: 'POST', body: '{"service":"repair"}',
   }));
@@ -493,9 +497,50 @@ test('shows the server operation after accepting a workspace launch', async () =
   expect(screen.getByRole('link', { name: 'View workspace' })).toHaveAttribute('href', '/workspaces/?id=workspace-one');
 });
 
-// A running VM can still be configuring its IDE. Once the controller allows
-// entry, a later denial must report the lost access without opening a URL.
+// Slow grants must not lose the click's permission to open a service tab.
+test.each([
+  { button: 'Open IDE', service: 'ide', readiness: { canOpenIde: true } },
+  { button: 'Open repair IDE', service: 'repair', readiness: { canOpenRepair: true } },
+  { button: 'Open preview 4173', service: 'preview-4173', readiness: { canOpenPreviews: true, previewPorts: [4173] } },
+])('opens a separate tab before waiting for the $service entry grant', async ({ button, service, readiness }) => {
+  const url = `https://workspace.${service}.test/_shiftbox/entry?grant=fixture`;
+  const tabDocument = document.implementation.createHTMLDocument();
+  const entry = tabDocument.createElement('a');
+  jest.spyOn(tabDocument, 'createElement').mockReturnValue(entry);
+  const navigate = jest.spyOn(entry, 'click').mockImplementation(() => {});
+  const tab = { document: tabDocument, opener: window };
+  const openTab = jest.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+  let grantRequested = false;
+  let openedBeforeGrant = false;
+  globalThis.fetch = jest.fn(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces/workspace-one') return json({
+      ...workspace, observedState: 'running', currentOperationId: null, ...readiness,
+    });
+    if (input === '/api/v1/workspaces/workspace-one/entry-grants') {
+      grantRequested = init?.body === JSON.stringify({ service });
+      openedBeforeGrant = openTab.mock.calls.length === 1;
+      return json({ exchangeUrl: url });
+    }
+    throw new Error('unexpected request');
+  });
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  await user.click(await screen.findByRole('button', { name: button }));
+  expect(grantRequested).toBe(true);
+  expect(openedBeforeGrant).toBe(true);
+  await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+  expect(openTab).toHaveBeenCalledWith('about:blank', '_blank');
+  expect(tab.opener).toBeNull();
+  expect(entry.href).toBe(url);
+  expect(entry.rel).toBe('noreferrer');
+});
+
+// Access can be revoked after the button appears. Report the denial and close
+// the waiting tab so the user is not left on a blank page.
 test('uses the controller IDE availability and requests a fresh entry grant', async () => {
+  const close = jest.fn();
+  jest.spyOn(window, 'open').mockReturnValue({ close } as unknown as Window);
   const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/workspaces/workspace-one') return json({
@@ -513,8 +558,27 @@ test('uses the controller IDE availability and requests a fresh entry grant', as
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
   await user.click(await screen.findByRole('button', { name: 'Open IDE' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Workspace service access denied');
+  expect(close).toHaveBeenCalledTimes(1);
   expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces/workspace-one/entry-grants', expect.objectContaining({
     method: 'POST', body: '{"service":"ide"}', cache: 'no-store',
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'fixture' },
   }));
+});
+
+// If the browser blocks the new tab, explain how to retry without issuing a grant.
+test('guides the user when the browser blocks the IDE tab', async () => {
+  jest.spyOn(window, 'open').mockReturnValue(null);
+  const fetch = jest.fn(async (input: RequestInfo | URL) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces/workspace-one') return json({
+      ...workspace, observedState: 'running', currentOperationId: null, canOpenIde: true,
+    });
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Open IDE' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Allow pop-ups for ShiftBox');
+  expect(fetch.mock.calls.map(([url]) => url)).not.toContain('/api/v1/workspaces/workspace-one/entry-grants');
 });

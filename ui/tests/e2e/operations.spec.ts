@@ -232,9 +232,8 @@ test.describe('operations with a fixture controller', () => {
     await expect(page.getByRole('button', { name: 'Update workspace: In progress' })).toHaveCount(0);
   });
 
-  // The preview launch uses the selected private service and leaves the
-  // management origin through its scoped, referrer-free entry link.
-  test('a private preview opens on its own HTTPS origin', async ({ page }) => {
+  // The preview launch opens the scoped, referrer-free entry in a separate tab.
+  test('a private preview opens in a new tab on its own HTTPS origin', async ({ page, context }) => {
     const previewOrigin = 'https://preview-4173--operations.preview.test';
     const exchange = `${previewOrigin}/_shiftbox/entry?grant=preview-fixture`;
     await page.route('**/api/v1/**', route => {
@@ -253,7 +252,7 @@ test.describe('operations with a fixture controller', () => {
       }
       return route.fulfill({ status: 404, json: {} });
     });
-    await page.route(url => url.href === exchange, route => {
+    await context.route(url => url.href === exchange, route => {
       const request = route.request();
       expect(request.isNavigationRequest()).toBe(true);
       expect(request.method()).toBe('GET');
@@ -263,11 +262,16 @@ test.describe('operations with a fixture controller', () => {
       return route.fulfill({ contentType: 'text/html', body: '<h1>Private preview entry fixture</h1>' });
     });
     await page.goto(`/workspaces/?id=${workspaceId}`);
-    const managementOrigin = new URL(page.url()).origin;
-    expect(managementOrigin).not.toBe(previewOrigin);
-    await page.getByRole('button', { name: 'Open preview 4173' }).click();
-    await expect(page).toHaveURL(exchange);
-    await expect(page.getByRole('heading', { name: 'Private preview entry fixture' })).toBeVisible();
+    const consoleURL = page.url();
+    expect(new URL(consoleURL).origin).not.toBe(previewOrigin);
+    const [previewTab] = await Promise.all([
+      context.waitForEvent('page'),
+      page.getByRole('button', { name: 'Open preview 4173' }).click(),
+    ]);
+    await expect(previewTab).toHaveURL(exchange);
+    await expect(previewTab.getByRole('heading', { name: 'Private preview entry fixture' })).toBeVisible();
+    expect(await previewTab.evaluate(() => window.opener)).toBeNull();
+    await expect(page).toHaveURL(consoleURL);
   });
 });
 
@@ -322,11 +326,10 @@ test.describe('operations with a live controller', () => {
         expect((await wrongOrigin.json()).code).toBe('auth.invalid_origin_or_csrf');
       });
 
-      const adminPreview = await adminContext.newPage();
-      const [ownerSocket, adminSocket] = await test.step('Open both private previews through the browser', async () => {
-        const sockets = await Promise.all([
+      const [ownerPreview, adminPreview] = await test.step('Open both private previews through the browser', async () => {
+        const pages = await Promise.all([
           openLivePreview(owner, management, preview, workspacePath, service),
-          openLivePreview(adminPreview, management, preview, workspacePath, service),
+          openLivePreview(administrator, management, preview, workspacePath, service),
         ]);
         const managementCookieNames = (await adminContext.cookies(management)).map(cookie => cookie.name);
         const previewCookieNames = (await adminContext.cookies(preview.href)).map(cookie => cookie.name);
@@ -334,8 +337,10 @@ test.describe('operations with a live controller', () => {
         expect(managementCookieNames).not.toContain('__Host-shiftbox_origin');
         expect(previewCookieNames).toContain('__Host-shiftbox_origin');
         expect(previewCookieNames).not.toContain('__Host-shiftbox_session');
-        return sockets;
+        return pages;
       });
+      const { socket: ownerSocket } = ownerPreview;
+      const { socket: adminSocket } = adminPreview;
 
       await test.step('Revoke only the administrator grant and observe the open tunnel close', async () => {
         await administrator.goto(new URL(workspacePath, management).href);
@@ -348,7 +353,7 @@ test.describe('operations with a live controller', () => {
         await expect(dialog).toBeHidden();
         await expect.poll(() => adminSocket.isClosed(), { timeout: 10_000 }).toBe(true);
         expect(ownerSocket.isClosed(), 'revocation preserves the owner tunnel').toBe(false);
-        expect((await adminPreview.reload({ waitUntil: 'domcontentloaded' }))?.status()).toBe(403);
+        expect((await adminPreview.tab.reload({ waitUntil: 'domcontentloaded' }))?.status()).toBe(403);
         const nextEntry = await requestLivePreviewEntry(administrator, entryURL, management, csrfToken, service);
         expect(nextEntry.status()).toBe(403);
         expect((await owner.request.get(preview.href, { maxRedirects: 0 })).status()).toBe(200);
@@ -424,20 +429,27 @@ async function signInForOperations(page: Page, management: string, account: Oper
   expect(session.installationState).toBe('active');
 }
 
-async function openLivePreview(page: Page, management: string, preview: URL, workspacePath: string, service: string): Promise<WebSocket> {
+async function openLivePreview(page: Page, management: string, preview: URL, workspacePath: string, service: string) {
   const previewSocketOrigin = `wss://${preview.host}`;
   let liveSocket: WebSocket | undefined;
-  page.on('websocket', socket => {
-    if (new URL(socket.url()).origin === previewSocketOrigin) {
-      socket.once('framereceived', () => { liveSocket = socket; });
-    }
-  });
-  await page.goto(new URL(workspacePath, management).href);
-  await page.getByRole('button', { name: `Open preview ${service.slice('preview-'.length)}`, exact: true }).click();
-  await page.waitForURL(preview.href);
+  const consoleURL = new URL(workspacePath, management).href;
+  await page.goto(consoleURL);
+  const [tab] = await Promise.all([
+    page.context().waitForEvent('page').then(tab => {
+      tab.on('websocket', socket => {
+        if (new URL(socket.url()).origin === previewSocketOrigin) {
+          socket.once('framereceived', () => { liveSocket = socket; });
+        }
+      });
+      return tab;
+    }),
+    page.getByRole('button', { name: `Open preview ${service.slice('preview-'.length)}`, exact: true }).click(),
+  ]);
+  await tab.waitForURL(preview.href);
+  await expect(page).toHaveURL(consoleURL);
   await expect.poll(() => liveSocket !== undefined && !liveSocket.isClosed(), {
     timeout: 20_000, message: 'the preview tunnel must deliver a frame before revocation',
   }).toBe(true);
   if (!liveSocket) throw new Error('Preview socket unavailable');
-  return liveSocket;
+  return { tab, socket: liveSocket };
 }

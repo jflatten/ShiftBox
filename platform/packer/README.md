@@ -96,9 +96,20 @@ candidate bundle and its manifest for UTM clone, boot, and enrollment checks.
 
 To import the candidate during local setup, pass its `final` directory to
 the setup command. Use the controller configuration for the same installation
-directory. The provider settings must include the UTM Documents directory,
-a host address the guest can reach, and resource bounds that include the
-image's virtual disk size.
+directory. The provider settings must include the UTM Documents directory
+and resource bounds that include the image's virtual disk size.
+
+For local UTM installs, omit `guestHost`, `enrollmentAddress`, `pollAddress`,
+and `tunnelAddress` from the `runtime` configuration to use UTM's default
+shared-network address, `192.168.64.1`. Enrollment, polling, and the guest
+tunnel use ports `19443`, `19444`, and `19445` respectively. ShiftBox waits
+for UTM to create the bridge during the first VM boot. The browser console
+uses its separately configured `browserAddress`.
+
+If your UTM shared network uses a different subnet, set all four guest
+settings to the appropriate host and listener addresses. An already enrolled
+workspace keeps the controller endpoint it was given, so changing the
+controller settings alone does not migrate that workspace.
 
 ```sh
 shiftbox setup --installation-dir /absolute/path/to/installation \
@@ -122,7 +133,6 @@ SHIFTBOX_TEST_UTM_BUNDLE="/absolute/path/to/final/shiftbox.utm" \
 SHIFTBOX_TEST_UTM_GUEST_HOST="your-guest-reachable-ip" \
 go test -tags utm_release -v ./tests/release -run '^TestUTMGuestEnrollment$'
 ```
-
 
 To verify the ARM64 Dev Container and offline repair IDE on an Apple Silicon
 Mac, use the same environment and add `SHIFTBOX_TEST_UTM_ARM64_WORKBENCHES=1`.

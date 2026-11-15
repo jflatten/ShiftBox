@@ -54,8 +54,9 @@ type guestListener struct {
 	server  *http.Server
 }
 
-// ListenGuests reserves both listeners and derives the endpoints for enrollment
-// media. A partial bind is closed before returning an error.
+// ListenGuests prepares the listeners and derives the endpoints for enrollment
+// media, including before UTM creates its shared network. A partial bind is
+// closed before returning an error.
 func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, authority *guest.Authority,
 	compatibility web.GuestCompatibility, now func() time.Time,
 ) (*GuestListeners, error) {
@@ -152,7 +153,7 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 }
 
 func listenGuest(address string, config *tls.Config, handler http.Handler, certificates *internalServerCertificate) (guestListener, error) {
-	listener, err := net.Listen("tcp", address)
+	listener, err := listenGuestNetwork(address, net.Listen)
 	if err != nil {
 		return guestListener{}, errors.New("cannot bind internal guest listener")
 	}

@@ -107,8 +107,8 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
                 <Stack gap={4}><Text size="sm" c="dimmed">Desired state</Text><Text fw={600}>{workspaceState(data.desiredState)}</Text></Stack>
               </Group>
               <Group align="flex-start">
-                {data.canOpenIde ? <OpenIDE id={id} csrfToken={csrfToken} /> : null}
-                {data.canOpenRepair ? <OpenIDE id={id} csrfToken={csrfToken} service="repair" describedBy={repairDescriptionId} /> : null}
+                {data.canOpenIde ? <WorkspaceEntryButton id={id} csrfToken={csrfToken} /> : null}
+                {data.canOpenRepair ? <WorkspaceEntryButton id={id} csrfToken={csrfToken} service="repair" describedBy={repairDescriptionId} /> : null}
                 {action ? (
                   <Group>
                     <Button variant={data.canOpenIde ? "default" : "filled"} loading={submitting === action} disabled={!!data.currentOperationId || operationBusy || !!submitting}
@@ -286,13 +286,13 @@ function WorkspacePreviews({ workspace, csrfToken, disabled, refresh }: {
       </form> : null}
       {error !== undefined ? <APIProblemView error={error} /> : null}
       {workspace.canOpenPreviews ? <Group>
-        {(workspace.previewPorts ?? []).map(port => <OpenIDE key={port} id={workspace.id} csrfToken={csrfToken} service={`preview-${port}`} />)}
+        {(workspace.previewPorts ?? []).map(port => <WorkspaceEntryButton key={port} id={workspace.id} csrfToken={csrfToken} service={`preview-${port}`} />)}
       </Group> : null}
     </Stack>
   );
 }
 
-function OpenIDE({ id, csrfToken, service = 'ide', describedBy }: {
+function WorkspaceEntryButton({ id, csrfToken, service = 'ide', describedBy }: {
   id: string; csrfToken: string; service?: 'ide' | 'repair' | `preview-${number}`; describedBy?: string;
 }) {
   const [submitting, setSubmitting] = useState(false);
@@ -302,7 +302,15 @@ function OpenIDE({ id, csrfToken, service = 'ide', describedBy }: {
     if (submitting) return;
     setSubmitting(true);
     setError(undefined);
+    let tab: Window | null = null;
     try {
+      // Reserve the tab during the click, before waiting for the grant.
+      tab = window.open('about:blank', '_blank');
+      if (!tab) {
+        setError('popup-blocked');
+        return;
+      }
+      tab.opener = null;
       const response = await fetch(`/api/v1/workspaces/${encodeURIComponent(id)}/entry-grants`, {
         method: 'POST', cache: 'no-store',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
@@ -313,13 +321,15 @@ function OpenIDE({ id, csrfToken, service = 'ide', describedBy }: {
       const url = new URL(exchangeUrl);
       if (url.protocol !== 'https:' || url.origin === window.location.origin || url.pathname !== '/_shiftbox/entry' ||
           url.username || url.password || !url.searchParams.get('grant')) {
-        throw new Error('Invalid IDE entry URL');
+        throw new Error('Invalid workspace entry URL');
       }
-      const entry = document.createElement('a');
+      if (tab.closed) return;
+      const entry = tab.document.createElement('a');
       entry.href = url.href;
       entry.rel = 'noreferrer';
       entry.click();
     } catch (error) {
+      tab?.close();
       setError(error);
     } finally {
       setSubmitting(false);
@@ -331,7 +341,9 @@ function OpenIDE({ id, csrfToken, service = 'ide', describedBy }: {
       <Button loading={submitting} aria-describedby={describedBy} onClick={() => void open()}>
         {service === 'ide' ? 'Open IDE' : service === 'repair' ? 'Open repair IDE' : `Open preview ${service.slice(8)}`}
       </Button>
-      {error !== undefined ? <APIProblemView error={error} /> : null}
+      {error === 'popup-blocked' ? (
+        <Alert color="red" title="Browser tab blocked">Allow pop-ups for ShiftBox and try again.</Alert>
+      ) : error !== undefined ? <APIProblemView error={error} /> : null}
     </Stack>
   );
 }

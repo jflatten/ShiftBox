@@ -23,7 +23,7 @@ type guestTunnelListener struct {
 func listenGuestTunnel(address string, authority *guest.Authority, certificates *internalServerCertificate,
 	tunnels *proxy.Tunnels, protocol string, authenticate func(context.Context, *x509.Certificate) (proxy.TunnelAuthority, error),
 ) (*guestTunnelListener, error) {
-	listener, err := net.Listen("tcp", address)
+	listener, err := listenGuestNetwork(address, net.Listen)
 	if err != nil {
 		return nil, errors.New("cannot bind internal guest tunnel listener")
 	}

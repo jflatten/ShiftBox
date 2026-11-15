@@ -3278,3 +3278,10 @@ This checkpoint does not itself change the goal status.
 - [X] T135 Preload the pinned ARM64 base image and verify the launch on a disposable native UTM workspace.
 - [X] T136 Roll out the faster controller and a uniquely versioned ARM64 image to the local installation and select the new default.
 - [X] T137 Time a real UI launch with the updated image and identify the remaining work in the one-minute budget.
+
+## Workspace console
+
+- [X] T138 Open the workspace IDE in a new tab while keeping the ShiftBox console open.
+- [X] T139 Open the repair IDE in a new tab and refresh the local controller build.
+- [X] T140 Open workspace previews in a new tab and refresh the local controller build.
+- [X] T141 Default local UTM guest communication to the private bridge and support startup before the bridge is available.

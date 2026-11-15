@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"time"
 )
+
+// UTMSharedHost is the default Mac address on UTM's private shared network.
+const UTMSharedHost = "192.168.64.1"
 
 // Config holds explicit installation inputs; only composition chooses its path.
 type Config struct {
@@ -98,5 +102,26 @@ func Load(path string) (Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
+	if cfg.Runtime != nil {
+		cfg.Runtime.setUTMGuestDefaults()
+	}
 	return cfg, nil
+}
+
+func (r *ControllerRuntime) setUTMGuestDefaults() {
+	if r.GuestHost == "" {
+		r.GuestHost = UTMSharedHost
+	}
+	if r.GuestHost != UTMSharedHost {
+		return
+	}
+	if r.EnrollmentAddress == "" {
+		r.EnrollmentAddress = net.JoinHostPort(r.GuestHost, "19443")
+	}
+	if r.PollAddress == "" {
+		r.PollAddress = net.JoinHostPort(r.GuestHost, "19444")
+	}
+	if r.TunnelAddress == "" {
+		r.TunnelAddress = net.JoinHostPort(r.GuestHost, "19445")
+	}
 }

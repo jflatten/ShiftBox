@@ -77,8 +77,7 @@ test('shares a template while preserving workspace and guest owner authority', a
     expect(owned.templateId).toBe(template.id);
     expect(owned.canOpenIde).toBe(true);
 
-    const memberIDE = await memberContext.newPage();
-    await openIDE(memberIDE, workspacePath, origin);
+    const memberIDE = await openIDE(member, workspacePath, origin);
     const guestOrigin = new URL(memberIDE.url()).origin;
     const memberTerminal = await openTerminal(memberIDE);
 
@@ -150,17 +149,17 @@ test('shares a template while preserving workspace and guest owner authority', a
       await expectSecretMetadata(member, 'user', memberSession.user.id, secretKey, values.member);
     });
 
-    const adminIDE = await adminContext.newPage();
     const adminStreams: WebSocket[] = [];
-    adminIDE.on('websocket', socket => {
-      if (new URL(socket.url()).host === new URL(guestOrigin).host) adminStreams.push(socket);
-    });
-    await test.step('Use the member owner context during an administrator IDE connection', async () => {
+    const adminIDE = await test.step('Use the member owner context during an administrator IDE connection', async () => {
       await administrator.goto('/account/');
       await expect(administrator.getByText('GitHub is connected.', { exact: true })).toBeVisible();
       await expect(member.getByText('GitHub is connected.', { exact: true })).toBeVisible();
       await saveSecret(administrator, secretKey, values.administrator);
-      await openIDE(adminIDE, workspacePath, origin);
+      const adminIDE = await openIDE(administrator, workspacePath, origin, ide => {
+        ide.on('websocket', socket => {
+          if (new URL(socket.url()).host === new URL(guestOrigin).host) adminStreams.push(socket);
+        });
+      });
       expect(new URL(adminIDE.url()).origin).toBe(guestOrigin);
       const adminTerminal = await openTerminal(adminIDE);
       await verifyGuestSecret(adminTerminal, secretKey, values.member);
@@ -174,6 +173,7 @@ test('shares a template while preserving workspace and guest owner authority', a
       // The connected administrator's OAuth grant must never replace the
       // revoked owner grant in that same administrator's open workbench.
       await terminalCheck(adminTerminal, `(printf 'protocol=https\\nhost=github.com\\npath=%s\\n\\n' '${repo}' | shiftbox git credential get >/dev/null 2>&1); [ "$?" -eq 4 ]`);
+      return adminIDE;
     });
 
     await test.step('Preserve existing workspace access through archive, then revoke the exact permissions', async () => {
@@ -324,11 +324,18 @@ async function enterPassword(field: Locator, value: string) {
   await field.page().keyboard.insertText(value);
 }
 
-async function openIDE(page: Page, workspacePath: string, managementOrigin: string) {
+async function openIDE(page: Page, workspacePath: string, managementOrigin: string, onOpen?: (ide: Page) => void) {
   await page.goto(workspacePath);
-  await page.getByRole('button', { name: 'Open IDE', exact: true }).click({ timeout: workbenchTimeout });
-  await page.waitForURL(url => url.protocol === 'https:' && url.origin !== managementOrigin, { timeout: workbenchTimeout });
-  await expect(page.locator('.monaco-workbench')).toBeVisible({ timeout: workbenchTimeout });
+  const [ide] = await Promise.all([
+    page.context().waitForEvent('page', { timeout: workbenchTimeout }).then(ide => {
+      onOpen?.(ide);
+      return ide;
+    }),
+    page.getByRole('button', { name: 'Open IDE', exact: true }).click({ timeout: workbenchTimeout }),
+  ]);
+  await ide.waitForURL(url => url.protocol === 'https:' && url.origin !== managementOrigin, { timeout: workbenchTimeout });
+  await expect(ide.locator('.monaco-workbench')).toBeVisible({ timeout: workbenchTimeout });
+  return ide;
 }
 
 async function openTerminal(page: Page): Promise<Terminal> {
