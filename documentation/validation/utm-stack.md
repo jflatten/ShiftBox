@@ -303,6 +303,13 @@ The fixture exercised the repair container over local Docker. The
 frozen candidate's browser and trusted repair origin remain a separate
 native validation.
 
+The frozen RC3 source repeated all four failure cases with the race
+detector in 27.74 seconds. The first fixture extracted the public IDE
+files with a restrictive mask, which prevented the non-root editor
+from loading. The rerun used the platform recipe's permissions and a
+writable temporary IDE home. Configuration, build, hook, and IDE failures
+all reached the isolated repair workbench and preserved the checkout.
+
 Run with `SHIFTBOX_TEST_REPAIR_IMAGE` set to the local repair image's
 `sha256:` ID and `SHIFTBOX_TEST_DEVCONTAINER_CLI` set to the pinned CLI.
 Use `go test -race -tags utm_release ./internal/guest -run '^TestRepairDockerFailures$' -count=1 -v`.
