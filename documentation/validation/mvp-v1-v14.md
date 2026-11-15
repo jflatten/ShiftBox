@@ -1,6 +1,9 @@
 # MVP release validation tracker
 
-T124 remains open. `development-repair` has native stop/start, rebuild, and
+The user waived the remaining T124 checks for this MVP pass. The gate
+table records available evidence and outstanding verification. The
+checked-in release manifest remains the RC1 record. `development-repair`
+has native stop/start, rebuild, and
 repair evidence. The newer `mvp-rc1` build has completed native image
 validation, protected setup, fresh administrator sign-in, and a verified
 prelaunch management backup. The workspace run completed GitHub consent,
@@ -8,9 +11,8 @@ private checkout, initial browser IDE verification, and the retained-file
 journey through stop/start, rebuild, repair, and retry. The strict controller
 journal check passed on the same installation.
 See [MVP workspace validation](mvp-workspace.md) for both sets of results.
-Run the release gates against one frozen candidate and record its component
-versions and hashes in `platform/manifests/release.json` before marking a
-gate passed.
+Use one frozen candidate and record its component versions and hashes in
+`platform/manifests/release.json` when completing the full release audit.
 
 ## Candidate provenance
 

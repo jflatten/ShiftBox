@@ -402,6 +402,6 @@ detector. They cover guest scope, metadata-only reads, template grants and
 archive, callback and repository checks, and refresh and revocation fencing.
 The native single-owner checkout remains required. See [sharing validation](template-sharing.md).
 
-T125 remains open for the technical scenarios. The user deferred the
+The user waived the remaining T125 technical scenarios and deferred the
 moderated first-use study for MVP. The [release tracker](mvp-v1-v14.md)
-records the remaining live checks.
+records the outstanding verification.

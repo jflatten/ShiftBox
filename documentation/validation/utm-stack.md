@@ -72,6 +72,14 @@ and disk remained in use until the test verified cleanup.
 
 ## Expired guest recovery
 
+The RC3 attempt enrolled successfully, stopped, and let its shortened
+test certificate expire. The controller invalidated the previous grant
+and attached fresh enrollment media to the same VM. UTM stayed in
+Starting until the 27-minute test deadline, and the controller recorded
+no fresh authenticated contact. Cleanup removed the disposable VM through
+UTM after the test. The user subsequently waived the remaining T124 and
+T125 release checks for this MVP pass.
+
 The race-enabled `TestUTMExpiredGuestRecovery` passed against the
 `mvp-rc1` image in 289.46 seconds. The guest first authenticated with a
 short-lived certificate. The test stopped the guest and waited for that
