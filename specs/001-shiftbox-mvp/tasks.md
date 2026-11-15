@@ -3226,3 +3226,19 @@ This checkpoint does not itself change the goal status.
   with a persistent View notices action and explicit dismissal. Verified 19
   targeted UI tests, production build, and desktop/phone Chrome journeys,
   including overlay positioning and viewport bounds. Updated the live demo.
+
+### Audit UI review — Carbon data table guidance
+
+- [X] T077: Added an Audit history card with a toolbar, refresh, clear cursor
+  pagination, local timestamps, readable action labels, outcome badges, and
+  permission-gated current user names. Expandable rows retain original event,
+  actor, and resource identifiers, UTC time, action and reason codes without
+  rendering arbitrary metadata.
+- [X] T077: Added full-history action/resource filters with validation and
+  event-detail shortcuts, plus explicitly scoped current-page search and
+  outcome filtering. Empty, loading, error/retry, and unavailable-name states
+  preserve read-only audit evidence and administrator authorization.
+- [X] T077: Verified six Audit unit tests, TypeScript/production export, and
+  Chrome journeys at 1280px and 390px covering keyboard expansion, filters,
+  paging, viewport bounds, and visible outcome labels. Updated and visually
+  checked the running embedded demo against its real audit history.
