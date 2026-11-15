@@ -13,12 +13,6 @@
       "skillPath": "skills/productivity/grilling/SKILL.md",
       "computedHash": "485451958784497cd4c4dbea13cb5bbb579da58fac0d0e45f3bcb310fab68ac7"
     },
-    "less-is-more-ui": {
-      "source": "Mendiak/less-is-more-ui",
-      "sourceType": "github",
-      "skillPath": "SKILL.md",
-      "computedHash": "74b486e73c6e8ded71257c2f7ed8da0792e12c909c0f4a3a3cbb1a781b52d08a"
-    },
     "mantine-combobox": {
       "source": "mantinedev/skills",
       "sourceType": "github",
