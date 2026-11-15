@@ -14,7 +14,7 @@ const stateLabels = {
   revoked: 'GitHub is disconnected.',
 };
 
-export function GitConnection({ userID, csrfToken }: { userID: string; csrfToken: string }) {
+export function GitConnection({ userID, csrfToken, description }: { userID: string; csrfToken: string; description?: string }) {
   const status = useQuery<{ state: keyof typeof stateLabels }>({
     queryKey: ['git-authorization', userID],
     queryFn: async ({ signal }) => {
@@ -64,6 +64,7 @@ export function GitConnection({ userID, csrfToken }: { userID: string; csrfToken
   return (
     <Stack align="flex-start" gap="sm">
       <Title order={2}>GitHub</Title>
+      {description ? <Text size="sm" c="dimmed">{description}</Text> : null}
       {status.isPending ? <Text role="status">Checking GitHub authorization…</Text> : null}
       {status.isError ? <>
         <APIProblemView error={status.error} />

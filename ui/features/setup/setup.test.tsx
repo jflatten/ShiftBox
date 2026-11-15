@@ -65,6 +65,7 @@ test('changes the password with the restricted session and requires fresh sign-i
   expect(screen.getByLabelText(/^Current password/)).toHaveFocus();
   await user.type(screen.getByLabelText(/^Current password/), 'temporary-password');
   await user.type(screen.getByLabelText(/^New password/), 'different-long-password');
+  await user.type(screen.getByLabelText(/^Confirm password/), 'different-long-password');
   await user.click(save);
   await waitFor(() => expect(screen.getByText('Sign in again with your new password.')).toBeVisible());
   expect(screen.queryByLabelText(/^New password/)).not.toBeInTheDocument();

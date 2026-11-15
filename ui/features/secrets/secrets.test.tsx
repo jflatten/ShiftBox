@@ -8,7 +8,15 @@ import { Templates } from '../templates/templates';
 import { Secrets } from './secrets';
 
 const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; });
+beforeEach(() => {
+  // Menu visibility needs layout measurements that jsdom does not provide.
+  jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 40, width: 100, height: 40, toJSON: () => ({}),
+  });
+  jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1024);
+  jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(768);
+});
+afterEach(() => { globalThis.fetch = originalFetch; jest.restoreAllMocks(); });
 
 const now = '2026-11-14T00:00:00Z';
 const secret = { name: 'API_KEY', scope: 'template', scopeId: 'project', explicitEmpty: true,
@@ -89,7 +97,9 @@ test('opens organization secrets with the server-provided scope', async () => {
     },
   }));
   globalThis.fetch = fetch as unknown as typeof globalThis.fetch;
+  const user = userEvent.setup();
   render(<Providers><Infrastructure /></Providers>);
+  await user.click(await screen.findByRole('tab', { name: 'Secrets' }));
   expect(await screen.findByRole('heading', { name: 'Organization secrets' })).toBeVisible();
   expect(fetch).toHaveBeenCalledWith('/api/v1/secrets?scope=organization&scopeId=installation', expect.anything());
 });
@@ -111,8 +121,9 @@ test('offers project secret management only for templates the user manages', asy
   render(<Providers><Templates /></Providers>);
   const own = await screen.findByRole('row', { name: /My project/ });
   const shared = screen.getByRole('row', { name: /Shared project/ });
-  expect(within(shared).queryByRole('button', { name: 'Project secrets' })).not.toBeInTheDocument();
-  await user.click(within(own).getByRole('button', { name: 'Project secrets' }));
+  expect(within(shared).queryByRole('button', { name: /Actions for/ })).not.toBeInTheDocument();
+  await user.click(within(own).getByRole('button', { name: 'Actions for My project' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Project secrets' }));
   await screen.findByRole('heading', { name: 'Project template secrets' });
   expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/secrets?scope=template&scopeId=own-project', expect.anything());
 });

@@ -179,6 +179,7 @@ test('restricted setup keyboard progression', async ({ page }) => {
   await current('Password');
   await enter(page, page.getByLabel(/^Current password/i), 'fixture-old-password');
   await enter(page, page.getByLabel(/^New password/i), 'fixture-new-password');
+  await enter(page, page.getByLabel(/^Confirm password/i), 'fixture-new-password');
   await activate(page, page.getByRole('button', { name: 'Change password' }));
   await expect(page.getByText('Sign in again with your new password.')).toBeVisible();
   await tabTo(page, page.getByRole('link', { name: 'Sign in', exact: true }));
@@ -630,4 +631,88 @@ test('recovery review and activation', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Recovery complete' })).toBeFocused();
   await activate(page, page.getByRole('button', { name: 'Activate reviewed installation: Completed' }));
   await expect(page.getByText('Activation recorded.')).toBeVisible();
+});
+
+// Personal settings and sign-out are keyboard accessible from the header;
+// cancelling a password edit returns focus without changing credentials.
+test('personal settings avatar menu and password dialog', async ({ page }) => {
+  let signedOut = false;
+  let mutations = 0;
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) {
+      if (route.request().method() === 'DELETE') {
+        signedOut = true;
+        return route.fulfill({ status: 204 });
+      }
+      if (signedOut) return route.fulfill({ status: 401, json: {} });
+      return route.fulfill({ json: { ...admin(['session.logout', 'session.change_password', 'git.manage', 'secret.manage_user']),
+        user: { id: 'admin', role: 'administrator', displayName: 'Alex Developer', primaryEmail: 'alex@example.test', credentialMode: 'local' },
+      } });
+    }
+    if (path.endsWith('/session/password')) {
+      mutations++;
+      return route.fulfill({ status: 500, json: {} });
+    }
+    if (path.endsWith('/git/authorization')) return route.fulfill({ json: { state: 'connected' } });
+    if (path.endsWith('/secrets')) return route.fulfill({ json: [] });
+  });
+  await page.goto('/account/');
+  const avatar = page.getByRole('button', { name: 'User menu' });
+  await expect(page.getByRole('banner').getByRole('button', { name: 'User menu' })).toBeVisible();
+  await activate(page, avatar);
+  await expect(page.getByRole('menu').locator('[data-autofocus]')).toBeFocused();
+  await expect(page.getByRole('menu')).toContainText('alex@example.test');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitem', { name: 'Personal settings' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Personal settings', exact: true })).toBeVisible();
+  const change = page.getByRole('button', { name: 'Change password', exact: true });
+  await activate(page, change);
+  const dialog = page.getByRole('dialog', { name: 'Change password' });
+  await expect(dialog.getByLabel(/^Current password/)).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(change).toBeFocused();
+  expect(mutations).toBe(0);
+  await activate(page, avatar);
+  await expect(page.getByRole('menu').locator('[data-autofocus]')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(avatar).toBeHidden();
+  await expect(page.getByRole('region', { name: 'Your profile' })).toBeHidden();
+});
+
+// A password typo stays in the dialog with an accessible field error;
+// only matching entries reach the API, without the confirmation value.
+test('password confirmation blocks mismatched changes', async ({ page }) => {
+  let submitted: Record<string, string> | undefined;
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) return route.fulfill({ json: { ...admin(['session.change_password']),
+      user: { id: 'admin', role: 'administrator', credentialMode: 'local' },
+    } });
+    if (path.endsWith('/session/password')) {
+      submitted = route.request().postDataJSON();
+      return route.fulfill({ status: 204 });
+    }
+  });
+  await page.goto('/account/');
+  await activate(page, page.getByRole('button', { name: 'Change password', exact: true }));
+  const dialog = page.getByRole('dialog', { name: 'Change password' });
+  await enter(page, dialog.getByLabel(/^Current password/), 'current-fixture');
+  await enter(page, dialog.getByLabel(/^New password/), 'replacement-fixture');
+  const confirmation = dialog.getByLabel(/^Confirm password/);
+  await enter(page, confirmation, 'replacement-fixture-typo');
+  await activate(page, dialog.getByRole('button', { name: 'Change password' }));
+  await expect(confirmation).toBeFocused();
+  await expect(confirmation).toHaveAttribute('aria-invalid', 'true');
+  await expect(dialog.getByText('Passwords do not match. Re-enter your new password.')).toBeVisible();
+  expect(submitted).toBeUndefined();
+  await confirmation.fill('replacement-fixture');
+  await activate(page, dialog.getByRole('button', { name: 'Change password' }));
+  await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
+  expect(submitted).toEqual({ currentPassword: 'current-fixture', newPassword: 'replacement-fixture' });
 });

@@ -48,7 +48,7 @@ test('restores keyboard focus after cancelling workspace deletion', async () => 
       permissions: [], csrfToken: 'fixture',
     }) } as Response;
     if (input === `/api/v1/workspaces/${id}`) return { ok: true, json: async () => ({
-      id, ownerId: 'member', templateId: 'template-one', templateRevision: 1,
+      id, name: 'Keyboard workspace', ownerId: 'member', templateId: 'template-one', templateRevision: 1,
       desiredState: 'stopped', observedState: 'stopped', currentOperationId: null, version: 4,
       platformRelease: 'release', resources: { cpuCount: 2, memoryMiB: 4096, diskMiB: 32768 },
     }) } as Response;
@@ -66,7 +66,9 @@ test('restores keyboard focus after cancelling workspace deletion', async () => 
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await user.keyboard('{Enter}');
   expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  expect(screen.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Keyboard workspace' })).toBeVisible();
+  await user.tab();
+  expect(screen.getByRole('button', { name: 'User menu' })).toHaveFocus();
   await user.tab();
   const nav = within(screen.getByRole('navigation', { name: 'Main navigation' }));
   expect(nav.getByRole('link', { name: 'Workspaces' })).toHaveFocus();

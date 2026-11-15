@@ -17,11 +17,12 @@ interface SecretMetadata {
 
 type SecretEditor = { action: 'save'; name?: string } | { action: 'delete'; item: SecretMetadata };
 
-export function Secrets({ scope, scopeID, userID, csrfToken }: {
+export function Secrets({ scope, scopeID, userID, csrfToken, description }: {
   scope: Scope;
   scopeID: string;
   userID: string;
   csrfToken: string;
+  description?: string;
 }) {
   const metadata = useQuery({
     queryKey: ['secret-metadata', userID, scope, scopeID],
@@ -50,6 +51,7 @@ export function Secrets({ scope, scopeID, userID, csrfToken }: {
         <Title order={2}>{scopeLabels[scope]} secrets</Title>
         {rows ? <Button onClick={() => { setStatus(''); setEditor({ action: 'save' }); }}>Add secret</Button> : null}
       </Group>
+      {description ? <Text size="sm" c="dimmed">{description}</Text> : null}
       {status ? <Text role="status" size="sm">{status}</Text> : null}
       {metadata.isPending ? <Text role="status">Loading secrets…</Text> : null}
       {metadata.isError ? <>

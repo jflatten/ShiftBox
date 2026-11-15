@@ -3,7 +3,8 @@ import type { ShellSession } from '../components/app-shell';
 import { readProblem } from './api-problem';
 
 interface SessionView extends Omit<ShellSession, 'role'> {
-  user: { id: string; role: ShellSession['role']; mustChangePassword?: boolean };
+  user: { id: string; role: ShellSession['role']; mustChangePassword?: boolean;
+    primaryEmail?: string; displayName?: string | null; credentialMode?: 'local' | 'external' };
   csrfToken: string;
   organizationSecretScopeId?: string;
   recoveryReviewId?: string;

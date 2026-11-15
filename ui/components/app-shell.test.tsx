@@ -1,9 +1,18 @@
 import { MantineProvider } from '@mantine/core';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import { ShiftBoxShell } from './app-shell';
 import userEvent from '@testing-library/user-event';
 import { Providers } from '../app/providers';
 
+beforeEach(() => {
+  // jsdom has no layout; menu anchors need a visible viewport.
+  jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 40, width: 100, height: 40, toJSON: () => ({}),
+  });
+  jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1024);
+  jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(768);
+});
+afterEach(() => jest.restoreAllMocks());
 
 // A member must not be offered administration navigation by the shared shell.
 test('shows member navigation and the approved brand', () => {
@@ -91,14 +100,51 @@ test('signs out a restricted session with its CSRF token', async () => {
       role: 'member', mode: 'password_change', installationState: 'active',
       permissions: ['session.change_password', 'session.logout'], csrfToken: 'fixture',
     }} alerts={[]}><h1>Change password</h1></ShiftBoxShell></Providers>);
-    // Restricted users must be able to find sign-out in the shared navigation tray.
-    expect(screen.getByRole('navigation', { name: 'Main navigation' })).toContainElement(screen.getByRole('button', { name: 'Sign out' }));
-    expect(screen.getByRole('main')).not.toContainElement(screen.getByRole('button', { name: 'Sign out' }));
-    await user.click(screen.getByRole('button', { name: 'Sign out' }));
+    const trigger = screen.getByRole('button', { name: 'User menu' });
+    expect(screen.getByRole('banner')).toContainElement(trigger);
+    expect(within(screen.getByRole('navigation')).queryByRole('button', { name: 'Sign out' })).toBeNull();
+    await user.click(trigger);
+    await user.click(await screen.findByRole('menuitem', { name: 'Sign out' }));
     expect(fetch).toHaveBeenCalledWith('/api/v1/session', expect.objectContaining({
       method: 'DELETE', headers: { 'X-CSRF-Token': 'fixture' },
     }));
     expect(await screen.findByRole('link', { name: 'Sign in' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Change password' })).not.toBeInTheDocument();
+  } finally { globalThis.fetch = original; }
+});
+
+// The header menu identifies the current user without exposing internal IDs,
+// and personal settings no longer appears in the primary navigation.
+test('offers personal settings through the user avatar menu', async () => {
+  const user = userEvent.setup();
+  render(<MantineProvider><ShiftBoxShell session={{ role: 'member', mode: 'normal', installationState: 'active', permissions: [],
+    user: { displayName: 'Alex Developer', primaryEmail: 'alex@example.test' },
+  }} alerts={[]}><h1>Workspaces</h1></ShiftBoxShell></MantineProvider>);
+  expect(within(screen.getByRole('navigation')).queryByRole('link', { name: /Account|Personal settings/ })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'User menu' }));
+  expect(await screen.findByText('Alex Developer')).toBeVisible();
+  expect(screen.getByText('alex@example.test')).toBeVisible();
+  expect(screen.getByRole('menuitem', { name: 'Personal settings' })).toHaveAttribute('href', '/account/');
+  await user.keyboard('{Escape}');
+  expect(screen.getByRole('button', { name: 'User menu' })).toHaveFocus();
+});
+
+// A failed sign-out must leave the private page intact and provide an error;
+// retry retires the session only after the server accepts the request.
+test('keeps the session when sign-out fails and supports retry', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = jest.fn().mockRejectedValueOnce(new Error('Offline')).mockResolvedValue({ ok: true, status: 204 });
+  try {
+    const user = userEvent.setup();
+    render(<Providers><ShiftBoxShell session={{ role: 'member', mode: 'normal', installationState: 'active',
+      permissions: ['session.logout'], csrfToken: 'fixture',
+    }} alerts={[]}><h1>Private page</h1></ShiftBoxShell></Providers>);
+    await user.click(screen.getByRole('button', { name: 'User menu' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Sign out' }));
+    expect(await screen.findByRole('alert')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Private page' })).toBeVisible();
+    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    expect(await screen.findByRole('link', { name: 'Sign in' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'User menu' })).toBeNull();
   } finally { globalThis.fetch = original; }
 });

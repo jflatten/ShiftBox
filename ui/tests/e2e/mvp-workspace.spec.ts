@@ -77,6 +77,7 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     await expect(page.getByLabel(/^Current password/)).toBeFocused();
     await enter(page.getByLabel(/^Current password/), installation.temporaryPassword);
     await enter(page.getByLabel(/^New password/), installation.password);
+    await enter(page.getByLabel(/^Confirm password/), installation.password);
     await activate(page.getByRole('button', { name: 'Change password' }));
     await activate(page.getByRole('link', { name: 'Sign in', exact: true }));
     await passwordLogin(page, installation.administratorEmail, installation.password);

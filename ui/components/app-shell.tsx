@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import { Alert, AppShell, Burger, Button, Group, Image, NavLink, Stack, useComputedColorScheme } from '@mantine/core';
+import { Alert, AppShell, Avatar, Burger, Group, Image, Menu, NavLink, Stack, Text, UnstyledButton, useComputedColorScheme } from '@mantine/core';
 import { useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from './api-problem';
 import { ExternalReauthorization } from '../features/session/external-reauthorization';
@@ -10,6 +10,7 @@ import { readProblem } from '../lib/api-problem';
 import { SignInChoices } from '../features/session/sign-in';
 
 export interface ShellSession {
+  user?: { displayName?: string | null; primaryEmail?: string };
   role: 'member' | 'administrator';
   mode: string;
   installationState: string;
@@ -27,6 +28,8 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
 }) {
   const [opened, setOpened] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<unknown>();
+  const [signOutPending, setSignOutPending] = useState(false);
   const scheme = useComputedColorScheme('light');
   const permitted = (action: string) => session?.permissions.includes(action);
   const canRenew = permitted('session.external_reauthorize') && !!session?.csrfToken;
@@ -34,7 +37,7 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
   const expired = useAuthorizationExpired(deadline);
   const renewalRequired = canRenew && (expired || !Number.isFinite(deadline));
   const normal = !signedOut && session?.mode === 'normal' && session.installationState === 'active' && !renewalRequired;
-  const account = (normal && (permitted('git.manage') || permitted('secret.manage_user'))) ||
+  const account = normal ||
     (!signedOut && !renewalRequired && session?.installationState === 'active' && permitted('session.change_password'));
   const recovery = !signedOut && session?.mode === 'recovery_review' &&
     session.installationState === 'recovery' && permitted('recovery.review');
@@ -42,30 +45,46 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
   return (
     <AppShell header={{ height: 72 }} navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="lg">
       <AppShell.Header>
-        <Group h="100%" px="lg">
-          <Burger opened={opened} onClick={() => setOpened(value => !value)} hiddenFrom="sm" aria-label="Toggle navigation" aria-expanded={opened} />
-          <Image src={`/brand/shiftbox-logo-${scheme}.svg`} alt="ShiftBox" w={160} h={40} fit="contain" />
+        <Group h="100%" px="lg" justify="space-between" wrap="nowrap">
+          <Group wrap="nowrap">
+            <Burger opened={opened} onClick={() => setOpened(value => !value)} hiddenFrom="sm" aria-label="Toggle navigation" aria-expanded={opened} />
+            <Image src={`/brand/shiftbox-logo-${scheme}.svg`} alt="ShiftBox" w={160} h={40} fit="contain" />
+          </Group>
+          {!signedOut && session ? <Menu position="bottom-end" shadow="md" width={280}
+            transitionProps={{ duration: 0 }} styles={{ dropdown: { maxWidth: 'calc(100vw - 32px)' } }}>
+            <Menu.Target>
+              <UnstyledButton aria-label="User menu" title="Personal settings and sign out" style={{ borderRadius: 'var(--mantine-radius-md)' }}>
+                <Avatar name={session.user?.displayName || session.user?.primaryEmail?.split('@')[0]} color="violet" radius="md" size={44} aria-hidden="true" />
+              </UnstyledButton>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>
+                <Text fw={600} c="var(--mantine-color-text)" style={{ overflowWrap: 'anywhere' }}>{session.user?.displayName || session.user?.primaryEmail || 'Signed in'}</Text>
+                {session.user?.displayName && session.user.primaryEmail ? <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{session.user.primaryEmail}</Text> : null}
+                <Text size="xs" mt={4}>{session.role === 'administrator' ? 'Administrator' : 'Member'}</Text>
+              </Menu.Label>
+              <Menu.Divider />
+              {account ? <Menu.Item component="a" href="/account/">Personal settings</Menu.Item> : null}
+              {permitted('session.logout') && session.csrfToken ? <SignOut csrfToken={session.csrfToken}
+                pending={signOutPending} setPending={setSignOutPending} onError={setSignOutError} onSignedOut={() => setSignedOut(true)} /> : null}
+            </Menu.Dropdown>
+          </Menu> : null}
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="md" component="nav" aria-label="Main navigation">
         {normal ? <NavLink href="/workspaces/" label="Workspaces" /> : null}
         {normal ? <NavLink href="/templates/" label="Templates" /> : null}
         {normal && permitted('notice.list') ? <NavLink href="/notices/" label="Notices" /> : null}
-        {account ? <NavLink href="/account/" label="Account" /> : null}
         {!signedOut && !renewalRequired && session?.role === 'administrator' && permitted('infrastructure.view') ? <NavLink href="/infrastructure/" label="Infrastructure" /> : null}
         {normal && session?.role === 'administrator' && permitted('user.list') ? <NavLink href="/users/" label="Users" /> : null}
         {normal && session?.role === 'administrator' && permitted('audit.list') ? <NavLink href="/audit/" label="Audit" /> : null}
         {backup || recovery ? <NavLink href="/recovery/" label="Backup & Recovery" /> : null}
-        {!signedOut && permitted('session.logout') && session?.csrfToken ? (
-          <AppShell.Section mt="auto" pt="md">
-            <SignOut csrfToken={session.csrfToken} onSignedOut={() => setSignedOut(true)} />
-          </AppShell.Section>
-        ) : null}
       </AppShell.Navbar>
       <AppShell.Main>
         <Stack gap="lg">
           <Stack gap="sm" role="region" aria-label="Persistent conditions">
             {error !== undefined ? <APIProblemView error={error} /> : null}
+            {signOutError !== undefined ? <APIProblemView error={signOutError} /> : null}
             {alerts.map(alert => <Alert key={alert.id} title={alert.title} color={alert.color ?? 'red'}>{alert.detail}</Alert>)}
             {!signedOut && canRenew && session?.csrfToken ? (
               <ExternalReauthorization key={session.csrfToken} csrfToken={session.csrfToken}
@@ -80,15 +99,16 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
   );
 }
 
-function SignOut({ csrfToken, onSignedOut }: { csrfToken: string; onSignedOut: () => void }) {
+function SignOut({ csrfToken, onSignedOut, onError, pending, setPending }: {
+  csrfToken: string; onSignedOut: () => void; onError: (error: unknown) => void;
+  pending: boolean; setPending: (pending: boolean) => void;
+}) {
   const client = useQueryClient();
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<unknown>();
 
   async function signOut() {
     if (pending) return;
     setPending(true);
-    setError(undefined);
+    onError(undefined);
     try {
       const response = await fetch('/api/v1/session', {
         method: 'DELETE', headers: { 'X-CSRF-Token': csrfToken }, cache: 'no-store',
@@ -99,14 +119,13 @@ function SignOut({ csrfToken, onSignedOut }: { csrfToken: string; onSignedOut: (
       client.removeQueries({ predicate: query => query.queryKey[0] !== 'session' });
       client.setQueryData(['session'], null);
     } catch (error) {
-      setError(error);
+      onError(error);
     } finally {
       setPending(false);
     }
   }
 
-  return <Stack align="flex-start">
-    {error !== undefined ? <APIProblemView error={error} /> : null}
-    <Button variant="default" loading={pending} onClick={() => void signOut()}>Sign out</Button>
-  </Stack>;
+  return <Menu.Item closeMenuOnClick={false} disabled={pending} onClick={() => void signOut()}>
+    {pending ? 'Signing out…' : 'Sign out'}
+  </Menu.Item>;
 }
