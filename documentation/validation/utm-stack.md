@@ -113,6 +113,23 @@ reported the same running VM and owned disk until fixture cleanup.
 Set `SHIFTBOX_TEST_UTM_EXPIRED_CA=1` with the normal native settings.
 The test waits for wall-clock expiry and uses the ordinary TLS checks.
 
+## Revoked native guest and verified deletion
+
+`TestUTMRevokedGuestStaysIneligible` passed with `-race` in 104.73 seconds
+on `mvp-rc2` and UTM 5.0.8. After initial authentication, the fixture
+marked the guest registration revoked in the disposable database. The
+controller refused the original certificate, and authenticated contact did
+not advance during 25 seconds with the same VM running. The host stopped
+the revoked guest, and the ordinary stop operation reconciled the retained
+disk without relying on a guest acknowledgement.
+
+The ordinary start operation reported that the revoked identity was
+ineligible for automatic recovery. It issued no enrollment grant and left
+the original VM stopped with the same disk. The ordinary deletion operation
+confirmed provider absence, released the disk reservation, and recorded
+the registration as deleted. The original certificate remained denied.
+Set `SHIFTBOX_TEST_UTM_REVOKED_GUEST=1` with the normal native fixture settings.
+
 ## Signed maintenance fixture
 
 `TestUTMGuestMaintenance` reuses the enrollment fixture and only needs one

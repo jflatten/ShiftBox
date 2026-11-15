@@ -155,6 +155,12 @@ fresh TLS contact stopped. Correcting the guest clock restored contact
 with the original guest certificate, VM, and disk. See [the native clock
 test](utm-stack.md#guest-clock-correction).
 
+The native `mvp-rc2` revocation run denied the old certificate while the
+guest was running. After a host stop, the start workflow issued no recovery
+grant and kept the disk. Normal deletion verified provider absence, released
+the disk reservation, and left the deleted identity denied. See [the native
+revocation test](utm-stack.md#revoked-native-guest-and-verified-deletion).
+
 The `mvp-rc2` retention fixture exercised outage grace, fresh activity,
 the full shutdown window, and actual UTM deletion. Simulated partial
 cleanup and a lost provider reply both kept the disk reservation until

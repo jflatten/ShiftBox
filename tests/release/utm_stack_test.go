@@ -64,6 +64,7 @@ const (
 	nativeExpiredLeaf
 	nativeControllerTrust
 	nativeGuestClock
+	nativeRevokedGuest
 	nativeExpiredCA
 	nativeRetention
 	nativeCapacity
@@ -289,6 +290,10 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 		clock.skew(t, ctx)
 		_, stopRuntime = startRuntime(ca, time.Now)
 		verifyNativeGuestClock(t, ctx, db, machines, before, clock)
+		return
+	}
+	if scenario == nativeRevokedGuest {
+		verifyNativeRevokedGuest(t, ctx, db, journal, machines, before, op.ID, owner, ca)
 		return
 	}
 	if scenario == nativeExpiredLeaf {

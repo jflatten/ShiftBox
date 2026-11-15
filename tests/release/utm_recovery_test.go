@@ -8,15 +8,120 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"encoding/hex"
+	"errors"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/provider/utm"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
+
+// TestUTMRevokedGuestStaysIneligible verifies poll, restart and deletion
+// behavior using the same revoked certificate and actual retained VM.
+func TestUTMRevokedGuestStaysIneligible(t *testing.T) {
+	if os.Getenv("SHIFTBOX_TEST_UTM_REVOKED_GUEST") != "1" {
+		t.Skip("set SHIFTBOX_TEST_UTM_REVOKED_GUEST=1 for native revocation and deletion")
+	}
+	runUTMGuestFixture(t, nil, nativeRevokedGuest)
+}
+
+func verifyNativeRevokedGuest(t *testing.T, ctx context.Context, db *sql.DB, journal *operation.Journal,
+	machines *utm.Provider, before provider.Inventory, provisionID, owner string, ca *guest.Authority,
+) {
+	t.Helper()
+	ref := before.Ref
+	leaf := nativeEnrollmentLeaf(t, ctx, db, ref)
+	enrollment := guest.NewEnrollment(db, ca)
+	if contact, err := enrollment.Authenticate(ctx, leaf, time.Now()); err != nil || contact.WorkspaceID != ref.WorkspaceID {
+		t.Fatalf("enrolled native certificate = %v, want authenticated workspace", err)
+	}
+	// Inject the revoked registration in the disposable controller database.
+	// Capture the timestamp in the same write so an in-flight poll cannot
+	// race the baseline for the refusal check.
+	var lastPoll string
+	if err := db.QueryRowContext(ctx, `UPDATE guest_registrations SET state='revoked'
+		WHERE workspace_id=$1 AND generation=$2 AND state='active' RETURNING last_authenticated_at`,
+		ref.WorkspaceID, ref.Generation).Scan(&lastPoll); err != nil {
+		t.Fatal(err)
+	}
+	assertDenied := func(state string) {
+		t.Helper()
+		if _, err := enrollment.AuthenticatePoll(ctx, leaf, time.Now()); !errors.Is(err, guest.ErrGuestUnauthorized) {
+			t.Fatalf("poll with the %s native registration = %v, want identity denial", state, err)
+		}
+	}
+	assertDenied("revoked")
+	timer := time.NewTimer(25 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	case <-timer.C:
+	}
+	var afterPoll string
+	if err := db.QueryRowContext(ctx, `SELECT last_authenticated_at FROM guest_registrations
+		WHERE workspace_id=$1 AND generation=$2 AND state='revoked'`, ref.WorkspaceID, ref.Generation).Scan(&afterPoll); err != nil || afterPoll != lastPoll {
+		t.Fatalf("native polling after revocation advanced contact or changed registration: %v", err)
+	}
+	running, err := machines.Inspect(ctx, ref)
+	if err != nil || running.Power != provider.Running || running.Ref != ref {
+		t.Fatalf("native VM after revocation = %s/%+v (%v), want the same running VM", running.Power, running.Ref, err)
+	}
+	verifyOwnedDisk(t, before, running)
+	t.Log("revoked native certificate could not authenticate during 25 seconds of continued guest runtime")
+
+	// The guest cannot acknowledge shutdown once revoked. Use the native host
+	// stop, then reconcile it through the ordinary recorded lifecycle action.
+	if _, err := machines.Stop(ctx, provider.StopRequest{Ref: ref, OperationID: "revoked-fixture-host-stop", ForceRetentionDelete: true}); err != nil {
+		t.Fatal(err)
+	}
+	stopped := stopUTMEnrolledFixture(t, ctx, db, journal, machines, before, provisionID, owner)
+	admit := func(action string) operation.Operation {
+		t.Helper()
+		var op operation.Operation
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			var err error
+			op, err = admitUTMFixturePower(ctx, tx, journal, ref.WorkspaceID, owner, action, time.Now())
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return op
+	}
+	start := admit("start")
+	failure := waitNativeOperation(t, ctx, journal, start.ID, "failed")
+	if !strings.Contains(failure.Steps[0].Detail, "ineligible for automatic recovery") {
+		t.Fatalf("revoked start detail = %q, want actionable recovery refusal", failure.Steps[0].Detail)
+	}
+	var grants int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM enrollment_grants WHERE operation_id=$1", start.ID).Scan(&grants); err != nil || grants != 0 {
+		t.Fatalf("revoked start issued %d enrollment grants (%v), want 0", grants, err)
+	}
+	afterStart, err := machines.Inspect(ctx, ref)
+	if err != nil || afterStart.Power != provider.Stopped || afterStart.Ref != ref {
+		t.Fatalf("native VM after refused start = %s/%+v (%v), want the same stopped VM", afterStart.Power, afterStart.Ref, err)
+	}
+	verifyOwnedDisk(t, stopped, afterStart)
+
+	deletion := admit("delete")
+	waitNativeOperation(t, ctx, journal, deletion.ID, "succeeded")
+	var state, disk string
+	if err := db.QueryRowContext(ctx, `SELECT g.state, r.disk_state FROM guest_registrations g JOIN reservations r ON r.workspace_id=g.workspace_id
+		WHERE g.workspace_id=$1 AND g.generation=$2`, ref.WorkspaceID, ref.Generation).Scan(&state, &disk); err != nil || state != "deleted" || disk != "released" {
+		t.Fatalf("after confirmed deletion: registration %q, disk reservation %q (%v), want deleted and released", state, disk, err)
+	}
+	if _, err := machines.Inspect(ctx, ref); !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("inspect deleted native VM = %v, want provider absence", err)
+	}
+	assertDenied("deleted")
+	t.Log("revoked start issued no grant and preserved the stopped disk; verified deletion released it and permanently denied the old certificate")
+}
 
 func stopUTMEnrolledFixture(t *testing.T, ctx context.Context, db *sql.DB, journal *operation.Journal,
 	machines *utm.Provider, before provider.Inventory, provisionID, owner string,
@@ -56,6 +161,23 @@ func admitUTMFixturePower(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 
 func waitForNativeGuestExpiry(t *testing.T, ctx context.Context, db *sql.DB, ref provider.WorkspaceRef) *x509.Certificate {
 	t.Helper()
+	leaf := nativeEnrollmentLeaf(t, ctx, db, ref)
+	if !time.Now().Before(leaf.NotAfter) {
+		t.Fatal("fixture leaf expired before the controller verified the native stop")
+	}
+	t.Logf("waiting for the stopped guest certificate to expire in %s", time.Until(leaf.NotAfter).Round(time.Second))
+	timer := time.NewTimer(time.Until(leaf.NotAfter) + 2*time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	case <-timer.C:
+	}
+	return leaf
+}
+
+func nativeEnrollmentLeaf(t *testing.T, ctx context.Context, db *sql.DB, ref provider.WorkspaceRef) *x509.Certificate {
+	t.Helper()
 	var encoded string
 	if err := db.QueryRowContext(ctx, `SELECT certificate_der FROM enrollment_grants WHERE workspace_id=$1
 		AND generation=$2 AND state='consumed'`, ref.WorkspaceID, ref.Generation).Scan(&encoded); err != nil {
@@ -68,17 +190,6 @@ func waitForNativeGuestExpiry(t *testing.T, ctx context.Context, db *sql.DB, ref
 	leaf, err := x509.ParseCertificate(der)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !time.Now().Before(leaf.NotAfter) {
-		t.Fatal("fixture leaf expired before the controller verified the native stop")
-	}
-	t.Logf("waiting for the stopped guest certificate to expire in %s", time.Until(leaf.NotAfter).Round(time.Second))
-	timer := time.NewTimer(time.Until(leaf.NotAfter) + 2*time.Second)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	case <-timer.C:
 	}
 	return leaf
 }
