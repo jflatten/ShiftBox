@@ -1,6 +1,6 @@
 # Feature Specification: ShiftBox MVP
 
-**Feature Branch**: `[001-shiftbox-mvp]`
+**Feature Branch**: `feature/mvp`
 
 **Created**: 2026-11-13
 
@@ -76,7 +76,7 @@ An administrator creates an encrypted management backup and can restore the same
 
 **Acceptance Scenarios**:
 
-1. **Given** an authenticated administrator provides a backup password, **When** a management backup is requested, **Then** ShiftBox briefly coordinates management and identity writes, exports a consistent independently encrypted archive, resumes normal writes, and allows workspace computation to continue.
+1. **Given** an authenticated administrator provides a backup password, **When** a management backup is requested, **Then** ShiftBox pauses management writes only while application and identity checkpoints are acquired, resumes them before archive assembly and encryption, exports a consistent independently encrypted archive, and allows workspace computation to continue.
 2. **Given** a valid archive and empty replacement management-data target on the original host, **When** an administrator restores it, **Then** ShiftBox validates the archive, password, keys, compatibility, and target ownership before activation and enters administrator-reviewed recovery mode.
 3. **Given** a restored installation contains old browser sessions, enrollment grants, OAuth state, or overdue deletion work, **When** recovery mode begins, **Then** those records do not automatically regain authority and workspace access and destructive mutations remain gated until review and provider reconciliation complete.
 4. **Given** an archive has the wrong password, is truncated, is incompatible, or lacks a required matching key, **When** restore validation runs, **Then** ShiftBox fails visibly before activation and leaves the installation recoverable.
@@ -164,7 +164,7 @@ An administrator creates an encrypted management backup and can restore the same
 
 - **FR-048**: ShiftBox MUST support demo/very-small and production management-data profiles while preserving separate ownership boundaries for application and identity data.
 - **FR-049**: ShiftBox MUST provide manually initiated, independently password-encrypted management backups containing owned application and identity data, configuration, protected-value keys, trust material, and compatibility metadata while excluding workspace disks and unrelated external data.
-- **FR-050**: ShiftBox MUST create backups from a coordinated consistent checkpoint, briefly pause affected management writes, and allow workspace computation to continue.
+- **FR-050**: ShiftBox MUST pause affected management writes only while coordinated application and identity checkpoints are acquired, resume writes before archive assembly and encryption, resume them after any checkpoint failure, and allow workspace computation to continue throughout.
 - **FR-051**: ShiftBox MUST validate archive integrity, password, keys, version compatibility, target ownership, and prerequisites before activating a restore.
 - **FR-052**: Restore MUST target the same logical installation on its original host and MAY use an empty replacement production-data target without overwriting unrelated data or an unmatched operator-supplied key.
 - **FR-053**: Restored installations MUST enter administrator-reviewed recovery mode in which restored sessions, enrollment grants, stale authorization, workspace access, and destructive mutations remain gated until identity review and provider reconciliation complete.
@@ -202,7 +202,7 @@ An administrator creates an encrypted management backup and can restore the same
 ### Measurable Outcomes
 
 - **SC-001**: In release validation, 100% of reference projects that meet the documented MVP compatibility scope can be launched from an approved template to a usable authenticated browser IDE without operator intervention after launch.
-- **SC-002**: At least 90% of representative first-time developers can launch an authorized template, identify current progress, and open the ready workspace on their first attempt without administrator assistance.
+- **SC-002**: In a moderated release-candidate study with at least 10 participants who have not previously used ShiftBox, at least 9 participants can launch an authorized template, identify current progress, and open the ready workspace on their first attempt without administrator assistance; the study protocol, participant eligibility, failures, and results are recorded.
 - **SC-003**: In all required persistence tests, 100% of designated project files, developer-home content, and declared persistent application data survive reboot, stop/start, and development-container rebuild.
 - **SC-004**: In all injected timeout, duplicate-request, and controller-restart scenarios, ShiftBox creates no duplicate workspace, performs no duplicate destructive effect, and releases no reservation before provider confirmation.
 - **SC-005**: In all authorization tests, unauthorized users cannot access management actions, another owner's IDE or preview, another owner's personal secret context, or revoked project-secret access; established access closes after explicit revocation.
