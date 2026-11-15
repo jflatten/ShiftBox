@@ -54,7 +54,10 @@ func TestReadControllerGitHub(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "github.json")
 	const input = `{"clientId":"client","clientSecret":"private-fixture","installationId":123}`
-	if err := os.WriteFile(path, []byte(input), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readControllerGitHub(path); err == nil || strings.Contains(err.Error(), "private-fixture") {

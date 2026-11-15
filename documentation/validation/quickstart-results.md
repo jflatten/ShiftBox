@@ -166,5 +166,48 @@ client and real mutual TLS, with two local users. It verified separate
 cookies, cross-origin denial and selective WebSocket revocation. The
 native UTM preview and GitHub workspace reruns remain pending.
 
-T125 remains open for the outstanding scenarios in sections 3–10. The
-[release tracker](mvp-v1-v14.md) records the remaining live checks.
+## Final-candidate rerun of the guest secret command
+
+Quickstart section 5 ran the exact `mvp-rc2` Linux guest binary in a
+disposable Ubuntu 24.04 container. The agent used its ordinary Unix
+socket and a real enrollment certificate to reach the exact rc2
+controller over mutual TLS. The test used the existing Ubuntu base
+image after finding that the earlier repair fixture image had been
+cleaned up.
+
+| Condition | Exit | Output verified |
+| --- | --- | --- |
+| Authorized stored value | 0 | Exact stdout bytes, including the trailing newline |
+| Intentional empty value | 0 | Empty stdout and stderr |
+| Missing name | 3 | Empty stdout and a diagnostic on stderr |
+| Workspace authorization withdrawn | 4 | Empty stdout and a diagnostic on stderr |
+| Controller stopped while the agent was still serving its socket | 5 | Empty stdout and a diagnostic on stderr |
+
+The denial used a stopped desired state in the disposable workspace
+record. The container hosted the production guest agent and command.
+The native private Git checkout and owner-context authorization checks
+remain part of the [full sharing journey](template-sharing.md).
+
+## Fresh engineering runs on `mvp-rc2`
+
+The frozen candidate's `npm ci`, 89 UI unit tests, and production export
+passed. `npm ci` reported three low and 16 moderate advisories. The first
+browser invocation ran Chrome but could not start Firefox or WebKit
+because their locked binaries were absent. After installing those versions
+in a disposable directory, the suite passed 79 checks across Chrome
+157.0.8103.51, Firefox 159.0, and WebKit 27.2, including the separate
+Chrome storage check. It skipped 14 cases gated on a live installation
+or the selected browser.
+
+A fresh Go run under `umask 077` exposed two permission fixtures that
+relied on `WriteFile` to create a world-readable file. The mask made
+both files private, which invalidated their negative assertions. The
+updated fixtures set mode 0644 explicitly before testing refusal. Both
+tests passed with the race detector under `umask 077`. On the unchanged
+frozen checkout, the standard and race suites plus both tagged suites
+passed without cached test results under `umask 022`. The tagged runs
+used the default fixture gates with the rc2 manifest override. The
+separate native and database evidence is recorded above.
+
+T125 remains open. The [release tracker](mvp-v1-v14.md) records the
+remaining live checks.

@@ -65,7 +65,10 @@ func TestKeyValidation(t *testing.T) {
 	if _, err := cryptostore.LoadKey(path); err == nil {
 		t.Error("LoadKey(missing) succeeded")
 	}
-	if err := os.WriteFile(path, bytes.Repeat([]byte{7}, 32), 0644); err != nil {
+	if err := os.WriteFile(path, bytes.Repeat([]byte{7}, 32), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cryptostore.LoadKey(path); err == nil {
