@@ -57,7 +57,9 @@ func (e maintenanceUpdateExecutor) Observe(ctx context.Context, op operation.Ope
 		FROM maintenance_targets t JOIN maintenance_campaigns c ON c.operation_id=t.campaign_id
 		JOIN workspaces w ON w.id=t.workspace_id AND w.generation=t.generation AND w.installation_id=c.installation_id
 		JOIN installations i ON i.id=c.installation_id
+		JOIN platform_artifacts source ON source.id=w.platform_artifact_id
 		JOIN platform_artifacts a ON a.release_id=c.release_id AND a.state='available' AND a.guest_release=i.active_release
+		 AND a.architecture=source.architecture
 		LEFT JOIN guest_dispatches g ON g.operation_id=t.operation_id
 		WHERE t.operation_id=$1 AND w.id=$2 AND w.generation=$3 AND i.id=$4 AND i.state='active'
 		AND c.state='active' AND w.deletion_commit_at IS NULL`, op.ID, *op.WorkspaceID, op.Generation, e.installation).

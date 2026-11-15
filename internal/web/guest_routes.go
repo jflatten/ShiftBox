@@ -200,11 +200,15 @@ func GuestPollHandler(compatibility GuestCompatibility,
 			w.Header().Set(guest.TunnelAddressHeader, tunnelAddress)
 			w.Header().Set(guest.PreviewPortsHeader, contact.PreviewPorts)
 		}
+		delaySeconds := 30
+		if contact.LaunchAwaitingDispatch {
+			delaySeconds = 1
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"protocolVersion": compatibility.Protocol, "serverTime": stamp,
 			"workspaceGeneration": contact.Generation, "desiredState": contact.DesiredState, "operation": dispatch,
 			"certificate":          map[string]time.Time{"renewAfter": contact.RenewAfter},
-			"nextPollAfterSeconds": 30,
+			"nextPollAfterSeconds": delaySeconds,
 		})
 	})
 	return WithRequestID(mux)

@@ -136,9 +136,11 @@ func ScheduleMaintenance(ctx context.Context, tx *sql.Tx, journal *operation.Jou
 		return operation.Operation{}, err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO maintenance_targets(campaign_id,workspace_id,generation,prior_desired_state,prior_observed_state,state,updated_at)
-		SELECT $1,id,generation,desired_state,observed_state,'pending',$3 FROM workspaces
-		WHERE installation_id=$2 AND desired_state<>'deleted' AND observed_state<>'deleted' AND deletion_commit_at IS NULL`,
-		op.ID, installation, created)
+		SELECT $1,w.id,w.generation,w.desired_state,w.observed_state,'pending',$3 FROM workspaces w
+		JOIN platform_artifacts source ON source.id=w.platform_artifact_id
+		JOIN platform_artifacts target ON target.release_id=$4 AND target.architecture=source.architecture
+		WHERE w.installation_id=$2 AND w.desired_state<>'deleted' AND w.observed_state<>'deleted' AND w.deletion_commit_at IS NULL`,
+		op.ID, installation, created, releaseID)
 	return op, err
 }
 
@@ -278,7 +280,9 @@ func requestMaintenanceTarget(ctx context.Context, tx *sql.Tx, journal *operatio
 		JOIN maintenance_targets t ON t.campaign_id=c.operation_id
 		JOIN workspaces w ON w.id=t.workspace_id AND w.generation=t.generation AND w.installation_id=c.installation_id
 		JOIN installations i ON i.id=c.installation_id
+		JOIN platform_artifacts source ON source.id=w.platform_artifact_id
 		JOIN platform_artifacts a ON a.release_id=c.release_id AND a.guest_release=i.active_release AND a.state='available'
+			AND a.architecture=source.architecture
 		WHERE c.installation_id=$1 AND w.id=$2 AND c.state IN ('scheduled','active')`, installation, intent.WorkspaceID).Scan(&campaign)
 	if errors.Is(err, sql.ErrNoRows) {
 		return operation.Operation{}, provider.ErrInvalidState

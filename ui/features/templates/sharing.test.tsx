@@ -99,6 +99,7 @@ test('creates a new revision from the reviewed template', async () => {
     if (path === '/api/v1/templates/catalog') return {
       resourceProfiles: [{ id: 'small', name: 'Small' }],
       platformImages: [{ id: 'platform', name: 'Ubuntu release' }, { id: 'next-platform', name: 'Next Ubuntu release' }],
+      defaultPlatformArtifactId: 'next-platform',
     };
     if (path.endsWith('/revisions') && init?.method === 'POST') {
       current = { ...project, currentRevision: 3 };

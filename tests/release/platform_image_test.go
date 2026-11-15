@@ -32,10 +32,13 @@ func TestPlatformImageBootConfiguration(t *testing.T) {
 			`required_version = "= 1.14.2"`,
 			`source = "github.com/naveenrajm7/utm"`,
 			`version = "= 4.0.0"`,
-			`vm_arch = "x86_64"`,
+			`vm_arch = local.platform.vm_arch`,
 			`vm_backend = "qemu"`,
-			`hypervisor = false`,
-			`iso_url = "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20260716/ubuntu-24.04-minimal-cloudimg-amd64.img"`,
+			`hypervisor = var.architecture == "arm64"`,
+			`iso_url = "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20260716/ubuntu-24.04-minimal-cloudimg-${var.architecture}.img"`,
+			`vm_arch = "aarch64"`,
+			`vm_arch = "x86_64"`,
+			`checksum = "sha256:7e938df669e3b1923595eeda97aa28569350c5283e05a835cc912a2486a54934"`,
 			`"sudo systemctl enable shiftbox-agent.service",`,
 		}},
 		{path: "guest/shiftbox-agent.service", lines: []string{
@@ -77,6 +80,16 @@ func TestValidatePlatformArtifact(t *testing.T) {
 	}
 	if artifact.ManifestSHA256 != fmt.Sprintf("%x", sha256.Sum256(manifest)) {
 		t.Errorf("manifest digest = %s, want SHA-256 of the imported document", artifact.ManifestSHA256)
+	}
+}
+
+// TestValidateARM64Artifact accepts a checksummed native image in the same catalog format as AMD64.
+func TestValidateARM64Artifact(t *testing.T) {
+	root, manifest := artifactFixture(t)
+	manifest = bytes.Replace(manifest, []byte(`"amd64"`), []byte(`"arm64"`), 1)
+	got, err := release.ValidateArtifact(t.Context(), root, bytes.NewReader(manifest))
+	if err != nil || got.Manifest.Architecture != "arm64" {
+		t.Fatalf("ValidateArtifact(arm64) = %q, %v, want arm64 and no error", got.Manifest.Architecture, err)
 	}
 }
 
@@ -163,7 +176,7 @@ func TestValidatePlatformArtifactRejectsInvalidManifest(t *testing.T) {
 		from string
 		to   string
 	}{
-		{name: "architecture", from: "amd64", to: "arm64"},
+		{name: "architecture", from: "amd64", to: "s390x"},
 		{name: "missing provenance revision", from: "release-commit", to: ""},
 		{name: "unrecognized field", from: "\"architecture\"", to: "\"platformArch\""},
 		{name: "outside bundle", from: diskPath, to: "../reference.qcow2"},

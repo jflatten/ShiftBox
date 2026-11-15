@@ -67,7 +67,7 @@ func (p setupPlatform) importPlatform(ctx context.Context, store *release.Store,
 	pollHost, _, _ := net.SplitHostPort(p.runtime.PollAddress)
 	listeners := app.GuestListenerConfig{PublicHost: p.runtime.GuestHost,
 		EnrollmentAddress: net.JoinHostPort(enrollHost, "0"), PollAddress: net.JoinHostPort(pollHost, "0")}
-	if !caps.Create || !caps.Start || !caps.Stop || !caps.Delete || caps.Architecture != "amd64" {
+	if !caps.Create || !caps.Start || !caps.Stop || !caps.Delete {
 		return provider.ErrCapabilityUnsupported
 	}
 	entry, err := catalog.ImportLocal(ctx, actor, time.Now(), folder)
@@ -75,6 +75,9 @@ func (p setupPlatform) importPlatform(ctx context.Context, store *release.Store,
 		return err
 	}
 	manifest := entry.Artifact.Manifest
+	if !caps.SupportsArchitecture(manifest.Architecture) {
+		return provider.ErrCapabilityUnsupported
+	}
 	if manifest.ProtocolVersion != guestProtocol || (manifest.Guest.Version != current && manifest.Guest.Version != previous) {
 		return release.ErrCatalogConflict
 	}

@@ -45,10 +45,19 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 		VALUES($1,'Outbound access','all','[]','[]','5.0.8')`, policyID); err != nil {
 		t.Fatal(err)
 	}
+	// Keep the first revision on AMD64 and bind the ARM64 image to a new revision.
+	if _, err := db.Exec(`INSERT INTO platform_artifacts
+		(id,release_id,architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,
+		provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state)
+		SELECT 'arm-artifact','release-arm64','arm64',platform_version,guest_release,protocol_version,owned_resources_json,digests_json,
+		provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state
+		FROM platform_artifacts WHERE id='artifact'`); err != nil {
+		t.Fatal(err)
+	}
 	// Template revisions are immutable, including their policy reference.
 	if _, err := db.Exec(`INSERT INTO template_revisions(template_id,revision,repository_url,devcontainer_path,resource_profile_id,platform_artifact_id,
 		network_policy_id,secret_names_json,created_by,created_at)
-		SELECT template_id,2,repository_url,devcontainer_path,resource_profile_id,platform_artifact_id,$1,secret_names_json,created_by,created_at
+		SELECT template_id,2,repository_url,devcontainer_path,resource_profile_id,'arm-artifact',$1,secret_names_json,created_by,created_at
 		FROM template_revisions WHERE template_id=$2 AND revision=1`, policyID, templateID); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +65,7 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	journal := operation.NewJournal(db, clock, uuid.NewString)
 	available := uint64(1 << 40)
 	handler := web.WorkspaceLaunchHandler(db, origin, clock, journal, web.WorkspaceLaunchPolicy{
-		Capabilities: provider.Capabilities{Create: true, Start: true, Architecture: "amd64", Version: "5.0.8", NetworkModes: []string{"shared"},
+		Capabilities: provider.Capabilities{Create: true, Start: true, Architecture: "amd64", Architectures: []string{"amd64", "arm64"}, Version: "5.0.8", NetworkModes: []string{"shared"},
 			Minimum: provider.Resources{CPU: 1, MemoryBytes: 512 << 20, DiskBytes: 1 << 20},
 			Maximum: provider.Resources{CPU: 8, MemoryBytes: 8192 << 20, DiskBytes: 100 << 20}},
 		Protocols: []string{"1"}, AvailableDisk: func() (uint64, error) { return available, nil },
@@ -115,9 +124,10 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	available = 1 << 40
 	check(replayed, 202, "")
 	check(request(strings.Replace(selectedBody, "MVP development", "Other workspace", 1), key, csrf), 409, "workspace.launch_conflict")
-	var savedName string
-	if err := db.QueryRowContext(ctx, "SELECT name FROM workspaces WHERE id=$1", *op.WorkspaceID).Scan(&savedName); err != nil || savedName != "MVP development" {
-		t.Fatalf("stored workspace name = %q (%v), want MVP development", savedName, err)
+	var savedName, artifact string
+	if err := db.QueryRowContext(ctx, "SELECT name,platform_artifact_id FROM workspaces WHERE id=$1", *op.WorkspaceID).
+		Scan(&savedName, &artifact); err != nil || savedName != "MVP development" || artifact != "arm-artifact" {
+		t.Fatalf("stored workspace name and platform = %q/%q (%v), want MVP development and arm-artifact", savedName, artifact, err)
 	}
 	if replayed.Body.String() != accepted.Body.String() {
 		t.Error("retry returned a different operation")
@@ -187,7 +197,7 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil ||
 		view.OwnerID != "member" || view.DesiredState != "running" || view.ObservedState != "unknown" ||
-		view.PlatformRelease != "release" || view.TemplateRevision != 2 ||
+		view.PlatformRelease != "release-arm64" || view.TemplateRevision != 2 ||
 		view.CurrentOperationID != op.ID || response.Header().Get("ETag") != `"1"` ||
 		view.Retention.State != "grace" || view.Retention.GraceUntil == nil || !view.Retention.GraceUntil.Equal(graceUntil) {
 		t.Fatalf("workspace view = %+v, %v, want member-owned pending launch", view, err)

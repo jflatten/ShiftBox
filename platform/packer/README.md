@@ -2,7 +2,8 @@
 
 Run on the logged-in Mac with UTM 5.0.8, Packer 1.14.2, the repository's Go
 toolchain, and `utmctl` and `qemu-img` on `PATH`. The recipe pins the Ubuntu
-24.04 Minimal amd64 cloud image by dated release and SHA-256.
+24.04 Minimal cloud images by dated release and SHA-256. AMD64 uses QEMU
+emulation on Apple Silicon. ARM64 uses QEMU with hardware virtualization.
 
 Build the UTM plugin from the UTM 5-compatible revision. This uses the
 upstream plugin source that includes the UTM 5 driver.
@@ -17,8 +18,14 @@ git -C .cache/packer/utm-plugin checkout --detach fccda3be64189b5c057f6076184be7
     go build -trimpath -ldflags '-X github.com/naveenrajm7/packer-plugin-utm/version.Version=4.0.0 -X github.com/naveenrajm7/packer-plugin-utm/version.VersionPrerelease=' -o ../packer-plugin-utm .
 )
 packer plugins install --path .cache/packer/packer-plugin-utm github.com/naveenrajm7/utm
-platform/packer/build-image.sh development /absolute/path/to/guest-update.pub
+platform/packer/build-image.sh development /absolute/path/to/guest-update.pub arm64
 ```
+
+Use `amd64` or omit the final argument for the original AMD64 build. The
+ARM64 build requires an Apple Silicon Mac and appends `-arm64` to the
+platform release ID so both images can be imported with the same guest agent
+version. Select the ARM64 platform release on a template whose base image
+and Dev Container Features support `linux/arm64`.
 
 Supply the release publisher's raw 32-byte Ed25519 public key. The image
 installs it as `/usr/local/share/shiftbox/guest-update.pub`. Keep the matching
@@ -36,7 +43,8 @@ go run ./platform/packer/sign-guest-update /absolute/path/to/releases <release-i
 
 The signer reads an Ed25519 PKCS#8 PEM key from standard input. Deploy only
 the manifest, binary, and detached signature to the controller's release
-directory.
+directory. Run a maintenance campaign for each architecture using its
+matching signed guest binary.
 
 The build creates a disposable VM under a unique name and provisions it
 using a temporary SSH key. The shutdown step removes the build key,
@@ -51,13 +59,27 @@ The build installs Docker Engine 29.9.3, containerd 2.4.2, and Buildx
 24.22.3 and Dev Container CLI 0.90.0 archives by SHA-256, then checks the
 running Docker service and installed tools before sealing the guest.
 
-The build installs Coder code-server 4.145.2 from its checksum-pinned Linux
-amd64 release archive. The installed distribution retains its license and
+The build installs Coder code-server 4.145.2 from the checksum-pinned Linux
+release archive for the guest architecture. The installed distribution retains its license and
 third-party notices.
 
 The build also preloads `shiftbox/repair:ubuntu-24.04` from a digest-pinned
-Ubuntu amd64 base with the same code-server distribution. It verifies that
+Ubuntu base for the guest architecture with the same code-server distribution. It verifies that
 code-server starts without network access or an image pull.
+
+The ARM64 build also preloads `mcr.microsoft.com/devcontainers/base:ubuntu-24.04`
+from ARM64 manifest `sha256:309df9dde7aeb9e734a8f7ead76ab4d18ee4eb17b6047d2a2d008fa52fdea67b`.
+The standard tag is seeded in the VM's local Docker store for templates using
+that reference. Templates can use the digest-qualified reference to request
+the same bytes explicitly.
+
+Guest setup timings are available in the guest's systemd journal. They
+include operation ID, phase, duration in milliseconds, and outcome. Docker
+command timings are nested within the Dev Container CLI `up` timings.
+
+```sh
+journalctl -u shiftbox-agent.service --grep='Dev Container phase timing'
+```
 
 The build writes `manifest.json` beside `shiftbox.utm` in the `final`
 directory. The manifest records the guest and IDE versions and digests,
@@ -100,3 +122,12 @@ SHIFTBOX_TEST_UTM_BUNDLE="/absolute/path/to/final/shiftbox.utm" \
 SHIFTBOX_TEST_UTM_GUEST_HOST="your-guest-reachable-ip" \
 go test -tags utm_release -v ./tests/release -run '^TestUTMGuestEnrollment$'
 ```
+
+
+To verify the ARM64 Dev Container and offline repair IDE on an Apple Silicon
+Mac, use the same environment and add `SHIFTBOX_TEST_UTM_ARM64_WORKBENCHES=1`.
+Run `go test -tags utm_release -v ./tests/release -run '^TestUTMARM64Workbenches$' -count=1`.
+The test boots a disposable clone, seeds a local checkout, and verifies both
+workbench responses over the authenticated guest tunnel. It checks
+`uname -m` inside both containers and checks that Docker started the repair
+container from the preloaded image with networking disabled.

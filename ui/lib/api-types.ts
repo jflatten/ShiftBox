@@ -1680,6 +1680,8 @@ export interface operations {
                     "application/json": {
                         resourceProfiles: components["schemas"]["TemplateCatalogChoice"][];
                         platformImages: components["schemas"]["TemplateCatalogChoice"][];
+                        /** @description The compatible installation default when available */
+                        defaultPlatformArtifactId?: string;
                     };
                 };
             };

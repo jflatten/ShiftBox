@@ -5,7 +5,7 @@ export type Capacity = { cpuCount: number; memoryMiB: number; diskMiB: number };
 type Condition = { key: string; severity: 'info' | 'warning' | 'critical'; active: boolean; detail?: string };
 
 export interface InfrastructureStatus {
-  provider: { name: string; version: string; architecture: string; networkModes: string[] | null };
+  provider: { name: string; version: string; architecture: string; architectures?: string[]; networkModes: string[] | null };
   capacity: Capacity;
   version: number;
   conditions: Condition[];

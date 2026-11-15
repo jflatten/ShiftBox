@@ -31,16 +31,17 @@ func TemplateCatalogHandler(db *sql.DB, origin string, now func() time.Time, pol
 		},
 		Apply: func(ctx context.Context, tx *sql.Tx, _ *http.Request, _ auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
 			result := struct {
-				ResourceProfiles []templateCatalogChoice `json:"resourceProfiles"`
-				PlatformImages   []templateCatalogChoice `json:"platformImages"`
-			}{[]templateCatalogChoice{}, []templateCatalogChoice{}}
+				ResourceProfiles          []templateCatalogChoice `json:"resourceProfiles"`
+				PlatformImages            []templateCatalogChoice `json:"platformImages"`
+				DefaultPlatformArtifactID string                  `json:"defaultPlatformArtifactId,omitempty"`
+			}{ResourceProfiles: []templateCatalogChoice{}, PlatformImages: []templateCatalogChoice{}}
 			if policy.Capabilities.Create && policy.Capabilities.Start {
 				var err error
 				result.ResourceProfiles, err = templateCatalogProfiles(ctx, tx, policy)
 				if err != nil {
 					return nil, err
 				}
-				result.PlatformImages, err = templateCatalogImages(ctx, tx, policy)
+				result.PlatformImages, result.DefaultPlatformArtifactID, err = templateCatalogImages(ctx, tx, policy)
 				if err != nil {
 					return nil, err
 				}
@@ -74,26 +75,31 @@ func templateCatalogProfiles(ctx context.Context, tx *sql.Tx, policy WorkspaceLa
 	return choices, rows.Err()
 }
 
-func templateCatalogImages(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunchPolicy) ([]templateCatalogChoice, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.release_id,a.protocol_version FROM platform_artifacts a
-		CROSS JOIN installations i WHERE i.singleton=1 AND a.state='available' AND a.architecture=$1
-		AND a.guest_release IN (i.active_release,i.min_guest_release) ORDER BY a.release_id,a.id`, policy.Capabilities.Architecture)
+func templateCatalogImages(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunchPolicy) ([]templateCatalogChoice, string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.release_id,a.protocol_version,a.architecture,a.is_default FROM platform_artifacts a
+		CROSS JOIN installations i WHERE i.singleton=1 AND a.state='available'
+		AND a.guest_release IN (i.active_release,i.min_guest_release) ORDER BY a.release_id,a.id`)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer rows.Close()
 	choices := []templateCatalogChoice{}
+	var defaultID string
 	for rows.Next() {
 		var item templateCatalogChoice
-		var protocol string
-		if err := rows.Scan(&item.ID, &item.Name, &protocol); err != nil {
-			return nil, err
+		var protocol, architecture string
+		var isDefault int
+		if err := rows.Scan(&item.ID, &item.Name, &protocol, &architecture, &isDefault); err != nil {
+			return nil, "", err
 		}
-		if slices.Contains(policy.Protocols, protocol) {
+		if policy.Capabilities.SupportsArchitecture(architecture) && slices.Contains(policy.Protocols, protocol) {
 			choices = append(choices, item)
+			if isDefault == 1 {
+				defaultID = item.ID
+			}
 		}
 	}
-	return choices, rows.Err()
+	return choices, defaultID, rows.Err()
 }
 
 // TemplateHandlers serves listing, creation, and immutable template revisions.

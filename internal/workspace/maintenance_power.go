@@ -164,7 +164,10 @@ func (e maintenanceUpdateExecutor) checkManagementBootRelease(ctx context.Contex
 	err := e.store.db.QueryRowContext(ctx, `SELECT a.guest_release
 		FROM maintenance_targets t JOIN maintenance_campaigns c ON c.operation_id=t.campaign_id
 		JOIN installations i ON i.id=c.installation_id
+		JOIN workspaces w ON w.id=t.workspace_id AND w.generation=t.generation
+		JOIN platform_artifacts source ON source.id=w.platform_artifact_id
 		JOIN platform_artifacts a ON a.release_id=c.release_id AND a.state='available' AND a.guest_release=i.active_release
+			AND a.architecture=source.architecture
 		WHERE t.operation_id=$1 AND i.id=$2 AND i.state='active' AND c.state='active'`, operationID, e.installation).Scan(&product)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = release.ErrGuestUpdateUnavailable

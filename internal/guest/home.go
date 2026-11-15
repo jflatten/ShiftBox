@@ -71,7 +71,7 @@ func (d devContainer) ensureRetainedHome(ctx context.Context, result devContaine
 	}
 	if !mounted {
 		previous := result.ID
-		result, err = d.invoke(ctx, "up", append(options, "--remove-existing-container")...)
+		result, err = d.up(ctx, append(options, "--remove-existing-container")...)
 		if err != nil {
 			return devContainerResult{}, err
 		}

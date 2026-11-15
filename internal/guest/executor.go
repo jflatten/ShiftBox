@@ -3,7 +3,11 @@ package guest
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"time"
 )
+
+const ensureDevelopmentCommand = "ensure-development-container"
 
 type localEvidence struct {
 	ContainerID    string `json:"containerId,omitempty"`
@@ -68,6 +72,12 @@ func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDisp
 		return OperationReport{}, err
 	}
 	next := *j.state.Operation
+	if runtime.timing == nil {
+		runtime.timing = func(phase string, elapsed time.Duration, outcome string) {
+			slog.InfoContext(ctx, "Dev Container phase timing", "operation_id", dispatch.ID,
+				"phase", phase, "duration_ms", elapsed.Milliseconds(), "outcome", outcome)
+		}
+	}
 	var effectErr error
 	switch next.Phase {
 	case localPending:
@@ -75,12 +85,14 @@ func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDisp
 		repairRetry := dispatch.Command == retryAfterRepairCommand
 		if runtime.repository != nil {
 			source := repositorySource{URL: dispatch.Repository, Ref: dispatch.Ref, Config: dispatch.Config}
+			started := time.Now()
 			var err error
 			if rebuild || repairRetry {
 				_, err = runtime.repository.prepared(source)
 			} else {
 				_, err = runtime.repository.prepare(ctx, source)
 			}
+			runtime.measurePhase("repository_preparation", started, err)
 			if err != nil {
 				if ctx.Err() != nil {
 					return OperationReport{}, ctx.Err()

@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -119,7 +120,8 @@ func TestGuestEnrollmentHTTP(t *testing.T) {
 func TestGuestPollContract(t *testing.T) {
 	ctx := t.Context()
 	now := time.Now().UTC().Truncate(time.Second)
-	clock := func() time.Time { return now }
+	var clockOffset atomic.Int64
+	clock := func() time.Time { return now.Add(time.Duration(clockOffset.Load())) }
 	dir := t.TempDir()
 	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(dir, "guest.db")})
 	if err != nil {
@@ -241,6 +243,24 @@ func TestGuestPollContract(t *testing.T) {
 		if err := journal.StartStep(ctx, claim, index); err != nil {
 			t.Fatal(err)
 		}
+		if index == 1 {
+			// Release the first authenticated guest from the enrollment handoff promptly.
+			var handoff struct {
+				NextPollAfterSeconds int
+				Operation            *guest.PollOperation
+			}
+			raw := poll("current", http.StatusOK, "")
+			if err := json.Unmarshal(raw, &handoff); err != nil || handoff.NextPollAfterSeconds != 1 || handoff.Operation != nil {
+				t.Errorf("enrollment handoff poll = %s (%v), want a one-second retry without a dispatch", raw, err)
+			}
+			// A stalled admission must fall back to the idle interval.
+			clockOffset.Store(int64(91 * time.Second))
+			raw = poll("current", http.StatusOK, "")
+			clockOffset.Store(0)
+			if err := json.Unmarshal(raw, &handoff); err != nil || handoff.NextPollAfterSeconds != 30 || handoff.Operation != nil {
+				t.Errorf("stalled enrollment handoff = %s (%v), want idle cadence", raw, err)
+			}
+		}
 		if index < 2 {
 			if err := journal.CompleteStep(ctx, claim, index, "fixture provider evidence"); err != nil {
 				t.Fatal(err)
@@ -316,8 +336,8 @@ func TestGuestPollContract(t *testing.T) {
 	for range 2 {
 		var done pollView
 		raw := postGuestContract(t, registered, pollURL, input, http.StatusOK, "")
-		if err := json.Unmarshal(raw, &done); err != nil || done.Operation != nil {
-			t.Fatalf("completed guest operation poll returned %+v (%v), want no redispatch", done.Operation, err)
+		if err := json.Unmarshal(raw, &done); err != nil || done.Operation != nil || done.NextPollAfterSeconds != 30 {
+			t.Fatalf("completed guest operation poll returned %+v (%v), want idle cadence and no redispatch", done, err)
 		}
 	}
 	report["status"], report["step"] = "running", "devcontainer.wait_for"

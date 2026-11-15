@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/google/uuid"
@@ -50,8 +51,13 @@ func (p *Provider) Capabilities(ctx context.Context) (provider.Capabilities, err
 		}
 		return provider.Capabilities{}, err
 	}
+	architectures := []string{"amd64"}
+	if runtime.GOARCH == "arm64" {
+		architectures = append(architectures, "arm64")
+	}
 	return provider.Capabilities{
-		Name: "utm", Version: validatedVersion, Architecture: "amd64", ExecutionMode: "emulated",
+		Architectures: architectures,
+		Name:          "utm", Version: validatedVersion, Architecture: "amd64", ExecutionMode: "emulated",
 		Evidence: "UTM 5.0.8 native QEMU scripting",
 		Create:   true, Start: true, Stop: true, Delete: true, NetworkStoppedOnly: true,
 		NetworkModes: []string{"shared"}, RecoveryMechanisms: []string{"media"},

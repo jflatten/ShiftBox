@@ -98,7 +98,18 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 			return err
 		}
 		dispatch, err = nextGuestOperation(ctx, tx, contact)
-		return err
+		if err != nil || dispatch != nil || report.Operation != nil || contact.DesiredState != "running" {
+			return err
+		}
+		// The first authenticated poll can beat the worker's transition from
+		// enrollment to configure. Offer a short retry for this handoff only.
+		return tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM operations o JOIN operation_steps s ON s.operation_id=o.id AND s.step_key='enroll'
+			WHERE o.workspace_id=$1 AND o.generation=$2 AND o.type='provision' AND o.originating_action='workspace.launch'
+			AND o.status IN ('running','waiting') AND s.status IN ('active','succeeded') AND s.started_at>=$3
+			AND NOT EXISTS (SELECT 1 FROM guest_dispatches g WHERE g.operation_id=o.id))`,
+			contact.WorkspaceID, contact.Generation, now.Add(-90*time.Second).UTC().Format("2006-01-02T15:04:05.000000000Z")).
+			Scan(&contact.LaunchAwaitingDispatch)
 	})
 	if err != nil {
 		return Contact{}, nil, err
@@ -124,7 +135,7 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 	var step string
 	switch contact.DesiredState {
 	case "running":
-		dispatch.Command, step = "ensure-development-container", "configure"
+		dispatch.Command, step = ensureDevelopmentCommand, "configure"
 	case "stopped", "deleted":
 		dispatch.Command, step = "shutdown-for-stop", "shutdown"
 	default:

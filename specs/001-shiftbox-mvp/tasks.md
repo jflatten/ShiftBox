@@ -2799,6 +2799,9 @@ This checkpoint does not itself change the goal status.
 - The workbench probe checks the editor document after at most one relative
   project-folder redirect on the same authenticated tunnel. Tests cover
   unrelated destinations, startup failure, and the separate proxy gate.
+- T052 records a successful code-server copy for the current container and
+  packaged version. Regression tests cover restart reuse, replacement
+  containers, interrupted copies, and separate copy and startup deadlines.
 - Code-server 4.145.2 and Dev Container CLI 0.90.0 returned the actual VS Code
   workbench from a disposable amd64 Ubuntu Dev Container as `vscode`. The
   Go race suite passed serially. Packer rebuilt the Ubuntu 24.04 image
@@ -3242,3 +3245,23 @@ This checkpoint does not itself change the goal status.
   Chrome journeys at 1280px and 390px covering keyboard expansion, filters,
   paging, viewport bounds, and visible outcome labels. Updated and visually
   checked the running embedded demo against its real audit history.
+
+
+## ARM64 platform support
+
+- [X] T128 Add regression coverage for ARM64 artifact validation, provider inventory, catalog migration, and the native build inputs.
+- [X] T129 Build and admit ARM64 UTM platform images alongside AMD64.
+- [X] T130 Build the native ARM64 export on Apple Silicon and verify UTM boot, authenticated enrollment, a native devcontainer, and the offline repair IDE.
+
+
+- [X] T131 Apply the catalog default to new template forms while preserving the image selected by existing template revisions.
+- [X] T132 Import the compatible ARM64 image into the local installation, select it as default, and verify a native workspace launched from the UI.
+
+
+## ARM64 workspace launch latency
+
+- [X] T133 Shorten authenticated guest handoffs during launch while preserving idle polling and replay safety.
+- [X] T134 Record redacted durations for guest setup phases and the underlying Dev Container CLI Docker operations.
+- [X] T135 Preload the pinned ARM64 base image and verify the launch on a disposable native UTM workspace.
+- [X] T136 Roll out the faster controller and a uniquely versioned ARM64 image to the local installation and select the new default.
+- [X] T137 Time a real UI launch with the updated image and identify the remaining work in the one-minute budget.

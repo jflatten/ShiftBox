@@ -36,7 +36,9 @@ func activeGuestUpdate(ctx context.Context, tx *sql.Tx, contact Contact, step st
 			JOIN maintenance_campaigns c ON c.operation_id=t.campaign_id AND c.state='active'
 			JOIN workspaces w ON w.id=t.workspace_id AND w.generation=t.generation AND w.installation_id=c.installation_id
 			JOIN installations i ON i.id=c.installation_id
+			JOIN platform_artifacts source ON source.id=w.platform_artifact_id
 			JOIN platform_artifacts a ON a.release_id=c.release_id AND a.guest_release=i.active_release AND a.state='available'
+			 AND a.architecture=source.architecture
 			JOIN operations o ON o.id=t.operation_id AND o.workspace_id=w.id AND o.generation=w.generation
 			JOIN operation_steps s ON s.operation_id=o.id AND s.step_key=o.current_step AND s.status='active'
 			WHERE w.id=$1 AND w.generation=$2 AND w.deletion_commit_at IS NULL

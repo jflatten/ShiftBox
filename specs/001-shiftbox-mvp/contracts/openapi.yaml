@@ -439,6 +439,7 @@ paths:
                 properties:
                   resourceProfiles: { type: array, items: { $ref: '#/components/schemas/TemplateCatalogChoice' } }
                   platformImages: { type: array, items: { $ref: '#/components/schemas/TemplateCatalogChoice' } }
+                  defaultPlatformArtifactId: { type: string, description: The compatible installation default when available }
         default: { $ref: '#/components/responses/Error' }
   /templates:
     get:

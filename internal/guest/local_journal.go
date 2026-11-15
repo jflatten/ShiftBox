@@ -40,7 +40,7 @@ func (d guestDispatch) valid() bool {
 		return false
 	}
 	switch d.Command {
-	case "ensure-development-container", rebuildDevelopmentCommand, retryAfterRepairCommand:
+	case ensureDevelopmentCommand, rebuildDevelopmentCommand, retryAfterRepairCommand:
 		return d.Config == "" || validDevContainerPath(d.Config)
 	case "shutdown-for-stop", enterRepairCommand, exitRepairCommand:
 		return d.Config == "" && d.Repository == "" && d.Ref == ""

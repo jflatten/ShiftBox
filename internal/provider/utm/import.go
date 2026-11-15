@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,7 +47,7 @@ func (p *PowerController) importStagedArtifact(ctx context.Context, req provider
 	if err := verifyStagedDisk(ctx, artifact, req.Resources.DiskBytes); err != nil {
 		return provider.Inventory{}, err
 	}
-	inventory, err := p.ImportManagedVM(ctx, req, artifact.Bundle, storage)
+	inventory, err := p.importManagedVM(ctx, req, artifact.Bundle, storage, artifact.Manifest.Architecture)
 	if err != nil {
 		return inventory, err
 	}
@@ -68,6 +69,22 @@ func (p *PowerController) importStagedArtifact(ctx context.Context, req provider
 // filename. Storage is UTM's configured Documents directory. Enrollment is
 // delivered separately while the workspace is stopped.
 func (p *PowerController) ImportManagedVM(ctx context.Context, req provider.CreateRequest, stagedBundle, storage string) (provider.Inventory, error) {
+	return p.importManagedVM(ctx, req, stagedBundle, storage, "amd64")
+}
+
+func (p *PowerController) importManagedVM(ctx context.Context, req provider.CreateRequest, stagedBundle, storage, architecture string) (provider.Inventory, error) {
+	vmArchitecture := "x86_64"
+	switch architecture {
+	case "amd64":
+	case "arm64":
+		if runtime.GOARCH != "arm64" {
+			return provider.Inventory{}, provider.ErrCapabilityUnsupported
+		}
+		vmArchitecture = "aarch64"
+	default:
+		return provider.Inventory{}, provider.ErrCapabilityUnsupported
+	}
+
 	const mib = 1 << 20
 	ref := req.Ref
 	if ref.InstallationID == "" || ref.WorkspaceID == "" || ref.Generation < 1 || ref.OwnershipMarker == "" ||
@@ -112,7 +129,7 @@ func (p *PowerController) ImportManagedVM(ctx context.Context, req provider.Crea
 		return before, err
 	}
 
-	effectErr := importBundle(ctx, p.version, req, stagedBundle, destination)
+	effectErr := importBundle(ctx, p.version, req, stagedBundle, destination, vmArchitecture)
 	after, inspectErr := p.inspect(ctx, ref)
 	if inspectErr == nil {
 		return after, verifyImportedVM(after, req, destination)
@@ -174,7 +191,14 @@ on run argv
         set vm to import new virtual machine from sourceFile
         if backend of vm is not qemu or status of vm is not stopped then return "state"
         set cfg to configuration of vm
-        if architecture of cfg is not "x86_64" then return "state"
+        if architecture of cfg is not item 9 of argv then
+            delete vm
+            return "unsupported"
+        end if
+        if item 9 of argv is "aarch64" and not (hypervisor of cfg) then
+            delete vm
+            return "unsupported"
+        end if
         set interfaces to network interfaces of cfg
         if (count of interfaces) is not 1 then return "state"
         if mode of item 1 of interfaces is not shared then return "state"
@@ -187,7 +211,7 @@ on run argv
 end run
 `
 
-func importBundle(ctx context.Context, version string, req provider.CreateRequest, source, destination string) error {
+func importBundle(ctx context.Context, version string, req provider.CreateRequest, source, destination, vmArchitecture string) error {
 	if version == "" {
 		return provider.ErrCapabilityUnsupported
 	}
@@ -201,6 +225,6 @@ func importBundle(ctx context.Context, version string, req provider.CreateReques
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/usr/bin/osascript", "-e", importBundleScript, "--", version,
 		source, destination, ownershipPrefix+string(notes), strconv.Itoa(req.Resources.CPU),
-		strconv.FormatInt(req.Resources.MemoryBytes>>20, 10), strings.TrimSuffix(filepath.Base(destination), ".utm"), workspaceMAC(ref))
+		strconv.FormatInt(req.Resources.MemoryBytes>>20, 10), strings.TrimSuffix(filepath.Base(destination), ".utm"), workspaceMAC(ref), vmArchitecture)
 	return effectResult(cmd.Output())
 }

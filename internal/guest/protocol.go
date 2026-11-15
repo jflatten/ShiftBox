@@ -20,13 +20,14 @@ var ErrGuestUnauthorized = errors.New("guest identity is not authorized")
 
 // Contact describes the workspace authority established by an authenticated poll.
 type Contact struct {
-	WorkspaceID  string
-	OwnerID      string
-	Repository   string
-	Generation   int64
-	DesiredState string
-	RenewAfter   time.Time
-	PreviewPorts string
+	WorkspaceID            string
+	OwnerID                string
+	Repository             string
+	Generation             int64
+	DesiredState           string
+	RenewAfter             time.Time
+	PreviewPorts           string
+	LaunchAwaitingDispatch bool
 }
 
 // Authenticate checks the leaf against current registration and records

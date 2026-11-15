@@ -229,3 +229,16 @@ test('retains failed capacity edits and confirms a successful retry', async () =
   expect(screen.getByRole('button', { name: 'Save capacity budget' })).toBeDisabled();
   expect(attempts).toBe(2);
 });
+
+// Operators can see both image architectures the Apple Silicon host can launch.
+test('shows AMD64 and native ARM64 provider capabilities', async () => {
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json({
+      ...status, provider: { ...status.provider, architectures: ['amd64', 'arm64'] },
+    });
+    throw new Error('unexpected request');
+  });
+  render(<Providers><Infrastructure /></Providers>);
+  expect(await screen.findByText('x86-64 (amd64), ARM64')).toBeVisible();
+});

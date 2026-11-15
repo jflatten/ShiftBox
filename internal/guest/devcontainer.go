@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os/exec"
 	"path/filepath"
@@ -24,16 +25,18 @@ const (
 var dockerContainerID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type devContainer struct {
-	workspace       string
-	config          string
-	repository      *repositoryPreparation
-	credentials     bool
-	ide             bool
-	retainHome      bool
-	repairImageFile string
-	repairSocketDir string
-	run             func(context.Context, string, ...string) ([]byte, error)
-	setProjectOwner func(context.Context, string, int, int) error
+	workspace        string
+	config           string
+	repository       *repositoryPreparation
+	credentials      bool
+	ide              bool
+	codeServerSource string
+	retainHome       bool
+	repairImageFile  string
+	repairSocketDir  string
+	run              func(context.Context, string, ...string) ([]byte, error)
+	setProjectOwner  func(context.Context, string, int, int) error
+	timing           func(phase string, elapsed time.Duration, outcome string)
 }
 
 // containerConnection records successful execution through the declared waitFor
@@ -66,7 +69,7 @@ func (d devContainer) configure(ctx context.Context, previous rebuildSource) (co
 	if previous.id != "" {
 		options = append(options, "--remove-existing-container")
 	}
-	result, err := d.invoke(ctx, "up", options...)
+	result, err := d.up(ctx, options...)
 	if err != nil {
 		return containerConnection{}, err
 	}
@@ -78,7 +81,9 @@ func (d devContainer) configure(ctx context.Context, previous rebuildSource) (co
 			return containerConnection{}, err
 		}
 	} else if d.retainHome {
+		started := time.Now()
 		result, err = d.ensureRetainedHome(ctx, result, options)
+		d.measurePhase("retained_home", started, err)
 		if err != nil {
 			return containerConnection{}, err
 		}
@@ -92,12 +97,18 @@ func (d devContainer) configure(ctx context.Context, previous rebuildSource) (co
 	}
 	connection := containerConnection{ID: result.ID, WaitFor: waitFor}
 	if d.repository != nil {
-		if err := d.prepareProjectOwner(ctx, connection.ID, result.Merged.RemoteUser); err != nil {
+		started := time.Now()
+		err := d.prepareProjectOwner(ctx, connection.ID, result.Merged.RemoteUser)
+		d.measurePhase("project_permissions", started, err)
+		if err != nil {
 			return containerConnection{}, err
 		}
 	}
 	if d.repository != nil || previous.id != "" {
-		if _, err := d.invoke(ctx, "run-user-commands", "--container-id", connection.ID, "--skip-non-blocking-commands", "--skip-post-attach"); err != nil {
+		started := time.Now()
+		_, err := d.invoke(ctx, "run-user-commands", "--container-id", connection.ID, "--skip-non-blocking-commands", "--skip-post-attach")
+		d.measurePhase("required_hooks", started, err)
+		if err != nil {
 			return containerConnection{}, err
 		}
 	}
@@ -115,8 +126,17 @@ func (d devContainer) finishSetup(ctx context.Context, connection containerConne
 	}
 	// The CLI tracks completed creation and start hooks in the container.
 	// Attach hooks belong to the IDE attach path.
+	started := time.Now()
 	_, err := d.invoke(ctx, "run-user-commands", "--container-id", connection.ID, "--skip-post-attach")
+	d.measurePhase("remaining_hooks", started, err)
 	return err
+}
+
+func (d devContainer) up(ctx context.Context, options ...string) (devContainerResult, error) {
+	started := time.Now()
+	result, err := d.invoke(ctx, "up", options...)
+	d.measurePhase("devcontainer_up", started, err)
+	return result, err
 }
 
 func (d devContainer) invoke(ctx context.Context, stage string, options ...string) (devContainerResult, error) {
@@ -178,7 +198,15 @@ func (d devContainer) runner() func(context.Context, string, ...string) ([]byte,
 	if d.run != nil {
 		return d.run
 	}
-	return runDevContainerCLI
+	return func(ctx context.Context, executable string, args ...string) ([]byte, error) {
+		if d.timing != nil && executable == devContainerCLI && len(args) > 0 && args[0] == "up" {
+			timings := &devContainerCLITimings{record: func(name string, elapsed time.Duration) {
+				d.timing(name, elapsed, "observed")
+			}}
+			return runDevContainerCommand(ctx, executable, timings, args...)
+		}
+		return runDevContainerCLI(ctx, executable, args...)
+	}
 }
 
 func validDevContainerPath(path string) bool {
@@ -195,7 +223,12 @@ func validWaitFor(stage string) bool {
 }
 
 func runDevContainerCLI(ctx context.Context, executable string, args ...string) ([]byte, error) {
+	return runDevContainerCommand(ctx, executable, nil, args...)
+}
+
+func runDevContainerCommand(ctx context.Context, executable string, stderr io.Writer, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, executable, args...)
+	cmd.Stderr = stderr
 	var stdout devContainerOutput
 	cmd.Stdout = &stdout
 	cmd.WaitDelay = 2 * time.Second

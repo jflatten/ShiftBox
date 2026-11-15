@@ -31,8 +31,9 @@ The single Go module pins dependencies in `go.mod` and `go.sum`.
 The [validation quickstart](specs/001-shiftbox-mvp/quickstart.md) describes the
 planned environment and acceptance scenarios. Full validation also requires an
 awake, logged-in Apple Mac with the pinned UTM release, an approved Ubuntu 24.04
-Minimal amd64 image, PostgreSQL with owned schemas and TLS, and trusted browser
-certificates/service names. Release versions and artifact digests must be recorded
+Minimal platform image, PostgreSQL with owned schemas and TLS, and trusted browser
+certificates/service names. The [platform image recipe](platform/packer/README.md)
+covers hardware-virtualized ARM64 and emulated AMD64 on Apple Silicon. Release versions and artifact digests must be recorded
 before claiming support.
 
 Build/test entry points are `make fmt-check vet test race`, `make ui-test ui-build`,

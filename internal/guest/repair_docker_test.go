@@ -103,7 +103,8 @@ func testRepairDockerFailure(t *testing.T, docker, cli, image, stage, configurat
 			}
 		}
 	})
-	d := devContainer{workspace: project, config: ".devcontainer.json", repairImageFile: imgFile, repairSocketDir: sockets}
+	d := devContainer{workspace: project, config: ".devcontainer.json", codeServerSource: testCodeServerPackage(t),
+		repairImageFile: imgFile, repairSocketDir: sockets}
 	var cliFailure string
 	d.run = func(ctx context.Context, executable string, args ...string) ([]byte, error) {
 		args = slices.Clone(args)

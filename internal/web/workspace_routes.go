@@ -130,7 +130,7 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 		return operation.Operation{}, Problem{Status: 409, Code: "workspace.platform_incompatible", Title: "The template's platform release is incompatible with this controller"}
 	}
 	caps := policy.Capabilities
-	if !caps.Create || !caps.Start || caps.Architecture != architecture || !slices.Contains(policy.Protocols, protocol) {
+	if !caps.Create || !caps.Start || !caps.SupportsArchitecture(architecture) || !slices.Contains(policy.Protocols, protocol) {
 		return operation.Operation{}, launchCapabilityProblem()
 	}
 	network, err := workspace.LaunchNetworkSnapshot(ctx, tx, revision.NetworkPolicyID, caps)

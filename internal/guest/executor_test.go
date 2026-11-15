@@ -147,14 +147,21 @@ func TestGuestPollSendsCommittedLifecycleEvidence(t *testing.T) {
 		}
 		return []byte(`{"outcome":"success","containerId":"` + id + `","mergedConfiguration":{}}`), nil
 	}}
-	for range 2 {
+	for i := range 2 {
 		journal, err := loadLocalJournal(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		input := newGuestPollRequest("1", "test", journal)
-		if err := pollAgent(t.Context(), server.Client(), server.URL+pollPath, input, journal, runtime, nil); err != nil {
+		delay, err := pollAgent(t.Context(), server.Client(), server.URL+pollPath, input, journal, runtime, nil)
+		if err != nil {
 			t.Fatalf("pollAgent(%+v) = %v, want success", input, err)
+		}
+		if i == 0 && delay != 0 {
+			t.Errorf("fresh setup receipt delay = %v, want immediate report", delay)
+		}
+		if i == 1 && (delay < 27*time.Second || delay >= 33*time.Second) {
+			t.Errorf("unchanged setup receipt delay = %v, want steady polling", delay)
 		}
 	}
 	first, second := <-requests, <-requests
@@ -164,6 +171,34 @@ func TestGuestPollSendsCommittedLifecycleEvidence(t *testing.T) {
 	if second.Report == nil || second.LastOperationVersion != 7 || second.LastOperationID != ensureDispatch().ID ||
 		second.Report.Evidence.ContainerID != id || !second.Report.Evidence.WaitForReached {
 		t.Errorf("second poll = %+v, want persisted waitFor evidence for operation version 7", second)
+	}
+}
+
+// TestGuestPollCadence keeps an authenticated launch handoff near one second
+// and ignores arbitrary response intervals outside the supported cadence.
+func TestGuestPollCadence(t *testing.T) {
+	for _, tc := range []struct {
+		hint     int
+		min, max time.Duration
+	}{
+		{hint: 1, min: time.Second, max: time.Second + 250*time.Millisecond},
+		{hint: 30, min: 27 * time.Second, max: 33 * time.Second},
+		{hint: -1, min: 27 * time.Second, max: 33 * time.Second},
+	} {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer r.Body.Close()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"protocolVersion": "1", "workspaceGeneration": 1, "desiredState": "running",
+				"serverTime": time.Now(), "certificate": map[string]time.Time{"renewAfter": time.Now().Add(time.Hour)},
+				"operation": nil, "nextPollAfterSeconds": tc.hint,
+			})
+		}))
+		delay, err := pollAgent(t.Context(), server.Client(), server.URL+pollPath,
+			newGuestPollRequest("1", "test", nil), nil, devContainer{}, nil)
+		server.Close()
+		if err != nil || delay < tc.min || delay >= tc.max {
+			t.Errorf("pollAgent(hint %d) = %v, %v, want [%v, %v)", tc.hint, delay, err, tc.min, tc.max)
+		}
 	}
 }
 
@@ -420,13 +455,15 @@ func TestDevContainerOutputLimit(t *testing.T) {
 // steps so an operation can record the connection gate before later work.
 func TestDevContainerLifecycle(t *testing.T) {
 	id := strings.Repeat("a", 64)
-	workspace := t.TempDir()
+	workspace := filepath.Join(t.TempDir(), "project")
+	source := testCodeServerPackage(t)
 	var calls [][]string
 	runtime := devContainer{
-		workspace:   workspace,
-		config:      ".devcontainer/go/devcontainer.json",
-		credentials: true,
-		ide:         true,
+		workspace:        workspace,
+		config:           ".devcontainer/go/devcontainer.json",
+		credentials:      true,
+		ide:              true,
+		codeServerSource: source,
 		run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
 			calls = append(calls, append([]string{executable}, args...))
 			if executable == "/usr/bin/docker" {
@@ -458,7 +495,7 @@ func TestDevContainerLifecycle(t *testing.T) {
 			"--mount", "type=bind,source=/run/shiftbox-credentials/shiftbox,target=/usr/local/bin/shiftbox",
 			"--config", workspace + "/.devcontainer/go/devcontainer.json", "--skip-non-blocking-commands",
 			"--skip-post-attach", "--include-merged-configuration"},
-		{"/usr/bin/docker", "cp", "/usr/local/lib/shiftbox/code-server/.", id + ":/opt/shiftbox-code-server"},
+		{"/usr/bin/docker", "cp", source + "/.", id + ":/opt/shiftbox-code-server"},
 		{"/usr/local/bin/devcontainer", "exec", "--workspace-folder", workspace, "--docker-path", "/usr/bin/docker",
 			"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", "shiftbox.container=development",
 			"--config", workspace + "/.devcontainer/go/devcontainer.json", "--container-id", id,
@@ -476,7 +513,7 @@ func TestDevContainerLifecycle(t *testing.T) {
 // and leaves the underlying command output out of the operation evidence.
 func TestDevContainerIDEStartFailure(t *testing.T) {
 	id := strings.Repeat("a", 64)
-	runtime := devContainer{workspace: t.TempDir(), ide: true, run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
+	runtime := devContainer{workspace: filepath.Join(t.TempDir(), "project"), ide: true, codeServerSource: testCodeServerPackage(t), run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
 		if executable == "/usr/bin/docker" {
 			return nil, nil
 		}

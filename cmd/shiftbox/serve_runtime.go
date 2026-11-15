@@ -80,8 +80,8 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if err != nil {
 		return errors.New("cannot verify UTM capabilities; check the supported UTM version and macOS automation access")
 	}
-	if !caps.Create || !caps.Start || !caps.Stop || !caps.Delete || caps.Architecture != "amd64" {
-		return errors.New("UTM lacks required amd64 workspace lifecycle capabilities")
+	if !caps.Create || !caps.Start || !caps.Stop || !caps.Delete {
+		return errors.New("UTM lacks required workspace lifecycle capabilities")
 	}
 	checkpoint := &backup.WriteFence{}
 	journal := operation.NewJournal(state.DB, time.Now, uuid.NewString)

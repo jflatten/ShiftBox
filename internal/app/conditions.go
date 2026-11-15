@@ -92,7 +92,7 @@ func sampleOperationalConditions(ctx context.Context, db *sql.DB, probes operati
 			condition operationalCondition
 			active    bool
 		}{
-			{providerUnavailable, providerErr != nil || !caps.Create || !caps.Start || !caps.Stop || !caps.Delete || caps.Architecture != "amd64"},
+			{providerUnavailable, providerErr != nil || !caps.Create || !caps.Start || !caps.Stop || !caps.Delete},
 			{keyUnavailable, !keyHealthy},
 			{storageLow, spaceErr == nil && available < probes.minimumDiskBytes},
 			{storageUnknown, spaceErr != nil},

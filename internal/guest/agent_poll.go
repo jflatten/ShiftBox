@@ -26,7 +26,8 @@ var errAgentIdentityRenewed = errors.New("guest identity renewed")
 func (identity AgentIdentity) Poll(ctx context.Context, endpoint, serverName, protocol, release string) error {
 	client := identity.pollClient(serverName)
 	defer client.CloseIdleConnections()
-	return pollAgent(ctx, client, endpoint, newGuestPollRequest(protocol, release, nil), nil, devContainer{}, nil)
+	_, err := pollAgent(ctx, client, endpoint, newGuestPollRequest(protocol, release, nil), nil, devContainer{}, nil)
+	return err
 }
 
 func (identity AgentIdentity) pollClient(serverName string) *http.Client {
@@ -65,33 +66,33 @@ func newGuestPollRequest(protocol, release string, journal *localJournal) guestP
 	return input
 }
 
-func pollAgent(ctx context.Context, client *http.Client, endpoint string, input guestPollRequest, journal *localJournal, runtime devContainer, tunnel *agentTunnel) error {
+func pollAgent(ctx context.Context, client *http.Client, endpoint string, input guestPollRequest, journal *localJournal, runtime devContainer, tunnel *agentTunnel) (time.Duration, error) {
 	if !validPollEndpoint(endpoint) || input.ProtocolVersion == "" || input.GuestRelease == "" {
-		return errors.New("invalid guest poll configuration")
+		return 0, errors.New("invalid guest poll configuration")
 	}
 	body, err := json.Marshal(input)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return errors.New("invalid guest poll request")
+		return 0, errors.New("invalid guest poll request")
 	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return 0, ctx.Err()
 		}
-		return errors.New("guest poll HTTPS exchange failed")
+		return 0, errors.New("guest poll HTTPS exchange failed")
 	}
 	defer response.Body.Close()
 	switch response.StatusCode {
 	case http.StatusOK:
 	case http.StatusForbidden, http.StatusUnauthorized:
-		return ErrGuestUnauthorized
+		return 0, ErrGuestUnauthorized
 	default:
-		return errors.New("controller did not accept guest poll")
+		return 0, errors.New("controller did not accept guest poll")
 	}
 	var result struct {
 		ProtocolVersion string          `json:"protocolVersion"`
@@ -106,19 +107,33 @@ func pollAgent(ctx context.Context, client *http.Client, endpoint string, input 
 	}
 	if err := decodeAgentJSON(response.Body, &result); err != nil || result.ProtocolVersion != input.ProtocolVersion ||
 		result.Generation < 1 || result.ServerTime.IsZero() || result.Certificate.RenewAfter.IsZero() {
-		return errors.New("invalid guest poll response")
+		return 0, errors.New("invalid guest poll response")
 	}
 	if tunnel != nil {
 		offer, err := readTunnelOffer(endpoint, response.Header, result.Generation, result.DesiredState)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if result.Generation < journal.state.Generation {
-			return errGuestDispatchConflict
+			return 0, errGuestDispatchConflict
 		}
 		tunnel.update(ctx, offer)
 	}
-	return applyGuestPoll(ctx, journal, runtime, result.Generation, result.DesiredState, result.Operation)
+	if err := applyGuestPoll(ctx, journal, runtime, result.Generation, result.DesiredState, result.Operation); err != nil {
+		return 0, err
+	}
+	// A new durable receipt is worth an immediate round trip. A replay of the
+	// same phase keeps the normal interval, even if the controller redispatches.
+	if journal != nil && journal.state.Operation != nil && journal.state.Operation.Command == ensureDevelopmentCommand {
+		receipt := newGuestPollRequest(input.ProtocolVersion, input.GuestRelease, journal).Report
+		if receipt != nil && (input.Report == nil || *input.Report != *receipt) {
+			return 0, nil
+		}
+	}
+	if result.NextPollSeconds == 1 {
+		return time.Second + rand.N(250*time.Millisecond), nil
+	}
+	return 27*time.Second + rand.N(6*time.Second), nil
 }
 
 func applyGuestPoll(ctx context.Context, journal *localJournal, runtime devContainer, generation int64, desiredState string, raw json.RawMessage) error {
@@ -187,7 +202,7 @@ func applyGuestPoll(ctx context.Context, journal *localJournal, runtime devConta
 		return err
 	}
 	replacement := dispatch.Command == rebuildDevelopmentCommand || dispatch.Command == retryAfterRepairCommand
-	if dispatch.Command != "ensure-development-container" && !replacement || len(dispatch.Arguments.RetainedMounts) != 0 {
+	if dispatch.Command != ensureDevelopmentCommand && !replacement || len(dispatch.Arguments.RetainedMounts) != 0 {
 		return errAgentOperationPending
 	}
 	if desiredState != "running" || !validDevContainerPath(dispatch.Arguments.Devcontainer) ||
@@ -285,8 +300,11 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 		}
 		input := newGuestPollRequest(protocol, release, journal)
 		input.Activity = sampler.sample(now)
+		var delay time.Duration
 		poll := func(ctx context.Context) error {
-			return pollAgent(ctx, client, identity.PollEndpoint, input, journal, runtime, tunnel)
+			var err error
+			delay, err = pollAgent(ctx, client, identity.PollEndpoint, input, journal, runtime, tunnel)
+			return err
 		}
 		if firstPoll {
 			executable, err := os.Executable()
@@ -300,7 +318,9 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 		} else if err := poll(ctx); err != nil {
 			return err
 		}
-		delay := 27*time.Second + rand.N(6*time.Second)
+		if delay == 0 && ctx.Err() == nil {
+			continue
+		}
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():

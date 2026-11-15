@@ -518,3 +518,35 @@ func maintenanceExec(t *testing.T, db *sql.DB, query string, args ...any) {
 		t.Fatal(err)
 	}
 }
+
+// TestScheduleMaintenanceTargetsMatchingArchitecture keeps an AMD64 release
+// campaign from asking a retained ARM64 workspace to run the AMD64 binary.
+func TestScheduleMaintenanceTargetsMatchingArchitecture(t *testing.T) {
+	db, journal, now := maintenanceFixture(t, "amd-workspace")
+	maintenanceExec(t, db, `INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,
+		owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state)
+		SELECT 'arm-artifact','arm-release','arm64',platform_version,guest_release,protocol_version,
+		owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state
+		FROM platform_artifacts WHERE id='reservation-artifact'`)
+	maintenanceExec(t, db, `INSERT INTO workspaces
+		(id,installation_id,owner_user_id,template_id,template_revision,platform_artifact_id,repository_url,devcontainer_path,
+		cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,desired_state,observed_state,generation,ownership_marker,created_at,updated_at,version)
+		SELECT 'arm-workspace',installation_id,owner_user_id,template_id,template_revision,'arm-artifact',repository_url,devcontainer_path,
+		cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,desired_state,observed_state,generation,ownership_marker,created_at,updated_at,version
+		FROM workspaces WHERE id='amd-workspace'`)
+	defer func() {
+		maintenanceExec(t, db, "DELETE FROM maintenance_targets WHERE workspace_id='arm-workspace'")
+		maintenanceExec(t, db, "DELETE FROM workspaces WHERE id='arm-workspace'")
+		maintenanceExec(t, db, "DELETE FROM platform_artifacts WHERE id='arm-artifact'")
+	}()
+	op, err := scheduleMaintenanceFixture(t, db, journal, "reservation-release", now.Add(time.Hour), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total, arm int
+	err = db.QueryRowContext(t.Context(), `SELECT count(*),count(CASE WHEN workspace_id='arm-workspace' THEN 1 END)
+		FROM maintenance_targets WHERE campaign_id=$1`, op.ID).Scan(&total, &arm)
+	if err != nil || total != 1 || arm != 0 {
+		t.Errorf("AMD64 campaign targets = %d total, %d ARM64, %v, want 1 total and 0 ARM64", total, arm, err)
+	}
+}

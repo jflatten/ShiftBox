@@ -33,19 +33,42 @@ variable "guest_update_public_key" {
   type = string
 }
 
+variable "architecture" {
+  type    = string
+  default = "amd64"
+  validation {
+    condition     = contains(["amd64", "arm64"], var.architecture)
+    error_message = "Architecture must be amd64 or arm64."
+  }
+}
+
+locals {
+  platforms = {
+    amd64 = {
+      vm_arch  = "x86_64"
+      checksum = "sha256:d99d1abe3284e568161b3b7dabfbd6cf67956a7f4274b13842f10aa9c7807a2c"
+    }
+    arm64 = {
+      vm_arch  = "aarch64"
+      checksum = "sha256:7e938df669e3b1923595eeda97aa28569350c5283e05a835cc912a2486a54934"
+    }
+  }
+  platform = local.platforms[var.architecture]
+}
+
 source "utm-cloud" "shiftbox" {
   vm_name            = var.build_name
-  vm_arch            = "x86_64"
+  vm_arch            = local.platform.vm_arch
   vm_backend         = "qemu"
-  hypervisor         = false
+  hypervisor         = var.architecture == "arm64"
   uefi_boot          = true
   cpus               = 2
   memory             = 4096
   disk_size          = 32768
   resize_cloud_image = true
 
-  iso_url      = "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20260716/ubuntu-24.04-minimal-cloudimg-amd64.img"
-  iso_checksum = "sha256:d99d1abe3284e568161b3b7dabfbd6cf67956a7f4274b13842f10aa9c7807a2c"
+  iso_url      = "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20260716/ubuntu-24.04-minimal-cloudimg-${var.architecture}.img"
+  iso_checksum = local.platform.checksum
   use_cd       = true
   cd_label     = "cidata"
   cd_content = {
@@ -125,7 +148,7 @@ build {
   provisioner "shell" {
     inline = [
       "cloud-init status --wait",
-      "sudo /bin/sh /tmp/shiftbox-install-toolchain",
+      "sudo /bin/sh /tmp/shiftbox-install-toolchain ${var.architecture}",
       "sudo install -m 0755 /tmp/shiftbox-agent /usr/local/bin/shiftbox-agent",
       "sudo install -D -o root -g root -m 0644 /tmp/shiftbox-guest-update.pub /usr/local/share/shiftbox/guest-update.pub",
       "sudo ln -s /usr/local/bin/shiftbox-agent /usr/local/bin/shiftbox",

@@ -96,10 +96,12 @@ export function Infrastructure() {
 }
 
 function ProviderDetails({ provider }: { provider: InfrastructureStatus['provider'] }) {
+  const architectureLabels: Record<string, string> = { amd64: 'x86-64 (amd64)', arm64: 'ARM64' };
+  const architectures = provider.architectures ?? [provider.architecture];
   const details = [
     ['Provider', provider.name === 'utm' ? 'UTM' : provider.name || 'Unavailable'],
     ['Version', provider.version || 'Unavailable'],
-    ['Architecture', provider.architecture === 'amd64' ? 'x86-64 (amd64)' : provider.architecture || 'Unavailable'],
+    ['Architecture', architectures.map(architecture => architectureLabels[architecture] ?? architecture).join(', ') || 'Unavailable'],
     ['Network modes', provider.networkModes?.map(mode => mode === 'shared' ? 'Shared' : mode).join(', ') || 'Unavailable'],
   ];
   return <Paper component="section" aria-labelledby="provider-heading" withBorder radius="md" p="lg">

@@ -94,3 +94,31 @@ test('lists current template revisions and follows the server cursor', async () 
   expect(await screen.findByRole('button', { name: 'View Second project' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'View Example project' })).toBeNull();
 });
+
+// An installation default is preselected and saved when creating a template.
+test('uses the installation platform default for a new template', async () => {
+  const fetch = jest.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
+    if (path === '/api/v1/session') return json({ ...session, permissions: ['template.create'] });
+    if (path === '/api/v1/templates/catalog') return json({
+      resourceProfiles: [{ id: 'profile-id', name: 'Small' }],
+      platformImages: [{ id: 'amd-image', name: 'AMD64' }, { id: 'arm-image', name: 'ARM64' }],
+      defaultPlatformArtifactId: 'arm-image',
+    });
+    if (init?.method === 'POST') return json({ id: 'new-template' });
+    return json({ items: [] });
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Templates /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'New template' }));
+  const dialog = within(screen.getByRole('dialog', { name: 'New template' }));
+  const image = await dialog.findByRole('combobox', { name: 'Platform image' });
+  expect(image).toHaveValue('arm-image');
+  await user.type(dialog.getByRole('textbox', { name: /^Name/ }), 'Native project');
+  await user.type(dialog.getByRole('textbox', { name: 'Repository URL' }), project.repositoryUrl);
+  await user.selectOptions(dialog.getByRole('combobox', { name: 'Resource profile' }), 'profile-id');
+  await user.click(dialog.getByRole('button', { name: 'Create template' }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/templates', expect.objectContaining({
+    method: 'POST', body: expect.stringContaining('"platformArtifactId":"arm-image"'),
+  })));
+});

@@ -71,6 +71,7 @@ const (
 	nativeExpiredCA
 	nativeRetention
 	nativeCapacity
+	nativeARM64Workbenches
 )
 
 func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, scenario nativeGuestScenario) {
@@ -94,6 +95,9 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	defer cancel()
 	owner := uuid.NewString()
 	metadata := readNativeArtifactManifest(t, bundle)
+	if scenario == nativeARM64Workbenches && metadata.Architecture != "arm64" {
+		t.Fatalf("workbench fixture architecture = %q, want arm64", metadata.Architecture)
+	}
 	target := metadata
 	compatibility := web.GuestCompatibility{Protocol: metadata.ProtocolVersion, CurrentRelease: metadata.Guest.Version}
 	if maintenance != nil && maintenance.targetBundle != "" {
@@ -163,6 +167,13 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	var clock *nativeClockFixture
 	var replayMedia string
 	var tunnelRevocation *nativeTunnelFixture
+	var arm64Fixture *arm64Workbenches
+	repository := "https://github.com/example/project"
+	if scenario == nativeARM64Workbenches {
+		arm64Fixture = startARM64Workbenches(t, host, machines)
+		runtimeProvider = arm64Fixture
+		repository = nativeARM64Repository
+	}
 	if scenario == nativeGuestClock {
 		clock = startNativeClockFixture(t, host)
 		runtimeProvider = nativeSeedProvider{Provider: machines, seed: clock.seed}
@@ -257,7 +268,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 		var err error
 		op, err = workspace.AdmitLaunch(ctx, tx, journal, workspace.LaunchIntent{
 			InstallationID: id, WorkspaceID: workspaceID, OwnerID: owner, TemplateID: uuid.NewString(), TemplateRevision: 1,
-			RequestKey: "live-utm-enrollment", ArtifactID: artifactID, RepositoryURL: "https://github.com/example/project",
+			RequestKey: "live-utm-enrollment", ArtifactID: artifactID, RepositoryURL: repository,
 			DevcontainerPath: ".devcontainer/devcontainer.json", Allocation: allocation, OwnershipMarker: marker, NetworkPolicyJSON: `{"mode":"shared"}`,
 			RetentionSeconds: retention,
 		}, time.Now())
@@ -292,6 +303,10 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	before, err := machines.Inspect(ctx, ref)
 	if err != nil || before.Power != provider.Running {
 		t.Fatalf("provider after enrollment = %s (%v), want running", before.Power, err)
+	}
+	if arm64Fixture != nil {
+		arm64Fixture.verify(t, ctx, db, journal, before.Ref, owner, op.ID, tunnels)
+		return
 	}
 	if maintenance != nil {
 		maintenance.verify(t, ctx, db, journal, machines, before, op.ID, owner, metadata, target)

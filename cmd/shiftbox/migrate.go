@@ -95,7 +95,7 @@ func assessControllerMigration(ctx context.Context, cfg config.Config, state *ap
 	now := time.Now()
 	evidence := release.MigrationEvidence{
 		ProviderCompatible: manifest.ProtocolVersion == guestProtocol && caps.Version == manifest.UTM.Version &&
-			caps.Architecture == "amd64" && caps.Create && caps.Start && caps.Stop && caps.Delete,
+			caps.Create && caps.Start && caps.Stop && caps.Delete,
 		StorageWritable: migrationStorageWritable(cfg.InstallationDir, cfg.Runtime.UTMStorage),
 		ToolsCompatible: migrationDexMatches(cfg.Runtime.DexBinary, manifest.Dex) && migrationBackupTools(ctx, state, cfg.DataProfile),
 	}

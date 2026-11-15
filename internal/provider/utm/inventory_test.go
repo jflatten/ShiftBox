@@ -254,3 +254,14 @@ func checkLiveMediaReplacement(t *testing.T, controller *PowerController, before
 		}
 	}
 }
+
+// TestNativeARM64Inventory checks that a hardware-virtualized ARM workspace remains manageable.
+func TestNativeARM64Inventory(t *testing.T) {
+	vm := vmRecord{ID: "arm-vm", Backend: "qemu", Architecture: "aarch64", Status: "stopped",
+		CPU: 2, MemoryMiB: 4096, Drives: []driveRecord{}}
+	owner := ownership{ArtifactID: "arm-image", Release: "arm-release"}
+	got, err := inventoryFromRecord(provider.WorkspaceRef{}, vm, owner)
+	if err != nil || got.InstanceID != vm.ID {
+		t.Fatalf("inventoryFromRecord(aarch64) = %q, %v, want %q and no error", got.InstanceID, err, vm.ID)
+	}
+}

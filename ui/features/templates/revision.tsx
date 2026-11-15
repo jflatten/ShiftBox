@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Group, Modal, NativeSelect, Stack, Text, TextInput } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { useQuery } from '@tanstack/react-query';
@@ -45,6 +45,14 @@ export function TemplateRevisionForm({ template, csrfToken, onClose, refresh }: 
       platformArtifactId: value => images.some(image => image.id === value) ? null : 'Select an available platform image.',
     },
   });
+
+  const { getValues, isTouched, setFieldValue } = form;
+  const defaultImage = catalog.data?.defaultPlatformArtifactId;
+  useEffect(() => {
+    if (!template && defaultImage && !isTouched('platformArtifactId') && !getValues().platformArtifactId) {
+      setFieldValue('platformArtifactId', defaultImage);
+    }
+  }, [defaultImage, getValues, isTouched, setFieldValue, template]);
 
   async function save(values: typeof form.values) {
     if (stale) return;

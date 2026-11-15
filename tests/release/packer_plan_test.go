@@ -79,9 +79,12 @@ func TestPackerBuildPlan(t *testing.T) {
 	args := []string{"validate", "-var", "build_public_key=" + strings.TrimSpace(string(public)), "-var", "build_private_key=" + key,
 		"-var", "guest_update_public_key=" + publisherPath,
 		"-var", "agent_binary=" + key, "-var", "output_directory=" + filepath.Join(dir, "export"),
-		"-var", "build_name=shiftbox-packer-fixture", recipe}
-	if out, err := exec.CommandContext(t.Context(), packer, args...).CombinedOutput(); err != nil {
-		t.Fatalf("packer validate: %v\n%s", err, out)
+		"-var", "build_name=shiftbox-packer-fixture"}
+	for _, architecture := range []string{"amd64", "arm64"} {
+		plan := append(append([]string(nil), args...), "-var", "architecture="+architecture, recipe)
+		if out, err := exec.CommandContext(t.Context(), packer, plan...).CombinedOutput(); err != nil {
+			t.Errorf("packer validate (%s): %v\n%s", architecture, err, out)
+		}
 	}
 }
 
@@ -116,7 +119,7 @@ func TestPackerBrowserIDE(t *testing.T) {
 	root := filepath.Join("..", "..", "platform", "packer")
 	for file, expected := range map[string][]string{
 		"code-server.env":      {"CODE_SERVER_VERSION=4.145.2", "2f6db6c3e8b733dd6b3aeee83532e148b2bae2e392353ba85452d03572348962"},
-		"install-toolchain.sh": {"code-server-$CODE_SERVER_VERSION-linux-amd64.tar.gz", "ThirdPartyNotices", "code-server --version"},
+		"install-toolchain.sh": {"code-server-$CODE_SERVER_VERSION-linux-$architecture.tar.gz", "ThirdPartyNotices", "code-server --version"},
 		"shiftbox.pkr.hcl":     {"code-server.env", "/tmp/shiftbox-code-server.env"},
 		"seal-image.sh":        {"/tmp/shiftbox-code-server.env"},
 		"build-image.sh":       {"go run ./platform/packer/manifest", "manifest.json", "CODE_SERVER_SHA256"},
@@ -146,6 +149,23 @@ func TestPackerRepairImage(t *testing.T) {
 		"shiftbox/repair:ubuntu-24.04", "COPY . /opt/shiftbox-code-server/", "--pull=never --network=none"} {
 		if !strings.Contains(string(raw), marker) {
 			t.Errorf("%s missing repair image build or verification marker %q", path, marker)
+		}
+	}
+}
+
+// TestPackerARM64DevContainerCache checks that the bake pins the native base
+// by digest and seeds the reference used by the measured workspace.
+func TestPackerARM64DevContainerCache(t *testing.T) {
+	path := filepath.Join("..", "..", "platform", "packer", "install-toolchain.sh")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+		"sha256:309df9dde7aeb9e734a8f7ead76ab4d18ee4eb17b6047d2a2d008fa52fdea67b",
+		`docker pull --platform linux/arm64 "$devcontainer_pin"`, `docker tag "$devcontainer_pin" "$devcontainer_base"`} {
+		if !strings.Contains(string(raw), marker) {
+			t.Errorf("ARM64 bake missing base-image preload step %q", marker)
 		}
 	}
 }

@@ -133,7 +133,7 @@ func effectResult(out []byte, err error) error {
 	switch string(bytes.TrimSpace(out)) {
 	case "issued":
 		return nil
-	case "version":
+	case "version", "unsupported":
 		return provider.ErrCapabilityUnsupported
 	case "ownership":
 		return provider.ErrOwnershipMismatch

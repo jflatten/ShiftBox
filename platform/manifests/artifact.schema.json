@@ -47,7 +47,7 @@
       "minLength": 1
     },
     "architecture": {
-      "const": "amd64"
+      "enum": ["amd64", "arm64"]
     },
     "platformVersion": {
       "type": "string",

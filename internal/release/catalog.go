@@ -152,7 +152,7 @@ func readArtifactManifest(input io.Reader) ([]byte, ArtifactManifest, error) {
 }
 
 func manifestInventory(manifest ArtifactManifest) (string, map[string]string, error) {
-	if manifest.SchemaVersion != 1 || manifest.Architecture != "amd64" ||
+	if manifest.SchemaVersion != 1 || (manifest.Architecture != "amd64" && manifest.Architecture != "arm64") ||
 		!hasMetadata(manifest.ReleaseID, manifest.PlatformVersion, manifest.ProtocolVersion,
 			manifest.Guest.Version, manifest.IDE.Version, manifest.Provenance.Source, manifest.Provenance.Revision) ||
 		!validDigest(manifest.Guest.SHA256) || !validDigest(manifest.IDE.SHA256) {

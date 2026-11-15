@@ -67,7 +67,7 @@ func normalizeInventory(ref provider.WorkspaceRef, records []vmRecord) (provider
 }
 
 func inventoryFromRecord(ref provider.WorkspaceRef, vm vmRecord, owner ownership) (provider.Inventory, error) {
-	if vm.Backend != "qemu" || vm.Architecture != "x86_64" {
+	if vm.Backend != "qemu" || (vm.Architecture != "x86_64" && vm.Architecture != "aarch64") {
 		return provider.Inventory{}, provider.ErrCapabilityUnsupported
 	}
 	const mib = 1 << 20

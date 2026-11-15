@@ -1,6 +1,9 @@
 package provider
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // PowerState is the provider-observed lifecycle state of the workspace VM.
 type PowerState string
@@ -37,10 +40,21 @@ type Resources struct {
 // Capabilities describes the adapter's validated actions and host resource bounds.
 type Capabilities struct {
 	Name, Version, Architecture, ExecutionMode, Evidence string
-	Create, Start, Stop, Delete                          bool
-	NetworkModes, RecoveryMechanisms                     []string
-	NetworkStoppedOnly                                   bool
-	Minimum, Maximum                                     Resources
+	// Architectures lists supported image architectures. Single-architecture
+	// providers may supply Architecture alone.
+	Architectures                    []string
+	Create, Start, Stop, Delete      bool
+	NetworkModes, RecoveryMechanisms []string
+	NetworkStoppedOnly               bool
+	Minimum, Maximum                 Resources
+}
+
+// SupportsArchitecture reports whether the provider can run an image for the given architecture.
+func (c Capabilities) SupportsArchitecture(architecture string) bool {
+	if len(c.Architectures) != 0 {
+		return slices.Contains(c.Architectures, architecture)
+	}
+	return architecture != "" && architecture == c.Architecture
 }
 
 // OwnedResource describes one inventoried VM resource and its ownership.

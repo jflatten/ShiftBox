@@ -23,10 +23,11 @@ type profileInput struct {
 }
 
 type infrastructureProvider struct {
-	Name         string   `json:"name"`
-	Version      string   `json:"version"`
-	Architecture string   `json:"architecture"`
-	NetworkModes []string `json:"networkModes"`
+	Name          string   `json:"name"`
+	Version       string   `json:"version"`
+	Architecture  string   `json:"architecture"`
+	Architectures []string `json:"architectures,omitempty"`
+	NetworkModes  []string `json:"networkModes"`
 }
 
 type infrastructureCondition struct {
@@ -40,10 +41,11 @@ type infrastructureCondition struct {
 // current capacity budget through the administrator-only management route.
 func InfrastructureStatusHandler(db *sql.DB, origin string, now func() time.Time, caps provider.Capabilities) AuthorizedHandler {
 	providerView := infrastructureProvider{
-		Name:         caps.Name,
-		Version:      caps.Version,
-		Architecture: caps.Architecture,
-		NetworkModes: slices.Clone(caps.NetworkModes),
+		Name:          caps.Name,
+		Version:       caps.Version,
+		Architecture:  caps.Architecture,
+		Architectures: slices.Clone(caps.Architectures),
+		NetworkModes:  slices.Clone(caps.NetworkModes),
 	}
 	return AuthorizedHandler{
 		DB: db, Origin: origin, Now: now,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -12,7 +13,7 @@ import (
 )
 
 // TestProviderAdvertisesCapabilities verifies that successful inspection
-// advertises only the pinned emulated provider's supported operations.
+// advertises AMD64 and, on Apple Silicon, hardware-virtualized ARM64.
 func TestProviderAdvertisesCapabilities(t *testing.T) {
 	minimum := provider.Resources{CPU: 1, MemoryBytes: 512 << 20, DiskBytes: 64 << 20}
 	maximum := provider.Resources{CPU: 4, MemoryBytes: 4096 << 20, DiskBytes: 32768 << 20}
@@ -25,8 +26,13 @@ func TestProviderAdvertisesCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	architectures := []string{"amd64"}
+	if runtime.GOARCH == "arm64" {
+		architectures = append(architectures, "arm64")
+	}
 	want := provider.Capabilities{
-		Name: "utm", Version: "5.0.8", Architecture: "amd64", ExecutionMode: "emulated",
+		Architectures: architectures,
+		Name:          "utm", Version: "5.0.8", Architecture: "amd64", ExecutionMode: "emulated",
 		Evidence: "UTM 5.0.8 native QEMU scripting",
 		Create:   true, Start: true, Stop: true, Delete: true, NetworkStoppedOnly: true,
 		NetworkModes: []string{"shared"}, RecoveryMechanisms: []string{"media"}, Minimum: minimum, Maximum: maximum,
