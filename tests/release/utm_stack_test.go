@@ -67,6 +67,7 @@ const (
 	nativeRevokedGuest
 	nativeClonedEnrollment
 	nativeTunnelRevocation
+	nativeGuestRenewal
 	nativeExpiredCA
 	nativeRetention
 	nativeCapacity
@@ -199,7 +200,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	}
 	bind := net.JoinHostPort(host, "0")
 	addresses := [3]string{bind, bind, bind}
-	if scenario == nativeControllerTrust || scenario == nativeGuestClock {
+	if scenario == nativeControllerTrust || scenario == nativeGuestClock || scenario == nativeGuestRenewal {
 		addresses = reserveNativeGuestAddresses(t, bind)
 	}
 	journal := operation.NewJournal(db, time.Now, uuid.NewString)
@@ -235,9 +236,9 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 		}
 	}
 	issuer := ca
-	if scenario == nativeExpiredLeaf {
+	if scenario == nativeExpiredLeaf || scenario == nativeGuestRenewal {
 		// Keep the genuine CA DER, subject, and signing key. This copy caps only
-		// initial certificate issuance so the native guest can expire offline.
+		// initial certificate issuance to accelerate expiry or renewal.
 		shortIssuer, shortCertificate := *ca, *ca.Certificate
 		shortCertificate.NotAfter = time.Now().Add(4 * time.Minute).Truncate(time.Second)
 		shortIssuer.Certificate = &shortCertificate
@@ -308,6 +309,14 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 		clock.skew(t, ctx)
 		_, stopRuntime = startRuntime(ca, time.Now)
 		verifyNativeGuestClock(t, ctx, db, machines, before, clock)
+		return
+	}
+	if scenario == nativeGuestRenewal {
+		prior := nativeEnrollmentLeaf(t, ctx, db, before.Ref)
+		stopRuntime()
+		stopRuntime = func() {}
+		_, stopRuntime = startRuntime(ca, time.Now)
+		verifyNativeGuestRenewal(t, ctx, db, machines, before, prior, ca)
 		return
 	}
 	if scenario == nativeRevokedGuest {

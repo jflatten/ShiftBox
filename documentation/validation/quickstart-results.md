@@ -149,6 +149,12 @@ temporary installation CA expired on the wall clock. The controller
 refused to reload the expired CA. UTM still reported the same running VM
 and owned disk. See [the native CA test](utm-stack.md#expired-certificate-authority).
 
+For section 8, the packaged guest also renewed a short first leaf over its
+authenticated channel. It used a different key and a new eight-hour
+certificate before the first leaf expired. The still-valid predecessor was
+refused for ordinary access, and the agent kept its original running VM
+and disk. See [native certificate renewal](utm-stack.md#native-certificate-renewal).
+
 A separate native rc2 run verified actual guest-clock correction. A
 disposable NoCloud seed moved the Linux guest clock one hour behind, and
 fresh TLS contact stopped. Correcting the guest clock restored contact

@@ -47,6 +47,22 @@ identities and separate ownership markers. Deleting one clone left the
 other stopped with its original disk. The adapter verified both
 deletions, and both clones were absent afterward.
 
+## Native certificate renewal
+
+`TestUTMGuestRenewsBeforeExpiry` passed with `-race` in 190.36 seconds on
+UTM 5.0.8 and the pinned `mvp-rc2` guest. The fixture shortened only the
+first leaf's lifetime so the packaged agent reached its renewal window
+during the run. After enrollment, the controller restarted its listeners
+on the same addresses with the original CA and ordinary issuance limits.
+
+The agent generated a different key, received a new eight-hour
+certificate, and used it to authenticate before the first leaf expired.
+The still-valid predecessor was refused for ordinary guest access.
+No second enrollment grant was issued, and the running VM and disk kept
+their original identities. Both race-enabled renewal contract tests also
+passed, including retry of a lost renewal response. Set
+`SHIFTBOX_TEST_UTM_NATIVE_RENEWAL=1` with the normal native fixture settings.
+
 ## Expired guest recovery
 
 The race-enabled `TestUTMExpiredGuestRecovery` passed against the
