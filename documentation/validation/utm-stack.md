@@ -168,6 +168,13 @@ confirmed provider absence, released the disk reservation, and recorded
 the registration as deleted. The original certificate remained denied.
 Set `SHIFTBOX_TEST_UTM_REVOKED_GUEST=1` with the normal native fixture settings.
 
+The exact RC3 guest repeated this scenario with the race detector in
+592.26 seconds on UTM 5.0.8. Its first authenticated poll took nine
+minutes. Revocation denied the old certificate and left contact unchanged.
+Restart issued no enrollment media, and verified deletion released the
+original disk and kept the old certificate denied. UTM confirmed removal
+of the disposable guest.
+
 ## Native preview tunnel revocation
 
 `TestUTMNativeTunnelRevocation` passed with `-race` in 128.92 seconds on
