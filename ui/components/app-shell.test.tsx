@@ -27,13 +27,13 @@ test('respects session gates and keeps persistent conditions visible', () => {
 test('shows permitted administration navigation', () => {
   render(<MantineProvider><ShiftBoxShell session={{ role: 'administrator', mode: 'normal', installationState: 'active', permissions: ['infrastructure.view'] }} alerts={[]}><h1>Overview</h1></ShiftBoxShell></MantineProvider>);
   expect(screen.getByRole('link', { name: 'Infrastructure' })).toBeVisible();
-  expect(screen.queryByRole('link', { name: 'People' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
 });
 
-// The approved People navigation label points to the membership route.
-test('links authorized administrators to People', () => {
+// The approved Users navigation label points to the membership route.
+test('links authorized administrators to Users', () => {
   render(<MantineProvider><ShiftBoxShell session={{ role: 'administrator', mode: 'normal', installationState: 'active', permissions: ['user.list'] }} alerts={[]}><h1>Overview</h1></ShiftBoxShell></MantineProvider>);
-  expect(screen.getByRole('link', { name: 'People' })).toHaveAttribute('href', '/users/');
+  expect(screen.getByRole('link', { name: 'Users' })).toHaveAttribute('href', '/users/');
 });
 
 // Restored installations expose the review link while hiding normal controls.

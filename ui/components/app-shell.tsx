@@ -53,7 +53,7 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
         {normal && permitted('notice.list') ? <NavLink href="/notices/" label="Notices" /> : null}
         {account ? <NavLink href="/account/" label="Account" /> : null}
         {!signedOut && !renewalRequired && session?.role === 'administrator' && permitted('infrastructure.view') ? <NavLink href="/infrastructure/" label="Infrastructure" /> : null}
-        {normal && session?.role === 'administrator' && permitted('user.list') ? <NavLink href="/users/" label="People" /> : null}
+        {normal && session?.role === 'administrator' && permitted('user.list') ? <NavLink href="/users/" label="Users" /> : null}
         {normal && session?.role === 'administrator' && permitted('audit.list') ? <NavLink href="/audit/" label="Audit" /> : null}
         {backup || recovery ? <NavLink href="/recovery/" label="Backup & Recovery" /> : null}
         {!signedOut && permitted('session.logout') && session?.csrfToken ? (

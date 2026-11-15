@@ -321,7 +321,11 @@ test('offboarding and administrator password reset', async ({ page }) => {
     }
   }, operation(labels));
   await page.goto('/users/');
-  await activate(page, page.getByRole('button', { name: 'Reset password' }));
+  await activate(page, page.getByRole('button', { name: 'Actions for target@example.test' }));
+  await expect(page.getByRole('menu').locator('[data-autofocus]')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitem', { name: 'Reset password' })).toBeFocused();
+  await page.keyboard.press('Enter');
   const reset = page.getByRole('dialog', { name: 'Reset password' });
   await expect(reset.getByRole('button', { name: 'Cancel' })).toBeFocused();
   await activate(page, reset.getByRole('button', { name: 'Generate temporary password' }));
@@ -331,7 +335,12 @@ test('offboarding and administrator password reset', async ({ page }) => {
   await activate(page, reset.getByRole('checkbox', { name: 'I saved the temporary password' }), 'Space');
   await activate(page, done);
   await expect(reset).toBeHidden();
-  await activate(page, page.getByRole('button', { name: 'Disable account' }));
+  await activate(page, page.getByRole('button', { name: 'Actions for target@example.test' }));
+  await expect(page.getByRole('menu').locator('[data-autofocus]')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitem', { name: 'Disable account' })).toBeFocused();
+  await page.keyboard.press('Enter');
   const disable = page.getByRole('dialog');
   await expect(disable.getByRole('button', { name: 'Cancel' })).toBeFocused();
   await activate(page, disable.getByRole('button', { name: 'Confirm disable' }));
@@ -349,14 +358,49 @@ test('People dialogs restore focus on Escape', async ({ page }) => {
   });
   await page.goto('/users/');
   for (const action of ['Reset password', 'Disable account']) {
-    const trigger = page.getByRole('button', { name: action, exact: true });
+    const trigger = page.getByRole('button', { name: 'Actions for target@example.test' });
     await activate(page, trigger);
+    await expect(page.getByRole('menu').locator('[data-autofocus]')).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    if (action === 'Disable account') await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('menuitem', { name: action, exact: true })).toBeFocused();
+    await page.keyboard.press('Enter');
     const dialog = page.getByRole('dialog', { name: action });
     await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
     await expect.soft(trigger).toBeFocused();
   }
+});
+
+// A narrow screen must keep search, global sorting, pagination, and account
+// creation reachable by keyboard without making the whole page overflow.
+test('People directory search and pagination work on a narrow screen', async ({ page }) => {
+  const people = Array.from({ length: 23 }, (_, index) => ({ ...target,
+    id: `person-${index}`, displayName: `Person ${String(index + 1).padStart(2, '0')}`,
+    primaryEmail: `person-${index + 1}@example.test`,
+  })).reverse();
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) return route.fulfill({ json: admin(['user.list', 'user.create']) });
+    if (path.endsWith('/users')) return route.fulfill({ json: people });
+  });
+  await page.goto('/users/');
+  await expect(page.getByRole('status')).toHaveText('Showing 1–10 of 23 users');
+  await activate(page, page.getByRole('button', { name: 'Next page' }));
+  await expect(page.getByRole('status')).toHaveText('Showing 11–20 of 23 users');
+  await enter(page, page.getByRole('searchbox', { name: 'Search users' }), 'Person 23');
+  await expect(page.getByRole('row', { name: /Person 23/ })).toBeVisible();
+  await expect(page.getByRole('status')).toHaveText('Showing 1–1 of 1 user');
+  await activate(page, page.getByRole('button', { name: 'Clear filters' }));
+  await activate(page, page.getByRole('button', { name: 'Sort by Account' }));
+  await expect(page.getByRole('columnheader', { name: 'Sort by Account' })).toHaveAttribute('aria-sort', 'descending');
+  await expect(page.getByRole('row').nth(1)).toContainText('Person 23');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await activate(page, page.getByRole('button', { name: 'Add local account' }));
+  await expect(page.getByRole('dialog').getByLabel('Email address')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Add local account' })).toBeFocused();
 });
 
 for (const [heading, action, endpoint, fields] of [

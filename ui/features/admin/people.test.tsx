@@ -4,7 +4,16 @@ import { Providers } from '../../app/providers';
 import { People } from './people';
 
 const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; });
+beforeEach(() => {
+  // jsdom has no layout; give the menu a visible anchor and viewport so
+  // Mantine's detached-anchor detection does not hide an open dropdown.
+  jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 40, width: 100, height: 40, toJSON: () => ({}),
+  });
+  jest.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024);
+  jest.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768);
+});
+afterEach(() => { globalThis.fetch = originalFetch; jest.restoreAllMocks(); });
 
 const session = {
   user: { id: 'operator', role: 'administrator' }, mode: 'normal', installationState: 'active',
@@ -14,6 +23,93 @@ const session = {
 function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
+
+function directory() {
+  return Array.from({ length: 23 }, (_, index) => ({
+    id: `person-${index}`, displayName: `Person ${String(index + 1).padStart(2, '0')}`,
+    primaryEmail: `account-${index + 1}@example.test`, role: index === 22 ? 'administrator' : 'member',
+    membershipState: index === 22 ? 'pending' : 'active', credentialMode: 'external', version: 1,
+  })).reverse();
+}
+
+// Pagination must not discard records, and sorting must cover the full list,
+// not just reorder the currently visible page.
+test('sorts all accounts before paging and supports changing page size', async () => {
+  globalThis.fetch = jest.fn(async path => json(path === '/api/v1/session' ? session : directory()));
+  const user = userEvent.setup();
+  render(<Providers><People /></Providers>);
+  const table = await screen.findByRole('table', { name: 'Organization membership' });
+  expect(within(table).getAllByRole('row')).toHaveLength(11);
+  expect(within(table).getAllByRole('row')[1]).toHaveTextContent('Person 01');
+  expect(screen.getByText('Showing 1–10 of 23 users')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(screen.getByText('Showing 11–20 of 23 users')).toBeVisible();
+  expect(within(table).getAllByRole('row')[1]).toHaveTextContent('Person 11');
+  await user.click(screen.getByRole('button', { name: 'Sort by Account' }));
+  expect(screen.getByRole('columnheader', { name: /Account/ })).toHaveAttribute('aria-sort', 'descending');
+  expect(within(table).getAllByRole('row')[1]).toHaveTextContent('Person 23');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Rows per page' }), '25');
+  expect(within(table).getAllByRole('row')).toHaveLength(24);
+  expect(screen.getByText('Showing 1–23 of 23 users')).toBeVisible();
+});
+
+// Searching on a later page must find off-page people by name or email;
+// clearing a no-match search must recover the directory.
+test('searches the entire directory and combines role and status filters', async () => {
+  globalThis.fetch = jest.fn(async path => json(path === '/api/v1/session' ? session : directory()));
+  const user = userEvent.setup();
+  render(<Providers><People /></Providers>);
+  await screen.findByRole('table');
+  await user.click(screen.getByRole('button', { name: 'Next page' }));
+  const search = screen.getByRole('searchbox', { name: 'Search users' });
+  await user.type(search, ' PERSON 23 ');
+  expect(screen.getByRole('row', { name: /account-23@example.test/ })).toBeVisible();
+  expect(screen.getByText('Showing 1–1 of 1 user')).toBeVisible();
+  await user.clear(search);
+  await user.type(search, 'ACCOUNT-1@');
+  expect(screen.getByRole('row', { name: /Person 01/ })).toBeVisible();
+  await user.clear(search);
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by role' }), 'administrator');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by status' }), 'active');
+  expect(screen.getByText('No users match your search or filters.')).toBeVisible();
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by status' }), 'pending');
+  expect(screen.getByRole('row', { name: /Person 23/ })).toBeVisible();
+  await user.type(search, 'missing');
+  expect(screen.getByText('No users match your search or filters.')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+  expect(search).toHaveValue('');
+  expect(screen.getByText('Showing 1–10 of 23 users')).toBeVisible();
+});
+
+// Approving the sole account on the last filtered page must return to a
+// populated page and keep the Pending filter, rather than leave a blank page.
+test('keeps pagination valid when an approval removes the last matching row', async () => {
+  const accounts = directory().slice(-11).map(person => ({ ...person, membershipState: 'pending' }));
+  let approved = false;
+  globalThis.fetch = jest.fn(async (path, init) => {
+    if (path === '/api/v1/session') return json({ ...session, permissions: ['user.list', 'user.approve'] });
+    if (path === '/api/v1/admin/users') return json(accounts.map(person =>
+      approved && person.id === 'person-10' ? { ...person, membershipState: 'active', version: 2 } : person));
+    if (path === '/api/v1/admin/users/person-10' && init?.method === 'PATCH') {
+      approved = true;
+      return json(null);
+    }
+    throw new Error('unexpected request');
+  });
+  const user = userEvent.setup();
+  render(<Providers><People /></Providers>);
+  await screen.findByRole('table');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by status' }), 'pending');
+  await user.click(screen.getByRole('button', { name: 'Next page' }));
+  await user.click(screen.getByRole('button', { name: 'Actions for account-11@example.test' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Approve account' }));
+  const dialog = screen.getByRole('dialog');
+  await user.selectOptions(within(dialog).getByRole('combobox'), 'member');
+  await user.click(within(dialog).getByRole('button', { name: 'Approve' }));
+  expect(await screen.findByText('Showing 1–10 of 10 users')).toBeVisible();
+  expect(screen.getByRole('combobox', { name: 'Filter by status' })).toHaveValue('pending');
+  expect(screen.queryByRole('row', { name: /Person 11/ })).toBeNull();
+});
 
 // A failed membership read can be retried and then shows the distinct
 // account states and credential modes returned by the controller.
@@ -44,7 +140,7 @@ test('retries a failed membership read and shows account states', async () => {
   expect(within(disabled).getByText('Disabled')).toBeVisible();
   expect(within(disabled).getByRole('link', { name: /View workspaces/ })).toHaveAttribute('href', '/workspaces/?owner=disabled');
   expect(reads).toBe(2);
-  expect(screen.queryByRole('button', { name: 'Create local account' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Add local account' })).toBeNull();
 });
 
 // Local account creation requires an explicit role and shows the temporary
@@ -65,7 +161,9 @@ test('creates a local account and clears the one-time password', async () => {
   globalThis.fetch = fetch;
   const user = userEvent.setup();
   render(<Providers><People /></Providers>);
-  const submit = await screen.findByRole('button', { name: 'Create local account' });
+  expect(screen.queryByLabelText(/^Email address/)).toBeNull();
+  await user.click(await screen.findByRole('button', { name: 'Add local account' }));
+  const submit = screen.getByRole('button', { name: 'Create local account' });
   await user.type(screen.getByLabelText(/^Email address/), account.primaryEmail);
   await user.click(submit);
   expect(screen.getByText('Choose a role.')).toBeVisible();
@@ -73,6 +171,8 @@ test('creates a local account and clears the one-time password', async () => {
   await user.click(screen.getByRole('radio', { name: 'Administrator' }));
   await user.click(submit);
   expect(await screen.findByText('one-time-fixture')).toBeVisible();
+  await user.keyboard('{Escape}');
+  expect(screen.getByText('one-time-fixture')).toBeVisible();
   const row = await screen.findByRole('row', { name: /new@example.test/ });
   expect(within(row).getByText('Active')).toBeVisible();
   const done = screen.getByRole('button', { name: 'Done' });
@@ -80,6 +180,8 @@ test('creates a local account and clears the one-time password', async () => {
   await user.click(screen.getByRole('checkbox', { name: 'I saved the temporary password' }));
   await user.click(done);
   expect(screen.queryByText('one-time-fixture')).toBeNull();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Add local account' }));
   expect(screen.getByLabelText(/^Email address/)).toHaveValue('');
   expect(fetch).toHaveBeenCalledWith('/api/v1/admin/users', expect.objectContaining({
     method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'fixture' }),
@@ -119,8 +221,11 @@ test('approves a pending account with an explicitly selected role', async () => 
   const user = userEvent.setup();
   render(<Providers><People /></Providers>);
   const row = await screen.findByRole('row', { name: /pending@example.test/ });
-  const role = within(row).getByRole('combobox', { name: /Role for/ });
-  const approve = within(row).getByRole('button', { name: 'Approve' });
+  await user.click(within(row).getByRole('button', { name: /Actions for/ }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Approve account' }));
+  const dialog = screen.getByRole('dialog', { name: 'Approve account' });
+  const role = within(dialog).getByRole('combobox', { name: /Role for/ });
+  const approve = within(dialog).getByRole('button', { name: 'Approve' });
   expect(role).toHaveValue('');
   expect(approve).toBeDisabled();
   await user.selectOptions(role, 'administrator');
@@ -152,9 +257,12 @@ test('keeps the role unchanged when the controller protects the last administrat
   const user = userEvent.setup();
   render(<Providers><People /></Providers>);
   const row = await screen.findByRole('row', { name: /admin@example.test/ });
-  await user.selectOptions(within(row).getByRole('combobox', { name: /Role for/ }), 'member');
-  await user.click(within(row).getByRole('button', { name: 'Save role' }));
-  expect(await within(row).findByRole('alert')).toHaveTextContent('Keep at least one active administrator');
+  await user.click(within(row).getByRole('button', { name: /Actions for/ }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Change role' }));
+  const dialog = screen.getByRole('dialog', { name: 'Change role' });
+  await user.selectOptions(within(dialog).getByRole('combobox', { name: /Role for/ }), 'member');
+  await user.click(within(dialog).getByRole('button', { name: 'Save role' }));
+  expect(await within(dialog).findByRole('alert')).toHaveTextContent('Keep at least one active administrator');
   expect(within(row).getByRole('cell', { name: 'Administrator' })).toBeVisible();
   expect(fetch).toHaveBeenCalledWith('/api/v1/admin/users/operator', expect.objectContaining({
     method: 'PATCH', body: '{"role":"member"}',
@@ -187,7 +295,8 @@ test('confirms offboarding and shows a failed workspace stop', async () => {
   globalThis.fetch = fetch;
   const user = userEvent.setup();
   render(<Providers><People /></Providers>);
-  await user.click(await screen.findByRole('button', { name: 'Disable account' }));
+  await user.click(await screen.findByRole('button', { name: /Actions for target/ }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Disable account' }));
   const dialog = screen.getByRole('dialog');
   expect(await within(dialog).findByText('Documentation')).toBeVisible();
   expect(within(dialog).getByText(/files are preserved/)).toBeVisible();
@@ -222,8 +331,9 @@ test('confirms a local password reset and clears the temporary password', async 
   render(<Providers><People /></Providers>);
   const member = await screen.findByRole('row', { name: /member@example.test/ });
   const external = screen.getByRole('row', { name: /external@example.test/ });
-  expect(within(external).queryByRole('button', { name: 'Reset password' })).toBeNull();
-  await user.click(within(member).getByRole('button', { name: 'Reset password' }));
+  expect(within(external).queryByRole('button', { name: /Actions for/ })).toBeNull();
+  await user.click(within(member).getByRole('button', { name: /Actions for/ }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Reset password' }));
   const dialog = await screen.findByRole('dialog', { name: 'Reset password' });
   expect(within(dialog).getByText(/member@example.test/)).toBeVisible();
   expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);

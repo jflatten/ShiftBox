@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Alert, Button, Checkbox, Code, Group, Radio, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Button, Checkbox, Code, Group, Modal, Radio, Stack, Stepper, Text, TextInput } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
@@ -8,6 +8,7 @@ export function CreateLocalAccount({ csrfToken, refresh }: {
   csrfToken: string;
   refresh: () => Promise<unknown>;
 }) {
+  const [opened, setOpened] = useState(false);
   const [password, setPassword] = useState<string>();
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<unknown>();
@@ -40,41 +41,60 @@ export function CreateLocalAccount({ csrfToken, refresh }: {
     }
   };
 
-  if (password) {
-    return (
-      <Stack align="flex-start">
-        <Alert title="Temporary password" color="yellow">
-          <Stack gap="xs">
-            <Text size="sm">Save this password for private delivery. It is displayed once and must change at first sign-in.</Text>
-            <Code block>{password}</Code>
+  const canClose = !form.submitting && !password;
+  const close = () => {
+    setOpened(false);
+    form.reset();
+    setError(undefined);
+  };
+  return <>
+    <Button onClick={() => setOpened(true)}>Add local account</Button>
+    <Modal opened={opened} title="Create local account" onClose={canClose ? close : () => {}}
+      closeOnEscape={canClose} closeOnClickOutside={false} withCloseButton={canClose} transitionProps={{ duration: 0 }}>
+      <Stack>
+        <Stepper active={password ? 1 : 0} size="sm" allowNextStepsSelect={false}>
+          <Stepper.Step label="Account details" allowStepSelect={false} />
+          <Stepper.Step label="Save password" allowStepSelect={false} />
+        </Stepper>
+        {password ? (
+          <Stack align="flex-start">
+            <Alert title="Temporary password" color="yellow">
+              <Stack gap="xs">
+                <Text size="sm">Save this password for private delivery. It is displayed once and must change at first sign-in.</Text>
+                <Code block>{password}</Code>
+              </Stack>
+            </Alert>
+            <Checkbox label="I saved the temporary password" checked={saved} onChange={event => setSaved(event.currentTarget.checked)} />
+            <Button disabled={!saved} onClick={() => {
+              setPassword(undefined);
+              setSaved(false);
+              close();
+            }}>Done</Button>
           </Stack>
-        </Alert>
-        <Checkbox label="I saved the temporary password" checked={saved} onChange={event => setSaved(event.currentTarget.checked)} />
-        <Button disabled={!saved} onClick={() => {
-          setPassword(undefined);
-          setSaved(false);
-        }}>Done</Button>
+        ) : (
+          <form noValidate onSubmit={form.onSubmit(create, errors => {
+            if (errors.email) form.getInputNode('email')?.focus();
+            else member.current?.focus();
+          })}>
+            <Stack maw={480} gap="sm">
+              <Text size="sm" c="dimmed">Create an account with a temporary password to share privately.</Text>
+              <TextInput label="Email address" type="email" autoComplete="off" data-autofocus required disabled={form.submitting}
+                key={form.key('email')} {...form.getInputProps('email')} />
+              <Radio.Group label="Role" withAsterisk key={form.key('role')} {...form.getInputProps('role')}>
+                <Group mt="xs">
+                  <Radio ref={member} value="member" label="Member" disabled={form.submitting} />
+                  <Radio value="administrator" label="Administrator" disabled={form.submitting} />
+                </Group>
+              </Radio.Group>
+              {error !== undefined ? <APIProblemView error={error} /> : null}
+              <Group justify="flex-end">
+                <Button variant="default" disabled={form.submitting} onClick={close}>Cancel</Button>
+                <Button type="submit" loading={form.submitting}>Create local account</Button>
+              </Group>
+            </Stack>
+          </form>
+        )}
       </Stack>
-    );
-  }
-  return (
-    <form noValidate onSubmit={form.onSubmit(create, errors => {
-      if (errors.email) form.getInputNode('email')?.focus();
-      else member.current?.focus();
-    })}>
-      <Stack maw={480} gap="sm">
-        <Title order={2}>Local account</Title>
-        <TextInput label="Email address" type="email" autoComplete="off" required disabled={form.submitting}
-          key={form.key('email')} {...form.getInputProps('email')} />
-        <Radio.Group label="Role" withAsterisk key={form.key('role')} {...form.getInputProps('role')}>
-          <Group mt="xs">
-            <Radio ref={member} value="member" label="Member" disabled={form.submitting} />
-            <Radio value="administrator" label="Administrator" disabled={form.submitting} />
-          </Group>
-        </Radio.Group>
-        {error !== undefined ? <APIProblemView error={error} /> : null}
-        <Button type="submit" loading={form.submitting} style={{ alignSelf: 'flex-start' }}>Create local account</Button>
-      </Stack>
-    </form>
-  );
+    </Modal>
+  </>;
 }
