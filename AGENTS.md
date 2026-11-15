@@ -42,6 +42,7 @@ the developer and AI development agents.
 - Workflows are always expressed visually in our UI in realtime using Mantine Stepper.
 - Always use Mantine controls for our UI. Reference: <https://mantine.dev/llms.txt>
 - Always use IBM's Carbon Design System for our UI. Reference: <https://www.carbondesignsystem.com/>
+- States should always be displayed in the UI using chips. Reference: <https://mantine.dev/core/chip/>
 - Always use the mantine MCP server when selecting components.
 - Always apply our branding standard with the artifacts located in the `branding/` directory.
 

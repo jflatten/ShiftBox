@@ -343,20 +343,11 @@ async function enter(control: Locator, value: string) {
 }
 
 async function passwordLogin(page: Page, email: string, password: string) {
-  // Dex shows the connector chooser only when more than one method is enabled.
-  const username = page.locator('input[name=login]');
-  const passwordConnector = page.getByRole('button', { name: /Log in with Email/i })
-    .or(page.getByRole('link', { name: /Log in with Email/i }));
-  await expect(username.or(passwordConnector)).toBeVisible();
-  if (await passwordConnector.isVisible()) await activate(passwordConnector);
-  await enter(username, email);
-  await enter(page.locator('input[name=password]'), password);
-  await activate(page.getByRole('button', { name: 'Login', exact: true }));
-  // The pinned Dex may require consent before returning to ShiftBox.
-  await page.waitForURL(url => !url.pathname.startsWith('/dex/') || url.pathname === '/dex/approval');
-  if (new URL(page.url()).pathname === '/dex/approval') {
-    await activate(page.getByRole('button', { name: 'Grant Access', exact: true }));
-  }
+  await expect(page.getByRole('heading', { name: 'Log in to ShiftBox' })).toBeVisible();
+  await enter(page.getByLabel('Email', { exact: true }), email);
+  await enter(page.getByLabel('Password', { exact: true }), password);
+  await activate(page.getByRole('button', { name: 'Log in', exact: true }));
+  await page.waitForURL(url => !url.pathname.startsWith('/dex/'));
 }
 
 async function stepCompleted(page: Page, label: string, timeout = startupTimeout) {

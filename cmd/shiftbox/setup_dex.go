@@ -117,6 +117,16 @@ func startDex(ctx context.Context, dir, binary, origin string, server tls.Certif
 		cfg.SQLitePath = ""
 		cfg.Postgres = postgres
 	}
+	frontend, err := loginFrontendAssets()
+	if err != nil {
+		return admin, nil, nil, nil, nil, errors.New("cannot load the login frontend")
+	}
+	if frontend != nil {
+		cfg.FrontendDir = filepath.Join(runtime, "frontend")
+		if err := os.CopyFS(cfg.FrontendDir, frontend); err != nil {
+			return admin, nil, nil, nil, nil, errors.New("cannot stage the login frontend")
+		}
+	}
 	configPath := filepath.Join(runtime, "dex.json")
 	if err := identity.WriteDexConfig(configPath, cfg); err != nil {
 		return admin, nil, nil, nil, nil, err

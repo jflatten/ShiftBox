@@ -144,7 +144,10 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		api.Handle("PUT /api/v1/session/password", &change)
 		reset := services.Handlers["resetLocalUserPassword"]
 		api.Handle("POST /api/v1/admin/users/{userId}/password-reset", &reset)
-		assets, err := web.NewStaticHandler(fstest.MapFS{"index.html": {Data: []byte("<h1>ShiftBox</h1>")}})
+		assets, err := web.NewStaticHandler(fstest.MapFS{
+			"index.html":            {Data: []byte("<h1>ShiftBox</h1>")},
+			"workspaces/index.html": {Data: []byte("<h1>Workspaces</h1>")},
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -214,21 +217,46 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		if response.Request.URL.Host != probe.URL.Host || !strings.HasPrefix(response.Request.URL.Path, "/dex/") {
 			t.Fatalf("Dex form served from %s%s, want management origin /dex/", response.Request.URL.Host, response.Request.URL.Path)
 		}
+		if frontend, err := loginFrontendAssets(); err != nil {
+			t.Fatal(err)
+		} else if frontend != nil {
+			// An incorrect password should stay on the branded form with a generic
+			// error and an empty password field before the user retries.
+			res, err := submitDexForm(client, response, url.Values{"login": {email}, "password": {"incorrect-fixture-password"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := io.ReadAll(res.Body)
+			res.Body.Close()
+			if err != nil || !bytes.Contains(body, []byte("Log in to ShiftBox")) ||
+				!bytes.Contains(body, []byte("Incorrect email or password. Try again.")) ||
+				bytes.Contains(body, []byte("incorrect-fixture-password")) {
+				t.Fatal("failed login did not render the branded retry form safely")
+			}
+			response, err = client.Get(server.Origin + "/auth/login")
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		response, err = submitDexForm(client, response, url.Values{"login": {email}, "password": {credential}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if strings.HasSuffix(response.Request.URL.Path, "/approval") {
-			response, err = submitDexForm(client, response, url.Values{"approval": {"approve"}})
-			if err != nil {
-				t.Fatal(err)
-			}
+			response.Body.Close()
+			t.Fatal("first-party sign-in displayed a separate consent screen")
 		}
 		defer response.Body.Close()
 		body, err := io.ReadAll(response.Body)
 		if wantMode != "" && err == nil {
-			if response.StatusCode != http.StatusOK || response.Request.URL.Path != "/" || !bytes.Contains(body, []byte("ShiftBox")) {
-				t.Fatal("active sign-in did not return to the management page")
+			wantPath, wantPage := "/", "ShiftBox"
+			// An unrestricted login opens Workspaces. A temporary password still
+			// leads to the password-change entry point before work is available.
+			if wantMode == "normal" {
+				wantPath, wantPage = "/workspaces/", "Workspaces"
+			}
+			if response.StatusCode != http.StatusOK || response.Request.URL.Path != wantPath || !bytes.Contains(body, []byte(wantPage)) {
+				t.Fatalf("active sign-in (%s) returned %d at %s, want 200 at %s with %s", wantMode, response.StatusCode, response.Request.URL.Path, wantPath, wantPage)
 			}
 			response, err = client.Get(server.Origin + "/api/v1/session")
 			if err != nil {

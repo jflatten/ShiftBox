@@ -45,7 +45,8 @@ func (f loginFlow) start(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: f.cookie, Value: verifier, Path: f.cookiePath,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 300})
 	location := f.login.Config.AuthCodeURL(loginBinding("state", verifier),
-		oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", loginBinding("nonce", verifier)))
+		oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", loginBinding("nonce", verifier)),
+		oauth2.SetAuthURLParam("connector_id", "local"))
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, location, http.StatusSeeOther)
 }
@@ -81,7 +82,10 @@ func (f loginFlow) finish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirect := f.redirect
-	if session.Mode == "recovery_review" {
+	switch session.Mode {
+	case "normal":
+		redirect = workspacesHome
+	case "recovery_review":
 		redirect = "/recovery/"
 	}
 	http.Redirect(w, r, redirect, http.StatusSeeOther)

@@ -21,6 +21,14 @@ const launchTemplate = {
 const originalFetch = globalThis.fetch;
 const originalEventSource = Object.getOwnPropertyDescriptor(globalThis, 'EventSource');
 
+function mockMenuLayout() {
+  jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 40, width: 100, height: 40, toJSON: () => ({}),
+  });
+  jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1024);
+  jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(768);
+}
+
 afterEach(() => {
   jest.restoreAllMocks();
   globalThis.fetch = originalFetch;
@@ -31,6 +39,105 @@ afterEach(() => {
 function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
+
+// Inventory rows show the observed state with Carbon colors and no input control.
+test('shows workspace states as static Carbon-colored Mantine chips', async () => {
+  const states = [
+    ['Running', 'running', '#24a148'], ['Starting', 'starting', '#0043ce'],
+    ['Unreachable', 'unreachable', '#ff832b'], ['Failed', 'failed', '#da1e28'],
+    ['Stopped', 'stopped', '#6f6f6f'], ['Unknown', 'unknown', '#8a3ffc'],
+  ];
+  globalThis.fetch = jest.fn(async input => input === '/api/v1/session' ? json(session) : json({
+    items: states.map(([label, observedState]) => ({ ...workspace, id: observedState, name: `${label} workspace`,
+      observedState, desiredState: 'running', currentOperationId: observedState === 'starting' ? 'operation-one' : null })),
+    nextCursor: null,
+  }));
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+  const table = await screen.findByRole('table', { name: 'Workspaces' });
+  for (const [label, , color] of states) {
+    const row = within(table).getByRole('row', { name: new RegExp(`${label} workspace`) });
+    const chip = within(row).getByText(label, { exact: true }).closest<HTMLElement>('.mantine-Chip-root');
+    expect(chip?.style.getPropertyValue('--chip-bg')).toBe(color);
+    expect(within(row).queryByText('Desired:')).not.toBeInTheDocument();
+    expect(within(row).getByText(label, { exact: true })).toBeVisible();
+    const cells = within(row).getAllByRole('cell');
+    if (label === 'Starting') {
+      expect(within(cells[1]).getByRole('status', { name: 'State transition in progress' })).toBeVisible();
+      expect(within(cells[2]).getByText('Running')).toBeVisible();
+      expect(within(cells.at(-1)!).queryByText('Operation in progress')).not.toBeInTheDocument();
+    } else {
+      expect(within(cells[1]).queryByRole('status')).not.toBeInTheDocument();
+      expect(within(cells[2]).getByText('—')).toBeVisible();
+    }
+    expect(within(row).queryByRole('checkbox')).toBeNull();
+  }
+  expect(within(table).getByRole('columnheader', { name: 'Target State' })).toBeVisible();
+});
+
+// Opening row actions fetches the current workspace version and starts the
+// same tracked workflow as the detail page without navigating away.
+test('starts a stopped workspace from its inventory row', async () => {
+  mockMenuLayout();
+  const stopped = { ...workspace, desiredState: 'stopped', currentOperationId: null };
+  const operationID = 'start-from-row';
+  const fetch = jest.fn(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (String(input).startsWith('/api/v1/workspaces?')) return json({ items: [stopped], nextCursor: null });
+    if (input === `/api/v1/workspaces/${workspace.id}`) return json({ ...stopped, version: 9 });
+    if (input === `/api/v1/workspaces/${workspace.id}/actions/start` && init?.method === 'POST') return json({ id: operationID });
+    if (input === `/api/v1/operations/${operationID}`) return json({ id: operationID, status: 'succeeded', version: 1, steps: [] });
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+  const actions = await screen.findByRole('button', { name: 'Actions for Example workspace' });
+  expect(fetch).not.toHaveBeenCalledWith(`/api/v1/workspaces/${workspace.id}`, expect.anything());
+  await user.click(actions);
+  const menu = await screen.findByRole('menu');
+  expect(actions).toHaveAttribute('aria-expanded', 'true');
+  expect(within(menu).queryByRole('menuitem', { name: 'Open IDE' })).not.toBeInTheDocument();
+  expect(within(menu).getByRole('menuitem', { name: 'Open workspace' })).toHaveAttribute('href', '/workspaces/?id=workspace-one');
+  await user.click(await within(menu).findByRole('menuitem', { name: 'Start' }));
+  expect(fetch).toHaveBeenCalledWith(`/api/v1/workspaces/${workspace.id}/actions/start`, expect.objectContaining({
+    method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'fixture', 'If-Match': '"9"', 'Idempotency-Key': expect.any(String) }),
+  }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Workspace controls' })).not.toBeInTheDocument();
+  await user.click(actions);
+  await user.click(await screen.findByRole('menuitem', { name: 'View progress' }));
+  expect(await within(screen.getByRole('dialog', { name: 'Workspace operation' })).findByText('Completed')).toBeVisible();
+  expect(screen.getByRole('table', { name: 'Workspaces' })).toBeVisible();
+});
+
+// Running rows use detail capabilities for IDE and previews, and deletion
+// still requires the existing typed name and data-loss acknowledgement.
+test('offers ready actions and guarded deletion in the inventory', async () => {
+  mockMenuLayout();
+  const running = { ...workspace, observedState: 'running', currentOperationId: null, canOpenIde: true,
+    canOpenPreviews: true, canEditPreviewPorts: true, previewPorts: [3000] };
+  const fetch = jest.fn(async input => input === '/api/v1/session' ? json(session) :
+    input === `/api/v1/workspaces/${workspace.id}` ? json(running) : json({ items: [running], nextCursor: null }));
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Actions for Example workspace' }));
+  const menu = await screen.findByRole('menu');
+  for (const name of ['Open IDE', 'Stop', 'Rebuild', 'Open preview 3000', 'Open workspace']) {
+    expect(await within(menu).findByRole('menuitem', { name })).toBeVisible();
+  }
+  expect(screen.queryByLabelText('Preview ports')).not.toBeInTheDocument();
+  await user.click(within(menu).getByRole('menuitem', { name: 'Delete workspace' }));
+  const dialog = within(await screen.findByRole('dialog', { name: 'Delete workspace' }));
+  const confirm = dialog.getByRole('button', { name: 'Delete permanently' });
+  expect(confirm).toBeDisabled();
+  await user.type(dialog.getByLabelText('Type the workspace name'), workspace.name);
+  expect(confirm).toBeDisabled();
+  await user.click(dialog.getByRole('checkbox', { name: 'I have pushed work I need to keep.' }));
+  expect(confirm).toBeEnabled();
+  await user.click(dialog.getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('dialog', { name: 'Delete workspace' })).not.toBeInTheDocument();
+});
 
 // Filters apply before server pagination, reset stale cursors, and retain an
 // administrator's selected owner instead of accidentally widening the list.

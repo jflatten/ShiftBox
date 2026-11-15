@@ -3,6 +3,9 @@ import { act, render, screen, within } from '@testing-library/react';
 import { ShiftBoxShell } from './app-shell';
 import userEvent from '@testing-library/user-event';
 import { Providers } from '../app/providers';
+import { openLogin } from '../lib/login-navigation';
+
+jest.mock('../lib/login-navigation');
 
 beforeEach(() => {
   // jsdom has no layout; menu anchors need a visible viewport.
@@ -12,7 +15,7 @@ beforeEach(() => {
   jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1024);
   jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(768);
 });
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => { jest.restoreAllMocks(); jest.clearAllMocks(); });
 
 // A member must not be offered administration navigation by the shared shell.
 test('shows member navigation and the approved brand', () => {
@@ -20,12 +23,14 @@ test('shows member navigation and the approved brand', () => {
   expect(screen.getByRole('link', { name: 'Workspaces' })).toBeVisible();
   expect(screen.queryByRole('link', { name: 'Infrastructure' })).not.toBeInTheDocument();
   expect(screen.getByAltText('ShiftBox')).toHaveAttribute('src', '/brand/shiftbox-logo-light.svg');
+  expect(screen.getByRole('link', { name: 'ShiftBox home' })).toHaveAttribute('href', '/workspaces/');
 });
 
 // Restricted administrator sessions must not retain the navigation of a normal active session.
 test('respects session gates and keeps persistent conditions visible', () => {
   render(<MantineProvider><ShiftBoxShell session={{ role: 'administrator', mode: 'password_change', installationState: 'active', permissions: ['session.change_password'] }} alerts={[{ id: 'password', title: 'Change your password', detail: 'Choose a new password to continue.' }]}><h1>Account</h1></ShiftBoxShell></MantineProvider>);
   expect(screen.queryByRole('link', { name: 'Workspaces' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'ShiftBox home' })).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Infrastructure' })).not.toBeInTheDocument();
   expect(screen.getByRole('alert')).toHaveTextContent('Choose a new password to continue.');
   expect(screen.getByRole('region', { name: 'Persistent conditions' })).toContainElement(screen.getByRole('alert'));
@@ -108,7 +113,8 @@ test('signs out a restricted session with its CSRF token', async () => {
     expect(fetch).toHaveBeenCalledWith('/api/v1/session', expect.objectContaining({
       method: 'DELETE', headers: { 'X-CSRF-Token': 'fixture' },
     }));
-    expect(await screen.findByRole('link', { name: 'Sign in' })).toBeVisible();
+    expect(openLogin).toHaveBeenCalledWith();
+    expect(screen.queryByRole('link', { name: 'Sign in' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Change password' })).not.toBeInTheDocument();
   } finally { globalThis.fetch = original; }
 });
@@ -144,7 +150,8 @@ test('keeps the session when sign-out fails and supports retry', async () => {
     expect(await screen.findByRole('alert')).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Private page' })).toBeVisible();
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
-    expect(await screen.findByRole('link', { name: 'Sign in' })).toBeVisible();
+    expect(openLogin).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('link', { name: 'Sign in' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'User menu' })).toBeNull();
   } finally { globalThis.fetch = original; }
 });

@@ -6,6 +6,8 @@ import Account from '../../app/account/page';
 import { PasswordForm } from './password';
 import { Providers } from '../../app/providers';
 
+jest.mock('next/navigation', () => ({ usePathname: () => '/', useRouter: () => ({ replace: jest.fn() }) }));
+
 const originalFetch = globalThis.fetch;
 const originalTextEncoder = globalThis.TextEncoder;
 beforeAll(() => { globalThis.TextEncoder = TextEncoder; });

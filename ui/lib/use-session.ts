@@ -1,11 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import type { ShellSession } from '../components/app-shell';
 import { readProblem } from './api-problem';
+import { rememberSession, returnToLoginOnSessionLoss } from './login-navigation';
 
 interface SessionView extends Omit<ShellSession, 'role'> {
   user: { id: string; role: ShellSession['role']; mustChangePassword?: boolean;
     primaryEmail?: string; displayName?: string | null; credentialMode?: 'local' | 'external' };
   csrfToken: string;
+  expiresAt: string;
   organizationSecretScopeId?: string;
   recoveryReviewId?: string;
 }
@@ -16,9 +18,14 @@ export function useSession() {
     queryKey: ['session'],
     queryFn: async ({ signal }) => {
       const response = await fetch('/api/v1/session', { signal, cache: 'no-store' });
-      if (response.status === 401) return null;
+      if (response.status === 401) {
+        returnToLoginOnSessionLoss();
+        return null;
+      }
       if (!response.ok) throw await readProblem(response);
-      return response.json();
+      const session: SessionView = await response.json();
+      rememberSession(session.expiresAt);
+      return session;
     },
   });
   const session = !query.isError && query.data ? {

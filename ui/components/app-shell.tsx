@@ -2,14 +2,14 @@
 
 import { useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
-import { Alert, AppShell, Avatar, Burger, Group, Image, Menu, NavLink, Stack, Text, UnstyledButton, useComputedColorScheme } from '@mantine/core';
+import { Alert, Anchor, AppShell, Avatar, Burger, Group, Image, Menu, NavLink, Stack, Text, UnstyledButton, useComputedColorScheme } from '@mantine/core';
 import { useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from './api-problem';
 import { ExternalReauthorization } from '../features/session/external-reauthorization';
 import { useAuthorizationExpired } from '../lib/use-authorization-expired';
 import { readProblem } from '../lib/api-problem';
 import { NoticeToast } from '../features/notices/notice-toast';
-import { SignInChoices } from '../features/session/sign-in';
+import { openLogin, returnToLoginOnSessionLoss } from '../lib/login-navigation';
 
 export interface ShellSession {
   user?: { id?: string; displayName?: string | null; primaryEmail?: string };
@@ -53,13 +53,14 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
   const adminAudit = normal && session?.role === 'administrator' && permitted('audit.list');
   const adminRecovery = session?.role === 'administrator' && (backup || recovery);
   const administration = adminNotice || adminInfrastructure || adminUsers || adminAudit || adminRecovery;
+  const logo = <Image src={`/brand/shiftbox-logo-${scheme}.svg`} alt="ShiftBox" w={160} h={40} fit="contain" />;
   return (
     <AppShell header={{ height: 72 }} navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="lg">
       <AppShell.Header>
         <Group h="100%" px="lg" justify="space-between" wrap="nowrap">
           <Group wrap="nowrap">
             <Burger opened={opened} onClick={() => setOpened(value => !value)} hiddenFrom="sm" aria-label="Toggle navigation" aria-expanded={opened} />
-            <Image src={`/brand/shiftbox-logo-${scheme}.svg`} alt="ShiftBox" w={160} h={40} fit="contain" />
+            {normal ? <Anchor href="/workspaces/" aria-label="ShiftBox home">{logo}</Anchor> : logo}
           </Group>
           {!signedOut && session ? <Menu position="bottom-end" shadow="md" width={280}
             transitionProps={{ duration: 0 }} styles={{ dropdown: { maxWidth: 'calc(100vw - 32px)' } }}>
@@ -116,7 +117,6 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
             ) : null}
           </Stack>
           {!signedOut && !renewalRequired ? children : null}
-          {signedOut ? <SignInChoices /> : null}
         </Stack>
       </AppShell.Main>
     </AppShell>
@@ -139,9 +139,11 @@ function SignOut({ csrfToken, onSignedOut, onError, pending, setPending }: {
       });
       if (!response.ok && response.status !== 401) throw await readProblem(response);
       onSignedOut();
-      await client.cancelQueries();
+      const cancelling = client.cancelQueries();
       client.removeQueries({ predicate: query => query.queryKey[0] !== 'session' });
       client.setQueryData(['session'], null);
+      if (response.status !== 401 || !returnToLoginOnSessionLoss()) openLogin();
+      await cancelling;
     } catch (error) {
       onError(error);
     } finally {

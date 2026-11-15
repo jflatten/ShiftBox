@@ -800,6 +800,8 @@ export interface components {
             permissions: string[];
             installationState: string;
             /** Format: date-time */
+            expiresAt: string;
+            /** Format: date-time */
             externalAuthorizationDueAt?: string | null;
             /**
              * Format: uuid

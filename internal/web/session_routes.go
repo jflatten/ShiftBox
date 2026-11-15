@@ -112,10 +112,11 @@ func (h *SessionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		CSRFToken                  string     `json:"csrfToken"`
 		Permissions                []string   `json:"permissions"`
 		InstallationState          string     `json:"installationState"`
+		ExpiresAt                  time.Time  `json:"expiresAt"`
 		ExternalAuthorizationDueAt *time.Time `json:"externalAuthorizationDueAt"`
 		OrganizationSecretScopeID  string     `json:"organizationSecretScopeId,omitempty"`
 		RecoveryReviewID           string     `json:"recoveryReviewId,omitempty"`
-	}{principal.User, principal.Session.Mode, auth.CSRFToken(token), sessionPermissions(principal, now), principal.InstallationState, due, organizationSecretScopeID, reviewID}
+	}{principal.User, principal.Session.Mode, auth.CSRFToken(token), sessionPermissions(principal, now), principal.InstallationState, principal.Session.ExpiresAt, due, organizationSecretScopeID, reviewID}
 	encoded, err := json.Marshal(view)
 	if err != nil {
 		WriteProblem(w, RequestID(r.Context()), err)

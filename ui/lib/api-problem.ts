@@ -1,3 +1,5 @@
+import { returnToLoginOnSessionLoss } from './login-navigation';
+
 export interface APIProblem {
   type: string;
   title: string;
@@ -25,6 +27,7 @@ export async function readProblem(response: Response): Promise<APIProblemError> 
   try {
     const value: unknown = await response.json();
     if (!isProblem(value) || value.status !== response.status) return fallback;
+    if (value.status === 401 && value.code === 'auth.required') returnToLoginOnSessionLoss();
     return new APIProblemError(value);
   } catch {
     return fallback;

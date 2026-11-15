@@ -462,9 +462,16 @@ func TestDexConfigProtectsCredentials(t *testing.T) {
 		Web              map[string]any `json:"web"`
 		GRPC             map[string]any `json:"grpc"`
 		EnablePasswordDB bool           `json:"enablePasswordDB"`
+		OAuth2           struct {
+			SkipApprovalScreen bool `json:"skipApprovalScreen"`
+		} `json:"oauth2"`
 	}
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatal(err)
+	}
+	// The managed server registers only ShiftBox, a trusted first-party client.
+	if !document.OAuth2.SkipApprovalScreen {
+		t.Error("managed Dex login requires an approval screen, want direct return to ShiftBox")
 	}
 	if document.Web["https"] != cfg.WebAddress || document.Web["http"] != nil || document.GRPC["tlsClientCA"] != cfg.GRPCClientCAFile || !document.EnablePasswordDB {
 		t.Errorf("unsafe managed Dex configuration: %+v", document)

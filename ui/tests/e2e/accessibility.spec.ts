@@ -84,8 +84,36 @@ async function checkWorkflow(page: Page, labels: [string, string, string], scope
 
 test.use({ viewport: { width: 390, height: 844 }, trace: 'off' });
 
+// An in-flight workspace shows its server target and a chip-height loader.
+// When the inventory refresh sees completion, both indicators clear.
+test('workspace transition shows target and chip-height loader', async ({ page }) => {
+  let transitioning = true;
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) return route.fulfill({ json: admin([]) });
+    if (path === '/api/v1/workspaces') return route.fulfill({ json: { items: [{
+      id: workspaceID, name: 'Transition fixture', resources, desiredState: 'running',
+      observedState: transitioning ? 'starting' : 'running', currentOperationId: transitioning ? operationID : null,
+    }], nextCursor: null } });
+  });
+  await page.goto('/workspaces/');
+  const row = page.getByRole('row', { name: /Transition fixture/ });
+  const state = row.getByRole('cell').nth(1);
+  const loader = state.getByRole('status', { name: 'State transition in progress' });
+  await expect(loader).toBeVisible();
+  await expect(row.getByRole('cell').nth(2)).toHaveText('Running');
+  await expect(row.getByRole('cell').last()).toHaveText('Actions');
+  const chipBounds = await state.getByText('Starting').locator('..').boundingBox();
+  const loaderBounds = await loader.boundingBox();
+  expect(chipBounds?.height).toBe(loaderBounds?.height);
+  expect(loaderBounds!.x).toBeGreaterThan(chipBounds!.x + chipBounds!.width);
+  transitioning = false;
+  await expect(loader).toHaveCount(0, { timeout: 8000 });
+  await expect(state.getByText('Running')).toBeVisible();
+  await expect(row.getByRole('cell').nth(2).getByText('—')).toBeVisible();
+});
+
 // Filtering cannot strand the user on a stale cursor, deleted
-// workspaces stay hidden by default, and the inventory fits a narrow screen.
+// workspaces stay hidden by default, and status chips fit a narrow screen.
 test('workspace inventory filters and detail layout', async ({ page }) => {
   const current = { id: workspaceID, name: 'Keyboard workspace', resources, desiredState: 'stopped', observedState: 'stopped',
     currentOperationId: null, templateRevision: 1, platformRelease: 'Demo release', version: 1, canEditPreviewPorts: true };
@@ -103,6 +131,33 @@ test('workspace inventory filters and detail layout', async ({ page }) => {
   });
   await page.goto('/workspaces/');
   await expect(page.getByRole('link', { name: 'Keyboard workspace', exact: true })).toBeVisible();
+  const workspaceRow = page.getByRole('row', { name: /Keyboard workspace/ });
+  const stopped = workspaceRow.locator('label.mantine-Chip-label').filter({ hasText: 'Stopped' });
+  await expect(stopped).toHaveCount(1);
+  await expect(stopped).toHaveCSS('background-color', 'rgb(111, 111, 111)');
+  await expect(stopped).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await expect(workspaceRow.getByRole('checkbox')).toHaveCount(0);
+  await expect(workspaceRow.getByText('Desired:')).toHaveCount(0);
+  const actions = workspaceRow.getByRole('button', { name: 'Actions for Keyboard workspace' });
+  await activate(page, actions);
+  await expect(actions).toHaveAttribute('aria-expanded', 'true');
+  const menu = page.getByRole('menu');
+  const start = menu.getByRole('menuitem', { name: 'Start', exact: true });
+  await expect(start).toBeInViewport();
+  await expect(menu.getByRole('menuitem', { name: 'Open workspace' })).toHaveAttribute('href', '/workspaces/?id=' + workspaceID);
+  await page.keyboard.press('ArrowDown');
+  await expect(start).toBeFocused();
+  await page.keyboard.press('End');
+  const deleteAction = menu.getByRole('menuitem', { name: 'Delete workspace' });
+  await expect(deleteAction).toBeFocused();
+  await page.keyboard.press('Enter');
+  const deletion = page.getByRole('dialog', { name: 'Delete workspace' });
+  await expect(deletion.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(deletion).toBeHidden();
+  await expect(actions).toBeFocused();
+  await expect(menu).toBeHidden();
+  await expect(page).toHaveURL(/\/workspaces\/$/);
   await expect(page.getByRole('link', { name: 'Deleted example', exact: true })).toHaveCount(0);
   await activate(page, page.getByRole('button', { name: 'Next page' }));
   await expect(page.getByText('Page 2', { exact: true })).toBeVisible();
@@ -119,7 +174,9 @@ test('workspace inventory filters and detail layout', async ({ page }) => {
   await expect(state).toHaveValue('');
   await expect(page.getByRole('link', { name: 'Deleted example', exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await activate(page, page.getByRole('link', { name: 'Keyboard workspace', exact: true }));
+  await activate(page, actions);
+  await menu.getByRole('menuitem', { name: 'Open workspace' }).click();
+  await expect(page).toHaveURL(new RegExp('\\?id=' + workspaceID + '$'));
   await expect(page.getByRole('heading', { name: 'Keyboard workspace', level: 1 })).toBeVisible();
   await tabTo(page, page.getByRole('button', { name: 'Start workspace', exact: true }));
   await expect(page.getByRole('region', { name: 'Previews', exact: true })).toBeVisible();
@@ -681,9 +738,47 @@ test('personal settings avatar menu and password dialog', async ({ page }) => {
   await page.keyboard.press('ArrowDown');
   await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Log in to ShiftBox' })).toBeVisible();
+  await expect(page.getByText('Your session expired.')).toBeHidden();
   await expect(avatar).toBeHidden();
   await expect(page.getByRole('region', { name: 'Your profile' })).toBeHidden();
+});
+
+// Workspaces is home from both the site root and the shared header logo.
+test('opens Workspaces from the root and the ShiftBox logo', async ({ page }) => {
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) return route.fulfill({ json: admin([]) });
+    if (path.endsWith('/workspaces') || path.endsWith('/templates')) return route.fulfill({ json: { items: [], nextCursor: null } });
+  });
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/workspaces\/$/);
+  await page.goto('/templates/');
+  await activate(page, page.getByRole('link', { name: 'ShiftBox home' }));
+  await expect(page).toHaveURL(/\/workspaces\/$/);
+  await expect(page.getByRole('heading', { name: 'Workspaces', exact: true })).toBeVisible();
+});
+
+// A controller denial after the login deadline takes the user straight to the
+// credential form and explains why access ended.
+test('expired login opens the login form with a banner', async ({ page }) => {
+  const expiresAt = new Date(Date.now() + 60_000).toISOString();
+  let expired = false;
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session') && !expired) return route.fulfill({ json: { ...admin(['session.logout']), expiresAt } });
+    if (path.endsWith('/session') || (path.endsWith('/workspaces') && expired)) {
+      return route.fulfill({ status: 401, contentType: 'application/problem+json',
+        body: JSON.stringify({ type: 'about:blank', title: 'Sign in to continue', status: 401, code: 'auth.required', requestId: '' }),
+      });
+    }
+    if (path.endsWith('/workspaces')) return route.fulfill({ json: { items: [], nextCursor: null } });
+  });
+  await page.goto('/workspaces/');
+  await expect(page.getByText('No workspaces yet.')).toBeVisible();
+  expired = true;
+  await page.clock.setSystemTime(new Date(Date.parse(expiresAt) + 1));
+  await activate(page, page.getByRole('button', { name: 'Refresh' }));
+  await expect(page.getByRole('heading', { name: 'Log in to ShiftBox' })).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveText('Your session expired. Log in again to continue.');
 });
 
 // A password typo stays in the dialog with an accessible field error;

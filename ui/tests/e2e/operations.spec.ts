@@ -405,21 +405,14 @@ async function requestLivePreviewEntry(page: Page, entryURL: string, origin: str
 
 async function signInForOperations(page: Page, management: string, account: OperationsAccount, role: string) {
   await page.goto(new URL('/auth/login', management).href);
-  const username = page.locator('input[name=login]');
-  const emailConnector = page.getByRole('button', { name: /Log in with Email/i })
-    .or(page.getByRole('link', { name: /Log in with Email/i }));
-  await expect(username.or(emailConnector)).toBeVisible();
-  if (await emailConnector.isVisible()) await emailConnector.click();
-  await username.fill(account.email);
-  const password = page.locator('input[name=password]');
+  await expect(page.getByRole('heading', { name: 'Log in to ShiftBox' })).toBeVisible();
+  await page.getByLabel('Email', { exact: true }).fill(account.email);
+  const password = page.getByLabel('Password', { exact: true });
   await expect(password).toBeEditable();
   await password.focus();
   await page.keyboard.insertText(account.password);
-  await page.getByRole('button', { name: 'Login', exact: true }).click();
-  await page.waitForURL(url => !url.pathname.startsWith('/dex/') || url.pathname === '/dex/approval');
-  if (new URL(page.url()).pathname === '/dex/approval') {
-    await page.getByRole('button', { name: 'Grant Access', exact: true }).click();
-  }
+  await page.getByRole('button', { name: 'Log in', exact: true }).click();
+  await page.waitForURL(url => !url.pathname.startsWith('/dex/'));
   const sessionURL = new URL('/api/v1/session', management).href;
   await expect.poll(async () => (await page.request.get(sessionURL)).status()).toBe(200);
   const session = await (await page.request.get(sessionURL)).json();

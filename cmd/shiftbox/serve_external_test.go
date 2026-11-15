@@ -129,14 +129,14 @@ func TestDexExternalRoundTrip(t *testing.T) {
 		}
 		defer res.Body.Close()
 		if strings.HasSuffix(res.Request.URL.Path, "/approval") {
-			res, err = submitDexForm(client, res, url.Values{"approval": {"approve"}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer res.Body.Close()
+			t.Fatal("organization sign-in displayed a separate broker consent screen")
 		}
 		if res.StatusCode != want {
 			t.Fatalf("external visit returned %d at %s, want %d", res.StatusCode, res.Request.URL.Path, want)
+		}
+		// Approved organization sign-in and renewal both open Workspaces.
+		if want == http.StatusOK && res.Request.URL.Path != "/workspaces/" {
+			t.Fatalf("approved organization login landed at %q, want /workspaces/", res.Request.URL.Path)
 		}
 	}
 	visit(server.Origin+"/auth/external", http.StatusForbidden)

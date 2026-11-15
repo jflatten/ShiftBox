@@ -1,40 +1,34 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Alert, Anchor, Button, Checkbox, Group, Modal, Paper, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
 import { useOperation } from '../../lib/use-operation';
-import { workspaceName, workspaceState, type Workspace } from './workspace';
+import { workspaceName, type Workspace } from './workspace';
 import { WorkspaceStatus, WorkspaceTime } from './workspace-summary';
 import { RetentionWarning } from './retention';
 import { WorkspaceConnectionGrants } from './connection-grants';
-
-type WorkspaceAction = 'start' | 'stop' | 'rebuild' | 'repair' | 'retry' | 'delete' | 'update';
+import { availableWorkspaceCommands, openWorkspaceEntry, useWorkspaceCommand, useWorkspaceDetail, type WorkspaceService } from './workspace-commands';
 
 export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToken: string; admin: boolean }) {
-  const workspace = useQuery<Workspace>({
-    queryKey: ['workspaces', 'detail', id],
-    refetchInterval: query => query.state.data?.desiredState === 'deleted' ? false : 30_000,
-    queryFn: async ({ signal }) => {
-      const response = await fetch('/api/v1/workspaces/' + encodeURIComponent(id), { signal, cache: 'no-store' });
-      if (!response.ok) throw await readProblem(response);
-      return response.json();
-    },
-  });
+  const workspace = useWorkspaceDetail(id);
   const data = !workspace.isError ? workspace.data : undefined;
   const repairDescriptionId = useId();
   const [operationId, setOperationId] = useState<string>();
   const [operationBusy, setOperationBusy] = useState(false);
-  const [submitting, setSubmitting] = useState<WorkspaceAction>();
-  const [error, setError] = useState<unknown>();
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const request = useRef<{ action: WorkspaceAction; version: number; key: string }>(undefined);
   const progressHeading = useRef<HTMLHeadingElement>(null);
   const progressFocus = useRef<{ id: string; trigger: Element | null }>(undefined);
   const displayedOperation = data?.currentOperationId ?? (operationBusy ? operationId : data?.lastFailedOperationId ?? operationId);
-  const action = data?.desiredState === 'running' && data.observedState === 'running' ? 'stop' :
-    data?.desiredState === 'stopped' && data.observedState === 'stopped' ? 'start' : undefined;
+  const { lifecycle: action, rebuild, update, delete: canDelete } = availableWorkspaceCommands(data);
+  const { run: requestAction, submitting, error, setError } = useWorkspaceCommand(data, csrfToken, workspace.refetch,
+    (action, id, trigger) => {
+      if (action !== 'delete') progressFocus.current = { id, trigger };
+      setOperationBusy(true);
+      setOperationId(id);
+      if (action === 'delete') setConfirmDelete(false);
+    });
   const busy = !!data?.currentOperationId || operationBusy || !!submitting;
   const maintenance = data?.maintenance;
 
@@ -49,40 +43,6 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
     }
   }, [displayedOperation]);
 
-  const requestAction = async (action: WorkspaceAction) => {
-    if (!data || submitting) return;
-    const trigger = document.activeElement;
-    setSubmitting(action);
-    setError(undefined);
-    try {
-      if (request.current?.action !== action || request.current.version !== data.version) {
-        request.current = { action, version: data.version, key: crypto.randomUUID() };
-      }
-      const response = await fetch(`/api/v1/workspaces/${encodeURIComponent(id)}/actions/${action}`, {
-        method: 'POST',
-        headers: {
-          'X-CSRF-Token': csrfToken, 'If-Match': `"${data.version}"`, 'Idempotency-Key': request.current.key,
-          ...(action === 'delete' ? { 'Content-Type': 'application/json' } : {}),
-        },
-        body: action === 'delete' ? JSON.stringify({ confirmDataLoss: true }) : undefined,
-      });
-      if (!response.ok) {
-        if (response.status === 412) void workspace.refetch();
-        throw await readProblem(response);
-      }
-      const accepted: { id: string } = await response.json();
-      if (action !== 'delete') progressFocus.current = { id: accepted.id, trigger };
-      setOperationBusy(true);
-      setOperationId(accepted.id);
-      if (action === 'delete') setConfirmDelete(false);
-      request.current = undefined;
-      await workspace.refetch();
-    } catch (error) {
-      setError(error);
-    } finally {
-      setSubmitting(undefined);
-    }
-  };
   return (
     <>
       <Anchor href="/workspaces/">All workspaces</Anchor>
@@ -104,7 +64,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
             <Stack gap="md">
               <Group gap="xl">
                 <Stack gap={4} align="flex-start"><Text size="sm" c="dimmed">Observed state</Text><WorkspaceStatus value={data.observedState} /></Stack>
-                <Stack gap={4}><Text size="sm" c="dimmed">Desired state</Text><Text fw={600}>{workspaceState(data.desiredState)}</Text></Stack>
+                <Stack gap={4} align="flex-start"><Text size="sm" c="dimmed">Desired state</Text><WorkspaceStatus value={data.desiredState} /></Stack>
               </Group>
               <Group align="flex-start">
                 {data.canOpenIde ? <WorkspaceEntryButton id={id} csrfToken={csrfToken} /> : null}
@@ -115,7 +75,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
                       onClick={() => void requestAction(action)}>
                       {action === 'start' ? 'Start workspace' : 'Stop workspace'}
                     </Button>
-                    {action === 'stop' && !data.canOpenRepair && !data.canRetryAfterRepair ? (
+                    {rebuild ? (
                       <Button variant="default" loading={submitting === 'rebuild'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
                         onClick={() => void requestAction('rebuild')}>
                         Rebuild container
@@ -147,7 +107,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
           {maintenance ? <Alert title="Scheduled maintenance" color={maintenance.state === 'failed' ? 'red' : 'yellow'}>
             <Stack align="flex-start" gap="xs">
               <Text size="sm">Guest release {maintenance.releaseId} · Deadline <WorkspaceTime value={maintenance.deadline} fallback="Unavailable" /></Text>
-              {action && !maintenance.operationId && (maintenance.state === 'pending' || maintenance.state === 'waiting_safe') ? (
+              {update ? (
                 <Button variant="default" loading={submitting === 'update'} disabled={busy} onClick={() => void requestAction('update')}>
                   Update now
                 </Button>
@@ -192,7 +152,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
             </Paper>
           ) : null}
           {admin ? <Paper withBorder radius="md" p="md"><WorkspaceConnectionGrants workspaceId={id} csrfToken={csrfToken} /></Paper> : null}
-          {data.desiredState !== 'deleted' && data.observedState !== 'deleted' ? (
+          {canDelete ? (
             <Paper component="section" aria-label="Delete workspace" withBorder radius="md" p="md">
               <Stack gap="sm" align="flex-start">
                 <Title order={2} size="h3">Delete workspace</Title>
@@ -210,7 +170,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
   );
 }
 
-function DeleteWorkspaceDialog({ name, opened, busy, submitting, error, cancel, confirm }: {
+export function DeleteWorkspaceDialog({ name, opened, busy, submitting, error, cancel, confirm }: {
   name: string;
   opened: boolean;
   busy: boolean;
@@ -293,7 +253,7 @@ function WorkspacePreviews({ workspace, csrfToken, disabled, refresh }: {
 }
 
 function WorkspaceEntryButton({ id, csrfToken, service = 'ide', describedBy }: {
-  id: string; csrfToken: string; service?: 'ide' | 'repair' | `preview-${number}`; describedBy?: string;
+  id: string; csrfToken: string; service?: WorkspaceService; describedBy?: string;
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<unknown>();
@@ -302,34 +262,9 @@ function WorkspaceEntryButton({ id, csrfToken, service = 'ide', describedBy }: {
     if (submitting) return;
     setSubmitting(true);
     setError(undefined);
-    let tab: Window | null = null;
     try {
-      // Reserve the tab during the click, before waiting for the grant.
-      tab = window.open('about:blank', '_blank');
-      if (!tab) {
-        setError('popup-blocked');
-        return;
-      }
-      tab.opener = null;
-      const response = await fetch(`/api/v1/workspaces/${encodeURIComponent(id)}/entry-grants`, {
-        method: 'POST', cache: 'no-store',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-        body: JSON.stringify({ service }),
-      });
-      if (!response.ok) throw await readProblem(response);
-      const { exchangeUrl } = await response.json();
-      const url = new URL(exchangeUrl);
-      if (url.protocol !== 'https:' || url.origin === window.location.origin || url.pathname !== '/_shiftbox/entry' ||
-          url.username || url.password || !url.searchParams.get('grant')) {
-        throw new Error('Invalid workspace entry URL');
-      }
-      if (tab.closed) return;
-      const entry = tab.document.createElement('a');
-      entry.href = url.href;
-      entry.rel = 'noreferrer';
-      entry.click();
+      if (!await openWorkspaceEntry(id, csrfToken, service)) setError('popup-blocked');
     } catch (error) {
-      tab?.close();
       setError(error);
     } finally {
       setSubmitting(false);
@@ -348,14 +283,17 @@ function WorkspaceEntryButton({ id, csrfToken, service = 'ide', describedBy }: {
   );
 }
 
-function WorkspaceProgress({ workspaceId, operationId, onFinished }: { workspaceId: string; operationId: string; onFinished: (busy: boolean) => void }) {
+export function WorkspaceProgress({ workspaceId, operationId, onFinished }: { workspaceId: string; operationId: string; onFinished: (busy: boolean) => void }) {
   const operation = useOperation(operationId);
   const client = useQueryClient();
   const state = operation.data?.status;
   const ideVerified = operation.data?.steps.some(step => step.key === 'verify_ide' && step.status === 'succeeded');
   useEffect(() => {
     const finished = state === 'succeeded' || state === 'failed' || state === 'cancelled';
-    if (finished) onFinished(false);
+    if (finished) {
+      onFinished(false);
+      void client.invalidateQueries({ queryKey: ['workspaces', 'list'] });
+    }
     if (finished || ideVerified) void client.invalidateQueries({ queryKey: ['workspaces', 'detail', workspaceId] });
   }, [client, ideVerified, onFinished, state, workspaceId]);
   if (operation.accessDenied) return <Text role="alert">You no longer have access to this operation.</Text>;

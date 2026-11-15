@@ -1243,13 +1243,14 @@ components:
 
     SessionView:
       type: object
-      required: [user, mode, csrfToken, permissions, installationState]
+      required: [user, mode, csrfToken, permissions, installationState, expiresAt]
       properties:
         user: { $ref: '#/components/schemas/User' }
         mode: { type: string, enum: [bootstrap_restricted, password_change, normal, recovery_review] }
         csrfToken: { type: string, writeOnly: true }
         permissions: { type: array, items: { type: string } }
         installationState: { type: string }
+        expiresAt: { type: string, format: date-time }
         externalAuthorizationDueAt: { type: [string, 'null'], format: date-time }
         organizationSecretScopeId:
           type: string

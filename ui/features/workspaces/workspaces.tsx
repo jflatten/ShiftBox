@@ -10,9 +10,9 @@ import { SignInChoices } from '../session/sign-in';
 import { useSession } from '../../lib/use-session';
 import { LaunchFlow } from './launch-flow';
 import { WorkspaceDetail } from './workspace-detail';
-import { WorkspaceStatus, WorkspaceTime } from './workspace-summary';
+import { WorkspaceInventoryRow } from './workspace-inventory-row';
 
-import { workspaceName, workspaceState, type Workspace } from './workspace';
+import { workspaceIsTransitioning, workspaceState, type Workspace } from './workspace';
 
 export function Workspaces({ workspaceId, ownerId, launch = false }: {
   workspaceId: string | null;
@@ -33,18 +33,19 @@ export function Workspaces({ workspaceId, ownerId, launch = false }: {
         admin={current.role === 'administrator'} />
         : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken}
             admin={current.role === 'administrator'} />
-          : <WorkspaceList key={ownerId} ownerId={ownerId} />}
+          : <WorkspaceList key={ownerId} ownerId={ownerId} csrfToken={current.csrfToken} />}
     </ShiftBoxShell>
   );
 }
 
-function WorkspaceList({ ownerId }: { ownerId?: string | null }) {
+function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfToken: string }) {
   const [state, setState] = useState('');
   const [showDeleted, setShowDeleted] = useState(false);
   const [cursors, setCursors] = useState<string[]>([]);
   const cursor = cursors.at(-1);
   const page = useQuery<{ items: Workspace[]; nextCursor: string | null }>({
     queryKey: ['workspaces', 'list', ownerId ?? '', state, showDeleted, cursor ?? ''],
+    refetchInterval: query => query.state.data?.items.some(workspaceIsTransitioning) ? 3000 : false,
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams();
       if (ownerId) params.set('owner', ownerId);
@@ -88,7 +89,6 @@ function WorkspaceList({ ownerId }: { ownerId?: string | null }) {
             </Group>
             <Button variant="default" loading={page.isFetching} onClick={() => void page.refetch()}>Refresh</Button>
           </Group>
-          <Text c="dimmed" size="xs">Observed state is the latest reported status. Desired state is the requested target.</Text>
           {page.isError ? <Stack align="flex-start">
             <APIProblemView error={page.error} />
             <Button variant="default" onClick={() => void page.refetch()}>Retry</Button>
@@ -104,28 +104,12 @@ function WorkspaceList({ ownerId }: { ownerId?: string | null }) {
             <Table.ScrollContainer minWidth={680}>
               <Table aria-label="Workspaces" highlightOnHover verticalSpacing="md">
                 <Table.Thead><Table.Tr>
-                  <Table.Th>Workspace</Table.Th><Table.Th>State</Table.Th><Table.Th>Resources</Table.Th>
+                  <Table.Th>Workspace</Table.Th><Table.Th>State</Table.Th><Table.Th>Target State</Table.Th><Table.Th>Resources</Table.Th>
                   <Table.Th>Last activity</Table.Th><Table.Th>Actions</Table.Th>
                 </Table.Tr></Table.Thead>
                 <Table.Tbody>
                   {data.items.map(workspace => (
-                    <Table.Tr key={workspace.id}>
-                      <Table.Td style={{ maxWidth: 250, overflowWrap: 'anywhere' }}>
-                        <Anchor fw={600} href={workspaceURL(workspace)}>{workspaceName(workspace)}</Anchor>
-                        {workspace.currentOperationId ? <Text size="xs" c="dimmed">Operation in progress</Text> : null}
-                      </Table.Td>
-                      <Table.Td><Stack gap={4} align="flex-start">
-                        <WorkspaceStatus value={workspace.observedState} />
-                        <Text size="xs" c="dimmed">Desired: {workspaceState(workspace.desiredState)}</Text>
-                      </Stack></Table.Td>
-                      <Table.Td><Stack gap={2}>
-                        <Text size="sm">{workspace.resources.cpuCount} vCPU · {workspace.resources.memoryMiB.toLocaleString()} MiB memory</Text>
-                        <Text size="xs" c="dimmed">{workspace.resources.diskMiB.toLocaleString()} MiB disk</Text>
-                      </Stack></Table.Td>
-                      <Table.Td><Text size="sm"><WorkspaceTime value={workspace.lastActivityAt} fallback="Not recorded" /></Text></Table.Td>
-                      <Table.Td><Button component="a" href={workspaceURL(workspace)} variant="default" size="compact-sm"
-                        aria-label={`View ${workspaceName(workspace)}`}>View workspace</Button></Table.Td>
-                    </Table.Tr>
+                    <WorkspaceInventoryRow key={workspace.id} row={workspace} href={workspaceURL(workspace)} csrfToken={csrfToken} />
                   ))}
                 </Table.Tbody>
               </Table>

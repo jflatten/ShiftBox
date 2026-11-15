@@ -17,6 +17,8 @@ import (
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
+const workspacesHome = "/workspaces/"
+
 // NewActiveLoginHandler serves local Dex sign-in for the active installation.
 // It requires direct HTTPS on the configured management callback host.
 func NewActiveLoginHandler(db *sql.DB, installation string, login *SetupLogin, now func() time.Time, newID func() string) (http.Handler, error) {

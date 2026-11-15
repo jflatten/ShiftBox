@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { WorkflowOperation } from '../components/workflow-stepper';
 import { subscribeOperation } from './operation-events';
+import { readProblem } from './api-problem';
 
 type Operation = WorkflowOperation & { version: number };
 
@@ -22,6 +23,7 @@ export function useOperation(operationId: string) {
     retry: false,
     queryFn: async ({ signal }) => {
       const response = await fetch(`/api/v1/operations/${encodeURIComponent(operationId)}`, { signal, credentials: 'same-origin', cache: 'no-store' });
+      if (response.status === 401) await readProblem(response);
       if (!response.ok) throw new OperationReadError(response.status);
       return response.json();
     },
@@ -38,6 +40,7 @@ export function useOperation(operationId: string) {
       void client.invalidateQueries({ queryKey, exact: true });
     }, () => {
       setRevokedId(operationId);
+      void client.invalidateQueries({ queryKey: ['session'], exact: true });
       void client.cancelQueries({ queryKey, exact: true }).then(() => {
         client.removeQueries({ queryKey, exact: true });
       });

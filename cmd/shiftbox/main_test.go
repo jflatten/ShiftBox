@@ -274,10 +274,8 @@ func (w *stopOnSetupURL) probe(origin string) error {
 		return err
 	}
 	if strings.HasSuffix(browser.Request.URL.Path, "/approval") {
-		browser, err = submitDexForm(client, browser, url.Values{"approval": {"approve"}})
-		if err != nil {
-			return err
-		}
+		browser.Body.Close()
+		return errors.New("local setup login displayed a separate consent screen")
 	}
 	browser, err = readSetupSession(client, origin, browser)
 	if err != nil {
@@ -393,10 +391,8 @@ func (w *stopOnSetupURL) probe(origin string) error {
 		return err
 	}
 	if strings.HasSuffix(browser.Request.URL.Path, "/approval") {
-		browser, err = submitDexForm(client, browser, url.Values{"approval": {"approve"}})
-		if err != nil {
-			return err
-		}
+		browser.Body.Close()
+		return errors.New("local setup login displayed a separate consent screen")
 	}
 	browser, err = readSetupSession(client, origin, browser)
 	if err != nil {
@@ -469,7 +465,7 @@ func (w *stopOnSetupURL) probe(origin string) error {
 	return nil
 }
 
-// submitDexForm drives the pinned Dex HTML login and approval forms.
+// readSetupSession verifies that local login returned to the setup page.
 func readSetupSession(client *http.Client, origin string, response *http.Response) (*http.Response, error) {
 	if response.Request.URL.Path == "/api/v1/session" {
 		return response, nil
@@ -498,12 +494,8 @@ func submitDexForm(client *http.Client, response *http.Response, fields url.Valu
 		if err != nil {
 			return nil, err
 		}
-	} else if fields.Get("approval") == "" {
+	} else {
 		return nil, fmt.Errorf("Dex form was unavailable at %s (status %d)", action.Path, response.StatusCode)
-	}
-	req := regexp.MustCompile(`name="req" value="([^"]+)"`).FindSubmatch(body)
-	if len(req) == 2 {
-		fields.Set("req", html.UnescapeString(string(req[1])))
 	}
 	return client.PostForm(action.String(), fields)
 }

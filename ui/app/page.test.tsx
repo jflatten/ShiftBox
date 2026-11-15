@@ -1,6 +1,22 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import Home from './page';
 import { Providers } from './providers';
+
+const mockReplace = jest.fn();
+jest.mock('next/navigation', () => ({ usePathname: () => '/', useRouter: () => ({ replace: mockReplace }) }));
+
+// An authenticated visit to the site root opens Workspaces without an overview.
+test('opens Workspaces from the root for a normal session', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    user: { id: 'owner', role: 'member' }, mode: 'normal', installationState: 'active', permissions: [],
+  }) });
+  try {
+    render(<Providers><Home /></Providers>);
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/workspaces/'));
+    expect(screen.queryByRole('heading', { name: 'Your development environments' })).not.toBeInTheDocument();
+  } finally { globalThis.fetch = original; mockReplace.mockClear(); }
+});
 
 // An unavailable controller must remain an explicit condition, not an empty successful workspace list.
 test('shows a persistent connection error when the session API is unavailable', async () => {

@@ -116,12 +116,16 @@ func TestSessionReadUsesCurrentAuthority(t *testing.T) {
 		CSRFToken   string    `json:"csrfToken"`
 		Permissions []string  `json:"permissions"`
 		Mode        string    `json:"mode"`
+		ExpiresAt   time.Time `json:"expiresAt"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
 		t.Fatal(err)
 	}
 	if view.User.ID != principal.User.ID || view.CSRFToken != auth.CSRFToken(token) || view.Mode != "normal" || len(view.Permissions) == 0 {
 		t.Error("GET session did not return current principal, mode, permissions and bound CSRF")
+	}
+	if !view.ExpiresAt.Equal(principal.Session.ExpiresAt) {
+		t.Errorf("GET session expiry = %v, want %v", view.ExpiresAt, principal.Session.ExpiresAt)
 	}
 	for _, secret := range []string{token, principal.Session.TokenDigest, principal.Session.CSRFDigest} {
 		if strings.Contains(response.Body.String(), secret) {

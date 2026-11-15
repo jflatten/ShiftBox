@@ -68,6 +68,8 @@ test('restores keyboard focus after cancelling workspace deletion', async () => 
   expect(toggle).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByRole('heading', { name: 'Keyboard workspace' })).toBeVisible();
   await user.tab();
+  expect(screen.getByRole('link', { name: 'ShiftBox home' })).toHaveFocus();
+  await user.tab();
   expect(screen.getByRole('button', { name: 'User menu' })).toHaveFocus();
   await user.tab();
   const nav = within(screen.getByRole('navigation', { name: 'Main navigation' }));

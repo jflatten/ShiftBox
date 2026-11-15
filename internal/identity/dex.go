@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // DexPostgres contains scoped identity-store credentials. Schema/search-path
@@ -38,6 +39,7 @@ type DexConfig struct {
 	ClientID         string
 	ClientSecret     string
 	RedirectURI      string
+	FrontendDir      string
 }
 
 // WriteDexConfig atomically replaces a private JSON configuration, accepted by
@@ -45,6 +47,9 @@ type DexConfig struct {
 func WriteDexConfig(path string, cfg DexConfig) error {
 	if !filepath.IsAbs(path) || !identityURL(cfg.Issuer) || !identityURL(cfg.RedirectURI) || cfg.ClientID == "" || cfg.ClientSecret == "" {
 		return errors.New("invalid managed identity configuration")
+	}
+	if cfg.FrontendDir != "" && !filepath.IsAbs(cfg.FrontendDir) {
+		return errors.New("identity frontend requires an explicit absolute path")
 	}
 	for _, address := range []string{cfg.WebAddress, cfg.TelemetryAddress, cfg.GRPCAddress} {
 		if !loopbackAddress(address) {
@@ -71,12 +76,28 @@ func WriteDexConfig(path string, cfg DexConfig) error {
 	}
 	document := map[string]any{
 		"issuer": cfg.Issuer, "storage": storage, "enablePasswordDB": true,
-		"web":           map[string]any{"https": cfg.WebAddress, "tlsCert": cfg.TLSCertFile, "tlsKey": cfg.TLSKeyFile, "tlsMinVersion": "1.3"},
-		"grpc":          map[string]any{"addr": cfg.GRPCAddress, "tlsCert": cfg.GRPCCertFile, "tlsKey": cfg.GRPCKeyFile, "tlsClientCA": cfg.GRPCClientCAFile, "tlsMinVersion": "1.3"},
-		"telemetry":     map[string]any{"http": cfg.TelemetryAddress},
-		"logger":        map[string]any{"level": "error", "format": "json", "excludeFields": []string{"email", "username", "preferred_username", "groups"}},
-		"oauth2":        map[string]any{"responseTypes": []string{"code"}, "grantTypes": []string{"authorization_code", "refresh_token"}, "pkce": map[string]any{"enforce": true, "codeChallengeMethodsSupported": []string{"S256"}}},
+		"web":       map[string]any{"https": cfg.WebAddress, "tlsCert": cfg.TLSCertFile, "tlsKey": cfg.TLSKeyFile, "tlsMinVersion": "1.3"},
+		"grpc":      map[string]any{"addr": cfg.GRPCAddress, "tlsCert": cfg.GRPCCertFile, "tlsKey": cfg.GRPCKeyFile, "tlsClientCA": cfg.GRPCClientCAFile, "tlsMinVersion": "1.3"},
+		"telemetry": map[string]any{"http": cfg.TelemetryAddress},
+		"logger":    map[string]any{"level": "error", "format": "json", "excludeFields": []string{"email", "username", "preferred_username", "groups"}},
+		"oauth2": map[string]any{
+			"responseTypes": []string{"code"}, "grantTypes": []string{"authorization_code", "refresh_token"},
+			// The managed server registers ShiftBox as its sole first-party client.
+			"skipApprovalScreen": true,
+			"pkce":               map[string]any{"enforce": true, "codeChallengeMethodsSupported": []string{"S256"}},
+		},
 		"staticClients": []any{map[string]any{"id": cfg.ClientID, "secret": cfg.ClientSecret, "name": "ShiftBox", "redirectURIs": []string{cfg.RedirectURI}}},
+	}
+	if cfg.FrontendDir != "" {
+		origin := strings.TrimSuffix(cfg.RedirectURI, "/auth/callback")
+		extra := map[string]string{"retryURL": origin + "/auth/login"}
+		if cfg.Issuer == origin+"/dex" {
+			extra["loginOptionsURL"] = origin + "/"
+		}
+		document["frontend"] = map[string]any{
+			"dir": cfg.FrontendDir, "issuer": "ShiftBox",
+			"extra": extra,
+		}
 	}
 	data, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {

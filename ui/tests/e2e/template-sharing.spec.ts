@@ -264,16 +264,11 @@ async function readFixture(): Promise<SharingFixture> {
 
 async function signIn(page: Page, account: Account, role: string): Promise<Session> {
   await page.goto('/auth/login');
-  const username = page.locator('input[name=login]');
-  const emailConnector = page.getByRole('button', { name: /Log in with Email/i })
-    .or(page.getByRole('link', { name: /Log in with Email/i }));
-  await expect(username.or(emailConnector)).toBeVisible();
-  if (await emailConnector.isVisible()) await emailConnector.click();
-  await username.fill(account.email);
-  await enterPassword(page.locator('input[name=password]'), account.password);
-  await page.getByRole('button', { name: 'Login', exact: true }).click();
-  await page.waitForURL(url => !url.pathname.startsWith('/dex/') || url.pathname === '/dex/approval');
-  if (new URL(page.url()).pathname === '/dex/approval') await page.getByRole('button', { name: 'Grant Access', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Log in to ShiftBox' })).toBeVisible();
+  await page.getByLabel('Email', { exact: true }).fill(account.email);
+  await enterPassword(page.getByLabel('Password', { exact: true }), account.password);
+  await page.getByRole('button', { name: 'Log in', exact: true }).click();
+  await page.waitForURL(url => !url.pathname.startsWith('/dex/'));
   await expect.poll(async () => (await page.request.get('/api/v1/session')).status()).toBe(200);
   const session: Session = await (await page.request.get('/api/v1/session')).json();
   expect(session.user.role).toBe(role);
