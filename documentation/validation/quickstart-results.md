@@ -184,6 +184,14 @@ client and real mutual TLS, with two local users. It verified separate
 cookies, cross-origin denial and selective WebSocket revocation. The
 native UTM preview and GitHub workspace reruns remain pending.
 
+For section 7, a separate native `mvp-rc2` run verified the packaged
+agent's tunnel using a disposable WebSocket service in UTM. Offboarding
+closed the stream while the VM was running, the agent reported that the
+controller denied subsequent polling, and fresh stream entry was refused.
+The workspace then stopped with its disk retained. The integrated browser
+run with the native project workspace remains pending. See [native preview
+tunnel revocation](utm-stack.md#native-preview-tunnel-revocation).
+
 ## Final-candidate rerun of the guest secret command
 
 Quickstart section 5 ran the exact `mvp-rc2` Linux guest binary in a

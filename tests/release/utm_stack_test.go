@@ -66,6 +66,7 @@ const (
 	nativeGuestClock
 	nativeRevokedGuest
 	nativeClonedEnrollment
+	nativeTunnelRevocation
 	nativeExpiredCA
 	nativeRetention
 	nativeCapacity
@@ -160,6 +161,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	var runtimeProvider provider.Provider = machines
 	var clock *nativeClockFixture
 	var replayMedia string
+	var tunnelRevocation *nativeTunnelFixture
 	if scenario == nativeGuestClock {
 		clock = startNativeClockFixture(t, host)
 		runtimeProvider = nativeSeedProvider{Provider: machines, seed: clock.seed}
@@ -167,6 +169,13 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	if scenario == nativeClonedEnrollment {
 		replayMedia = filepath.Join(t.TempDir(), "copied-enrollment.iso")
 		runtimeProvider = nativeEnrollmentCapture{Provider: machines, image: replayMedia}
+	}
+	if scenario == nativeTunnelRevocation {
+		tunnelRevocation = startNativeTunnelFixture(t, host)
+		runtimeProvider = nativeTunnelProvider{
+			Provider:  nativeSeedProvider{Provider: machines, seed: tunnelRevocation.seed},
+			allowStop: tunnelRevocation.allowStop,
+		}
 	}
 	store := workspace.NewStore(db)
 	if err := store.SetCapacityBudget(ctx, id, allocation, 0, owner, time.Now()); err != nil {
@@ -199,12 +208,12 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	state.Installation.Settings.ManagementOrigin = "https://management.test"
 	state.Installation.Settings.IDEHostPattern = "{workspace}.ide.test"
 	state.Installation.Settings.PreviewHostPattern = "{service}--{workspace}.preview.test"
-	startRuntime := func(authority *guest.Authority, now func() time.Time) (*proxy.Registry, func()) {
+	startRuntime := func(authority *guest.Authority, now func() time.Time) (*proxy.Tunnels, func()) {
 		t.Helper()
-		registry := &proxy.Registry{}
+		tunnels := &proxy.Tunnels{Registry: &proxy.Registry{}}
 		listeners := app.GuestListenerConfig{
 			EnrollmentAddress: addresses[0], PollAddress: addresses[1], TunnelAddress: addresses[2], PublicHost: host,
-			Tunnels: &proxy.Tunnels{Registry: registry},
+			Tunnels: tunnels,
 		}
 		if maintenance != nil {
 			listeners.GuestUpdates = maintenance.load
@@ -217,7 +226,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 		runCtx, stop := context.WithCancel(ctx)
 		served := make(chan error, 1)
 		go func() { served <- runtime.Serve(runCtx) }()
-		return registry, func() {
+		return tunnels, func() {
 			stop()
 			if err := <-served; !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				t.Errorf("workspace runtime stopped: %v", err)
@@ -234,7 +243,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 		shortIssuer.Certificate = &shortCertificate
 		issuer = &shortIssuer
 	}
-	registry, stopRuntime := startRuntime(issuer, time.Now)
+	tunnels, stopRuntime := startRuntime(issuer, time.Now)
 	defer func() { stopRuntime() }()
 
 	var op operation.Operation
@@ -251,6 +260,9 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 			DevcontainerPath: ".devcontainer/devcontainer.json", Allocation: allocation, OwnershipMarker: marker, NetworkPolicyJSON: `{"mode":"shared"}`,
 			RetentionSeconds: retention,
 		}, time.Now())
+		if err == nil && tunnelRevocation != nil {
+			_, err = tx.ExecContext(ctx, "UPDATE workspaces SET preview_ports_json='[4173]' WHERE id=$1", workspaceID)
+		}
 		return err
 	})
 	if err != nil {
@@ -346,7 +358,11 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 		verifyNativeRetention(t, ctx, db, machines, before, *retention)
 		return
 	}
-	stopID := disableEnrollmentFixtureOwner(t, db, journal, registry, owner, workspaceID)
+	if tunnelRevocation != nil {
+		verifyNativeTunnelRevocation(t, ctx, db, journal, machines, before, owner, tunnels, tunnelRevocation)
+		return
+	}
+	stopID := disableEnrollmentFixtureOwner(t, db, journal, tunnels.Registry, owner, workspaceID)
 	for {
 		stop, err := journal.Get(ctx, stopID)
 		if err != nil {

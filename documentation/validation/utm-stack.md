@@ -145,6 +145,26 @@ confirmed provider absence, released the disk reservation, and recorded
 the registration as deleted. The original certificate remained denied.
 Set `SHIFTBOX_TEST_UTM_REVOKED_GUEST=1` with the normal native fixture settings.
 
+## Native preview tunnel revocation
+
+`TestUTMNativeTunnelRevocation` passed with `-race` in 128.92 seconds on
+`mvp-rc2` and UTM 5.0.8. A temporary NoCloud seed started a localhost
+WebSocket fixture on the disposable VM. The packaged agent advertised the
+configured preview port, registered its ordinary mutual TLS tunnel, and
+delivered a WebSocket upgrade and frame to the controller.
+
+The normal administrator membership handler disabled the workspace owner.
+An injected uncertain provider response held the VM running while the
+controller closed the established stream. The packaged agent reported
+identity denial on a subsequent poll, and an attempt to open a new preview
+stream failed. The offboarding stop then completed against real UTM and
+retained the original disk. Fixture cleanup deleted the VM.
+
+Set `SHIFTBOX_TEST_UTM_TUNNEL_REVOCATION=1` with the normal native fixture
+settings. The [integrated browser journey](mvp-v1-v14.md#gate-results)
+remains pending for the native project workspace and browser service
+origins.
+
 ## Signed maintenance fixture
 
 `TestUTMGuestMaintenance` reuses the enrollment fixture and only needs one
