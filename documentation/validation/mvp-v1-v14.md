@@ -60,18 +60,48 @@ separately owned application and Dex schemas. The application schema was
 13:14 UTC. The same public certificate was used by the test browser for
 setup and management.
 
+### `mvp-rc3`
+
+The controller and UTM guest were built from the clean checkout at
+`cab2289686eb2c213537fd37a43791fba2683c4f`. This candidate includes the
+owner-requested workspace update before the scheduled deadline. Packer
+1.14.2 completed the native guest build in 9 minutes 20 seconds. Local
+verification matched every UTM bundle resource, the guest executable,
+and the pinned Dex, UTM, Packer plug-in, Ubuntu archive, and code-server
+archive against their manifests.
+
+| Candidate artifact | SHA-256 |
+| --- | --- |
+| Controller | `a2f2efee3de12ff621cc38101942da8435a6105429b81f73dc0744b487308eda` |
+| Guest agent | `5a8154cdacdc790bf92f5cbfd31fe4e9d5fb409a3e8bf1d44d620240de916c09` |
+| UTM artifact manifest | `d46c21cd1a215cda6fca8fd561fd6f7154fcc361b4685186bf6d8a768b5a1721` |
+
+The [RC3 quickstart results](quickstart-results.md#engineering-runs-on-mvp-rc3)
+record the command checks on this revision. The checked-in release
+manifest remains the original `mvp-rc1` record until the integrated
+release gates pass on RC3.
+
+Native catalog validation passed in 348.96 seconds. The candidate booted
+and authenticated before publication. Two installations using the same
+workspace ID received distinct VM and disk identities. Deleting the first
+clone preserved the second, which was then removed independently.
+The separate native enrollment and offboarding run passed in 351.80
+seconds. The first authenticated poll arrived after five minutes.
+Offboarding stopped the VM and preserved its original owned disk before
+the test removed the VM. Both native checks ran with the race detector.
+
 ## Gate results
 
 | Gate | Evidence available | Evidence needed for release |
 | --- | --- | --- |
-| V1 Platform and provider | Both `mvp-rc1` and `mvp-rc2` passed native boot and removal. The same workspace ID in two installations received distinct VM and disk identities, and deleting either clone left no owned resources. | Include the result in the final release audit |
-| V2 Enrollment delivery | Native initial enrollment and native restart after certificate expiry passed on `mvp-rc2`. The restart replaced the guest identity, cleared enrollment media and preserved the owned disk. A second native guest could not use a copy of the consumed enrollment image. Controller tests cover lost enrollment replies. [Native enrollment replay evidence](utm-stack.md#cloned-enrollment-media) | Include the results in the final release audit |
+| V1 Platform and provider | `mvp-rc1`, `mvp-rc2`, and `mvp-rc3` passed native boot and removal. The same workspace ID in two installations received distinct VM and disk identities, and each clone was removed independently. | Include the RC3 result in the final release audit |
+| V2 Enrollment delivery | Native initial enrollment passed on `mvp-rc3`. Native restart after certificate expiry passed on `mvp-rc2`, replaced the guest identity, cleared enrollment media, and preserved the owned disk. A second native guest could not use a copy of the consumed enrollment image. Controller tests cover lost enrollment replies. [Native enrollment replay evidence](utm-stack.md#cloned-enrollment-media) | Repeat the expired identity and copied enrollment scenarios on RC3 |
 | V3 Certificates | The packaged `mvp-rc2` agent changed keys and used a new eight-hour certificate before its shortened first leaf expired. The prior certificate immediately lost ordinary access. A stopped guest recovered after leaf expiry. A running guest rejected an unrelated CA and a future-dated certificate, and lost contact when its CA expired. Native clock correction restored the original identity. Revocation blocked polling and restart; verified deletion released the disk and left the identity denied. Offboarding closed a native guest tunnel before the VM stopped. [Native trust evidence](utm-stack.md#native-certificate-renewal) | Include the results in the final release audit |
 | V4 Compatibility | A native `mvp-rc1` guest authenticated as the previous release and blocked migration while stopped. Signed rollback preserved rc1 and its blocker. The exact signed rc2 agent cleared the blocker after authenticating. The exact rc2 CLI reported ready with a stopped rc2 UTM workspace and a verified PostgreSQL backup. | Include the results in the final release audit |
 | V5 Networking | On `mvp-rc2`, UTM 5.0.8 advertised shared networking and returned 409 for no-network and allowlist policies. The native guest authenticated over shared networking. The rc1 browser journey cloned the private repository in that mode. | Verify private checkout and required exception behavior on the final candidate |
 | V6 Work and data | Chrome on `mvp-rc1` verified retained checkout, developer home and named-volume files across lifecycle actions. The rc2 guest runtime served trusted repair after configuration, build, hook, and IDE failures in real Docker tests using the pinned repair inputs. | Repeat retained-data and trusted repair browser checks on the final native candidate |
 | V7 Reconciliation and deletion | The restart matrix passed for launch, start, stop, rebuild, repair, offboarding and deletion. Native rc2 recovered the original VM and disk after exit during import. Competing Start and Delete requests admitted exactly one operation in each ordering. The winning Start kept its disk, and the winning Delete released its disk reservation after confirmed removal. Native capacity and retention tests covered refusals and partial cleanup. [Native concurrency evidence](workspace-operations.md#competing-native-start-and-delete-requests) | Complete the remaining native project lifecycle checks |
-| V8 Retention and maintenance | Native retention exercised outage grace, stale-candidate refusal after fresh activity, the full shutdown window and verified deletion. The corrected T095 controller passed native signed rollback and an owner-requested replacement before the deadline. Both paths restored stopped power on the same disk. The contract verifies that other targets wait until the deadline. [Native maintenance results](utm-stack.md#upgrade-across-release-ids) | Include the T095 controller fix in the next frozen release candidate |
+| V8 Retention and maintenance | Native retention exercised outage grace, stale-candidate refusal after fresh activity, the full shutdown window and verified deletion. The corrected T095 controller passed native signed rollback and an owner-requested replacement before the deadline. Both paths restored stopped power on the same disk. The contract verifies that other targets wait until the deadline. [Native maintenance results](utm-stack.md#upgrade-across-release-ids) | Repeat retention and signed upgrade on the frozen candidate |
 | V9 Identity and bootstrap | Chrome on `mvp-rc2` passed protected setup and fresh sign-in on both data profiles. The SQLite setup kept one administrator, schema, trust identity and platform artifact through six controller restarts. SQLite People verified forced first password change, stale-reset refusal, reset and disablement with session revocation. Native offboarding preserved the owned disk and released compute. The pinned Dex and a local OpenID Connect issuer passed the authorization round trip. [Setup restart results](quickstart-results.md#protected-setup-restarts-on-mvp-rc2) | Include the results in the final release audit |
 | V10 Backup and restore | Populated SQLite recovery on `mvp-rc1` and PostgreSQL recovery on `mvp-rc2` matched native retained UTM workspaces. The PostgreSQL run preserved the original stopped VM and disk and rejected copied and recovery sessions before normal sign-in. The earlier PostgreSQL run also covered six prepublication refusals. | Include both profiles in the final release audit |
 | V11 Application authorization | Chrome on `mvp-rc2` passed template grant and archive checks, secret metadata checks, and IDE-route connection revocation with two local Dex users and an enrolled local guest client. The guest verified effective secret precedence over mutual TLS. See [sharing validation](template-sharing.md). | Run the two-account native browser journey and controller journal verifier |

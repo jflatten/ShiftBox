@@ -298,8 +298,35 @@ owner-requested replacement before its deadline. It kept the stopped
 state and original disk. See [native upgrade validation](utm-stack.md#upgrade-across-release-ids).
 
 The full Go race suite, 90 UI unit tests, and the production UI build
-passed after the fix. The controller change still needs to be included in
-the next frozen release candidate.
+passed after the fix. The `mvp-rc3` candidate includes the controller change.
+
+## Engineering runs on `mvp-rc3`
+
+On the frozen checkout, `npm ci`, all 90 UI unit tests, and the production
+export passed. `npm ci` reported three low and 16 moderate advisories.
+The export passed 82 browser fixture checks across Chrome 157.0.8103.51,
+Firefox 159.0, and WebKit 27.2. Fourteen cases were skipped by their
+browser or live-installation gates. The separately enabled PostgreSQL
+integration checks passed preflight and resumed activation against a
+disposable TLS database with independently owned ShiftBox and Dex schemas.
+
+The first Go invocation pointed to the RC3 manifest before it had been
+generated. It also returned `ErrDexExited` from the unhealthy-startup
+test at its 300 ms deadline. The isolated test passed 15 subsequent runs.
+The identity race suite passed with the pinned Dex executable, including
+its readiness and loopback issuer checks. With the verified RC3 manifest,
+the standard, race, integration-tagged, and release-tagged Go commands all
+passed on a fresh run. The tagged commands used their default fixture
+settings. The separate PostgreSQL and native runs exercise those opt-in
+paths.
+
+The first combined native run passed catalog validation, then reached its
+shared nine-minute timeout while the standalone guest enrollment was still
+waiting for its first authenticated poll. The temporary guest and its
+staged disk were removed. The standalone retry passed in 351.80 seconds
+with the race detector. It recorded an authenticated enrollment, confirmed
+offboarding stopped the original VM while preserving its disk, and removed
+the disposable VM and staged files.
 
 T125 remains open. The [release tracker](mvp-v1-v14.md) records the
 remaining live checks.
