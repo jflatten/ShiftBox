@@ -212,6 +212,12 @@ and request key survived. The exact restarted rc2 controller enrolled the
 guest on the original VM and disk. Chrome showed the original provision
 and enrollment steps complete. See [native launch recovery](workspace-operations.md#native-launch-recovery-after-worker-exit).
 
+Chrome also raced Start and confirmed Delete on two stopped native
+workspaces. Both request orders admitted one operation and refused the
+second with HTTP 412. Start recovered the same VM and retained disk.
+Delete verified provider removal and released the disk reservation.
+See [the competing-request results](workspace-operations.md#competing-native-start-and-delete-requests).
+
 Chrome and the Go operations acceptance test passed together on the
 rc2 controller. The live preview case used an enrolled loopback guest
 client and real mutual TLS, with two local users. It verified separate
@@ -273,6 +279,17 @@ frozen checkout, the standard and race suites plus both tagged suites
 passed without cached test results under `umask 022`. The tagged runs
 used the default fixture gates with the rc2 manifest override. The
 separate native and database evidence is recorded above.
+
+## T095 workspace update contract gap
+
+The section 9 contract audit enabled `SHIFTBOX_TEST_WORKSPACE_DELETE_UPDATE=1`
+and ran `TestWorkspaceDeleteAndUpdateAPI` with the race detector. The
+test's update request without a scheduled campaign received HTTP 400
+`workspace.invalid_action` where it expected HTTP 409. Explicit deletion
+passed. The release contract lists `update` as a workspace action, and
+the maintenance design lets a workspace owner update before the scheduled
+deadline. T095 is open again. The existing maintenance scheduler and
+signed-update results above cover deadline-driven updates.
 
 T125 remains open. The [release tracker](mvp-v1-v14.md) records the
 remaining live checks.

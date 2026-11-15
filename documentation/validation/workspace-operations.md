@@ -66,6 +66,23 @@ on the original workspace, with IDE entry still gated. The database
 contained one workspace, one provision operation, and one consumed
 enrollment grant. Cleanup verified native VM and disk removal.
 
+## Competing native Start and Delete requests
+
+Chrome sent an authorized Start and a confirmed Delete concurrently at
+the same workspace version on the exact `mvp-rc2` controller. Each of the
+two trials began with a distinct enrolled UTM workspace stopped with its
+original disk reserved and compute released. The fixture ended each
+initial launch after enrollment to exercise lifecycle admission without a
+project checkout.
+
+In the Delete-first trial, Delete returned 202 and Start returned 412
+with `request.version_mismatch`. The controller recorded one operation,
+verified deletion through UTM, and released the disk reservation. In the
+Start-first trial, Start returned 202 and Delete returned the same stale
+version error. One operation was recorded, and the agent authenticated
+again on the same VM and reserved disk. The fixture removed that VM and
+disk after verification.
+
 ## Native capacity refusal
 
 The race-enabled `TestUTMCapacityRefusesExhaustedResources` passed on
