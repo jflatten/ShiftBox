@@ -120,6 +120,13 @@ Run this opt-in test with the usual native UTM settings and
 and lost replies are fixture inputs. UTM observation timestamps,
 the stop, deletion, and cleanup verification are native.
 
+The exact RC3 guest repeated the test with the race detector in 328.24
+seconds. Enrollment took 5 minutes 10 seconds. Outage grace withheld
+deletion, fresh activity invalidated the first candidate, and the native
+stop occurred only after the full grace window. Partial cleanup and a
+lost provider reply kept the disk reserved until UTM verified removal.
+The disposable guest was absent from the final UTM inventory.
+
 ## Live browser fixture
 
 Run the live Chrome case with `SHIFTBOX_OPERATIONS_FIXTURE` set to the

@@ -52,8 +52,9 @@ suite, the tagged integration and release packages under their default
 fixture settings, a fresh `npm ci`, all 89 UI unit tests, and the production
 export. `npm ci` reported three low and 16 moderate advisories. The browser
 rerun passed 26 fixture checks each in Chrome, Firefox, and WebKit. The
-separate Chrome browser-storage case also passed. Live sharing and preview
-cases require their dedicated fixture.
+separate Chrome browser-storage case also passed. The live preview cases
+require their dedicated fixture. The user later waived the live two-user
+sharing journey for MVP.
 
 The restart-focused race suite also passed, including the populated
 PostgreSQL setup interruption after source retirement. The first PostgreSQL
@@ -256,8 +257,9 @@ cleaned up.
 
 The denial used a stopped desired state in the disposable workspace
 record. The container hosted the production guest agent and command.
-The native private Git checkout and owner-context authorization checks
-remain part of the [full sharing journey](template-sharing.md).
+The MVP still requires native private Git checkout with one authorized
+owner and the focused owner-context contracts. The opt-in two-user fixture
+is documented in [sharing validation](template-sharing.md).
 
 ## Fresh engineering runs on `mvp-rc2`
 
@@ -391,6 +393,14 @@ nonempty destination before publication. Chrome then completed restricted
 recovery and explicit activation. The original stopped VM and owned disk
 matched the replacement database, and both the copied session and the
 recovery session were denied afterward. See [SQLite recovery evidence](backup-recovery.md#sqlite-recovery-on-mvp-rc3).
+
+### Template sharing and Git authorization
+
+The user waived the live two-user sharing journey for MVP. The frozen RC3
+source passed all 12 focused contract and identity tests under the race
+detector. They cover guest scope, metadata-only reads, template grants and
+archive, callback and repository checks, and refresh and revocation fencing.
+The native single-owner checkout remains required. See [sharing validation](template-sharing.md).
 
 T125 remains open. The [release tracker](mvp-v1-v14.md) records the
 remaining live checks.

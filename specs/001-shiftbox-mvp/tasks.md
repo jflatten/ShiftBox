@@ -144,7 +144,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T065 [P] [US2] Write failing management and guest secret/Git contract tests for metadata-only secret listing, mTLS-derived owner/template context, denied guest-supplied scope, exit codes 0/3/4/5, no persistent cache, authorization initiation/state-bound callback/revocation, current owner token, coordinated refresh, and reconnect-required failure in `tests/contract/credentials_test.go` and `tests/contract/git_authorization_api_test.go`
 - [X] T066 [P] [US2] Write failing GitHub authorization tests for repository coverage, stable provider identity, fenced concurrent renewal, app/refresh credential exclusion, revocation, and permanent renewal failure in `internal/identity/github_test.go`
 - [X] T067 [P] [US2] Write failing UI tests for people states, template grant exposure warning, secret metadata-only views, empty override, fallback deletion warning, archival filters, and no secret value rendering in `ui/features/admin/people.test.tsx`, `ui/features/templates/sharing.test.tsx`, and `ui/features/secrets/secrets.test.tsx`
-- [ ] T068 [P] [US2] Write failing Playwright sharing journey covering two users, owner privacy, project-secret warning, precedence, administrator connection owner context, Git authority, revoke, and archive in `ui/tests/e2e/template-sharing.spec.ts`
+- **T068 [P] [US2] — Waived for the MVP.** The user approved skipping the live two-user Playwright sharing journey. The opt-in test remains in `ui/tests/e2e/template-sharing.spec.ts`.
 
 ### Models and implementation
 
@@ -157,7 +157,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T075 [US2] Implement guest secret resolution and Git token endpoints plus `shiftbox secrets get-secret` and internal credential-helper exit behavior proven by T065 in `internal/web/credential_routes.go`, `internal/guest/credentials.go`, and `cmd/shiftbox-agent/credentials.go`
 - [X] T076 [US2] Implement self password/external reauthorization, users/membership/external connector, template update/new revision/grant/revoke/archive, secret metadata/set/delete, Git authorization/callback/revoke, and audit read handlers from the OpenAPI and authorization-matrix contracts in `internal/web/session_routes.go`, `internal/web/user_routes.go`, `internal/web/template_grant_routes.go`, `internal/web/secret_routes.go`, `internal/web/git_routes.go`, and `internal/web/audit_routes.go`
 - [X] T077 [US2] Implement Mantine password change, external reauthorization, People, template revision/sharing/archive, secret metadata/edit/delete, Git connection, and audit screens with the required warnings in `ui/features/session/password.tsx`, `ui/features/session/external-reauthorization.tsx`, `ui/features/admin/people.tsx`, `ui/features/templates/sharing.tsx`, `ui/features/secrets/secrets.tsx`, `ui/features/git/connection.tsx`, and `ui/app/audit/page.tsx`
-- [ ] T078 [US2] Add and run the Go sharing acceptance test together with the T068 Playwright journey, then record separate evidence for privacy, revocation, secret non-disclosure, and owner-bound Git behavior in `tests/acceptance/template_sharing_test.go` and `documentation/validation/template-sharing.md`
+- **T078 [US2] — Waived for the MVP.** The live two-user Playwright and Go journal run was part of T068. The verifier remains in `tests/acceptance/template_sharing_test.go`. Separate privacy, revocation, secret non-disclosure, and owner-bound Git evidence is recorded in `documentation/validation/template-sharing.md`.
 - [X] T127 [US2] Implement and verify signed-in administrator password resets for active local accounts, with dedicated authorization, session and browser grant revocation, forced password change, redacted audit, and one-time delivery from People.
 
 **Checkpoint**: User Story 2 works against the User Story 1 launch path but is independently testable with its own users, template, secrets, and Git authorization.
@@ -258,7 +258,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - **Phase 1 — Setup**: starts immediately.
 - **Phase 2 — Foundational**: depends on Phase 1 and blocks every user story.
 - **Phase 3 — User Story 1**: depends on Phase 2 and is the first independently demonstrable MVP slice.
-- **Phase 4 — User Story 2**: domain tests and services may start after Phase 2, but T068 and T078 depend on the completed User Story 1 launch path through T061.
+- **Phase 4 — User Story 2**: domain tests and services may start after Phase 2. The optional T068 and T078 fixtures depend on the User Story 1 launch path through T061.
 - **Phase 5 — User Story 3**: domain tests and services may start after Phase 2, but T088 and T103 depend on completed User Story 1 workspaces through T061.
 - **Phase 6 — User Story 4**: backup/recovery domain work may start after Phase 2, but T108 and T116 depend on populated User Story 1 management/workspace state through T061.
 - **Phase 7 — Polish**: depends on every story included in the release candidate.
@@ -2996,8 +2996,8 @@ This checkpoint does not itself change the goal status.
   command race tests. Coverage includes encrypted token persistence,
   repository restrictions, concurrent refresh, reconnect-required state,
   token delivery after an authority recheck, and secret command exits.
-  The Linux amd64 guest command built successfully. The real GitHub consent
-  and private clone remain part of T061 and T078 acceptance.
+  The Linux amd64 guest command built successfully. The single-owner
+  GitHub consent and private clone remain part of T061 acceptance.
 
 ### Workspace schema and stores
 

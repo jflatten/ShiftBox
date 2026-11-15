@@ -1,7 +1,15 @@
 # Template sharing acceptance
 
-T068 and T078 use a disposable ShiftBox installation and an isolated private
-GitHub repository. Native browser and journal acceptance are pending.
+The user approved skipping the live two-user sharing journey in the MVP.
+T068 and T078 retain their opt-in browser and Go journal fixtures for a
+future run. The supported release still exercises private repository
+checkout with a single authorized owner and verifies owner-bound Git,
+workspace access, and secret rules through the focused contracts.
+
+The frozen RC3 source passed all 12 focused tests with the Go race detector.
+They exercised guest owner and template scope, metadata-only secret reads,
+template grant and archive authority, GitHub callback and repository coverage,
+and concurrent refresh, reconnect, and revocation fencing.
 
 ## Fixture
 
@@ -46,16 +54,15 @@ go test ./tests/acceptance -run '^TestTemplateSharingJournal$' -count=1 -v
 
 | Check | Evidence | Result |
 | --- | --- | --- |
-| Owner privacy and permission revocation | Live browser IDE and WebSocket assertions, followed by committed grants and audit records | Pending fixture |
-| Secret precedence and non-disclosure | Guest command assertions, browser and API metadata checks, and durable override deletion | Pending fixture |
-| Owner-bound Git | Private repository access before owner disconnection, denied access afterward, and distinct persisted Git authorization states | Pending fixture |
+| Owner privacy and permission revocation | Live browser IDE and WebSocket assertions, followed by committed grants and audit records | Live two-user run waived for MVP |
+| Secret precedence and non-disclosure | Guest command assertions, browser and API metadata checks, and durable override deletion | Live two-user run waived for MVP |
+| Owner-bound Git | Private repository access before owner disconnection, denied access afterward, and distinct persisted Git authorization states | Live two-user run waived for MVP |
 | Test discovery | TypeScript typecheck, Chrome collection, and Go test discovery | Passed |
 
 T068 covers direct grant refusal without the project-secret acknowledgement,
 management metadata denial to an authorized member, and refusal to issue a
 new IDE entry grant after administrator access is revoked. The corresponding
-Go contract tests passed under the race detector. The native browser and
-journal runs remain pending.
+Go contract tests passed under the race detector.
 
 The browser archives the fixture template and revokes Git and workspace grants.
 Provision a fresh fixture for another complete run.
@@ -89,7 +96,6 @@ the owner's stream remained open. The journal matched the grant and the
 connection audit event to the member workspace. The journal run reported
 only the missing GitHub authorization evidence.
 
-The complete browser and journal journey still requires the native code-server
-workbench and two GitHub authorizations for the private fixture. The journal
-requires separate upstream GitHub identities and verifies that disconnection
-cleared only the member's credential.
+The optional full browser and journal fixture uses the native code-server
+workbench and two upstream GitHub authorizations. The journal verifies that
+disconnection clears only the member's credential.
