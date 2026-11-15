@@ -107,8 +107,7 @@ the test removed the VM. Both native checks ran with the race detector.
 | V11 Application authorization | The 12 focused RC3 contracts passed for template grants and archive, secret metadata, guest owner scope, and Git authorization. Chrome on RC2 also passed management and IDE-route checks with local users and an enrolled client over mutual TLS. The user waived the live two-user journey for MVP. [Sharing validation](template-sharing.md) | Include these results in the final release audit |
 | V12 Browser and tunnel | Chrome on the exact rc2 controller and packaged UTM agent denied ungranted requests and cross-origin mutation, separated cookies, and delivered both preview WebSockets. Revocation closed only the administrator's socket and preserved owner access. A separate native run closed the owner's stream on offboarding. [Browser and native preview results](workspace-operations.md) | Include the results in the final release audit and finish the native project IDE journey |
 | V13 GitHub OAuth | Native fixture authorization and private clone, plus owner-bound refresh and revocation contract tests. The user waived the live two-user journey for MVP. [Sharing validation](template-sharing.md) | Verify single-owner private checkout on RC3 |
-| V14 Accessibility and operability | Production-export Chrome keyboard suite and manual focus evidence | Complete remaining manual focus observations and moderated first-use study |
+| V14 Accessibility and operability | Production-export Chrome keyboard suite and manual focus evidence. The user deferred the moderated first-use study for MVP. | Complete remaining technical keyboard and focus observations |
 
-The [first-use study protocol](first-use-study.md) records eligibility and
-first-attempt outcomes. Release evidence requires at least 10 eligible
-participants and at least nine first-attempt successes.
+The [first-use study protocol](first-use-study.md) records the deferred
+participant threshold and moderator procedure for a future run.
