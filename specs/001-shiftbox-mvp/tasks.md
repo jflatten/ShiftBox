@@ -3205,3 +3205,24 @@ This checkpoint does not itself change the goal status.
   live mTLS revocation, pinned Dex/upstream OIDC exchange, scoped service
   entry, and corrupted encrypted archive checks passed. The exact UTM stack
   and full release gate matrix remain under T061 and T124.
+
+### Notices UI review — Carbon application notifications
+
+- [X] T101: Added one dismissible application notice across normal
+  authenticated pages, with a link to the Notices inbox. Per-user
+  receipts persist dismissal across navigation; the existing read receipt
+  requirement is fulfilled before dismissal. Failed saves retain the message.
+- [X] T101: Added Active/All notice views, severity and receipt labels, dates,
+  refresh, cursor paging, empty/error states, and a focused administrator
+  publishing dialog with scheduling guidance and expiry validation. Existing
+  certificate and operational warnings remain non-dismissible.
+- [X] T101: Verified 119 UI unit tests, TypeScript/production export, and Chrome
+  journeys at 1280px and 390px covering keyboard focus, publishing, dismissal,
+  reload persistence, history, and overflow. Rebuilt the embedded controller
+  and updated the running local demo for review.
+
+- [X] T101: Changed the application notice to Carbon's actionable toast pattern
+  after review: fixed at the top right below the header, outside page flow,
+  with a persistent View notices action and explicit dismissal. Verified 19
+  targeted UI tests, production build, and desktop/phone Chrome journeys,
+  including overlay positioning and viewport bounds. Updated the live demo.

@@ -7,10 +7,11 @@ import { APIProblemView } from './api-problem';
 import { ExternalReauthorization } from '../features/session/external-reauthorization';
 import { useAuthorizationExpired } from '../lib/use-authorization-expired';
 import { readProblem } from '../lib/api-problem';
+import { NoticeToast } from '../features/notices/notice-toast';
 import { SignInChoices } from '../features/session/sign-in';
 
 export interface ShellSession {
-  user?: { displayName?: string | null; primaryEmail?: string };
+  user?: { id?: string; displayName?: string | null; primaryEmail?: string };
   role: 'member' | 'administrator';
   mode: string;
   installationState: string;
@@ -20,11 +21,12 @@ export interface ShellSession {
 }
 
 /** Shared navigation is a convenience; every destination still enforces server authorization. */
-export function ShiftBoxShell({ session, alerts, error, children }: {
+export function ShiftBoxShell({ session, alerts, error, children, showNoticeToast = true }: {
   session?: ShellSession;
   alerts: { id: string; title: string; detail?: string; color?: string }[];
   error?: unknown;
   children: ReactNode;
+  showNoticeToast?: boolean;
 }) {
   const [opened, setOpened] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
@@ -82,6 +84,8 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
       </AppShell.Navbar>
       <AppShell.Main>
         <Stack gap="lg">
+          {showNoticeToast && normal && permitted('notice.list') && session?.user?.id && session.csrfToken ?
+            <NoticeToast key={session.user.id} userId={session.user.id} csrfToken={session.csrfToken} permissions={session.permissions} /> : null}
           <Stack gap="sm" role="region" aria-label="Persistent conditions">
             {error !== undefined ? <APIProblemView error={error} /> : null}
             {signOutError !== undefined ? <APIProblemView error={signOutError} /> : null}
