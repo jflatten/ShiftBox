@@ -63,6 +63,7 @@ const (
 	nativeNormal nativeGuestScenario = iota
 	nativeExpiredLeaf
 	nativeControllerTrust
+	nativeGuestClock
 	nativeExpiredCA
 	nativeRetention
 	nativeCapacity
@@ -154,6 +155,12 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	if err != nil {
 		t.Fatal(err)
 	}
+	var runtimeProvider provider.Provider = machines
+	var clock *nativeClockFixture
+	if scenario == nativeGuestClock {
+		clock = startNativeClockFixture(t, host)
+		runtimeProvider = nativeClockProvider{Provider: machines, seed: clock.seed}
+	}
 	store := workspace.NewStore(db)
 	if err := store.SetCapacityBudget(ctx, id, allocation, 0, owner, time.Now()); err != nil {
 		t.Fatal(err)
@@ -176,7 +183,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	}
 	bind := net.JoinHostPort(host, "0")
 	addresses := [3]string{bind, bind, bind}
-	if scenario == nativeControllerTrust {
+	if scenario == nativeControllerTrust || scenario == nativeGuestClock {
 		addresses = reserveNativeGuestAddresses(t, bind)
 	}
 	journal := operation.NewJournal(db, time.Now, uuid.NewString)
@@ -196,7 +203,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 			listeners.GuestUpdates = maintenance.load
 		}
 		state.GuestCA = authority
-		runtime, err := app.ListenWorkspaceRuntime(state, listeners, compatibility, journal, machines, dir, now)
+		runtime, err := app.ListenWorkspaceRuntime(state, listeners, compatibility, journal, runtimeProvider, dir, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -274,6 +281,14 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 		stopRuntime()
 		stopRuntime = func() {}
 		verifyNativeCapacity(t, ctx, db, machines, before, owner, artifactID, allocation)
+		return
+	}
+	if scenario == nativeGuestClock {
+		stopRuntime()
+		stopRuntime = func() {}
+		clock.skew(t, ctx)
+		_, stopRuntime = startRuntime(ca, time.Now)
+		verifyNativeGuestClock(t, ctx, db, machines, before, clock)
 		return
 	}
 	if scenario == nativeExpiredLeaf {

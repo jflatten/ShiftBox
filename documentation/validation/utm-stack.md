@@ -83,6 +83,24 @@ clock skew at the controller listener. The machine clocks are unchanged.
 The race-enabled rerun on `mvp-rc2` passed in 104.86 seconds. Both
 faults withheld authenticated contact until valid trust returned.
 
+## Guest clock correction
+
+`TestUTMGuestClockRecovery` passed with `-race` in 132.71 seconds on
+UTM 5.0.8 and the exact `mvp-rc2` platform disk. A temporary NoCloud seed
+ran only on the disposable workspace after its first authenticated poll.
+The seed reported the Linux guest clock after moving it one hour back.
+The runtime restarted its TLS listeners with the original CA on the same
+addresses, so the guest had to establish a fresh connection. Authenticated
+contact stopped for 30 seconds. After the seed corrected and reported the
+guest clock, polling resumed with the same certificate, VM, and owned disk.
+The fixture removed the clone at the end of the run.
+
+Set `SHIFTBOX_TEST_UTM_GUEST_CLOCK=1` with the normal native fixture settings.
+The seed runs in the cloned guest. Its temporary server uses a separate
+guest-reachable port and serves only the test script and clock values.
+The first attempt to use UTM's guest command interface failed because the
+image had no running QEMU guest agent. See [cloud-init NoCloud discovery](https://docs.cloud-init.io/en/latest/reference/datasources/nocloud.html#discovery-configuration).
+
 ## Expired certificate authority
 
 The race-enabled `TestUTMGuestRejectsExpiredCA` passed on `mvp-rc2`

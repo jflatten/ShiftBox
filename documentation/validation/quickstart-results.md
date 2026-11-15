@@ -149,6 +149,12 @@ temporary installation CA expired on the wall clock. The controller
 refused to reload the expired CA. UTM still reported the same running VM
 and owned disk. See [the native CA test](utm-stack.md#expired-certificate-authority).
 
+A separate native rc2 run verified actual guest-clock correction. A
+disposable NoCloud seed moved the Linux guest clock one hour behind, and
+fresh TLS contact stopped. Correcting the guest clock restored contact
+with the original guest certificate, VM, and disk. See [the native clock
+test](utm-stack.md#guest-clock-correction).
+
 The `mvp-rc2` retention fixture exercised outage grace, fresh activity,
 the full shutdown window, and actual UTM deletion. Simulated partial
 cleanup and a lost provider reply both kept the disk reservation until
