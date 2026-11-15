@@ -181,7 +181,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T085 [P] [US3] Write failing certificate/release/preflight API and CLI tests for 30-day browser warnings, independent internal PKI, invalid replacement rejection, no plaintext fallback, N/N−1 guest support, retained-workspace gate, backup/key/certificate/provider/tool checks, stable exits, and actionable blocks in `internal/release/preflight_test.go` and `cmd/shiftbox/migrate_test.go`
 - [X] T086 [P] [US3] Write failing notice, infrastructure, maintenance, and audit-retention API tests for persistent conditions, publish/list/read/dismiss/history semantics, maintenance independence, provider/capacity/artifact/profile/policy management, and protected active records in `internal/app/notices_test.go` and `tests/contract/admin_operations_api_test.go`
 - [X] T087 [P] [US3] Write failing UI tests for capacity errors, desired/observed state, destructive modal safe focus/typed name/checkbox, retention warnings, offboarding stop failures, maintenance steps, certificate/storage alerts, and narrow keyboard navigation in `ui/features/workspaces/operations.test.tsx` and `ui/features/admin/maintenance.test.tsx`
-- [ ] T088 [P] [US3] Write failing Playwright operations journey for hostile preview isolation, cross-origin mutation denial, live revocation, deletion focus/copy, partial cleanup reservation, inactivity, long-stop recovery, and maintenance in `ui/tests/e2e/operations.spec.ts`
+- [X] T088 [P] [US3] Write failing Playwright operations journey for hostile preview isolation, cross-origin mutation denial, live revocation, deletion focus/copy, partial cleanup reservation, inactivity, long-stop recovery, and maintenance in `ui/tests/e2e/operations.spec.ts`
 
 ### Models and implementation
 
@@ -199,7 +199,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T100 [US3] Implement the accessible destructive workspace Modal with initial focus on Cancel, typed workspace name, “I have pushed work I need to keep” acknowledgement, retained-path list, and management-backup exclusion in `ui/features/workspaces/delete-workspace-modal.tsx`
 - [X] T101 [US3] Implement Mantine Infrastructure, People offboarding, Notices, Retention, and Maintenance screens with server-driven Steppers and actionable persistent conditions in `ui/features/admin/infrastructure.tsx`, `ui/features/admin/offboarding.tsx`, `ui/features/notices/notices.tsx`, `ui/features/workspaces/retention.tsx`, and `ui/features/admin/maintenance.tsx`
 - [X] T102 [US3] Implement `shiftbox recover-admin` and `shiftbox migrate preflight` human/JSON output, stable exit codes, secret-safe arguments, and audit behavior in `cmd/shiftbox/recover_admin.go`, `cmd/shiftbox/migrate.go`, and `cmd/shiftbox/output.go`
-- [ ] T103 [US3] Add and run the Go operations acceptance test together with the T088 Playwright journey, then record separate evidence for capacity, revocation, destructive clarity, recovery denial, and maintenance authority in `tests/acceptance/workspace_operations_test.go` and `documentation/validation/workspace-operations.md`
+- [X] T103 [US3] Add and run the Go operations acceptance test together with the T088 Playwright journey, then record separate evidence for capacity, revocation, destructive clarity, recovery denial, and maintenance authority in `tests/acceptance/workspace_operations_test.go` and `documentation/validation/workspace-operations.md`
 
 **Checkpoint**: User Story 3 exposes every operational workflow and failure state without weakening ownership, reservations, or retained user work.
 
@@ -1792,6 +1792,10 @@ This checkpoint does not itself change the goal status.
   including inactivity and recovery grace, refused long-stop recovery,
   workflow access revocation, and private preview navigation. Live proxy,
   sibling-origin and native recovery checks remain open.
+  The combined T088 and T103 rerun passed all seven Chrome cases and the
+  Go acceptance test with the race detector. The live case used the exact
+  rc2 controller and an independently enrolled test guest tunnel. The
+  native UTM preview rerun remains in T124 and T125.
   T120 reopens the controller database after staging and activation receipt
   writes with an outstanding worker lease. Both confirmed activation and
   rollback settle the same persisted target and campaign after restart.

@@ -160,5 +160,11 @@ limiting resource and left the running VM unchanged, with no queued
 operations. The launch API contract returned the disk refusal when
 reported free space was below the requested disk allocation.
 
+Chrome and the Go operations acceptance test passed together on the
+rc2 controller. The live preview case used an enrolled loopback guest
+client and real mutual TLS, with two local users. It verified separate
+cookies, cross-origin denial and selective WebSocket revocation. The
+native UTM preview and GitHub workspace reruns remain pending.
+
 T125 remains open for the outstanding scenarios in sections 3–10. The
 [release tracker](mvp-v1-v14.md) records the remaining live checks.

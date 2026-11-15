@@ -21,10 +21,23 @@ refusal, revocation feedback, and private preview navigation. All six cases
 passed in Chrome. The maintenance case alternates running and waiting
 responses for the same waiting step and checks that the live announcement
 does not change and its spinner stays hidden until a real state change.
-The Go acceptance test passed with the race detector. The live
-operations journey for T088 and T103 requires a native workspace and live
-browser sessions so origin isolation and established connection closure can
-be observed on the frozen candidate.
+The Go acceptance test passed with the race detector. The combined T088
+and T103 run passed all seven Chrome cases in 11.3 seconds using the
+`mvp-rc2` controller. The live preview case used two genuine local Dex
+sessions and a disposable test guest enrolled over the production HTTPS
+enrollment handler. Its WebSocket service ran on loopback behind the
+actual mutual TLS guest tunnel and browser proxy.
+
+| Browser evidence | Result |
+| --- | --- |
+| Preview and mutation authority | An ungranted preview request was refused. The preview origin could not issue a management entry grant, even with the administrator's valid CSRF token. |
+| Origin separation and live revocation | Chrome observed separate host-only management and preview cookies and initial WebSocket frames for both accounts. Revoking the administrator's grant closed only their established socket, rejected reload and new entry, and preserved owner access. The database recorded the revocation. |
+| Destructive clarity | The deletion dialog started on Cancel, required confirmation, explained retained-file loss and showed the unresolved cleanup state. |
+| Recovery and maintenance | The browser showed activity and outage grace, kept a refused long-stop workspace stopped, and kept waiting progress stable until the maintenance outcome changed. |
+
+The live case used a seeded workspace record and an independently
+enrolled client. T124 and T125 retain the native UTM release rerun
+with a project container, preview service and live browser session.
 
 ## Native capacity refusal
 
