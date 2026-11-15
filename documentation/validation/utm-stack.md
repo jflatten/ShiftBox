@@ -167,3 +167,26 @@ Feature, failed a required hook before reaching `waitFor`, and completed that
 hook on rebuild. They preserved named-volume data from the original
 container and ran the later hook separately. These Docker checks ran
 independently of UTM.
+
+### Trusted repair after setup failures
+
+The race-enabled `TestRepairDockerFailures` passed all four cases in
+26.47 seconds using the `mvp-rc2` guest runtime code and a disposable
+Docker Desktop fixture. The fixture built the repair image from the
+pinned Linux amd64 Ubuntu digest and verified code-server 4.145.2
+archive used by Packer. It used the real Dev Container CLI 0.90.0 and
+Docker 29.9.3.
+
+The normal setup failed at configuration parsing, a Dockerfile build
+step, a required project hook, and IDE startup with a missing
+distribution. In each case, the repair workbench served the retained
+checkout over its Unix socket with no container network and a
+read-only root. The repair environment kept its own settings, left
+the hook log and Git index intact, and preserved an edit after exit.
+The fixture exercised the repair container over local Docker. The
+frozen candidate's browser and trusted repair origin remain a separate
+native validation.
+
+Run with `SHIFTBOX_TEST_REPAIR_IMAGE` set to the local repair image's
+`sha256:` ID and `SHIFTBOX_TEST_DEVCONTAINER_CLI` set to the pinned CLI.
+Use `go test -race -tags utm_release ./internal/guest -run '^TestRepairDockerFailures$' -count=1 -v`.
