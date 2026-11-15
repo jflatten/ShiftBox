@@ -177,9 +177,9 @@ stream failed. The offboarding stop then completed against real UTM and
 retained the original disk. Fixture cleanup deleted the VM.
 
 Set `SHIFTBOX_TEST_UTM_TUNNEL_REVOCATION=1` with the normal native fixture
-settings. The [integrated browser journey](mvp-v1-v14.md#gate-results)
-remains pending for the native project workspace and browser service
-origins.
+settings. The [integrated Chrome preview run](workspace-operations.md)
+also passed with the packaged UTM agent. The release tracker records the
+remaining GitHub-backed project and IDE checks.
 
 ## Signed maintenance fixture
 

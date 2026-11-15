@@ -188,15 +188,20 @@ Chrome and the Go operations acceptance test passed together on the
 rc2 controller. The live preview case used an enrolled loopback guest
 client and real mutual TLS, with two local users. It verified separate
 cookies, cross-origin denial and selective WebSocket revocation. The
-native UTM preview and GitHub workspace reruns remain pending.
+same seven Chrome cases then passed with the exact rc2 controller and
+packaged agent in a native UTM VM. A temporary NoCloud service supplied the
+preview. The live case verified host-only cookies, blocked cross-origin
+entry, and closed only the administrator's socket. The Go operations
+acceptance passed with the race detector, and cleanup verified removal of
+the VM and disk. See [workspace operations](workspace-operations.md).
 
 For section 7, a separate native `mvp-rc2` run verified the packaged
 agent's tunnel using a disposable WebSocket service in UTM. Offboarding
 closed the stream while the VM was running, the agent reported that the
 controller denied subsequent polling, and fresh stream entry was refused.
-The workspace then stopped with its disk retained. The integrated browser
-run with the native project workspace remains pending. See [native preview
-tunnel revocation](utm-stack.md#native-preview-tunnel-revocation).
+The workspace then stopped with its disk retained. The GitHub-backed
+project and IDE rerun remains pending. See [native preview tunnel
+revocation](utm-stack.md#native-preview-tunnel-revocation).
 
 ## Final-candidate rerun of the guest secret command
 

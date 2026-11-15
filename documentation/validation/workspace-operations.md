@@ -35,9 +35,20 @@ actual mutual TLS guest tunnel and browser proxy.
 | Destructive clarity | The deletion dialog started on Cancel, required confirmation, explained retained-file loss and showed the unresolved cleanup state. |
 | Recovery and maintenance | The browser showed activity and outage grace, kept a refused long-stop workspace stopped, and kept waiting progress stable until the maintenance outcome changed. |
 
-The live case used a seeded workspace record and an independently
-enrolled client. T124 and T125 retain the native UTM release rerun
-with a project container, preview service and live browser session.
+The first live case used a seeded workspace record and an independently
+enrolled client. The T124 and T125 follow-up ran the same Chrome cases
+against the exact rc2 controller with the packaged guest agent on UTM
+5.0.8. Protected setup created a fresh SQLite installation and two Dex
+accounts. The ordinary launch worker enrolled the native VM. A temporary
+NoCloud seed provided the localhost preview service, and the fixture
+supplied the explicit administrator grant. All seven Chrome cases passed
+in 11.5 seconds, including the live origin and revocation checks. The Go
+operations acceptance also passed with `-race`, and the live controller
+recorded one allowed explicit administrator connection.
+
+The fixture removed the enrolled VM and its disk after the run. The
+GitHub-backed project-container and IDE journey remains in the release
+checks.
 
 ## Native capacity refusal
 
