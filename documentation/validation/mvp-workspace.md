@@ -99,6 +99,31 @@ subsequent lifecycle actions.
 RC3's native enrollment tests measured the platform and guest path. The
 end-to-end RC3 private-repository launch still needs a timed run.
 
+### Investigating the Configure step
+
+The fixture selects `mcr.microsoft.com/devcontainers/base:ubuntu-24.04`
+and its only required hook sleeps for five seconds, then checks that the
+checkout is writable. The controller's Configure interval also includes
+checkout, container creation, retained-home setup, and installing and
+starting the packaged IDE. The original journal has one combined interval
+for this work.
+
+On a disposable native RC1 guest with two vCPUs and 4 GiB of RAM, the
+same amd64 image was absent from the initial cache. The independent Docker
+pull did not finish within the more than six minutes available after
+guest startup and before the probe deadline. The guest was active and
+its disk was still receiving writes during that interval. The probe
+did not record a completed pull or reach the later native stages.
+
+On Docker Desktop with the amd64 base image already cached, the same
+configuration took 0.99 seconds for container creation, 5.79 seconds for
+the required hook, and 4.18 seconds to copy the packaged code-server
+distribution. Docker reported 712 MB for the base image and the IDE files
+occupied 711 MB. These warm timings use Docker Desktop's ARM guest and
+measure the steps separately. They provide context for the cold UTM
+result. The tests did not separate registry transfer from extraction
+and did not establish exact per-stage timing for the original launch.
+
 The [release manifest](../../platform/manifests/release.json) records the
 controller and guest digests and the existing Dex, UTM, Packer fork, Ubuntu,
 and code-server pins. The active SQLite installation was at schema 27.
