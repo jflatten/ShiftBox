@@ -63,6 +63,13 @@ their original identities. Both race-enabled renewal contract tests also
 passed, including retry of a lost renewal response. Set
 `SHIFTBOX_TEST_UTM_NATIVE_RENEWAL=1` with the normal native fixture settings.
 
+The frozen RC3 guest passed in 563.54 seconds with the race detector.
+The disposable fixture set the first leaf's expiry 12 minutes after fixture
+setup so the observed 5-minute native boot could finish before renewal.
+The packaged agent authenticated with a fresh key and an eight-hour leaf
+before expiry. The controller rejected the predecessor, and the same VM
+and disk remained in use until the test verified cleanup.
+
 ## Expired guest recovery
 
 The race-enabled `TestUTMExpiredGuestRecovery` passed against the
