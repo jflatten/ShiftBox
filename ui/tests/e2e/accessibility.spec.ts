@@ -290,6 +290,9 @@ test('maintenance and certificate progress', async ({ page }) => {
     if (path.endsWith('/certificate')) return route.fulfill({ json: operation(certificateLabels) });
   }, operation(maintenanceLabels));
   await page.goto('/infrastructure/');
+  await tabTo(page, page.getByRole('tab', { name: 'Resources' }));
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Certificates' })).toHaveAttribute('aria-selected', 'true');
   const replace = page.getByRole('button', { name: 'Replace certificate' });
   await activate(page, replace);
   const chain = page.getByRole('button', { name: 'Certificate chain' });
@@ -300,9 +303,55 @@ test('maintenance and certificate progress', async ({ page }) => {
   }
   await activate(page, replace);
   await checkWorkflow(page, certificateLabels);
+  await tabTo(page, page.getByRole('tab', { name: 'Certificates' }));
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Maintenance' })).toHaveAttribute('aria-selected', 'true');
   await activate(page, page.getByRole('button', { name: 'View progress' }));
   const maintenance = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Maintenance', exact: true }) });
   await checkWorkflow(page, maintenanceLabels, maintenance);
+});
+
+// Keyboard tab navigation must preserve draft settings and global warnings,
+// including at a narrow viewport where the settings tabs wrap to a second line.
+test('Infrastructure categories preserve drafts and warnings on a narrow screen', async ({ page }) => {
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) return route.fulfill({ json: {
+      ...admin(['infrastructure.view', 'infrastructure.manage', 'maintenance.manage', 'secret.manage_organization']),
+      organizationSecretScopeId: 'organization-fixture',
+    } });
+    if (path.endsWith('/infrastructure')) return route.fulfill({ json: {
+      provider: { name: 'utm', version: 'fixture', architecture: 'amd64', networkModes: ['shared'] },
+      capacity: resources, version: 1,
+      conditions: [{ key: 'browser_certificate.expiring', severity: 'warning', active: true, detail: 'Replace the certificate soon.' }],
+    } });
+    if (path.endsWith('/workspaces')) return route.fulfill({ json: { items: [] } });
+    if (path.endsWith('/maintenance') || path.endsWith('/secrets')) return route.fulfill({ json: [] });
+  });
+  await page.goto('/infrastructure/');
+  const save = page.getByRole('button', { name: 'Save capacity budget' });
+  await expect(save).toBeDisabled();
+  const cpu = page.getByRole('textbox', { name: 'CPU limit' });
+  await tabTo(page, cpu);
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.insertText('6');
+  await expect(save).toBeEnabled();
+  for (const [current, next] of [['Resources', 'Certificates'], ['Certificates', 'Maintenance'], ['Maintenance', 'Secrets'], ['Secrets', 'Resources']]) {
+    await tabTo(page, page.getByRole('tab', { name: current }));
+    await page.keyboard.press('ArrowRight');
+    await expect(page.getByRole('tab', { name: next })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('region', { name: 'Persistent conditions' }).getByText('Replace the certificate soon.')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    if (next === 'Maintenance') await enter(page, page.getByRole('textbox', { name: 'Target release ID' }), 'draft-release');
+    if (next === 'Secrets') await expect(page.getByRole('heading', { name: 'Organization secrets' })).toBeVisible();
+  }
+  await expect(cpu).toHaveValue('6');
+  await activate(page, page.getByRole('button', { name: 'Discard changes' }));
+  await expect(cpu).toHaveValue('2');
+  await expect(save).toBeDisabled();
+  await tabTo(page, page.getByRole('tab', { name: 'Resources' }));
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('textbox', { name: 'Target release ID' })).toHaveValue('draft-release');
 });
 
 // People dialogs start on Cancel. The keyboard reaches the stop operation

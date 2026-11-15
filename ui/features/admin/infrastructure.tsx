@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, NumberInput, Stack, Text, Title } from '@mantine/core';
+import { Button, Group, NumberInput, Paper, SimpleGrid, Stack, Tabs, Text, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { APIProblemView } from '../../components/api-problem';
 import { ShiftBoxShell } from '../../components/app-shell';
@@ -14,9 +14,9 @@ import { Maintenance } from './maintenance';
 import { Secrets } from '../secrets/secrets';
 
 const capacityFields = [
-  { name: 'cpuCount', label: 'CPU limit' },
-  { name: 'memoryMiB', label: 'Memory limit (MiB)' },
-  { name: 'diskMiB', label: 'Disk limit (MiB)' },
+  { name: 'cpuCount', label: 'CPU limit', description: 'Total virtual CPUs available to workspaces.' },
+  { name: 'memoryMiB', label: 'Memory limit (MiB)', description: 'Total memory budget. 1,024 MiB = 1 GiB.' },
+  { name: 'diskMiB', label: 'Disk limit (MiB)', description: 'Total disk budget, including stopped workspaces.' },
 ] as const;
 
 export function Infrastructure() {
@@ -26,9 +26,18 @@ export function Infrastructure() {
     current.installationState === 'active' && current.permissions.includes('infrastructure.view');
   const status = useInfrastructure(allowed ? current.user.id : undefined);
   const { data, alerts } = status;
+  const canManage = allowed && current.permissions.includes('infrastructure.manage');
+  const canMaintain = allowed && current.permissions.includes('maintenance.manage');
+  const canManageSecrets = allowed && !!current.organizationSecretScopeId && current.permissions.includes('secret.manage_organization');
+  const [section, setSection] = useState<string | null>('resources');
+  const sections = ['resources', ...(canManage ? ['certificates'] : []), ...(canMaintain ? ['maintenance'] : []), ...(canManageSecrets ? ['secrets'] : [])];
+  const activeSection = section && sections.includes(section) ? section : 'resources';
   return (
     <ShiftBoxShell session={current} alerts={alerts} error={session.error ?? (allowed ? status.error : undefined) ?? undefined}>
-      <Title order={1}>Infrastructure</Title>
+      <Stack gap={4}>
+        <Title order={1}>Infrastructure</Title>
+        <Text c="dimmed" size="sm">Manage workspace resources, browser security, and guest updates.</Text>
+      </Stack>
       {session.isPending ? <Text role="status">Checking your session…</Text> : null}
       {session.data === null ? <SignInChoices /> : null}
       {current && !allowed ? <Text>Administrator access required.</Text> : null}
@@ -36,33 +45,77 @@ export function Infrastructure() {
       {allowed && status.isError ? (
         <Button variant="default" style={{ alignSelf: 'flex-start' }} onClick={() => void status.refetch()}>Retry</Button>
       ) : null}
-      {allowed && current.permissions.includes('infrastructure.manage') ? (
-        <BrowserCertificate key={`certificate:${current.user.id}`} csrfToken={current.csrfToken} refresh={status.refetch} />
-      ) : null}
-      {data && current ? (
-        <>
-          <Stack gap="xs">
-            <Title order={2}>Provider</Title>
-            <Text>{[data.provider.name, data.provider.version, data.provider.architecture].filter(Boolean).join(' · ') || 'Unavailable'}</Text>
-            {data.provider.networkModes?.length ? <Text>Network modes · {data.provider.networkModes.join(', ')}</Text> : null}
-          </Stack>
-          <Stack gap="xs">
-            <Title order={2}>Capacity budget</Title>
-            {current.permissions.includes('infrastructure.manage')
-              ? <CapacityBudget status={data} csrfToken={current.csrfToken} refresh={status.refetch} />
-              : <Text>{data.capacity.cpuCount} vCPU · {data.capacity.memoryMiB} MiB memory · {data.capacity.diskMiB} MiB disk</Text>}
-          </Stack>
-        </>
-      ) : null}
-      {allowed && current.permissions.includes('maintenance.manage') ? (
-        <Maintenance key={`maintenance:${current.user.id}`} userId={current.user.id} csrfToken={current.csrfToken} capacity={data?.capacity} />
-      ) : null}
-      {allowed && current.organizationSecretScopeId && current.permissions.includes('secret.manage_organization') ? (
-        <Secrets key={current.user.id + current.organizationSecretScopeId} scope="organization" scopeID={current.organizationSecretScopeId}
-          userID={current.user.id} csrfToken={current.csrfToken} />
+      {allowed && current ? (
+        // Keep drafts and live operation subscriptions when switching settings.
+        // Persistent conditions remain outside the tabs in the shared shell.
+        <Tabs value={activeSection} onChange={setSection} keepMounted keepMountedMode="display-none">
+          <Tabs.List aria-label="Infrastructure settings">
+            <Tabs.Tab value="resources">Resources</Tabs.Tab>
+            {canManage ? <Tabs.Tab value="certificates">Certificates</Tabs.Tab> : null}
+            {canMaintain ? <Tabs.Tab value="maintenance">Maintenance</Tabs.Tab> : null}
+            {canManageSecrets ? <Tabs.Tab value="secrets">Secrets</Tabs.Tab> : null}
+          </Tabs.List>
+          <Tabs.Panel value="resources" pt="lg">
+            {data ? <Stack gap="lg">
+              <ProviderDetails provider={data.provider} />
+              <Paper component="section" aria-labelledby="capacity-heading" withBorder radius="md" p="lg">
+                <Stack gap="md">
+                  <Stack gap={4}>
+                    <Title order={2} size="h3" id="capacity-heading">Capacity budget</Title>
+                    <Text size="sm" c="dimmed">Set the total resources ShiftBox can reserve across workspaces. These limits are budgets, not live usage.</Text>
+                    <Text size="sm" c="dimmed">CPU and memory remain reserved until a confirmed stop. Disk remains allocated until deletion.</Text>
+                  </Stack>
+                  {canManage
+                    ? <CapacityBudget status={data} csrfToken={current.csrfToken} refresh={status.refetch} />
+                    : <Text>{data.capacity.cpuCount} vCPU · {data.capacity.memoryMiB} MiB memory · {data.capacity.diskMiB} MiB disk</Text>}
+                </Stack>
+              </Paper>
+            </Stack> : null}
+          </Tabs.Panel>
+          {canManage ? <Tabs.Panel value="certificates" pt="lg">
+            <Paper withBorder radius="md" p="lg">
+              <BrowserCertificate key={`certificate:${current.user.id}`} csrfToken={current.csrfToken} refresh={status.refetch} />
+            </Paper>
+          </Tabs.Panel> : null}
+          {canMaintain ? <Tabs.Panel value="maintenance" pt="lg">
+            <Paper withBorder radius="md" p="lg">
+              <Maintenance key={`maintenance:${current.user.id}`} userId={current.user.id} csrfToken={current.csrfToken} capacity={data?.capacity} />
+            </Paper>
+          </Tabs.Panel> : null}
+          {canManageSecrets && current.organizationSecretScopeId ? <Tabs.Panel value="secrets" pt="lg">
+            <Paper withBorder radius="md" p="lg">
+              <Secrets key={current.user.id + current.organizationSecretScopeId} scope="organization" scopeID={current.organizationSecretScopeId}
+                userID={current.user.id} csrfToken={current.csrfToken} />
+              <Text size="sm" c="dimmed" mt="md">Organization values are used when no personal or project-template override applies. Saved secret values cannot be viewed.</Text>
+            </Paper>
+          </Tabs.Panel> : null}
+        </Tabs>
       ) : null}
     </ShiftBoxShell>
   );
+}
+
+function ProviderDetails({ provider }: { provider: InfrastructureStatus['provider'] }) {
+  const details = [
+    ['Provider', provider.name === 'utm' ? 'UTM' : provider.name || 'Unavailable'],
+    ['Version', provider.version || 'Unavailable'],
+    ['Architecture', provider.architecture === 'amd64' ? 'x86-64 (amd64)' : provider.architecture || 'Unavailable'],
+    ['Network modes', provider.networkModes?.map(mode => mode === 'shared' ? 'Shared' : mode).join(', ') || 'Unavailable'],
+  ];
+  return <Paper component="section" aria-labelledby="provider-heading" withBorder radius="md" p="lg">
+    <Stack gap="md">
+      <Stack gap={4}>
+        <Title order={2} size="h3" id="provider-heading">Provider</Title>
+        <Text size="sm" c="dimmed">The configured VM provider and its reported capabilities.</Text>
+      </Stack>
+      <SimpleGrid component="dl" cols={{ base: 1, xs: 2, lg: 4 }} m={0} spacing="md">
+        {details.map(([label, value]) => <Stack key={label} gap={4}>
+          <Text component="dt" size="xs" c="dimmed">{label}</Text>
+          <Text component="dd" size="sm" fw={600} m={0} style={{ overflowWrap: 'anywhere' }}>{value}</Text>
+        </Stack>)}
+      </SimpleGrid>
+    </Stack>
+  </Paper>;
 }
 
 function CapacityBudget({ status, csrfToken, refresh }: {
@@ -122,12 +175,21 @@ function CapacityForm({ status, csrfToken, refresh, report }: {
       const first = Object.keys(errors)[0];
       if (first) form.getInputNode(first)?.focus();
     })}>
-      <Stack maw={360} gap="sm">
-        {capacityFields.map(({ name, label }) => (
-          <NumberInput key={form.key(name)} label={label} required allowNegative={false} allowDecimal={false}
-            disabled={form.submitting} {...form.getInputProps(name)} />
-        ))}
-        <Button type="submit" loading={form.submitting} style={{ alignSelf: 'flex-start' }}>Save capacity budget</Button>
+      <Stack gap="md">
+        <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+          {capacityFields.map(({ name, label, description }) => (
+            <NumberInput key={form.key(name)} label={label} description={description} required allowNegative={false} allowDecimal={false}
+              disabled={form.submitting} {...form.getInputProps(name)} />
+          ))}
+        </SimpleGrid>
+        {form.isDirty() ? <Text size="sm" role="status">You have unsaved capacity changes.</Text> : null}
+        <Group>
+          <Button type="submit" disabled={!form.isDirty()} loading={form.submitting}>Save capacity budget</Button>
+          <Button variant="default" disabled={!form.isDirty() || form.submitting} onClick={() => {
+            form.reset();
+            report(undefined, false);
+          }}>Discard changes</Button>
+        </Group>
       </Stack>
     </form>
   );

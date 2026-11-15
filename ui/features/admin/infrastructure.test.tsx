@@ -37,9 +37,15 @@ test('keeps certificate and maintenance forms distinct after status loads', asyn
     throw new Error('unexpected request');
   });
   try {
+    const user = userEvent.setup();
     render(<Providers><Infrastructure /></Providers>);
     expect(await screen.findByRole('heading', { name: 'Provider' })).toBeVisible();
+    expect(screen.getByRole('tab', { name: 'Resources' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('button', { name: 'Replace certificate' })).toBeNull();
+    await user.click(screen.getByRole('tab', { name: 'Certificates' }));
     expect(screen.getAllByRole('button', { name: 'Replace certificate' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Schedule maintenance' })).toBeNull();
+    await user.click(screen.getByRole('tab', { name: 'Maintenance' }));
     expect(screen.getAllByRole('button', { name: 'Schedule maintenance' })).toHaveLength(1);
     expect(duplicateKeys.mock.calls.flat().join(' ')).not.toContain('same key');
   } finally {
@@ -70,7 +76,9 @@ test('shows infrastructure warnings and refreshes after a concurrent capacity ed
   render(<Providers><Infrastructure /></Providers>);
   const conditions = screen.getByRole('region', { name: 'Persistent conditions' });
   expect(await within(conditions).findByText('Replace the browser certificate before December 14.')).toBeVisible();
-  expect(screen.getByText('utm · 5.0.8 · amd64')).toBeVisible();
+  expect(screen.getByText('UTM')).toBeVisible();
+  expect(screen.getByText('5.0.8')).toBeVisible();
+  expect(screen.getByText('x86-64 (amd64)')).toBeVisible();
   const cpu = screen.getByRole('textbox', { name: 'CPU limit' });
   await user.clear(cpu);
   await user.type(cpu, '5');
@@ -119,6 +127,7 @@ test('retries a certificate upload and shows the committed replacement', async (
   const user = userEvent.setup();
   const { container } = render(<Providers><Infrastructure /></Providers>);
   const warning = await screen.findByText('Browser certificate expires soon');
+  await user.click(screen.getByRole('tab', { name: 'Certificates' }));
   const submit = screen.getByRole('button', { name: 'Replace certificate' });
   await user.click(submit);
   expect(screen.getByLabelText(/^Certificate chain/)).toHaveFocus();
@@ -129,6 +138,9 @@ test('retries a certificate upload and shows the committed replacement', async (
   const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
   await user.upload(inputs[0], file('chain fixture', 'chain.pem'));
   await user.upload(inputs[1], file('key fixture', 'private.pem'));
+  await user.click(screen.getByRole('tab', { name: 'Resources' }));
+  await user.click(screen.getByRole('tab', { name: 'Certificates' }));
+  expect(screen.getByText('private.pem')).toBeVisible();
   await user.click(submit);
   expect(await screen.findByText('Unable to complete the request')).toBeVisible();
   expect(warning).toBeVisible();
@@ -154,4 +166,66 @@ test('requires infrastructure management permission to replace a certificate', a
   render(<Providers><Infrastructure /></Providers>);
   expect(await screen.findByText('Browser certificate expires soon')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Replace certificate' })).toBeNull();
+  expect(screen.queryByRole('tab', { name: 'Certificates' })).toBeNull();
+  expect(screen.queryByRole('tab', { name: 'Maintenance' })).toBeNull();
+  expect(screen.queryByRole('tab', { name: 'Secrets' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Save capacity budget' })).toBeNull();
+});
+
+// Switching settings categories must not silently discard a capacity draft;
+// Discard changes restores the saved values without issuing a mutation.
+test('preserves a capacity draft across tabs and discards it explicitly', async () => {
+  const fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json(status);
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Infrastructure /></Providers>);
+  const save = await screen.findByRole('button', { name: 'Save capacity budget' });
+  expect(save).toBeDisabled();
+  const cpu = screen.getByRole('textbox', { name: 'CPU limit' });
+  await user.clear(cpu);
+  await user.type(cpu, '5');
+  expect(screen.getByText('You have unsaved capacity changes.')).toBeVisible();
+  await user.click(screen.getByRole('tab', { name: 'Certificates' }));
+  expect(screen.getByText('Browser certificate expires soon')).toBeVisible();
+  await user.click(screen.getByRole('tab', { name: 'Resources' }));
+  expect(cpu).toHaveValue('5');
+  expect(save).toBeEnabled();
+  await user.click(screen.getByRole('button', { name: 'Discard changes' }));
+  expect(screen.getByRole('textbox', { name: 'CPU limit' })).toHaveValue('4');
+  expect(save).toBeDisabled();
+  expect(screen.queryByText('You have unsaved capacity changes.')).toBeNull();
+  expect(fetch.mock.calls.map(([input]) => input)).toEqual(['/api/v1/session', '/api/v1/admin/infrastructure']);
+});
+
+// A failed capacity save must keep the administrator's draft and permit a
+// deliberate retry. Success resets the save state only after refreshed data.
+test('retains failed capacity edits and confirms a successful retry', async () => {
+  let attempts = 0;
+  globalThis.fetch = jest.fn(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json(attempts === 2
+      ? { ...status, version: 3, capacity: { ...status.capacity, cpuCount: 5 } } : status);
+    if (input === '/api/v1/admin/capacity' && init?.method === 'PUT') {
+      attempts++;
+      return attempts === 1 ? new Response(null, { status: 503 }) : json(null);
+    }
+    throw new Error('unexpected request');
+  });
+  const user = userEvent.setup();
+  render(<Providers><Infrastructure /></Providers>);
+  const cpu = await screen.findByRole('textbox', { name: 'CPU limit' });
+  await user.clear(cpu);
+  await user.type(cpu, '5');
+  await user.click(screen.getByRole('button', { name: 'Save capacity budget' }));
+  expect(await screen.findByText('Unable to complete the request')).toBeVisible();
+  expect(cpu).toHaveValue('5');
+  expect(screen.queryByText('Capacity budget saved.')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Save capacity budget' }));
+  expect(await screen.findByText('Capacity budget saved.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Save capacity budget' })).toBeDisabled();
+  expect(attempts).toBe(2);
 });

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Group, List, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Button, Divider, Group, List, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
@@ -80,8 +80,9 @@ export function Maintenance({ userId, csrfToken, capacity }: { userId: string; c
 
   return (
     <Stack component="section" gap="sm">
-      <Title order={2}>Maintenance</Title>
+      <Title order={2} size="h3">Maintenance</Title>
       <Text size="sm">Schedule guest updates for retained workspaces. The deadline uses your browser’s local time.</Text>
+      <Title order={3} size="h4" mt="sm">Affected workspaces</Title>
       {capacity ? <Text size="sm">Capacity budget · {capacity.cpuCount} vCPU · {capacity.memoryMiB} MiB memory · {capacity.diskMiB} MiB disk</Text> : null}
       {workspaces.isPending ? <Text role="status">Loading retained workspaces…</Text> : null}
       {workspaces.isError ? <Group align="flex-start">
@@ -99,6 +100,8 @@ export function Maintenance({ userId, csrfToken, capacity }: { userId: string; c
           ))}
         </List> : null}
       </> : null}
+      <Divider my="sm" />
+      <Title order={3} size="h4">Schedule an update</Title>
       <form noValidate onSubmit={form.onSubmit(schedule, errors => form.getInputNode(Object.keys(errors)[0])?.focus())}>
         <Stack maw={420}>
           <TextInput label="Target release ID" required disabled={form.submitting}
@@ -109,11 +112,14 @@ export function Maintenance({ userId, csrfToken, capacity }: { userId: string; c
           <Button type="submit" disabled={!canSchedule} loading={form.submitting} style={{ alignSelf: 'flex-start' }}>Schedule maintenance</Button>
         </Stack>
       </form>
+      <Divider my="sm" />
+      <Title order={3} size="h4">Update campaigns</Title>
       {campaigns.isError ? <Group align="flex-start">
         <APIProblemView error={campaigns.error} />
         <Button variant="default" onClick={() => void campaigns.refetch()}>Retry campaigns</Button>
       </Group> : null}
       {campaigns.isPending ? <Text role="status">Loading campaigns…</Text> : null}
+      {campaigns.isSuccess && campaigns.data.length === 0 ? <Text size="sm" c="dimmed">No maintenance campaigns yet.</Text> : null}
       {!campaigns.isError && campaigns.data?.length ? <Stack component="ul" gap="xs" p={0} m={0} style={{ listStyle: 'none' }}>
         {campaigns.data.map(campaign => (
           <Group component="li" key={campaign.id} justify="space-between">

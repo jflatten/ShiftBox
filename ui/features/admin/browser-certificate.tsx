@@ -52,11 +52,11 @@ export function BrowserCertificate({ csrfToken, refresh }: {
   return (
     <form noValidate onSubmit={form.onSubmit(replace, errors => form.getInputNode(Object.keys(errors)[0])?.focus())}>
       <Stack maw={480} gap="sm">
-        <Title order={2}>Browser certificate</Title>
+        <Title order={2} size="h3">Browser certificate</Title>
         <Text size="sm">Use a trusted certificate covering the management address and both IDE and preview wildcards.</Text>
-        <FileInput label="Certificate chain" accept=".pem,.crt" withAsterisk disabled={form.submitting}
+        <FileInput label="Certificate chain" description="PEM-encoded certificate chain (.pem or .crt)." accept=".pem,.crt" withAsterisk disabled={form.submitting}
           key={form.key('chain')} {...form.getInputProps('chain')} />
-        <FileInput label="Private key" accept=".pem,.key" withAsterisk disabled={form.submitting}
+        <FileInput label="Private key" description="The matching PEM-encoded private key (.pem or .key)." accept=".pem,.key" withAsterisk disabled={form.submitting}
           key={form.key('key')} {...form.getInputProps('key')} />
         <Button type="submit" loading={form.submitting} style={{ alignSelf: 'flex-start' }}>Replace certificate</Button>
         {error !== undefined ? <APIProblemView error={error} /> : null}
