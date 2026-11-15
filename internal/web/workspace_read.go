@@ -176,17 +176,20 @@ func resolveWorkspaceView(ctx context.Context, tx *sql.Tx, r *http.Request, prin
 func listWorkspaces(ctx context.Context, tx *sql.Tx, r *http.Request, principal auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
 	query := r.URL.Query()
 	owner, state, cursor := query.Get("owner"), query.Get("state"), query.Get("cursor")
+	excludeDeleted := query.Get("excludeDeleted")
 	states := []string{"unknown", "provisioning", "stopped", "starting", "running", "unreachable", "stopping", "deleting", "deleted", "failed"}
 	if (owner != "" && !ValidUUID(owner)) || (cursor != "" && !ValidUUID(cursor)) ||
-		(state != "" && !slices.Contains(states, state)) {
+		(state != "" && !slices.Contains(states, state)) ||
+		(excludeDeleted != "" && excludeDeleted != "true" && excludeDeleted != "false") {
 		return nil, Problem{Status: 400, Code: "request.invalid_filter", Title: "Check the workspace filters"}
 	}
 	const limit = 50
 	admin := principal.User.Role == "administrator"
 	rows, err := tx.QueryContext(ctx, `SELECT `+workspaceProjection+workspaceFrom+`
 		WHERE ($1 OR w.owner_user_id=$2) AND ($3='' OR w.owner_user_id=$3)
-		  AND ($4='' OR w.observed_state=$4) AND w.id>$5 ORDER BY w.id LIMIT $6`,
-		admin, principal.User.ID, owner, state, cursor, limit+1)
+		  AND ($4='' OR w.observed_state=$4) AND w.id>$5
+		  AND (NOT $7 OR w.observed_state<>'deleted') ORDER BY w.id LIMIT $6`,
+		admin, principal.User.ID, owner, state, cursor, limit+1, excludeDeleted == "true")
 	if err != nil {
 		return nil, err
 	}

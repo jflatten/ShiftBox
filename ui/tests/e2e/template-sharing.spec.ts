@@ -220,7 +220,7 @@ test('shares a template while preserving workspace and guest owner authority', a
       });
       expect(newEntry.status()).toBe(403);
       await administrator.reload();
-      await expect(administrator.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
+      await expect(administrator.getByRole('heading', { level: 1 })).toBeVisible();
       await expect(administrator.getByRole('button', { name: 'Open IDE', exact: true })).toHaveCount(0);
       await verifyGuestSecret(memberTerminal, secretKey, values.organization);
 

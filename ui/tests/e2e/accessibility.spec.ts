@@ -84,6 +84,48 @@ async function checkWorkflow(page: Page, labels: [string, string, string], scope
 
 test.use({ viewport: { width: 390, height: 844 }, trace: 'off' });
 
+// Filtering cannot strand the user on a stale cursor, deleted
+// workspaces stay hidden by default, and the inventory fits a narrow screen.
+test('workspace inventory filters and detail layout', async ({ page }) => {
+  const current = { id: workspaceID, name: 'Keyboard workspace', resources, desiredState: 'stopped', observedState: 'stopped',
+    currentOperationId: null, templateRevision: 1, platformRelease: 'Demo release', version: 1, canEditPreviewPorts: true };
+  const deleted = { ...current, id: 'deleted-workspace', name: 'Deleted example', observedState: 'deleted', desiredState: 'deleted' };
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) return route.fulfill({ json: { ...admin([]), user: { id: 'member', role: 'member' } } });
+    if (path.endsWith(`/workspaces/${workspaceID}`)) return route.fulfill({ json: current });
+    if (path === '/api/v1/workspaces') {
+      const query = new URL(route.request().url()).searchParams;
+      const items = query.get('state') === 'deleted' ? [deleted] :
+        query.get('cursor') ? [{ ...current, id: 'second-workspace', name: 'Second workspace' }] :
+        query.get('excludeDeleted') === 'true' ? [current] : [current, deleted];
+      return route.fulfill({ json: { items, nextCursor: query.has('cursor') || query.has('state') ? null : 'next-page' } });
+    }
+  });
+  await page.goto('/workspaces/');
+  await expect(page.getByRole('link', { name: 'Keyboard workspace', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Deleted example', exact: true })).toHaveCount(0);
+  await activate(page, page.getByRole('button', { name: 'Next page' }));
+  await expect(page.getByText('Page 2', { exact: true })).toBeVisible();
+  const history = page.getByRole('checkbox', { name: 'Show deleted workspaces' });
+  await activate(page, history, 'Space');
+  await expect(page.getByRole('link', { name: 'Deleted example', exact: true })).toBeVisible();
+  await expect(page.getByText('Page 1', { exact: true })).toBeVisible();
+  const state = page.getByLabel('Observed state', { exact: true });
+  await tabTo(page, state);
+  await state.selectOption('deleted');
+  await expect(state).toHaveValue('deleted');
+  await expect(page.getByRole('link', { name: 'Keyboard workspace', exact: true })).toHaveCount(0);
+  await activate(page, history, 'Space');
+  await expect(state).toHaveValue('');
+  await expect(page.getByRole('link', { name: 'Deleted example', exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await activate(page, page.getByRole('link', { name: 'Keyboard workspace', exact: true }));
+  await expect(page.getByRole('heading', { name: 'Keyboard workspace', level: 1 })).toBeVisible();
+  await tabTo(page, page.getByRole('button', { name: 'Start workspace', exact: true }));
+  await expect(page.getByRole('region', { name: 'Previews', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
 // Setup validation focuses the invalid field and the keyboard can reach the
 // one-time password acknowledgement without visiting informational steps.
 test('setup keyboard path and current stage', async ({ page }) => {

@@ -1374,6 +1374,8 @@ export interface operations {
             query?: {
                 owner?: string;
                 state?: string;
+                /** @description Exclude workspaces with confirmed observed state deleted before pagination. In-progress deletion remains visible. */
+                excludeDeleted?: boolean;
                 cursor?: components["parameters"]["Cursor"];
             };
             header?: never;

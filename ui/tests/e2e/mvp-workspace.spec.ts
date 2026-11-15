@@ -192,7 +192,7 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     const early = await page.context().newPage();
     try {
       await early.goto(workspaceURL);
-      await expect(early.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
+      await expect(early.getByRole('heading', { name: templateName, exact: true })).toBeVisible();
       await expect(early.getByRole('button', { name: /^Verify the browser IDE: (Pending|In progress)$/ })).toBeVisible();
       await expect(early.getByRole('button', { name: 'Open IDE', exact: true })).toHaveCount(0);
       await expect.poll(() => streamAttempts, { timeout: startupTimeout }).toBeGreaterThanOrEqual(2);

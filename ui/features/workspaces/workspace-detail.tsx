@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Alert, Anchor, Button, Checkbox, Group, Modal, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Anchor, Button, Checkbox, Group, Modal, Paper, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
 import { useOperation } from '../../lib/use-operation';
-import { workspaceState, type Workspace } from './workspace';
+import { workspaceName, workspaceState, type Workspace } from './workspace';
+import { WorkspaceStatus, WorkspaceTime } from './workspace-summary';
 import { RetentionWarning } from './retention';
 import { WorkspaceConnectionGrants } from './connection-grants';
 
@@ -85,36 +86,63 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
   return (
     <>
       <Anchor href="/workspaces/">All workspaces</Anchor>
-      <Title order={1}>Workspace</Title>
-      {workspace.isError ? <APIProblemView error={workspace.error} /> : null}
+      <Group justify="space-between" align="flex-start">
+        <Stack gap={4} style={{ minWidth: 0 }}>
+          <Title order={1} style={{ overflowWrap: 'anywhere' }}>{data ? workspaceName(data) : 'Workspace'}</Title>
+          <Text size="sm" c="dimmed">Manage your environment, connections, and retained data.</Text>
+        </Stack>
+        <Button variant="default" loading={workspace.isFetching} onClick={() => void workspace.refetch()}>Refresh</Button>
+      </Group>
+      {workspace.isError ? <Stack align="flex-start">
+        <APIProblemView error={workspace.error} />
+        <Button variant="default" onClick={() => void workspace.refetch()}>Retry</Button>
+      </Stack> : null}
       {workspace.isPending ? <Text role="status">Loading workspace…</Text> : null}
       {data ? (
         <Stack gap="lg">
-          {data.name && data.name !== data.id ? <Text fw={600}>{data.name}</Text> : null}
-          <Text size="sm" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{data.id}</Text>
-          <Group gap="xl" align="flex-start">
-            <Stack gap={2}><Text size="sm" c="dimmed">Desired state</Text><Text fw={600}>{workspaceState(data.desiredState)}</Text></Stack>
-            <Stack gap={2}><Text size="sm" c="dimmed">Observed state</Text><Text fw={600}>{workspaceState(data.observedState)}</Text></Stack>
-          </Group>
-          <Text>{data.resources.cpuCount} vCPU · {data.resources.memoryMiB} MiB memory · {data.resources.diskMiB} MiB disk</Text>
-          <Stack component="dl" gap="xs" m={0}>
-            <div>
-              <Text component="dt" size="sm" c="dimmed">Template</Text>
-              <Text component="dd" m={0}>{data.templateId} · Revision {data.templateRevision}</Text>
-            </div>
-            <div>
-              <Text component="dt" size="sm" c="dimmed">Platform release</Text>
-              <Text component="dd" m={0}>{data.platformRelease}</Text>
-            </div>
-            <div>
-              <Text component="dt" size="sm" c="dimmed">Last activity</Text>
-              <Text component="dd" m={0}><WorkspaceTime value={data.lastActivityAt} fallback="No activity recorded" /></Text>
-            </div>
-            <div>
-              <Text component="dt" size="sm" c="dimmed">Retention deadline</Text>
-              <Text component="dd" m={0}><WorkspaceTime value={data.retentionDeadline} fallback="No deadline scheduled" /></Text>
-            </div>
-          </Stack>
+          <Paper component="section" aria-label="Workspace controls" withBorder radius="md" p="md">
+            <Stack gap="md">
+              <Group gap="xl">
+                <Stack gap={4} align="flex-start"><Text size="sm" c="dimmed">Observed state</Text><WorkspaceStatus value={data.observedState} /></Stack>
+                <Stack gap={4}><Text size="sm" c="dimmed">Desired state</Text><Text fw={600}>{workspaceState(data.desiredState)}</Text></Stack>
+              </Group>
+              <Group align="flex-start">
+                {data.canOpenIde ? <OpenIDE id={id} csrfToken={csrfToken} /> : null}
+                {data.canOpenRepair ? <OpenIDE id={id} csrfToken={csrfToken} service="repair" describedBy={repairDescriptionId} /> : null}
+                {action ? (
+                  <Group>
+                    <Button variant={data.canOpenIde ? "default" : "filled"} loading={submitting === action} disabled={!!data.currentOperationId || operationBusy || !!submitting}
+                      onClick={() => void requestAction(action)}>
+                      {action === 'start' ? 'Start workspace' : 'Stop workspace'}
+                    </Button>
+                    {action === 'stop' && !data.canOpenRepair && !data.canRetryAfterRepair ? (
+                      <Button variant="default" loading={submitting === 'rebuild'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
+                        onClick={() => void requestAction('rebuild')}>
+                        Rebuild container
+                      </Button>
+                    ) : null}
+                    {data.canStartRepair ? (
+                      <Button variant="default" loading={submitting === 'repair'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
+                        aria-describedby={repairDescriptionId} onClick={() => void requestAction('repair')}>
+                        Start repair
+                      </Button>
+                    ) : null}
+                    {data.canRetryAfterRepair ? (
+                      <Button variant="default" loading={submitting === 'retry'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
+                        onClick={() => void requestAction('retry')}>
+                        Exit repair and retry setup
+                      </Button>
+                    ) : null}
+                  </Group>
+                ) : null}
+              </Group>
+              {error !== undefined && !confirmDelete ? <APIProblemView error={error} /> : null}
+              <Text size="sm">Stop and start preserve project files, the developer home, and named application volumes. Rebuilding also preserves this data and replaces the container’s writable layer.</Text>
+              {data.canStartRepair || data.canOpenRepair || data.canRetryAfterRepair ? (
+                <Text id={repairDescriptionId} size="sm">Repair opens your project files in a separate IDE and skips project hooks, tasks, and extensions.</Text>
+              ) : null}
+            </Stack>
+          </Paper>
           <RetentionWarning workspace={data} />
           {maintenance ? <Alert title="Scheduled maintenance" color={maintenance.state === 'failed' ? 'red' : 'yellow'}>
             <Stack align="flex-start" gap="xs">
@@ -126,54 +154,56 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
               ) : null}
             </Stack>
           </Alert> : null}
-          <Text size="sm">Stop and start preserve project files, the developer home, and named application volumes. Rebuilding also preserves this data and replaces the container’s writable layer.</Text>
-          {data.canStartRepair || data.canOpenRepair || data.canRetryAfterRepair ? (
-            <Text id={repairDescriptionId} size="sm">Repair opens your project files in a separate IDE and skips project hooks, tasks, and extensions.</Text>
-          ) : null}
-          {error !== undefined && !confirmDelete ? <APIProblemView error={error} /> : null}
-          {data.canOpenIde ? <OpenIDE id={id} csrfToken={csrfToken} /> : null}
-          {data.canOpenRepair ? <OpenIDE id={id} csrfToken={csrfToken} service="repair" describedBy={repairDescriptionId} /> : null}
-          {data.canOpenPreviews || data.canEditPreviewPorts ? (
-            <WorkspacePreviews key={(data.previewPorts ?? []).join(',')} workspace={data} csrfToken={csrfToken}
-              disabled={busy || data.desiredState === 'deleted'} refresh={workspace.refetch} />
-          ) : null}
-          {action ? (
-            <Group>
-              <Button loading={submitting === action} disabled={!!data.currentOperationId || operationBusy || !!submitting}
-                onClick={() => void requestAction(action)}>
-                {action === 'start' ? 'Start workspace' : 'Stop workspace'}
-              </Button>
-              {action === 'stop' && !data.canOpenRepair && !data.canRetryAfterRepair ? (
-                <Button variant="default" loading={submitting === 'rebuild'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
-                  onClick={() => void requestAction('rebuild')}>
-                  Rebuild container
-                </Button>
-              ) : null}
-              {data.canStartRepair ? (
-                <Button variant="default" loading={submitting === 'repair'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
-                  aria-describedby={repairDescriptionId} onClick={() => void requestAction('repair')}>
-                  Start repair
-                </Button>
-              ) : null}
-              {data.canRetryAfterRepair ? (
-                <Button variant="default" loading={submitting === 'retry'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
-                  onClick={() => void requestAction('retry')}>
-                  Exit repair and retry setup
-                </Button>
-              ) : null}
-            </Group>
-          ) : null}
-          {data.desiredState !== 'deleted' && data.observedState !== 'deleted' ? (
-            <Button variant="subtle" color="red" disabled={busy} style={{ alignSelf: 'flex-start' }}
-              onClick={() => { setError(undefined); setConfirmDelete(true); }}>Delete workspace</Button>
-          ) : null}
-          <DeleteWorkspaceDialog name={data.name || id} opened={confirmDelete} busy={busy} submitting={submitting === 'delete'} error={error}
-            cancel={() => setConfirmDelete(false)} confirm={() => void requestAction('delete')} />
           {displayedOperation ? <Stack gap="xs">
             <Title order={2} size="h4" tabIndex={-1} ref={progressHeading}>Workspace operation</Title>
             <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation} onFinished={setOperationBusy} />
           </Stack> : null}
-          {admin ? <WorkspaceConnectionGrants workspaceId={id} csrfToken={csrfToken} /> : null}
+          <Paper component="section" aria-label="Workspace configuration" withBorder radius="md" p="md">
+            <Stack gap="md">
+              <Title order={2} size="h3">Configuration</Title>
+              <Text fw={600}>{data.resources.cpuCount} vCPU · {data.resources.memoryMiB} MiB memory · {data.resources.diskMiB} MiB disk</Text>
+              <SimpleGrid component="dl" cols={{ base: 1, sm: 2 }} spacing="md" m={0}>
+                <div>
+                  <Text component="dt" size="sm" c="dimmed">Template revision</Text>
+                  <Text component="dd" m={0}>Revision {data.templateRevision}</Text>
+                </div>
+                <div>
+                  <Text component="dt" size="sm" c="dimmed">Platform release</Text>
+                  <Text component="dd" m={0}>{data.platformRelease}</Text>
+                </div>
+                <div>
+                  <Text component="dt" size="sm" c="dimmed">Last activity</Text>
+                  <Text component="dd" m={0}><WorkspaceTime value={data.lastActivityAt} fallback="No activity recorded" /></Text>
+                </div>
+                <div>
+                  <Text component="dt" size="sm" c="dimmed">Retention deadline</Text>
+                  <Text component="dd" m={0}><WorkspaceTime value={data.retentionDeadline} fallback="No deadline scheduled" /></Text>
+                </div>
+              </SimpleGrid>
+            </Stack>
+          </Paper>
+          {data.canOpenPreviews || data.canEditPreviewPorts ? (
+            <Paper component="section" aria-label="Previews" withBorder radius="md" p="md">
+              <Stack gap="md">
+                <Title order={2} size="h3">Previews</Title>
+                <WorkspacePreviews key={(data.previewPorts ?? []).join(',')} workspace={data} csrfToken={csrfToken}
+                  disabled={busy || data.desiredState === 'deleted'} refresh={workspace.refetch} />
+              </Stack>
+            </Paper>
+          ) : null}
+          {admin ? <Paper withBorder radius="md" p="md"><WorkspaceConnectionGrants workspaceId={id} csrfToken={csrfToken} /></Paper> : null}
+          {data.desiredState !== 'deleted' && data.observedState !== 'deleted' ? (
+            <Paper component="section" aria-label="Delete workspace" withBorder radius="md" p="md">
+              <Stack gap="sm" align="flex-start">
+                <Title order={2} size="h3">Delete workspace</Title>
+                <Text size="sm" c="dimmed">Permanently remove this environment and its files. Push work you need to keep before deleting.</Text>
+                <Button variant="light" color="red" disabled={busy}
+                  onClick={() => { setError(undefined); setConfirmDelete(true); }}>Delete workspace</Button>
+              </Stack>
+            </Paper>
+          ) : null}
+          <DeleteWorkspaceDialog name={data.name || id} opened={confirmDelete} busy={busy} submitting={submitting === 'delete'} error={error}
+            cancel={() => setConfirmDelete(false)} confirm={() => void requestAction('delete')} />
         </Stack>
       ) : null}
     </>
@@ -214,13 +244,6 @@ function DeleteWorkspaceDialog({ name, opened, busy, submitting, error, cancel, 
       </form>
     </Modal>
   );
-}
-
-function WorkspaceTime({ value, fallback }: { value: string | null; fallback: string }) {
-  if (!value) return fallback;
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return fallback;
-  return <time dateTime={value}>{date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>;
 }
 
 function WorkspacePreviews({ workspace, csrfToken, disabled, refresh }: {

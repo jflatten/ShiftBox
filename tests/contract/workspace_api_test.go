@@ -327,6 +327,22 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	if response := lookup("/api/v1/workspaces?cursor=" + *op.WorkspaceID); response.Body.String() != "{\"items\":[],\"nextCursor\":null}\n" {
 		t.Errorf("cursor replayed the previous item: %d %s", response.Code, response.Body)
 	}
+	// Hidden history must exclude only confirmed deletion. A pending deletion
+	// remains visible so an operator can follow cleanup and uncertain outcomes.
+	check(lookup("/api/v1/workspaces?excludeDeleted=invalid"), 400, "request.invalid_filter")
+	for _, observed := range []string{"deleting", "deleted"} {
+		if _, err := db.Exec("UPDATE workspaces SET desired_state='deleted',observed_state=$1 WHERE id=$2", observed, *op.WorkspaceID); err != nil {
+			t.Fatal(err)
+		}
+		response := lookup("/api/v1/workspaces?excludeDeleted=true")
+		present := strings.Contains(response.Body.String(), *op.WorkspaceID)
+		if response.Code != 200 || present != (observed == "deleting") {
+			t.Errorf("excludeDeleted for %s returned %d, workspace present=%t, want 200 and present=%t", observed, response.Code, present, observed == "deleting")
+		}
+	}
+	if response := lookup("/api/v1/workspaces?excludeDeleted=false&state=deleted"); response.Code != 200 || !strings.Contains(response.Body.String(), *op.WorkspaceID) {
+		t.Errorf("explicit deleted history returned %d %s, want deleted workspace", response.Code, response.Body)
+	}
 	if _, err := db.Exec("UPDATE users SET role='member' WHERE id='owner'"); err != nil {
 		t.Fatal(err)
 	}

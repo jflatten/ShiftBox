@@ -205,6 +205,10 @@ paths:
       parameters:
         - { name: owner, in: query, schema: { type: string, format: uuid } }
         - { name: state, in: query, schema: { type: string } }
+        - name: excludeDeleted
+          in: query
+          description: Exclude workspaces with confirmed observed state deleted before pagination. In-progress deletion remains visible.
+          schema: { type: boolean, default: false }
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':

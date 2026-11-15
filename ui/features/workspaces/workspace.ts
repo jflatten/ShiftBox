@@ -32,3 +32,7 @@ export interface Workspace {
 export function workspaceState(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
+
+export function workspaceName(workspace: Workspace) {
+  return workspace.name && workspace.name !== workspace.id ? workspace.name : 'Unnamed workspace';
+}

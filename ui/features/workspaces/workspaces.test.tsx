@@ -4,7 +4,7 @@ import { Providers } from '../../app/providers';
 import { Workspaces } from './workspaces';
 
 const workspace = {
-  id: 'workspace-one', ownerId: 'member', templateId: 'template-one', templateRevision: 2,
+  id: 'workspace-one', name: 'Example workspace', ownerId: 'member', templateId: 'template-one', templateRevision: 2,
   desiredState: 'running', observedState: 'stopped', currentOperationId: 'operation-one', version: 4,
   platformRelease: 'ubuntu-amd64-r5', lastActivityAt: '2026-11-14T10:00:00Z', retentionDeadline: '2026-11-15T10:00:00Z',
   resources: { cpuCount: 2, memoryMiB: 4096, diskMiB: 32768 },
@@ -30,6 +30,71 @@ afterEach(() => {
 function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
+
+// Filters apply before server pagination, reset stale cursors, and retain an
+// administrator's selected owner instead of accidentally widening the list.
+test('filters workspace state and excludes deleted workspaces by default', async () => {
+  const fetch = jest.fn(async (input: RequestInfo | URL) => {
+    if (input === '/api/v1/session') return json(session);
+    const url = new URL(String(input), 'https://management.test');
+    if (url.pathname === '/api/v1/workspaces') return json({ items: [workspace], nextCursor: 'next' });
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={null} ownerId="member" /></Providers>);
+  await screen.findByRole('link', { name: 'Example workspace' });
+  expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces?owner=member&excludeDeleted=true', expect.anything());
+  await user.click(screen.getByRole('button', { name: 'Next page' }));
+  await screen.findByText('Page 2');
+  await user.selectOptions(screen.getByLabelText('Observed state'), 'stopped');
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces?owner=member&state=stopped&excludeDeleted=true', expect.anything()));
+  expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+  await user.click(screen.getByRole('checkbox', { name: 'Show deleted workspaces' }));
+  await user.selectOptions(screen.getByLabelText('Observed state'), 'deleted');
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces?owner=member&state=deleted', expect.anything()));
+  await user.click(screen.getByRole('checkbox', { name: 'Show deleted workspaces' }));
+  expect(screen.getByLabelText('Observed state')).toHaveValue('');
+  expect(screen.queryByRole('option', { name: 'Deleted' })).not.toBeInTheDocument();
+});
+
+// A failed refresh must not present stale workspace state as current or leave
+// the operator stranded without a retry control.
+test('retries failed workspace lists and distinguishes filtered empty results', async () => {
+  let failed = true;
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (failed) throw new Error('Disconnected');
+    return json({ items: [], nextCursor: null });
+  });
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+  const retry = await screen.findByRole('button', { name: 'Retry' });
+  expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  failed = false;
+  await user.click(retry);
+  expect(await screen.findByText('No workspaces yet.')).toBeVisible();
+  await user.selectOptions(screen.getByLabelText('Observed state'), 'failed');
+  expect(await screen.findByText('No workspaces match this filter.')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+  expect(screen.getByLabelText('Observed state')).toHaveValue('');
+});
+
+// Details identify the workspace by name and separate routine actions from
+// previews and irreversible deletion without losing readiness gating.
+test('organizes workspace controls by purpose', async () => {
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    return json({ ...workspace, currentOperationId: null, observedState: 'running', canEditPreviewPorts: true });
+  });
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  expect(await screen.findByRole('heading', { level: 1, name: 'Example workspace' })).toBeVisible();
+  expect(within(screen.getByRole('region', { name: 'Workspace controls' })).getByRole('button', { name: 'Stop workspace' })).toBeVisible();
+  expect(within(screen.getByRole('region', { name: 'Previews' })).getByLabelText('Preview ports')).toBeVisible();
+  expect(within(screen.getByRole('region', { name: 'Delete workspace' })).getByRole('button', { name: 'Delete workspace' })).toBeVisible();
+  expect(screen.queryByText(workspace.id, { exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Open IDE' })).not.toBeInTheDocument();
+});
 
 // Administrators can confirm revocation by email and see the active list refresh.
 test('revokes an administrator connection grant from workspace details', async () => {
@@ -146,7 +211,7 @@ test('shows the saved workspace state and workflow', async () => {
   expect(await screen.findByText('Running', { exact: true })).toBeVisible();
   expect(screen.getByText('Stopped', { exact: true })).toBeVisible();
   expect(screen.getByText('ubuntu-amd64-r5')).toBeVisible();
-  expect(screen.getByText('template-one · Revision 2')).toBeVisible();
+  expect(screen.getByText('Revision 2')).toBeVisible();
   expect(screen.getByText('Last activity').nextElementSibling?.firstElementChild).toHaveAttribute('datetime', workspace.lastActivityAt);
   expect(screen.getByText('Retention deadline').nextElementSibling?.firstElementChild).toHaveAttribute('datetime', workspace.retentionDeadline);
   expect(await screen.findByText('Failed — Start workspace')).toBeVisible();
@@ -180,13 +245,13 @@ test('shows retention recovery grace and data loss guidance', async () => {
 test('lists workspaces and goes to the next page', async () => {
   globalThis.fetch = jest.fn(async (input) => {
     if (input === '/api/v1/session') return json(session);
-    if (input === '/api/v1/workspaces') return json({ items: [workspace], nextCursor: 'cursor-one' });
-    if (input === '/api/v1/workspaces?cursor=cursor-one') return json({ items: [], nextCursor: null });
+    if (input === '/api/v1/workspaces?excludeDeleted=true') return json({ items: [workspace], nextCursor: 'cursor-one' });
+    if (input === '/api/v1/workspaces?excludeDeleted=true&cursor=cursor-one') return json({ items: [], nextCursor: null });
     throw new Error('unexpected request');
   });
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={null} /></Providers>);
-  expect(await screen.findByRole('link', { name: 'workspace-one' })).toHaveAttribute('href', '/workspaces/?id=workspace-one');
+  expect(await screen.findByRole('link', { name: 'Example workspace' })).toHaveAttribute('href', '/workspaces/?id=workspace-one');
   await user.click(screen.getByRole('button', { name: 'Next page' }));
   expect(await screen.findByText('No workspaces on this page.')).toBeVisible();
 });
@@ -359,13 +424,13 @@ test('requests a rebuild and shows its progress', async () => {
 test('keeps the owner filter when paging from People', async () => {
   globalThis.fetch = jest.fn(async input => {
     if (input === '/api/v1/session') return json({ ...session, user: { id: 'admin', role: 'administrator' } });
-    if (input === '/api/v1/workspaces?owner=member') return json({ items: [workspace], nextCursor: 'cursor-one' });
-    if (input === '/api/v1/workspaces?owner=member&cursor=cursor-one') return json({ items: [], nextCursor: null });
+    if (input === '/api/v1/workspaces?owner=member&excludeDeleted=true') return json({ items: [workspace], nextCursor: 'cursor-one' });
+    if (input === '/api/v1/workspaces?owner=member&excludeDeleted=true&cursor=cursor-one') return json({ items: [], nextCursor: null });
     throw new Error('unexpected request');
   });
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={null} ownerId="member" /></Providers>);
-  expect(await screen.findByRole('link', { name: 'workspace-one' })).toBeVisible();
+  expect(await screen.findByRole('link', { name: 'Example workspace' })).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Next page' }));
   expect(await screen.findByText('No workspaces on this page.')).toBeVisible();
 });
