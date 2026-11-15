@@ -64,6 +64,7 @@ const (
 	nativeExpiredLeaf
 	nativeControllerTrust
 	nativeExpiredCA
+	nativeRetention
 )
 
 func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, scenario nativeGuestScenario) {
@@ -222,12 +223,18 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	defer func() { stopRuntime() }()
 
 	var op operation.Operation
+	var retention *int64
+	if scenario == nativeRetention {
+		seconds := int64(2)
+		retention = &seconds
+	}
 	err = database.Transaction(ctx, db, func(tx *sql.Tx) error {
 		var err error
 		op, err = workspace.AdmitLaunch(ctx, tx, journal, workspace.LaunchIntent{
 			InstallationID: id, WorkspaceID: workspaceID, OwnerID: owner, TemplateID: uuid.NewString(), TemplateRevision: 1,
 			RequestKey: "live-utm-enrollment", ArtifactID: artifactID, RepositoryURL: "https://github.com/example/project",
 			DevcontainerPath: ".devcontainer/devcontainer.json", Allocation: allocation, OwnershipMarker: marker, NetworkPolicyJSON: `{"mode":"shared"}`,
+			RetentionSeconds: retention,
 		}, time.Now())
 		return err
 	})
@@ -288,6 +295,17 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	}
 	if scenario == nativeExpiredCA {
 		verifyNativeExpiredCA(t, ctx, db, machines, before, ca, cipher, dir)
+		return
+	}
+	if scenario == nativeRetention {
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			return journal.CancelInTx(ctx, tx, op.ID, time.Now())
+		}); err != nil {
+			t.Fatal(err)
+		}
+		stopRuntime()
+		stopRuntime = func() {}
+		verifyNativeRetention(t, ctx, db, machines, before, *retention)
 		return
 	}
 	stopID := disableEnrollmentFixtureOwner(t, db, journal, registry, owner, workspaceID)

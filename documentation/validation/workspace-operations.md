@@ -26,6 +26,30 @@ operations journey for T088 and T103 requires a native workspace and live
 browser sessions so origin isolation and established connection closure can
 be observed on the frozen candidate.
 
+## Native retention and disk accounting
+
+The race-enabled `TestUTMRetentionDeletion` passed against the pinned
+`mvp-rc2` image in 67.97 seconds. After native guest enrollment, the
+fixture disconnected the guest, advanced a test policy clock, and fed a
+fresh CPU sample through the production activity evaluator. Outage grace
+withheld the candidate. The fresh sample invalidated an earlier
+candidate and postponed deletion to the new deadline.
+
+The worker withheld provider-enforced stop through the 59-second
+observation and stopped the real VM after the full graceful shutdown
+window. A simulated partial cleanup left the real disk in place and
+reserved. The next attempt deleted through UTM, but the fixture withheld
+the successful reply. The worker kept the reservation until a retry
+verified provider absence and storage cleanup. The final operation
+succeeded with the disk released.
+
+Run this opt-in test with the usual native UTM settings and
+`SHIFTBOX_TEST_UTM_RETENTION=1`. The policy clock, activity sample,
+and lost replies are fixture inputs. UTM observation timestamps,
+the stop, deletion, and cleanup verification are native.
+
+## Live browser fixture
+
 Run the live Chrome case with `SHIFTBOX_OPERATIONS_FIXTURE` set to the
 absolute path of a private JSON file. Include `disposable: true`,
 `managementURL`, `workspaceID`, `previewURL`, and separate `owner` and

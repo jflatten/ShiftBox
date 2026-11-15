@@ -149,5 +149,10 @@ temporary installation CA expired on the wall clock. The controller
 refused to reload the expired CA. UTM still reported the same running VM
 and owned disk. See [the native CA test](utm-stack.md#expired-certificate-authority).
 
+The `mvp-rc2` retention fixture exercised outage grace, fresh activity,
+the full shutdown window, and actual UTM deletion. Simulated partial
+cleanup and a lost provider reply both kept the disk reservation until
+native cleanup was verified. See [workspace operations](workspace-operations.md#native-retention-and-disk-accounting).
+
 T125 remains open for the outstanding scenarios in sections 3–10. The
 [release tracker](mvp-v1-v14.md) records the remaining live checks.
