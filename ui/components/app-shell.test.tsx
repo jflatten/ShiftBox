@@ -91,6 +91,9 @@ test('signs out a restricted session with its CSRF token', async () => {
       role: 'member', mode: 'password_change', installationState: 'active',
       permissions: ['session.change_password', 'session.logout'], csrfToken: 'fixture',
     }} alerts={[]}><h1>Change password</h1></ShiftBoxShell></Providers>);
+    // Restricted users must be able to find sign-out in the shared navigation tray.
+    expect(screen.getByRole('navigation', { name: 'Main navigation' })).toContainElement(screen.getByRole('button', { name: 'Sign out' }));
+    expect(screen.getByRole('main')).not.toContainElement(screen.getByRole('button', { name: 'Sign out' }));
     await user.click(screen.getByRole('button', { name: 'Sign out' }));
     expect(fetch).toHaveBeenCalledWith('/api/v1/session', expect.objectContaining({
       method: 'DELETE', headers: { 'X-CSRF-Token': 'fixture' },

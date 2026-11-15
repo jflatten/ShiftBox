@@ -56,6 +56,11 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
         {normal && session?.role === 'administrator' && permitted('user.list') ? <NavLink href="/users/" label="People" /> : null}
         {normal && session?.role === 'administrator' && permitted('audit.list') ? <NavLink href="/audit/" label="Audit" /> : null}
         {backup || recovery ? <NavLink href="/recovery/" label="Backup & Recovery" /> : null}
+        {!signedOut && permitted('session.logout') && session?.csrfToken ? (
+          <AppShell.Section mt="auto" pt="md">
+            <SignOut csrfToken={session.csrfToken} onSignedOut={() => setSignedOut(true)} />
+          </AppShell.Section>
+        ) : null}
       </AppShell.Navbar>
       <AppShell.Main>
         <Stack gap="lg">
@@ -69,9 +74,6 @@ export function ShiftBoxShell({ session, alerts, error, children }: {
           </Stack>
           {!signedOut && !renewalRequired ? children : null}
           {signedOut ? <SignInChoices /> : null}
-          {!signedOut && permitted('session.logout') && session?.csrfToken ? (
-            <SignOut csrfToken={session.csrfToken} onSignedOut={() => setSignedOut(true)} />
-          ) : null}
         </Stack>
       </AppShell.Main>
     </AppShell>

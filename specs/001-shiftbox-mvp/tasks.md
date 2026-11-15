@@ -70,6 +70,7 @@ description: "Dependency-ordered implementation tasks for the ShiftBox MVP"
 - [X] T027 [P] Implement installation ECDSA P-256 CA loading plus TLS 1.3 server/client certificate verification primitives without guest enrollment behavior in `internal/guest/ca.go` and `internal/guest/tls.go`
 - [X] T028 Implement management/IDE/preview connection registries and a reverse-proxy sanitizer that strips ShiftBox cookies, CSRF tokens, origin grants, and hop-by-hop headers in `internal/proxy/registry.go` and `internal/proxy/sanitize.go`
 - [X] T029 Implement the static Mantine AppShell, ShiftBox theme/branding, role-aware navigation, persistent Alert region, TanStack Query client with no persistence, API problem view, and reusable WorkflowStepper proven by T016 in `ui/app/layout.tsx`, `ui/app/providers.tsx`, `ui/components/app-shell.tsx`, `ui/components/workflow-stepper.tsx`, and `ui/lib/query-client.ts`
+  - [X] Move Sign out to the bottom of the shared left navigation tray; verify the restricted-session sign-out regression, typecheck, production build, and placement in the updated running demo.
 
 **Checkpoint**: Database profiles, protected values, authentication primitives, durable operations, HTTP boundaries, SSE, connection revocation, and the visible workflow shell are testable shared foundations.
 
