@@ -19,6 +19,55 @@ import (
 	"github.com/jflatten/ShiftBox/internal/provider/utm"
 )
 
+// TestUTMGuestRejectsExpiredCA lets the retained authority expire while the
+// native guest is running, then checks that polling and CA loading fail closed.
+func TestUTMGuestRejectsExpiredCA(t *testing.T) {
+	if os.Getenv("SHIFTBOX_TEST_UTM_EXPIRED_CA") != "1" {
+		t.Skip("set SHIFTBOX_TEST_UTM_EXPIRED_CA=1 for native CA expiry")
+	}
+	runUTMGuestFixture(t, nil, nativeExpiredCA)
+}
+
+func verifyNativeExpiredCA(t *testing.T, ctx context.Context, db *sql.DB, machines *utm.Provider, before provider.Inventory,
+	authority *guest.Authority, cipher *cryptostore.Store, root string,
+) {
+	t.Helper()
+	expiry := authority.Certificate.NotAfter
+	if remaining := time.Until(expiry); remaining <= 0 || remaining > 4*time.Minute {
+		t.Fatalf("fixture CA duration remaining = %v, want expiry within four minutes", remaining)
+	}
+	initial, _ := nativeGuestContact(t, ctx, db, before.Ref)
+	t.Logf("waiting for the running guest's CA to expire in %s", time.Until(expiry).Round(time.Second))
+	wait := func(delay time.Duration) {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-timer.C:
+		}
+	}
+	wait(time.Until(expiry) + 3*time.Second)
+	last, serial := nativeGuestContact(t, ctx, db, before.Ref)
+	if !last.After(initial) || !last.Before(expiry) {
+		t.Fatalf("last authenticated contact = %v, want after %v and before CA expiry %v", last, initial, expiry)
+	}
+	wait(15 * time.Second)
+	afterExpiry, afterSerial := nativeGuestContact(t, ctx, db, before.Ref)
+	if !afterExpiry.Equal(last) || afterSerial != serial {
+		t.Fatalf("the guest authenticated or renewed after its CA expired: contact %v, prior contact %v", afterExpiry, last)
+	}
+	if loaded, err := app.LoadInstallationCA(root, before.Ref.InstallationID, cipher, time.Now().UTC()); err == nil || loaded != nil {
+		t.Fatal("controller loaded an expired installation authority")
+	}
+	vm, err := machines.Inspect(ctx, before.Ref)
+	if err != nil || vm.Ref != before.Ref || vm.Power != provider.Running {
+		t.Fatalf("VM after CA expiry = %s/%+v (%v), want the same running guest", vm.Power, vm.Ref, err)
+	}
+	verifyOwnedDisk(t, before, vm)
+	t.Log("expired CA stopped authenticated contact and could not be reloaded; the VM and owned disk were retained")
+}
+
 // reserveNativeGuestAddresses chooses distinct endpoints for controller restarts.
 func reserveNativeGuestAddresses(t *testing.T, bind string) [3]string {
 	t.Helper()

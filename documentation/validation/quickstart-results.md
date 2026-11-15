@@ -144,5 +144,10 @@ All three calls returned exit 7 and left the copied CA file and stopped
 workspace record intact. The test used the stored workspace record
 without starting or changing a VM.
 
+Separately, a running UTM guest lost authenticated contact after its
+temporary installation CA expired on the wall clock. The controller
+refused to reload the expired CA. UTM still reported the same running VM
+and owned disk. See [the native CA test](utm-stack.md#expired-certificate-authority).
+
 T125 remains open for the outstanding scenarios in sections 3–10. The
 [release tracker](mvp-v1-v14.md) records the remaining live checks.

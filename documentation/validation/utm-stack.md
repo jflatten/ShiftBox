@@ -83,6 +83,18 @@ clock skew at the controller listener. The machine clocks are unchanged.
 The race-enabled rerun on `mvp-rc2` passed in 104.86 seconds. Both
 faults withheld authenticated contact until valid trust returned.
 
+## Expired certificate authority
+
+The race-enabled `TestUTMGuestRejectsExpiredCA` passed on `mvp-rc2`
+in 269.37 seconds. The test generated a private installation CA with
+four minutes of remaining validity. The native guest authenticated
+before expiry. After expiry, polling no longer advanced authenticated
+contact, and the controller refused to reload the stored CA. UTM
+reported the same running VM and owned disk until fixture cleanup.
+
+Set `SHIFTBOX_TEST_UTM_EXPIRED_CA=1` with the normal native settings.
+The test waits for wall-clock expiry and uses the ordinary TLS checks.
+
 ## Signed maintenance fixture
 
 `TestUTMGuestMaintenance` reuses the enrollment fixture and only needs one

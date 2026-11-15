@@ -63,6 +63,7 @@ const (
 	nativeNormal nativeGuestScenario = iota
 	nativeExpiredLeaf
 	nativeControllerTrust
+	nativeExpiredCA
 )
 
 func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, scenario nativeGuestScenario) {
@@ -159,7 +160,15 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	if err != nil {
 		t.Fatal(err)
 	}
-	ca, err := app.EnsureInstallationCA(dir, id, cipher, time.Now())
+	caTime := time.Now().UTC()
+	if scenario == nativeExpiredCA {
+		deadline := caTime.Add(4 * time.Minute)
+		caTime = deadline.AddDate(-5, 0, 0)
+		if !caTime.AddDate(5, 0, 0).Equal(deadline) {
+			t.Skip("the five-year CA fixture needs a date that can be backdated exactly")
+		}
+	}
+	ca, err := app.EnsureInstallationCA(dir, id, cipher, caTime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,6 +284,10 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 			return stop
 		}
 		verifyNativeControllerTrust(t, ctx, db, machines, before, ca, dir, restart)
+		return
+	}
+	if scenario == nativeExpiredCA {
+		verifyNativeExpiredCA(t, ctx, db, machines, before, ca, cipher, dir)
 		return
 	}
 	stopID := disableEnrollmentFixtureOwner(t, db, journal, registry, owner, workspaceID)
