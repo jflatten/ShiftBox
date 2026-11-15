@@ -40,6 +40,9 @@ type View struct {
 	Input
 	ID              string            `json:"id"`
 	OwnerID         string            `json:"ownerId"`
+	OwnerName       string            `json:"ownerName,omitempty"`
+	ProfileName     string            `json:"resourceProfileName,omitempty"`
+	ImageName       string            `json:"platformImageName,omitempty"`
 	State           string            `json:"state"`
 	CurrentRevision int64             `json:"currentRevision"`
 	Version         int64             `json:"version"`

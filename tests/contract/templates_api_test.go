@@ -216,6 +216,29 @@ func TestTemplateAPI(t *testing.T) {
 	}
 	granteeToken := signIn(grantee)
 	ownerList := request("GET", "", "", "", "", 200).Body.String()
+	// Display names come from authorized records, including a pinned image
+	// that may no longer be available in the new-launch catalog.
+	for _, field := range []string{`"ownerName":"member@example.test"`, `"resourceProfileName":"Selected"`, `"platformImageName":"template-api-release"`} {
+		if !strings.Contains(ownerList, field) {
+			t.Errorf("template list omitted %s: %s", field, ownerList)
+		}
+	}
+	// Search is case-insensitive and literal: SQL wildcard characters must
+	// not turn a narrow search into every template the caller can access.
+	for _, scenario := range []struct {
+		query string
+		count int
+	}{{"RENAMED", 1}, {"example/repo", 1}, {"no-match", 0}, {"%25", 0}, {"%5F", 0}} {
+		response := request("GET", "?q="+scenario.query, "", "", "", 200)
+		var page struct{ Items []json.RawMessage }
+		if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Items) != scenario.count {
+			t.Errorf("template search %q returned %d items, want %d", scenario.query, len(page.Items), scenario.count)
+		}
+	}
+	request("GET", "?q="+strings.Repeat("x", 201), "", "", "", 400)
 	if !strings.Contains(ownerList, "grantee@example.test") || !strings.Contains(ownerList, grantee) {
 		t.Fatal("template owner could not see the active launch grant")
 	}

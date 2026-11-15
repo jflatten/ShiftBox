@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/auth"
@@ -194,7 +195,8 @@ func templateResponse(view template.View, status int) http.Handler {
 func listTemplates(ctx context.Context, tx *sql.Tx, r *http.Request, p auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
 	query := r.URL.Query()
 	cursor, archived := query.Get("cursor"), query.Get("archived")
-	if cursor != "" && !ValidUUID(cursor) || archived != "" && archived != "true" && archived != "false" {
+	search := strings.TrimSpace(query.Get("q"))
+	if cursor != "" && !ValidUUID(cursor) || archived != "" && archived != "true" && archived != "false" || len(search) > 200 {
 		return nil, Problem{Status: 400, Code: "request.invalid_filter", Title: "Check the template filters"}
 	}
 	admin := p.User.Role == "administrator"
@@ -205,7 +207,7 @@ func listTemplates(ctx context.Context, tx *sql.Tx, r *http.Request, p auth.Prin
 		}
 		state = "archived"
 	}
-	items, next, err := template.List(ctx, tx, p.User.ID, admin, state, cursor)
+	items, next, err := template.List(ctx, tx, p.User.ID, admin, state, cursor, search)
 	if err != nil {
 		return nil, err
 	}

@@ -102,7 +102,7 @@ test('shares a template while preserving workspace and guest owner authority', a
       await saveSecret(administrator, secretKey, values.organization);
       await expectSecretMetadata(administrator, 'organization', organizationScopeID, secretKey, values.organization);
       await administrator.goto('/templates/');
-      await templateRow(administrator, fixture.templateName).getByRole('button', { name: 'Project secrets' }).click();
+      await templateAction(administrator, fixture.templateName, 'Project secrets');
       await saveSecret(administrator, secretKey, values.project);
       await saveSecret(administrator, projectOnlyKey, values.project);
       await expectSecretMetadata(administrator, 'template', template.id, secretKey, values.project);
@@ -117,7 +117,7 @@ test('shares a template while preserving workspace and guest owner authority', a
       await verifyGuestSecret(memberTerminal, projectOnlyKey, undefined);
 
       await administrator.getByRole('button', { name: 'Back to templates' }).click();
-      await templateRow(administrator, fixture.templateName).getByRole('button', { name: 'Share launch access' }).click();
+      await templateAction(administrator, fixture.templateName, 'Share launch access');
       const share = administrator.getByRole('dialog', { name: 'Share launch access' });
       await expect(share.getByText(/authorized workspace code can retrieve project secrets/i)).toBeVisible();
       await share.getByLabel('User ID').fill(memberSession.user.id);
@@ -126,7 +126,7 @@ test('shares a template while preserving workspace and guest owner authority', a
       await share.getByRole('checkbox', { name: 'I acknowledge project secret access' }).check();
       await grant.click();
       await expect(share).toBeHidden();
-      await templateRow(administrator, fixture.templateName).getByRole('button', { name: 'Share launch access' }).click();
+      await templateAction(administrator, fixture.templateName, 'Share launch access');
       await expect(share.getByRole('button', { name: `Revoke launch access for ${fixture.member.email}` })).toBeVisible();
       await share.getByRole('button', { name: 'Cancel' }).click();
 
@@ -185,7 +185,7 @@ test('shares a template while preserving workspace and guest owner authority', a
       await verifyGuestSecret(memberTerminal, secretKey, values.project);
 
       await administrator.goto('/templates/');
-      await templateRow(administrator, fixture.templateName).getByRole('button', { name: 'Archive template' }).click();
+      await templateAction(administrator, fixture.templateName, 'Archive template');
       const archive = administrator.getByRole('dialog', { name: 'Archive template' });
       await expect(archive.getByText(/existing workspaces, files, and grants are preserved/i)).toBeVisible();
       await archive.getByRole('button', { name: 'Archive template' }).click();
@@ -195,7 +195,7 @@ test('shares a template while preserving workspace and guest owner authority', a
       await verifyGuestSecret(memberTerminal, projectOnlyKey, values.project);
 
       await administrator.getByLabel('Archived templates').check();
-      await templateRow(administrator, fixture.templateName).getByRole('button', { name: 'Manage launch grants' }).click();
+      await templateAction(administrator, fixture.templateName, 'Manage launch grants');
       const share = administrator.getByRole('dialog', { name: 'Share launch access' });
       await share.getByRole('button', { name: `Revoke launch access for ${fixture.member.email}` }).click();
       await expect(share.getByText('No launch grants.')).toBeVisible();
@@ -284,7 +284,12 @@ async function signIn(page: Page, account: Account, role: string): Promise<Sessi
 }
 
 function templateRow(page: Page, name: string) {
-  return page.getByRole('row').filter({ has: page.getByRole('cell', { name, exact: true }) });
+  return page.getByRole('row').filter({ has: page.getByRole('button', { name: `View ${name}`, exact: true }) });
+}
+
+async function templateAction(page: Page, name: string, action: string) {
+  await templateRow(page, name).getByRole('button', { name: `Actions for ${name}` }).click();
+  await page.getByRole('menuitem', { name: action, exact: true }).click();
 }
 
 async function saveSecret(page: Page, name: string, value: string, replace = false) {

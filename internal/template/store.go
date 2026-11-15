@@ -75,13 +75,17 @@ func ValidRepositoryRef(ref string) bool {
 }
 
 // List reads a page of templates visible to the caller and their current revisions.
-func List(ctx context.Context, tx *sql.Tx, actor string, admin bool, state, cursor string) ([]View, *string, error) {
+func List(ctx context.Context, tx *sql.Tx, actor string, admin bool, state, cursor, search string) ([]View, *string, error) {
 	const limit = 50
+	// Search literal text before pagination; wildcard characters must not
+	// widen a search or alter the existing ownership and grant predicate.
+	pattern := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(strings.ToLower(search)) + "%"
 	rows, err := tx.QueryContext(ctx, templateViewQuery+`
 		WHERE t.id>$1 AND t.state=$2 AND ($3 OR (t.state='active' AND (t.owner_user_id=$4 OR EXISTS (
 		  SELECT 1 FROM template_grants g WHERE g.template_id=t.id AND g.user_id=$4 AND g.can_launch=1 AND g.revoked_at IS NULL
 		))))
-		ORDER BY t.id LIMIT $5`, cursor, state, admin, actor, limit+1)
+		AND (LOWER(t.name) LIKE $6 ESCAPE '\' OR LOWER(r.repository_url) LIKE $6 ESCAPE '\')
+		ORDER BY t.id LIMIT $5`, cursor, state, admin, actor, limit+1, pattern)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -549,6 +549,51 @@ test('creates a template with named catalog choices', async ({ page }) => {
   expect(submitted).toMatchObject({ resourceProfileId: 'profile-fixture', platformArtifactId: 'artifact-fixture' });
 });
 
+// Template details and action dialogs remain reachable on narrow screens;
+// cancel returns focus to the menu trigger, and removing a row has a stable target.
+test('template inventory keyboard dialogs and archive focus', async ({ page }) => {
+  let archived = false;
+  const project = { id: templateID, name: 'Keyboard template', ownerId: 'admin', ownerName: 'Template author',
+    currentRevision: 2, version: 4, state: 'active', repositoryUrl: 'https://github.com/example/project',
+    devcontainerPath: '.devcontainer/devcontainer.json', resourceProfileName: 'Small', platformImageName: 'Ubuntu release', secretNames: [] };
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) return route.fulfill({ json: admin(['template.create']) });
+    if (path.endsWith(`/templates/${templateID}`) && route.request().method() === 'PATCH') {
+      archived = true;
+      return route.fulfill({ json: { ...project, state: 'archived' } });
+    }
+    if (path.endsWith('/templates')) return route.fulfill({ json: { items: archived ? [] : [project] } });
+  });
+  await page.goto('/templates/');
+  const details = page.getByRole('button', { name: 'View Keyboard template' });
+  await activate(page, details);
+  await expect(page.getByRole('dialog', { name: 'Template details' })).toContainText('Small');
+  await activate(page, page.getByRole('button', { name: 'Done', exact: true }));
+  await expect(details).toBeFocused();
+  const actions = page.getByRole('button', { name: 'Actions for Keyboard template' });
+  await activate(page, actions);
+  await expect(page.getByRole('menu').locator('[data-autofocus]')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitem', { name: 'New revision' })).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(page.getByRole('menuitem', { name: 'Archive template' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Archive template' });
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(actions).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('menu').locator('[data-autofocus]')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitem', { name: 'New revision' })).toBeFocused();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  await activate(page, dialog.getByRole('button', { name: 'Archive template' }));
+  await expect(page.getByText('No templates yet.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Templates', exact: true })).toBeFocused();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
 // A recovery reviewer advances through gated decisions by keyboard and can
 // inspect the completed activation step after authority changes.
 test('recovery review and activation', async ({ page }) => {

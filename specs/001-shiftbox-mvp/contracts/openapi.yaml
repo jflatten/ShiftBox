@@ -446,6 +446,10 @@ paths:
       operationId: listTemplates
       parameters:
         - { name: archived, in: query, schema: { type: boolean, default: false } }
+        - name: q
+          in: query
+          description: Case-insensitive literal search of template name and repository URL, applied before pagination. Maximum 200 UTF-8 bytes.
+          schema: { type: string, maxLength: 200 }
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
@@ -1352,6 +1356,9 @@ components:
       properties:
         id: { type: string, format: uuid }
         ownerId: { type: string, format: uuid }
+        ownerName: { type: string, description: Current owner display name or email. }
+        resourceProfileName: { type: string }
+        platformImageName: { type: string }
         name: { type: string }
         state: { type: string, enum: [active, archived] }
         currentRevision: { type: integer, minimum: 1 }

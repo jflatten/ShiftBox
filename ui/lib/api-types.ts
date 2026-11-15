@@ -913,6 +913,10 @@ export interface components {
             id: string;
             /** Format: uuid */
             ownerId: string;
+            /** @description Current owner display name or email. */
+            ownerName?: string;
+            resourceProfileName?: string;
+            platformImageName?: string;
             name: string;
             /** @enum {string} */
             state: "active" | "archived";
@@ -1686,6 +1690,8 @@ export interface operations {
         parameters: {
             query?: {
                 archived?: boolean;
+                /** @description Case-insensitive literal search of template name and repository URL, applied before pagination. Maximum 200 UTF-8 bytes. */
+                q?: string;
                 cursor?: components["parameters"]["Cursor"];
             };
             header?: never;

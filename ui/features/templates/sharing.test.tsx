@@ -4,7 +4,16 @@ import { Providers } from '../../app/providers';
 import { Templates } from './templates';
 
 const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; });
+beforeEach(() => {
+  // jsdom has no layout; give Mantine a visible anchor and viewport so
+  // its detached-anchor detection does not hide an open menu.
+  jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 40, width: 100, height: 40, toJSON: () => ({}),
+  });
+  jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1024);
+  jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(768);
+});
+afterEach(() => { globalThis.fetch = originalFetch; jest.restoreAllMocks(); });
 
 const project = { id: 'template', ownerId: 'owner', name: 'Sample', state: 'active', version: 4,
   currentRevision: 2, repositoryUrl: 'https://github.com/example/sample', resourceProfileId: 'small',
@@ -38,7 +47,8 @@ test('requires project secret acknowledgement when sharing a template', async ()
   fixture('member', path => path === '/api/v1/templates' ? { items: [project] } : null);
   const user = userEvent.setup();
   render(<Providers><Templates /></Providers>);
-  await user.click(await screen.findByRole('button', { name: 'Share launch access' }));
+  await user.click(await screen.findByRole('button', { name: 'Actions for Sample' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Share launch access' }));
   const dialog = screen.getByRole('dialog', { name: 'Share launch access' });
   expect(within(dialog).getByText(/workspace code can retrieve project secrets/i)).toBeVisible();
   const submit = within(dialog).getByRole('button', { name: 'Grant launch access' });
@@ -71,7 +81,8 @@ test('filters archived templates and restores with the reviewed version', async 
   await screen.findByText('No templates yet.');
   expect(globalThis.fetch).not.toHaveBeenCalledWith('/api/v1/templates?archived=true', expect.anything());
   await user.click(screen.getByRole('switch', { name: 'Archived templates' }));
-  await user.click(await screen.findByRole('button', { name: 'Restore template' }));
+  await user.click(await screen.findByRole('button', { name: 'Actions for Sample' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Restore template' }));
   const dialog = screen.getByRole('dialog', { name: 'Restore template' });
   await user.click(within(dialog).getByRole('button', { name: 'Restore template' }));
   expect(await screen.findByText('No archived templates.')).toBeVisible();
@@ -97,7 +108,8 @@ test('creates a new revision from the reviewed template', async () => {
   });
   const user = userEvent.setup();
   render(<Providers><Templates /></Providers>);
-  await user.click(await screen.findByRole('button', { name: 'New revision' }));
+  await user.click(await screen.findByRole('button', { name: 'Actions for Sample' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'New revision' }));
   const dialog = screen.getByRole('dialog', { name: 'New revision' });
   expect(within(dialog).getByLabelText(/^Repository URL/)).toHaveValue(project.repositoryUrl);
   const profile = await within(dialog).findByRole('combobox', { name: 'Resource profile' });
@@ -107,7 +119,7 @@ test('creates a new revision from the reviewed template', async () => {
   await user.selectOptions(image, within(image).getByRole('option', { name: 'Next Ubuntu release' }));
   await user.type(within(dialog).getByLabelText('Repository ref'), 'next');
   await user.click(within(dialog).getByRole('button', { name: 'Save revision' }));
-  expect(await screen.findByRole('cell', { name: '3' })).toBeVisible();
+  expect(await screen.findByText('Revision 3')).toBeVisible();
   expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/templates/template/revisions', expect.objectContaining({
     method: 'POST', headers: expect.objectContaining({ 'If-Match': '"4"', 'Idempotency-Key': expect.any(String) }),
   }));
@@ -128,7 +140,8 @@ test('revokes an existing launch grant from the sharing dialog', async () => {
   });
   const user = userEvent.setup();
   render(<Providers><Templates /></Providers>);
-  await user.click(await screen.findByRole('button', { name: 'Share launch access' }));
+  await user.click(await screen.findByRole('button', { name: 'Actions for Sample' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Share launch access' }));
   expect(screen.getByText('member@example.test')).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Revoke launch access for member@example.test' }));
   expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/templates/template/grants/' + memberID, expect.objectContaining({

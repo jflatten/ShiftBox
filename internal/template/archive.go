@@ -33,14 +33,19 @@ func Update(ctx context.Context, tx *sql.Tx, id string, version int64, name, sta
 
 const templateViewQuery = `SELECT t.id,t.owner_user_id,t.name,t.state,t.current_revision,t.version,
 		r.repository_url,COALESCE(r.repository_ref,''),r.devcontainer_path,r.resource_profile_id,
-		r.platform_artifact_id,COALESCE(r.network_policy_id,''),r.secret_names_json
-		FROM project_templates t JOIN template_revisions r ON r.template_id=t.id AND r.revision=t.current_revision`
+		r.platform_artifact_id,COALESCE(r.network_policy_id,''),r.secret_names_json,
+		COALESCE(NULLIF(u.display_name,''),u.primary_email),p.name,a.release_id
+		FROM project_templates t JOIN template_revisions r ON r.template_id=t.id AND r.revision=t.current_revision
+		JOIN users u ON u.id=t.owner_user_id
+		JOIN resource_profiles p ON p.id=r.resource_profile_id
+		JOIN platform_artifacts a ON a.id=r.platform_artifact_id`
 
 func scanView(row interface{ Scan(...any) error }) (View, error) {
 	var view View
 	var names string
 	err := row.Scan(&view.ID, &view.OwnerID, &view.Name, &view.State, &view.CurrentRevision, &view.Version,
-		&view.RepositoryURL, &view.RepositoryRef, &view.DevcontainerPath, &view.ProfileID, &view.ArtifactID, &view.NetworkPolicyID, &names)
+		&view.RepositoryURL, &view.RepositoryRef, &view.DevcontainerPath, &view.ProfileID, &view.ArtifactID, &view.NetworkPolicyID, &names,
+		&view.OwnerName, &view.ProfileName, &view.ImageName)
 	if err != nil {
 		return View{}, err
 	}
