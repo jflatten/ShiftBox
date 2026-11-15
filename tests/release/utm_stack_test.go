@@ -65,6 +65,7 @@ const (
 	nativeControllerTrust
 	nativeExpiredCA
 	nativeRetention
+	nativeCapacity
 )
 
 func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, scenario nativeGuestScenario) {
@@ -267,6 +268,12 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	}
 	if maintenance != nil {
 		maintenance.verify(t, ctx, db, journal, machines, before, op.ID, owner, metadata, target)
+		return
+	}
+	if scenario == nativeCapacity {
+		stopRuntime()
+		stopRuntime = func() {}
+		verifyNativeCapacity(t, ctx, db, machines, before, owner, artifactID, allocation)
 		return
 	}
 	if scenario == nativeExpiredLeaf {

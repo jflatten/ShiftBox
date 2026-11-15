@@ -154,5 +154,11 @@ the full shutdown window, and actual UTM deletion. Simulated partial
 cleanup and a lost provider reply both kept the disk reservation until
 native cleanup was verified. See [workspace operations](workspace-operations.md#native-retention-and-disk-accounting).
 
+The native capacity fixture independently reached the configured CPU,
+memory and disk limits. Both launch attempts in each case reported the
+limiting resource and left the running VM unchanged, with no queued
+operations. The launch API contract returned the disk refusal when
+reported free space was below the requested disk allocation.
+
 T125 remains open for the outstanding scenarios in sections 3–10. The
 [release tracker](mvp-v1-v14.md) records the remaining live checks.

@@ -26,6 +26,21 @@ operations journey for T088 and T103 requires a native workspace and live
 browser sessions so origin isolation and established connection closure can
 be observed on the frozen candidate.
 
+## Native capacity refusal
+
+The race-enabled `TestUTMCapacityRefusesExhaustedResources` passed on
+`mvp-rc2` in 61.41 seconds. A native UTM guest enrolled and stayed
+running while the fixture set three revisioned budgets. Each budget
+left room in two resource dimensions and used all capacity in the
+third. CPU, memory, and disk exhaustion each refused a launch and its
+retry, identified the resource and quantities, and created no workspace,
+reservation, or queued operation. The existing VM kept the same
+allocation, disk and reservations.
+
+Set `SHIFTBOX_TEST_UTM_CAPACITY=1` with the normal native test settings.
+The test exercises configured capacity limits on the real provider.
+The separate launch API contract test covers the host-volume space check.
+
 ## Native retention and disk accounting
 
 The race-enabled `TestUTMRetentionDeletion` passed against the pinned
