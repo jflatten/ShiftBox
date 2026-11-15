@@ -309,6 +309,11 @@ Firefox 159.0, and WebKit 27.2. Fourteen cases were skipped by their
 browser or live-installation gates. The separately enabled PostgreSQL
 integration checks passed preflight and resumed activation against a
 disposable TLS database with independently owned ShiftBox and Dex schemas.
+The PostgreSQL parity run also exercised recovery-review login isolation,
+authority constraints, transaction rollback, and migration replay on
+both database profiles. The two profiles reached the same schema version
+and required guarded recovery for rollback. PostgreSQL rejected the
+unowned schema before migration.
 
 The first Go invocation pointed to the RC3 manifest before it had been
 generated. It also returned `ErrDexExited` from the unhealthy-startup
@@ -327,6 +332,23 @@ staged disk were removed. The standalone retry passed in 351.80 seconds
 with the race detector. It recorded an authenticated enrollment, confirmed
 offboarding stopped the original VM while preserving its disk, and removed
 the disposable VM and staged files.
+
+### Protected setup restarts
+
+Chrome ran the protected setup journey on the exact RC3 controller. The
+first invocation generated a new loopback certificate and Chrome refused
+it. The rerun seeded the previously trusted localhost test certificate
+into the disposable installation and used normal TLS verification.
+
+After the first password delivery, the setup process restarted at six
+durable checkpoints. The run verified one initial administrator and one
+password delivery, the saved replacement password, and stable setup TLS,
+guest CA, installation identity, and schema. Native platform validation
+left one available default image and removed its validation VM. The final
+activation invalidated the restricted session, and the management origin
+required a fresh sign-in. The original administrator signed in and reached
+the activated installation on schema 27. The disposable installation was
+removed after the checks.
 
 T125 remains open. The [release tracker](mvp-v1-v14.md) records the
 remaining live checks.

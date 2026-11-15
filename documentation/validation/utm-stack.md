@@ -96,6 +96,13 @@ and retained the original guest certificate, key binding, and owned disk.
 The test removed both disposable VMs and the private image copy. Set
 `SHIFTBOX_TEST_UTM_CLONED_ENROLLMENT=1` with the normal native settings.
 
+The frozen `mvp-rc3` image passed the same test with the race detector in
+464.35 seconds. Its first guest authenticated after 5 minutes 5 seconds.
+The packaged agent refused the copied media in the second guest. The
+test verified that the clone had no controller registration and that
+the original certificate, key binding, and disk were retained. Both
+disposable VMs were absent from UTM after the test.
+
 ## Controller trust failures
 
 The race-enabled `TestUTMGuestRejectsControllerTrustFailures` passed
