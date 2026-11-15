@@ -3246,6 +3246,19 @@ This checkpoint does not itself change the goal status.
   paging, viewport bounds, and visible outcome labels. Updated and visually
   checked the running embedded demo against its real audit history.
 
+### Administration navigation review — Carbon UI shell
+
+- [X] T029: Grouped Notices, Infrastructure, Users, Audit, and Backup & Recovery
+  under one expandable Administration section in the left navigation, with
+  permission-gated destinations, selected-page indication, and a button that
+  exposes its expanded state to assistive technology. Workspaces and Templates
+  remain the everyday destinations. Members can reach their personal notice
+  history from the avatar menu.
+- [X] T029: Verified 13 shell unit tests, the updated Notices tests, production
+  export, and desktop/mobile Chrome journeys for role separation, keyboard
+  expansion, and selected-page state. Rebuilt and visually checked the running
+  demo.
+
 
 ## ARM64 platform support
 

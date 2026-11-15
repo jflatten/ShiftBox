@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
 import { Alert, AppShell, Avatar, Burger, Group, Image, Menu, NavLink, Stack, Text, UnstyledButton, useComputedColorScheme } from '@mantine/core';
 import { useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from './api-problem';
@@ -33,6 +34,8 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
   const [signOutError, setSignOutError] = useState<unknown>();
   const [signOutPending, setSignOutPending] = useState(false);
   const scheme = useComputedColorScheme('light');
+  const pathname = usePathname();
+  const at = (href: string) => pathname === href || pathname === href.slice(0, -1) || pathname?.startsWith(href);
   const permitted = (action: string) => session?.permissions.includes(action);
   const canRenew = permitted('session.external_reauthorize') && !!session?.csrfToken;
   const deadline = Date.parse(session?.externalAuthorizationDueAt ?? '');
@@ -44,6 +47,12 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
   const recovery = !signedOut && session?.mode === 'recovery_review' &&
     session.installationState === 'recovery' && permitted('recovery.review');
   const backup = normal && (permitted('backup.create') || permitted('restore.validate'));
+  const adminNotice = normal && session?.role === 'administrator' && permitted('notice.list');
+  const adminInfrastructure = !signedOut && !renewalRequired && session?.role === 'administrator' && permitted('infrastructure.view');
+  const adminUsers = normal && session?.role === 'administrator' && permitted('user.list');
+  const adminAudit = normal && session?.role === 'administrator' && permitted('audit.list');
+  const adminRecovery = session?.role === 'administrator' && (backup || recovery);
+  const administration = adminNotice || adminInfrastructure || adminUsers || adminAudit || adminRecovery;
   return (
     <AppShell header={{ height: 72 }} navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="lg">
       <AppShell.Header>
@@ -67,6 +76,8 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
               </Menu.Label>
               <Menu.Divider />
               {account ? <Menu.Item component="a" href="/account/">Personal settings</Menu.Item> : null}
+              {normal && session.role === 'member' && permitted('notice.list') ?
+                <Menu.Item component="a" href="/notices/">Notice history</Menu.Item> : null}
               {permitted('session.logout') && session.csrfToken ? <SignOut csrfToken={session.csrfToken}
                 pending={signOutPending} setPending={setSignOutPending} onError={setSignOutError} onSignedOut={() => setSignedOut(true)} /> : null}
             </Menu.Dropdown>
@@ -74,13 +85,22 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="md" component="nav" aria-label="Main navigation">
-        {normal ? <NavLink href="/workspaces/" label="Workspaces" /> : null}
-        {normal ? <NavLink href="/templates/" label="Templates" /> : null}
-        {normal && permitted('notice.list') ? <NavLink href="/notices/" label="Notices" /> : null}
-        {!signedOut && !renewalRequired && session?.role === 'administrator' && permitted('infrastructure.view') ? <NavLink href="/infrastructure/" label="Infrastructure" /> : null}
-        {normal && session?.role === 'administrator' && permitted('user.list') ? <NavLink href="/users/" label="Users" /> : null}
-        {normal && session?.role === 'administrator' && permitted('audit.list') ? <NavLink href="/audit/" label="Audit" /> : null}
-        {backup || recovery ? <NavLink href="/recovery/" label="Backup & Recovery" /> : null}
+        {normal ? <NavLink href="/workspaces/" label="Workspaces" active={!!at('/workspaces/')}
+          aria-current={at('/workspaces/') ? 'page' : undefined} /> : null}
+        {normal ? <NavLink href="/templates/" label="Templates" active={!!at('/templates/')}
+          aria-current={at('/templates/') ? 'page' : undefined} /> : null}
+        {administration ? <NavLink component="button" type="button" label="Administration" defaultOpened childrenOffset={16}>
+          {adminNotice ? <NavLink href="/notices/" label="Notices" active={!!at('/notices/')}
+            aria-current={at('/notices/') ? 'page' : undefined} /> : null}
+          {adminInfrastructure ? <NavLink href="/infrastructure/" label="Infrastructure" active={!!at('/infrastructure/')}
+            aria-current={at('/infrastructure/') ? 'page' : undefined} /> : null}
+          {adminUsers ? <NavLink href="/users/" label="Users" active={!!at('/users/')}
+            aria-current={at('/users/') ? 'page' : undefined} /> : null}
+          {adminAudit ? <NavLink href="/audit/" label="Audit" active={!!at('/audit/')}
+            aria-current={at('/audit/') ? 'page' : undefined} /> : null}
+          {adminRecovery ? <NavLink href="/recovery/" label="Backup & Recovery" active={!!at('/recovery/')}
+            aria-current={at('/recovery/') ? 'page' : undefined} /> : null}
+        </NavLink> : null}
       </AppShell.Navbar>
       <AppShell.Main>
         <Stack gap="lg">

@@ -148,3 +148,46 @@ test('keeps the session when sign-out fails and supports retry', async () => {
     expect(screen.queryByRole('button', { name: 'User menu' })).toBeNull();
   } finally { globalThis.fetch = original; }
 });
+
+// Daily navigation stays separate from permission-gated administration links.
+test('groups permitted administrative destinations in one expandable section', async () => {
+  const user = userEvent.setup();
+  render(<MantineProvider><ShiftBoxShell session={{ role: 'administrator', mode: 'normal', installationState: 'active',
+    permissions: ['notice.list', 'infrastructure.view', 'user.list', 'audit.list', 'backup.create'] }} alerts={[]}>
+    <h1>Workspaces</h1>
+  </ShiftBoxShell></MantineProvider>);
+  const nav = screen.getByRole('navigation', { name: 'Main navigation' });
+  const group = within(nav).getByRole('button', { name: 'Administration' });
+  expect(group).toHaveAttribute('aria-expanded', 'true');
+  for (const label of ['Notices', 'Infrastructure', 'Users', 'Audit', 'Backup & Recovery']) {
+    expect(within(nav).getByRole('link', { name: label })).toBeVisible();
+  }
+  await user.click(group);
+  expect(group).toHaveAttribute('aria-expanded', 'false');
+  await user.keyboard('{Enter}');
+  expect(group).toHaveAttribute('aria-expanded', 'true');
+});
+
+// Members can return to their own notice history without an administration section.
+test('keeps personal notice history available from the user menu', async () => {
+  const user = userEvent.setup();
+  render(<MantineProvider><ShiftBoxShell session={{ role: 'member', mode: 'normal', installationState: 'active',
+    permissions: ['notice.list'] }} alerts={[]}><h1>Workspaces</h1></ShiftBoxShell></MantineProvider>);
+  const nav = screen.getByRole('navigation', { name: 'Main navigation' });
+  expect(within(nav).queryByRole('button', { name: 'Administration' })).toBeNull();
+  expect(within(nav).queryByRole('link', { name: 'Notices' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'User menu' }));
+  expect(await screen.findByRole('menuitem', { name: 'Notice history' })).toHaveAttribute('href', '/notices/');
+});
+
+// Recovery review still exposes its one authorized destination under Administration.
+test('groups recovery review access without normal workspace navigation', () => {
+  render(<MantineProvider><ShiftBoxShell session={{ role: 'administrator', mode: 'recovery_review',
+    installationState: 'recovery', permissions: ['recovery.review'] }} alerts={[]}>
+    <h1>Recovery</h1>
+  </ShiftBoxShell></MantineProvider>);
+  const nav = screen.getByRole('navigation', { name: 'Main navigation' });
+  expect(within(nav).getByRole('button', { name: 'Administration' })).toBeVisible();
+  expect(within(nav).getByRole('link', { name: 'Backup & Recovery' })).toBeVisible();
+  expect(within(nav).queryByRole('link', { name: 'Workspaces' })).toBeNull();
+});

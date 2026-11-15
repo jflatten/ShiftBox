@@ -38,7 +38,7 @@ test('reads, dismisses and reopens a notice from history', async () => {
   });
   const user = userEvent.setup();
   render(<Providers><Notices /></Providers>);
-  expect(await screen.findByRole('link', { name: 'Notices' })).toHaveAttribute('href', '/notices/');
+  expect(await screen.findByRole('heading', { name: 'Notices' })).toBeVisible();
   expect(await screen.findByText(notice.title)).toBeVisible();
   expect(globalThis.fetch).not.toHaveBeenCalledWith('/api/v1/admin/infrastructure', expect.anything());
   expect(screen.queryByRole('button', { name: 'Publish notice' })).toBeNull();
