@@ -116,6 +116,28 @@ survived rollback and cleared after the signed rc2 agent authenticated.
 The fixture called the retained-guest check used by preflight. See
 [UTM validation](utm-stack.md#upgrade-across-release-ids).
 
+## Protected setup restarts on `mvp-rc2`
+
+For section 3, Chrome drove the exact rc2 SQLite setup through six
+process restarts. The setup command was restarted after administrator
+delivery, password change, database validation, browser certificate
+validation, native platform validation, and capacity save. Each
+invocation opened a new protected loopback address. A fresh browser
+context confirmed the saved step and signed in to continue.
+
+Only the first invocation delivered a temporary password. The password
+change survived restart, the setup and guest CA files kept their original
+digests, and the installation identity, administrator ID, Dex account
+count, and SQLite schema were stable throughout. The completed database
+contained one administrator, one available default platform artifact,
+one capacity record, and one successful activation. UTM confirmed the
+platform validation VM was removed.
+
+Activation invalidated the restricted session. After the setup process
+stopped, the exact rc2 management process required a fresh sign-in and
+accepted the original administrator with the saved replacement password.
+The separate PostgreSQL cutover interruption is recorded above.
+
 ## PostgreSQL preflight with a native retained workspace
 
 The exact `mvp-rc2` controller and PostgreSQL schema authenticated an
