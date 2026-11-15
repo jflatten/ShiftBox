@@ -63,10 +63,12 @@ func TestTemplateSharingJournal(t *testing.T) {
 		) AND EXISTS (
 			SELECT 1 FROM audit_events WHERE resource_id=$1 AND actor_id=$3 AND action='template.share' AND reason_code='launch_revoked'
 		)`, []any{result.TemplateID, result.MemberID, result.AdministratorID}},
-		{"only the member's Git authority was revoked", `SELECT EXISTS(
+		{"distinct GitHub identities retained separate authorizations and only the member's credential was revoked", `SELECT EXISTS(
 			SELECT 1 FROM github_authorizations member JOIN github_authorizations administrator ON member.app_id=administrator.app_id
 			WHERE member.user_id=$1 AND member.state='revoked' AND length(member.ciphertext)=0
 			AND administrator.user_id=$2 AND administrator.state='connected' AND length(administrator.ciphertext)>0
+			AND length(member.provider_user_id)>0 AND length(administrator.provider_user_id)>0
+			AND member.provider_user_id<>administrator.provider_user_id
 		)`, []any{result.MemberID, result.AdministratorID}},
 		{"administrator connection was audited in member context and revoked", `SELECT EXISTS(
 			SELECT 1 FROM resource_grants g JOIN origin_grants o ON o.resource_grant_id=g.id

@@ -59,3 +59,37 @@ journal runs remain pending.
 
 The browser archives the fixture template and revokes Git and workspace grants.
 Provision a fresh fixture for another complete run.
+
+## Release candidate checks with a local guest client
+
+Chrome completed protected SQLite setup with the exact `mvp-rc2` controller.
+Two distinct local Dex accounts signed in. The administrator created a
+template in the browser with the named profile and pinned image. A disposable
+client enrolled with the installation CA, then called the running controller's
+guest secret endpoint over mutual TLS in the member workspace context.
+
+Chrome confirmed that ungranted templates were hidden from the member and
+launch was refused. The sharing dialog required acknowledgement of project
+secret access. Management rendered only secret names and metadata, refused
+the member's direct project metadata request, and excluded the synthetic
+values from the audit response. The enrolled client verified organization,
+project, personal, and explicitly empty values as grants and overrides
+changed. Archiving preserved the existing workspace's project grant and
+refused new launches. Revoking the grant removed the project-only value and
+restored the organization fallback. The journal confirmed the archived
+template and retained member workspace, acknowledged grant revocation and
+its audit record, and deletion of the personal override while encrypted lower
+scopes remained.
+
+On the same installation, the local guest client served an HTTP and
+WebSocket fixture on the IDE route. Two Chrome sessions received WebSocket
+frames on the private origin. Revoking the administrator's grant closed its
+socket, rejected its existing origin cookie and blocked a new entry while
+the owner's stream remained open. The journal matched the grant and the
+connection audit event to the member workspace. The journal run reported
+only the missing GitHub authorization evidence.
+
+The complete browser and journal journey still requires the native code-server
+workbench and two GitHub authorizations for the private fixture. The journal
+requires separate upstream GitHub identities and verifies that disconnection
+cleared only the member's credential.
