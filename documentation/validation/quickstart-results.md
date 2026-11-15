@@ -315,6 +315,15 @@ both database profiles. The two profiles reached the same schema version
 and required guarded recovery for rollback. PostgreSQL rejected the
 unowned schema before migration.
 
+The PostgreSQL backup and restore tests passed with the race detector.
+They checked a shared snapshot, credential-safe dump invocation, draining
+Dex writes, rejection of a damaged archive, and recovery from interruption
+between the two schema loads. Running all the opt-in tests against one
+replacement database first caused the empty-target check to encounter
+the schema left populated by the successful restore test. On a fresh
+fixture, the empty-target check passed before the restore tests populated
+it. The fixture databases and temporary roles were removed.
+
 The first Go invocation pointed to the RC3 manifest before it had been
 generated. It also returned `ErrDexExited` from the unhealthy-startup
 test at its 300 ms deadline. The isolated test passed 15 subsequent runs.
@@ -349,6 +358,29 @@ activation invalidated the restricted session, and the management origin
 required a fresh sign-in. The original administrator signed in and reached
 the activated installation on schema 27. The disposable installation was
 removed after the checks.
+
+### Protected PostgreSQL setup, preflight, and recovery
+
+Chrome completed protected PostgreSQL setup using the frozen RC3
+controller and native image. Activation rejected the restricted browser
+session, and the retired SQLite configuration failed at startup. A fresh
+administrator sign-in worked on the PostgreSQL controller. The provider
+reported shared networking and returned HTTP 409 for `no_network` and
+`allowlist` policies.
+
+The native RC3 guest authenticated before the fixture stopped the VM and
+recorded its owned disk. The RC3 migration preflight returned exit 7 with
+only `migration.backup_required`. After the controller wrote and verified
+the management archive, preflight returned exit 0 with no blockers.
+
+The RC3 CLI validated and activated the archive on a separate replacement
+database with the two owned schemas. Chrome refused the copied browser
+session, required restricted recovery sign-in and explicit activation, and
+then required a fresh normal sign-in. The recovered installation retained
+the second local user and rejected the earlier normal and recovery
+sessions. Its PostgreSQL workspace record and UTM identified the same
+stopped VM and owned disk as before backup. The disposable VM, disk,
+databases, roles, and local installation files were removed.
 
 T125 remains open. The [release tracker](mvp-v1-v14.md) records the
 remaining live checks.

@@ -260,6 +260,16 @@ returned to stopped on its original disk, and cleared the migration
 blocker. The fixture used the updated controller code and the existing
 pinned rc1 and rc2 guest bundles.
 
+The signed `mvp-rc2` to `mvp-rc3` run passed with the race detector in
+513.35 seconds. The stopped RC2 guest blocked migration. The first signed
+trial failed activation, returned to RC2 on the same stopped disk, and
+left one retained guest blocker. The owner then invoked the scheduled
+replacement before its deadline. The guest authenticated with the exact
+RC3 agent digest in the frozen image manifest, returned to the stopped
+state with the original disk, and cleared the blocker. Both trials kept
+the disk reservation and released compute after the VM stopped. UTM then
+confirmed removal of the disposable VM.
+
 ## Dev Container fixtures
 
 `TestDevContainerReleaseFixtures` passed for the digest-pinned Debian
@@ -269,6 +279,10 @@ Feature, failed a required hook before reaching `waitFor`, and completed that
 hook on rebuild. They preserved named-volume data from the original
 container and ran the later hook separately. These Docker checks ran
 independently of UTM.
+
+The frozen RC3 source repeated both reference projects with the same
+Dev Container CLI and Docker versions. `TestDevContainerReleaseFixtures`
+passed with the race detector in 18.01 seconds.
 
 ### Trusted repair after setup failures
 
