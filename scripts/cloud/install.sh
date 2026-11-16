@@ -2,6 +2,11 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 cd /workspace/ShiftBox
+# Expose the checkout's Codex configuration to the cloud harness at its workspace root.
+# -T prevents existing directories from receiving nested links or being replaced.
+for entry in .codex .agents AGENTS.md; do
+  ln -sfnT "/workspace/ShiftBox/$entry" "/workspace/$entry"
+done
 go version
 node --version
 go mod download
