@@ -90,9 +90,9 @@ func TestProjectOwnerKeepsReceipt(t *testing.T) {
 	}
 }
 
-// TestAssignProjectOwnerDoesNotFollowLink exercises a checkout containing a
+// TestAssignTreeOwnerDoesNotFollowLink exercises a checkout containing a
 // symlink outside the workspace and verifies directory traversal stays local.
-func TestAssignProjectOwnerDoesNotFollowLink(t *testing.T) {
+func TestAssignTreeOwnerDoesNotFollowLink(t *testing.T) {
 	parent := t.TempDir()
 	project := filepath.Join(parent, "project")
 	if err := os.Mkdir(project, 0700); err != nil {
@@ -101,12 +101,12 @@ func TestAssignProjectOwnerDoesNotFollowLink(t *testing.T) {
 	if err := os.Symlink(filepath.Join(parent, "missing"), filepath.Join(project, "link")); err != nil {
 		t.Fatal(err)
 	}
-	if err := assignProjectOwner(t.Context(), project, os.Getuid(), os.Getgid()); err != nil {
+	if err := assignTreeOwner(t.Context(), project, os.Getuid(), os.Getgid()); err != nil {
 		t.Fatalf("assign owner with dangling symlink = %v, want success", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := assignProjectOwner(ctx, project, os.Getuid(), os.Getgid()); !errors.Is(err, context.Canceled) {
+	if err := assignTreeOwner(ctx, project, os.Getuid(), os.Getgid()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("assign owner after cancellation = %v, want context.Canceled", err)
 	}
 }

@@ -6,7 +6,7 @@ import type { WorkflowOperation } from '../components/workflow-stepper';
 import { subscribeOperation } from './operation-events';
 import { readProblem } from './api-problem';
 
-type Operation = WorkflowOperation & { version: number };
+type Operation = WorkflowOperation & { type: string; version: number };
 
 class OperationReadError extends Error {
   constructor(readonly status: number) { super('Unable to refresh workflow progress.'); }

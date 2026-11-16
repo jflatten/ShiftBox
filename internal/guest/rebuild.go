@@ -57,7 +57,7 @@ func (d devContainer) verifyReplacement(ctx context.Context, result devContainer
 	if err := d.verifyRebuildMounts(ctx, result.ID, previous); err != nil {
 		return err
 	}
-	return d.verifyHomeOwner(ctx, result, previous.home)
+	return d.prepareRetainedHomeOwner(ctx, result, previous.home)
 }
 
 // verifyRebuildMounts confirms both containers point at the same retained

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func (d devContainer) prepareProjectOwner(ctx context.Context, containerID, remoteUser string) error {
@@ -48,7 +49,7 @@ func (d devContainer) prepareProjectOwner(ctx context.Context, containerID, remo
 	}
 	setOwner := d.setProjectOwner
 	if setOwner == nil {
-		setOwner = assignProjectOwner
+		setOwner = assignTreeOwner
 	}
 	if err := setOwner(ctx, d.workspace, int(uid), int(gid)); err != nil {
 		return err
@@ -56,18 +57,28 @@ func (d devContainer) prepareProjectOwner(ctx context.Context, containerID, remo
 	return writePrivateState(receipt, []byte(owner))
 }
 
-func assignProjectOwner(ctx context.Context, workspace string, uid, gid int) error {
-	root, err := os.OpenRoot(workspace)
+// assignTreeOwner changes ownership within a retained directory without
+// following symlinks or touching entries that already have the requested owner.
+func assignTreeOwner(ctx context.Context, directory string, uid, gid int) error {
+	root, err := os.OpenRoot(directory)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	return fs.WalkDir(root.FS(), ".", func(path string, _ fs.DirEntry, walkErr error) error {
+	return fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		owner := info.Sys().(*syscall.Stat_t)
+		if int(owner.Uid) == uid && int(owner.Gid) == gid {
+			return nil
 		}
 		return root.Lchown(filepath.FromSlash(path), uid, gid)
 	})

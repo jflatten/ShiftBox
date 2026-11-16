@@ -41,7 +41,7 @@ func TestGuestRebuild(t *testing.T) {
 			}
 			for path, value := range map[string]string{
 				filepath.Join(state, "retained-home", "target"): "/home/developer",
-				filepath.Join(state, "retained-home", "owner"):  "1000:1000",
+				filepath.Join(state, "retained-home", "owner"):  homeOwner(os.Getuid(), os.Getgid()),
 			} {
 				if err := os.WriteFile(path, []byte(value), 0600); err != nil {
 					t.Fatal(err)
@@ -85,7 +85,7 @@ func TestGuestRebuild(t *testing.T) {
 					mounts = append(mounts, fmt.Sprintf(`{"Type":"volume","Name":%q,"Destination":"/cache","RW":true}`, prefix+"anonymous"))
 					return []byte("[" + strings.Join(mounts, ",") + "]"), nil
 				case executable == "/usr/bin/docker" && args[1] == "exec":
-					return []byte("1000 1000\n/home/developer\n"), nil
+					return []byte(fmt.Sprintf("%d %d\n/home/developer\n", os.Getuid(), os.Getgid())), nil
 				case executable == devContainerCLI && args[0] == "up":
 					up++
 					if !slices.Contains(args, "--remove-existing-container") || !slices.Contains(args, "--skip-post-create") ||

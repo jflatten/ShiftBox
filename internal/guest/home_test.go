@@ -8,11 +8,12 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 )
 
 // TestDevContainerRetainsDeveloperHome verifies that the discovered home is
-// seeded from the first container and mounted before remote hooks run.
+// seeded with the developer's ownership and repaired on restart before hooks.
 func TestDevContainerRetainsDeveloperHome(t *testing.T) {
 	state := t.TempDir()
 	project := filepath.Join(state, "project")
@@ -21,6 +22,41 @@ func TestDevContainerRetainsDeveloperHome(t *testing.T) {
 	}
 	initial := strings.Repeat("a", 64)
 	replacement := strings.Repeat("b", 64)
+	uid, gid := os.Getuid(), os.Getgid()
+	wrongUID, wrongGID := uid, gid
+	if uid == 0 {
+		uid, gid = 1001, 1002
+	} else {
+		groups, err := os.Getgroups()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, group := range groups {
+			if group != gid {
+				wrongGID = group
+				break
+			}
+		}
+	}
+	outside := filepath.Join(state, "outside")
+	if err := os.WriteFile(outside, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(outside, wrongUID, wrongGID); err != nil {
+		t.Fatal(err)
+	}
+	checkOwner := func(path string, wantUID, wantGID int) {
+		t.Helper()
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stat := info.Sys().(*syscall.Stat_t)
+		if int(stat.Uid) != wantUID || int(stat.Gid) != wantGID {
+			t.Errorf("owner of %q = %d:%d, want %d:%d", path, stat.Uid, stat.Gid, wantUID, wantGID)
+		}
+	}
+	home := filepath.Join(state, "retained-home", "data")
 	var stages []string
 	var mounted bool
 	var changedOwner bool
@@ -32,7 +68,8 @@ func TestDevContainerRetainsDeveloperHome(t *testing.T) {
 			case "up":
 				id := initial
 				if slices.Contains(args, "--remove-existing-container") {
-					mounted = slices.Contains(args, "type=bind,source="+filepath.Join(state, "retained-home", "data")+",target=/srv/developer")
+					mounted = slices.Contains(args, "type=bind,source="+home+",target=/srv/developer")
+					checkOwner(filepath.Join(home, ".profile"), uid, gid)
 				}
 				if mounted {
 					id = replacement
@@ -47,16 +84,45 @@ func TestDevContainerRetainsDeveloperHome(t *testing.T) {
 				}
 				if strings.Contains(args[len(args)-1], "getent") {
 					if changedOwner {
-						return []byte("1001 1002\n/srv/developer\n"), nil
+						return []byte(fmt.Sprintf("%d %d\n/srv/developer\n", uid+1, gid+1)), nil
 					}
-					return []byte(fmt.Sprintf("%d %d\n/srv/developer\n", os.Getuid(), os.Getgid())), nil
+					return []byte(fmt.Sprintf("%d %d\n/srv/developer\n", uid, gid)), nil
 				}
-				return []byte(fmt.Sprintf("%d %d\n", os.Getuid(), os.Getgid())), nil
+				return []byte(fmt.Sprintf("%d %d\n", uid, gid)), nil
 			case "cp":
 				if executable != "/usr/bin/docker" || args[2] != initial+":/srv/developer/." {
 					t.Fatalf("home copy = %q %q, want the discovered home from the first container", executable, args)
 				}
-				return nil, os.WriteFile(filepath.Join(args[3], ".profile"), []byte("original home contents"), 0600)
+				// Simulate files and directories installed by Dockerfile steps running as root.
+				config := filepath.Join(args[3], ".config")
+				if err := os.Mkdir(config, 0700); err != nil {
+					return nil, err
+				}
+				profile := filepath.Join(args[3], ".profile")
+				if err := os.WriteFile(profile, []byte("original home contents"), 0600); err != nil {
+					return nil, err
+				}
+				settings := filepath.Join(config, "settings")
+				if err := os.WriteFile(settings, nil, 0600); err != nil {
+					return nil, err
+				}
+				link := filepath.Join(args[3], "link")
+				if err := os.Symlink(outside, link); err != nil {
+					return nil, err
+				}
+				for _, path := range []string{profile, settings, config, link} {
+					if err := os.Lchown(path, wrongUID, wrongGID); err != nil {
+						return nil, err
+					}
+				}
+				return nil, nil
+			case "run-user-commands":
+				checkOwner(filepath.Join(home, ".profile"), uid, gid)
+				checkOwner(filepath.Join(home, ".config", "settings"), uid, gid)
+				checkOwner(filepath.Join(home, ".config"), uid, gid)
+				checkOwner(filepath.Join(home, "link"), uid, gid)
+				checkOwner(outside, wrongUID, wrongGID)
+				return []byte(`{"outcome":"success"}`), nil
 			default:
 				return []byte(`{"outcome":"success"}`), nil
 			}
@@ -73,6 +139,9 @@ func TestDevContainerRetainsDeveloperHome(t *testing.T) {
 	if err != nil || string(data) != "original home contents" {
 		t.Fatalf("retained home content = %q, %v, want original home contents", data, err)
 	}
+	if err := os.Chown(filepath.Join(home, ".profile"), wrongUID, wrongGID); err != nil {
+		t.Fatal(err)
+	}
 	stages = nil
 	if _, err := d.ensure(t.Context()); err != nil {
 		t.Fatal(err)
@@ -80,10 +149,14 @@ func TestDevContainerRetainsDeveloperHome(t *testing.T) {
 	if slices.Contains(stages, "cp") {
 		t.Errorf("restart copied an already retained home: %v", stages)
 	}
+	if err := os.Chown(filepath.Join(home, ".profile"), wrongUID, wrongGID); err != nil {
+		t.Fatal(err)
+	}
 	changedOwner = true
 	if _, err := d.ensure(t.Context()); err == nil {
 		t.Error("ensure accepted a retained home owned by a different developer identity")
 	}
+	checkOwner(filepath.Join(home, ".profile"), wrongUID, wrongGID)
 }
 
 // TestRetainedHomeRejectsUnexpectedMount verifies that a different mount at

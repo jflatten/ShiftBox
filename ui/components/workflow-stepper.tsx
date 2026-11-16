@@ -22,7 +22,7 @@ const stepLabels = { pending: 'Pending', active: 'In progress', succeeded: 'Comp
 const operationLabels = { pending: 'Pending', running: 'In progress', waiting: 'Waiting', succeeded: 'Completed', failed: 'Failed', cancelled: 'Cancelled' };
 
 /** WorkflowStepper displays server progress and lets users inspect reached steps. */
-export function WorkflowStepper({ operation }: { operation: WorkflowOperation }) {
+export function WorkflowStepper({ operation, failureTitle }: { operation: WorkflowOperation; failureTitle?: string }) {
   const [inspected, setInspected] = useState<{ operationId: string; key: string } | null>(null);
   const steps = [...operation.steps].sort((a, b) => a.index - b.index);
   const current = steps.findIndex(step => step.key === operation.currentStep);
@@ -35,12 +35,19 @@ export function WorkflowStepper({ operation }: { operation: WorkflowOperation })
   const status = operation.status === 'running' && steps[active]?.status === 'active' && currentDetail
     ? 'waiting'
     : operation.status;
+  const showWarning = status === 'failed' && !!failureTitle;
+  const failedStep = showWarning ? steps.find(step => step.status === 'failed') ?? steps[active] : undefined;
+  const failureDetails = new Set([failedStep?.label, failedStep?.problem?.title, failedStep?.detail, failedStep?.problem?.detail]);
 
   return (
     <Stack gap="md">
-      <Text role="status" aria-live="polite" aria-atomic="true">
+      {showWarning ? <Alert color="yellow" title={failureTitle}>
+        <Stack gap={4}>
+          {[...failureDetails].map(detail => detail ? <Text key={detail} size="sm">{detail}</Text> : null)}
+        </Stack>
+      </Alert> : <Text role="status" aria-live="polite" aria-atomic="true">
         {operationLabels[status]}{steps[active] ? ` — ${steps[active].label}` : ''}
-      </Text>
+      </Text>}
       <Stepper active={active} allowNextStepsSelect={false} orientation="vertical" onStepClick={index => {
         const step = steps[index];
         if (step && step.status !== 'pending') setInspected({ operationId: operation.id, key: step.key });
@@ -60,9 +67,9 @@ export function WorkflowStepper({ operation }: { operation: WorkflowOperation })
           />
         ))}
       </Stepper>
-      {currentDetail ? <Text size="sm">{currentDetail}</Text> : null}
-      {selected?.detail && selected.key !== steps[active]?.key ? <Text size="sm">{selected.detail}</Text> : null}
-      {steps.filter(step => step.problem).map(step => (
+      {currentDetail && steps[active] !== failedStep ? <Text size="sm">{currentDetail}</Text> : null}
+      {selected?.detail && selected !== failedStep && selected.key !== steps[active]?.key ? <Text size="sm">{selected.detail}</Text> : null}
+      {steps.filter(step => step.problem && step !== failedStep).map(step => (
         <Alert key={step.key} color="red" title={`${step.label}: ${step.problem!.title}`}>
           {step.problem!.detail}
         </Alert>

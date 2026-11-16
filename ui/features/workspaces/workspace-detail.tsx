@@ -116,7 +116,8 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
           </Alert> : null}
           {displayedOperation ? <Stack gap="xs">
             <Title order={2} size="h4" tabIndex={-1} ref={progressHeading}>Workspace operation</Title>
-            <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation} onFinished={setOperationBusy} />
+            <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation}
+              onFinished={setOperationBusy} showFailureWarning />
           </Stack> : null}
           <Paper component="section" aria-label="Workspace configuration" withBorder radius="md" p="md">
             <Stack gap="md">
@@ -283,7 +284,9 @@ function WorkspaceEntryButton({ id, csrfToken, service = 'ide', describedBy }: {
   );
 }
 
-export function WorkspaceProgress({ workspaceId, operationId, onFinished }: { workspaceId: string; operationId: string; onFinished: (busy: boolean) => void }) {
+export function WorkspaceProgress({ workspaceId, operationId, onFinished, showFailureWarning = false }: {
+  workspaceId: string; operationId: string; onFinished: (busy: boolean) => void; showFailureWarning?: boolean;
+}) {
   const operation = useOperation(operationId);
   const client = useQueryClient();
   const state = operation.data?.status;
@@ -299,5 +302,8 @@ export function WorkspaceProgress({ workspaceId, operationId, onFinished }: { wo
   if (operation.accessDenied) return <Text role="alert">You no longer have access to this operation.</Text>;
   if (operation.isError) return <APIProblemView error={operation.error} />;
   if (!operation.data) return <Text role="status">Loading operation…</Text>;
-  return <WorkflowStepper operation={operation.data} />;
+  const failureTitle = showFailureWarning
+    ? operation.data.type === 'provision' ? 'Workspace launch failed' : 'Workspace operation failed'
+    : undefined;
+  return <WorkflowStepper operation={operation.data} failureTitle={failureTitle} />;
 }

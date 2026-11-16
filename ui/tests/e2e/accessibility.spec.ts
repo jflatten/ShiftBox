@@ -295,23 +295,58 @@ for (const configuration of [
   });
 }
 
-// Workspace launch is reachable through the template radio group and retains
-// the server's step order and evidence after the form hands off to progress.
-test('workspace launch progress', async ({ page }) => {
-  const labels: [string, string, string] = ['Provision workspace', 'Enroll guest', 'Verify IDE'];
+for (const failed of [false, true]) {
+  // Keyboard launch keeps the Stepper visible and puts a failed step's
+  // server-provided explanation in an inline warning.
+  test(failed ? 'workspace launch failure warning' : 'workspace launch progress', async ({ page }) => {
+    const labels: [string, string, string] = ['Provision workspace', 'Enroll guest', 'Verify IDE'];
+    const progress = operation(labels);
+    const snapshot = failed ? { ...progress, status: 'failed', steps: progress.steps.map(step =>
+      step.status === 'active' ? { ...step, status: 'failed', detail: 'The guest could not enroll.' } : step,
+    ) } : progress;
+    await fixture(page, (route, path) => {
+      if (path.endsWith('/session')) return route.fulfill({ json: admin([]) });
+      if (path.endsWith('/templates')) return route.fulfill({ json: { items: [{ id: templateID, name: 'Keyboard project', currentRevision: 1,
+        repositoryUrl: 'https://github.com/example/project', platformArtifactId: 'Ubuntu', resourceProfileId: 'Small' }], nextCursor: null } });
+      if (path.endsWith('/workspaces') && route.request().method() === 'POST') return route.fulfill({ status: 202, json: { id: operationID, workspaceId: workspaceID } });
+    }, snapshot);
+    await page.goto('/workspaces/?launch=1');
+    await activate(page, page.getByRole('radio', { name: /Keyboard project/ }), 'Space');
+    await activate(page, page.getByRole('button', { name: 'Review launch' }));
+    await tabTo(page, page.getByRole('textbox', { name: 'Workspace name' }));
+    await page.keyboard.insertText('Keyboard workspace');
+    await activate(page, page.getByRole('button', { name: 'Launch workspace' }));
+    if (failed) {
+      const warning = page.getByRole('alert', { name: 'Workspace launch failed' });
+      await expect(warning).toContainText('The guest could not enroll.');
+      await expect(page.getByRole('button', { name: 'Provision workspace: Completed' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Enroll guest: Failed' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Verify IDE: Pending' })).toBeDisabled();
+    } else {
+      await checkWorkflow(page, labels);
+    }
+  });
+}
+
+// A direct visit to an existing workspace surfaces the saved launch failure
+// above its Stepper, including the next step that could not run.
+test('workspace detail launch failure warning', async ({ page }) => {
+  const progress = operation(['Provision workspace', 'Configure container', 'Verify IDE']);
+  const failed = { ...progress, type: 'provision', status: 'failed', steps: progress.steps.map(step =>
+    step.status === 'active' ? { ...step, status: 'failed', detail: 'The guest could not prepare the repository.' } : step,
+  ) };
   await fixture(page, (route, path) => {
     if (path.endsWith('/session')) return route.fulfill({ json: admin([]) });
-    if (path.endsWith('/templates')) return route.fulfill({ json: { items: [{ id: templateID, name: 'Keyboard project', currentRevision: 1,
-      repositoryUrl: 'https://github.com/example/project', platformArtifactId: 'Ubuntu', resourceProfileId: 'Small' }], nextCursor: null } });
-    if (path.endsWith('/workspaces') && route.request().method() === 'POST') return route.fulfill({ status: 202, json: { id: operationID, workspaceId: workspaceID } });
-  }, operation(labels));
-  await page.goto('/workspaces/?launch=1');
-  await activate(page, page.getByRole('radio', { name: /Keyboard project/ }), 'Space');
-  await activate(page, page.getByRole('button', { name: 'Review launch' }));
-  await tabTo(page, page.getByRole('textbox', { name: 'Workspace name' }));
-  await page.keyboard.insertText('Keyboard workspace');
-  await activate(page, page.getByRole('button', { name: 'Launch workspace' }));
-  await checkWorkflow(page, labels);
+    if (path.endsWith(`/workspaces/${workspaceID}`)) return route.fulfill({ json: {
+      id: workspaceID, name: 'Failed workspace', observedState: 'running', desiredState: 'running', resources,
+      currentOperationId: null, lastFailedOperationId: operationID,
+    } });
+  }, failed);
+  await page.goto(`/workspaces/?id=${workspaceID}`);
+  const warning = page.getByRole('alert', { name: 'Workspace launch failed' });
+  await expect(warning).toContainText('The guest could not prepare the repository.');
+  await expect(page.getByRole('button', { name: 'Configure container: Failed' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Verify IDE: Pending' })).toBeDisabled();
 });
 
 for (const [action, button, label] of [

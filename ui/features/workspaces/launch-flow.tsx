@@ -124,7 +124,7 @@ function LaunchProgress({ accepted }: { accepted: AcceptedLaunch }) {
     <Stack align="flex-start">
       {operation.isError ? <APIProblemView error={operation.error} /> : null}
       {operation.isPending ? <Text role="status">Loading launch progress…</Text> : null}
-      {operation.data ? <WorkflowStepper operation={operation.data} /> : null}
+      {operation.data ? <WorkflowStepper operation={operation.data} failureTitle="Workspace launch failed" /> : null}
       <Anchor href={`/workspaces/?id=${encodeURIComponent(accepted.workspaceId)}`}>View workspace</Anchor>
     </Stack>
   );

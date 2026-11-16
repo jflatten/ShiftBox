@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -86,13 +87,13 @@ func (d devContainer) ensureRetainedHome(ctx context.Context, result devContaine
 	if !mounted {
 		return devContainerResult{}, errors.New("Dev Container did not mount the retained home")
 	}
-	if err := d.verifyHomeOwner(ctx, result, target); err != nil {
+	if err := d.prepareRetainedHomeOwner(ctx, result, target); err != nil {
 		return devContainerResult{}, err
 	}
 	return result, nil
 }
 
-func (d devContainer) verifyHomeOwner(ctx context.Context, result devContainerResult, target string) error {
+func (d devContainer) prepareRetainedHomeOwner(ctx context.Context, result devContainerResult, target string) error {
 	actual, uid, gid, err := developerHome(ctx, result, d.runner())
 	if err != nil {
 		return err
@@ -103,6 +104,10 @@ func (d devContainer) verifyHomeOwner(ctx context.Context, result devContainerRe
 	expected, err := os.ReadFile(filepath.Join(d.retainedHomeRoot(), "owner"))
 	if err != nil || string(expected) != homeOwner(uid, gid) {
 		return errors.New("Dev Container developer home ownership changed")
+	}
+	// Older retained homes may still contain files copied with image ownership.
+	if err := assignTreeOwner(ctx, d.retainedHomeData(), uid, gid); err != nil {
+		return fmt.Errorf("repair retained developer home ownership: %w", err)
 	}
 	return nil
 }
@@ -192,8 +197,8 @@ func (d devContainer) seedRetainedHome(ctx context.Context, result devContainerR
 	if _, err := run(ctx, "/usr/bin/docker", "cp", "-a", result.ID+":"+target+"/.", data); err != nil {
 		return "", err
 	}
-	if err := os.Chown(data, uid, gid); err != nil {
-		return "", err
+	if err := assignTreeOwner(ctx, data, uid, gid); err != nil {
+		return "", fmt.Errorf("set retained developer home ownership: %w", err)
 	}
 	if err := writePrivateState(filepath.Join(dir, "target"), []byte(target)); err != nil {
 		return "", err
