@@ -14,3 +14,15 @@ Dockerfile*
 .dockerignore
 *.utm/
 *.qcow2*
+.aws/
+bin/
+dist/
+**/.terraform/
+**/*.tfstate*
+**/*.tfplan
+**/*.tfvars
+**/*.tfvars.json
+**/*.local.pkrvars.hcl
+**/*.local.pkrvars.json
+**/*.key
+**/*.pem

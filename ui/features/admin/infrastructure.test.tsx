@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MantineProvider } from '@mantine/core';
 import { Providers } from '../../app/providers';
 import { Infrastructure } from './infrastructure';
 
@@ -26,12 +27,98 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
+// A fresh EC2 installation can create a profile and see it in the table immediately.
+test('lists a resource profile after creation', async () => {
+  const profiles: unknown[] = [];
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json({ ...status, provider: { ...status.provider, name: 'ec2' } });
+    if (input === '/api/v1/admin/resource-profiles') {
+      if (init?.method === 'POST') {
+        profiles.push({ ...JSON.parse(String(init.body)), id: 'profile', enabled: true, version: 1 });
+        return json({});
+      }
+      return json(profiles);
+    }
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Infrastructure /></Providers>);
+  expect(await screen.findByText('No resource profiles yet.')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'New resource profile' }));
+  const dialog = await screen.findByRole('dialog', { name: 'New resource profile' });
+  await user.type(within(dialog).getByLabelText(/Profile name/), 'AWS demo');
+  await user.type(within(dialog).getByLabelText(/vCPUs/), '2');
+  await user.type(within(dialog).getByLabelText(/Memory \(MiB\)/), '4096');
+  await user.type(within(dialog).getByLabelText(/Disk \(MiB\)/), '32768');
+  await user.click(within(dialog).getByRole('button', { name: 'Create resource profile' }));
+  expect(await screen.findByText('Resource profile created.')).toBeVisible();
+  expect(within(screen.getByRole('table', { name: 'Resource profiles' })).getByRole('rowheader', { name: 'AWS demo' })).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/admin/resource-profiles', expect.objectContaining({
+    method: 'POST', body: JSON.stringify({ name: 'AWS demo', cpuCount: 2, memoryMiB: 4096, diskMiB: 32768 }),
+  }));
+});
+
+
+// Editing refreshes the displayed name and state. A referenced profile remains
+// available to administer after a rejected delete.
+test('edits a profile and explains why deletion is blocked', async () => {
+  const collection = '/api/v1/admin/resource-profiles';
+  let profile = { id: 'profile', name: 'Small', cpuCount: 2, memoryMiB: 1024, diskMiB: 40, enabled: true, version: 1 };
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json(status);
+    if (input === collection) return json([profile]);
+    if (input === collection + '/profile' && init?.method === 'PUT') {
+      profile = { ...profile, ...JSON.parse(String(init.body)), version: 2 };
+      return json(null);
+    }
+    if (input === collection + '/profile' && init?.method === 'DELETE') {
+      return { ok: false, status: 409, headers: new Headers({ 'Content-Type': 'application/problem+json' }),
+        json: async () => ({ type: 'about:blank', status: 409, requestId: 'ref',
+          code: 'infrastructure.resource_profile_in_use', title: 'A template revision uses this resource profile' }),
+      } as Response;
+    }
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><MantineProvider env="test"><Infrastructure /></MantineProvider></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Actions for Small' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+  const edit = await screen.findByRole('dialog', { name: 'Edit resource profile' });
+  const name = within(edit).getByLabelText(/Profile name/);
+  expect(name).toHaveValue('Small');
+  await user.clear(name);
+  await user.type(name, 'Medium');
+  await user.click(within(edit).getByRole('switch', { name: 'Enabled' }));
+  await user.click(within(edit).getByRole('button', { name: 'Save changes' }));
+  expect(await screen.findByRole('rowheader', { name: 'Medium' })).toBeVisible();
+  expect(screen.getByText('Disabled')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith(collection + '/profile', expect.objectContaining({
+    method: 'PUT', headers: expect.objectContaining({ 'If-Match': '"1"', 'X-CSRF-Token': 'fixture' }),
+  }));
+  await user.click(screen.getByRole('button', { name: 'Actions for Medium' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+  const remove = await screen.findByRole('dialog', { name: 'Delete resource profile' });
+  await waitFor(() => expect(within(remove).getByRole('button', { name: 'Cancel' })).toHaveFocus());
+  await user.click(within(remove).getByRole('button', { name: 'Delete resource profile' }));
+  expect(await within(remove).findByText('A template revision uses this resource profile')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith(collection + '/profile', expect.objectContaining({
+    method: 'DELETE', headers: expect.objectContaining({ 'If-Match': '"2"', 'X-CSRF-Token': 'fixture' }),
+  }));
+  await user.click(within(remove).getByRole('button', { name: 'Cancel' }));
+  expect(screen.getByRole('rowheader', { name: 'Medium' })).toBeVisible();
+});
+
 // Loading infrastructure results must preserve one form per permitted action.
 test('keeps certificate and maintenance forms distinct after status loads', async () => {
   const duplicateKeys = jest.spyOn(console, 'error').mockImplementation(() => {});
   globalThis.fetch = jest.fn(async input => {
     if (input === '/api/v1/session') return json({ ...session, permissions: [...session.permissions, 'maintenance.manage'] });
     if (input === '/api/v1/admin/infrastructure') return json(status);
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
     if (input === '/api/v1/admin/maintenance') return json([]);
     if (input === '/api/v1/workspaces') return json({ items: [] });
     throw new Error('unexpected request');
@@ -61,6 +148,7 @@ test('shows infrastructure warnings and refreshes after a concurrent capacity ed
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/admin/infrastructure') return json(capacityChanged
       ? { ...status, capacity: { ...status.capacity, cpuCount: 6 }, version: 3 } : status);
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
     if (input === '/api/v1/admin/capacity' && init?.method === 'PUT') {
       capacityChanged = true;
       return {
@@ -114,6 +202,7 @@ test('retries a certificate upload and shows the committed replacement', async (
   const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/admin/infrastructure') return json(requests.length > 1 ? { ...status, conditions: [] } : status);
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
     if (input === '/api/v1/admin/certificate' && init?.method === 'PUT') {
       requests.push(init);
       if (requests.length === 1) throw new TypeError('response lost');
@@ -161,10 +250,16 @@ test('requires infrastructure management permission to replace a certificate', a
   globalThis.fetch = jest.fn(async input => {
     if (input === '/api/v1/session') return json({ ...session, permissions: ['infrastructure.view'] });
     if (input === '/api/v1/admin/infrastructure') return json(status);
+    if (input === '/api/v1/admin/resource-profiles') {
+      return json([{ id: 'one', name: 'Small', cpuCount: 1, memoryMiB: 512, diskMiB: 40, enabled: true, version: 1 }]);
+    }
     throw new Error('unexpected request');
   });
   render(<Providers><Infrastructure /></Providers>);
   expect(await screen.findByText('Browser certificate expires soon')).toBeVisible();
+  expect(await screen.findByRole('rowheader', { name: 'Small' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'New resource profile' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Actions for Small' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Replace certificate' })).toBeNull();
   expect(screen.queryByRole('tab', { name: 'Certificates' })).toBeNull();
   expect(screen.queryByRole('tab', { name: 'Maintenance' })).toBeNull();
@@ -175,9 +270,10 @@ test('requires infrastructure management permission to replace a certificate', a
 // Switching settings categories must not silently discard a capacity draft;
 // Discard changes restores the saved values without issuing a mutation.
 test('preserves a capacity draft across tabs and discards it explicitly', async () => {
-  const fetch = jest.fn(async input => {
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async input => {
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/admin/infrastructure') return json(status);
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
     throw new Error('unexpected request');
   });
   globalThis.fetch = fetch;
@@ -198,7 +294,10 @@ test('preserves a capacity draft across tabs and discards it explicitly', async 
   expect(screen.getByRole('textbox', { name: 'CPU limit' })).toHaveValue('4');
   expect(save).toBeDisabled();
   expect(screen.queryByText('You have unsaved capacity changes.')).toBeNull();
-  expect(fetch.mock.calls.map(([input]) => input)).toEqual(['/api/v1/session', '/api/v1/admin/infrastructure']);
+  expect(fetch.mock.calls.map(([input]) => input).sort()).toEqual([
+    '/api/v1/admin/infrastructure', '/api/v1/admin/resource-profiles', '/api/v1/session',
+  ]);
+  expect(fetch.mock.calls.every(([, init]) => !init?.method)).toBe(true);
 });
 
 // A failed capacity save must keep the administrator's draft and permit a
@@ -209,6 +308,7 @@ test('retains failed capacity edits and confirms a successful retry', async () =
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/admin/infrastructure') return json(attempts === 2
       ? { ...status, version: 3, capacity: { ...status.capacity, cpuCount: 5 } } : status);
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
     if (input === '/api/v1/admin/capacity' && init?.method === 'PUT') {
       attempts++;
       return attempts === 1 ? new Response(null, { status: 503 }) : json(null);

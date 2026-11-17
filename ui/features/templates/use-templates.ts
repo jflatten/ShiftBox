@@ -8,6 +8,7 @@ export interface TemplateRevision {
   ownerName?: string;
   resourceProfileName?: string;
   platformImageName?: string;
+  providerKind?: string;
   state: 'active' | 'archived';
   version: number;
   currentRevision: number;

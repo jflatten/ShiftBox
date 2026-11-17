@@ -146,11 +146,12 @@ func GuestPollHandler(compatibility GuestCompatibility,
 			return
 		}
 		var input struct {
-			ProtocolVersion      string                 `json:"protocolVersion"`
-			GuestRelease         string                 `json:"guestRelease"`
-			LastOperationID      *string                `json:"lastOperationId"`
-			LastOperationVersion int64                  `json:"lastOperationVersion"`
-			OperationReport      *guest.OperationReport `json:"operationReport"`
+			ProtocolVersion      string                  `json:"protocolVersion"`
+			GuestRelease         string                  `json:"guestRelease"`
+			LastOperationID      *string                 `json:"lastOperationId"`
+			LastOperationVersion int64                   `json:"lastOperationVersion"`
+			OperationReport      *guest.OperationReport  `json:"operationReport"`
+			Probes               []workspace.ProbeResult `json:"probes"`
 			Activity             *struct {
 				SampledAt      time.Time `json:"sampledAt"`
 				CPUPercent     float64   `json:"cpuPercent"`
@@ -169,13 +170,17 @@ func GuestPollHandler(compatibility GuestCompatibility,
 			WriteProblem(w, requestID, Problem{Status: 409, Code: "guest.release_unsupported", Title: "Guest release or protocol is unsupported"})
 			return
 		}
+		if !workspace.ValidProbeResults(input.Probes) {
+			WriteProblem(w, requestID, Problem{Status: 400, Code: "request.invalid_body", Title: "Invalid guest probe results"})
+			return
+		}
 		if exchange == nil || now == nil {
 			WriteProblem(w, requestID, errors.New("guest polling is incompletely wired"))
 			return
 		}
 		stamp := now().UTC()
 		report := guest.PollReport{GuestRelease: input.GuestRelease, ProtocolVersion: input.ProtocolVersion,
-			Version: input.LastOperationVersion, Operation: input.OperationReport}
+			Version: input.LastOperationVersion, Operation: input.OperationReport, Probes: input.Probes}
 		if input.Activity != nil {
 			report.Activity = &workspace.CPUActivity{SampledAt: input.Activity.SampledAt, Percent: input.Activity.CPUPercent}
 		}
@@ -196,6 +201,7 @@ func GuestPollHandler(compatibility GuestCompatibility,
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(guest.ProbeReportsHeader, "1")
 		if tunnelAddress != "" && contact.DesiredState == "running" {
 			w.Header().Set(guest.TunnelAddressHeader, tunnelAddress)
 			w.Header().Set(guest.PreviewPortsHeader, contact.PreviewPorts)

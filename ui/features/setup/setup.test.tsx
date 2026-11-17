@@ -227,3 +227,27 @@ test('saves capacity and confirms activation before submitting', async () => {
   await user.click(activate);
   expect(await screen.findByRole('link', { name: 'Sign in to ShiftBox' })).toHaveAttribute('href', 'https://shiftbox.example.test/auth/login');
 });
+
+// Cloud setup validates the deployed scoped database without exposing its URI.
+test('validates the deployed PostgreSQL database in cloud setup', async () => {
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return response(200, { mode: 'bootstrap_restricted', csrfToken: 'csrf' }) as Response;
+    if (input === '/api/v1/setup/status') return response(200, {
+      ...bootstrap('data_profile'),
+      cloud: {
+        managementOrigin: 'https://shiftbox.dev.example.test:8443',
+        ideHostPattern: '{workspace}.ide.dev.example.test',
+        previewHostPattern: '{service}--{workspace}.preview.dev.example.test',
+      },
+    }) as Response;
+    if (input === '/api/v1/setup/data-profile' && init?.method === 'PUT') return response(202) as Response;
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  render(<Providers><SetupFlow /></Providers>);
+  await userEvent.click(await screen.findByRole('button', { name: 'Validate database' }));
+  expect(screen.queryByLabelText('PostgreSQL connection URI')).toBeNull();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/setup/data-profile', expect.objectContaining({
+    body: JSON.stringify({ profile: 'postgres', tlsMode: 'verify-full' }),
+  }));
+});

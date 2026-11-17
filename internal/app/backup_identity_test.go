@@ -4,7 +4,29 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jflatten/ShiftBox/internal/config"
 )
+
+// TestEC2BackupHostID follows the persistent deployment volume across ECS host replacements.
+func TestEC2BackupHostID(t *testing.T) {
+	settings := &config.ControllerRuntime{Provider: "ec2", EC2: &config.EC2Runtime{
+		AccountID: "524941137496", Region: "us-east-2", DataVolumeID: "vol-09cc035be176053cd",
+	}}
+	first, err := BackupHostIDForRuntime(t.Context(), settings)
+	if err != nil || len(first) != 64 {
+		t.Fatalf("EC2 backup binding length = %d (%v), want an opaque digest", len(first), err)
+	}
+	settings.EC2.DataVolumeID = "vol-039cc035be176053c"
+	second, err := BackupHostIDForRuntime(t.Context(), settings)
+	if err != nil || second == first {
+		t.Fatal("a new data volume reused the original backup binding")
+	}
+	settings.EC2.DataVolumeID = ""
+	if _, err := BackupHostIDForRuntime(t.Context(), settings); err == nil {
+		t.Fatal("EC2 accepted a missing data volume identity")
+	}
+}
 
 // TestBackupHostIDOnMac checks the actual registry format on supported hosts.
 func TestBackupHostIDOnMac(t *testing.T) {

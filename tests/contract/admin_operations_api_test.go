@@ -84,7 +84,7 @@ func TestAdminHistoryDoesNotChangeActiveState(t *testing.T) {
 		infrastructure := web.InfrastructureStatusHandler(db, origin, clock, provider.Capabilities{
 			Name: "utm", Version: "5.0.8", Architecture: "amd64", NetworkModes: []string{"shared"},
 		})
-		importArtifact := app.NewPlatformImport(db, journal, origin, installation, clock, nil).Handler()
+		importArtifact := app.NewPlatformImport(db, journal, origin, installation, clock, nil, "utm").Handler()
 		mux := http.NewServeMux()
 		for _, h := range []*web.AuthorizedHandler{&publish, &notices, &receipt, &campaigns, &schedule, &workspace, &infrastructure, &importArtifact} {
 			mux.Handle(h.Route.Method+" /api/v1"+h.Route.Path, h)

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
@@ -26,7 +27,7 @@ var errAgentIdentityRenewed = errors.New("guest identity renewed")
 func (identity AgentIdentity) Poll(ctx context.Context, endpoint, serverName, protocol, release string) error {
 	client := identity.pollClient(serverName)
 	defer client.CloseIdleConnections()
-	_, err := pollAgent(ctx, client, endpoint, newGuestPollRequest(protocol, release, nil), nil, devContainer{}, nil)
+	_, err := pollAgent(ctx, client, endpoint, newGuestPollRequest(protocol, release, nil), nil, devContainer{}, nil, nil)
 	return err
 }
 
@@ -42,12 +43,13 @@ func (identity AgentIdentity) pollClient(serverName string) *http.Client {
 }
 
 type guestPollRequest struct {
-	ProtocolVersion      string                 `json:"protocolVersion"`
-	GuestRelease         string                 `json:"guestRelease"`
-	LastOperationID      string                 `json:"lastOperationId,omitempty"`
-	LastOperationVersion int64                  `json:"lastOperationVersion,omitempty"`
-	Report               *OperationReport       `json:"operationReport,omitempty"`
-	Activity             *workspace.CPUActivity `json:"activity,omitempty"`
+	ProtocolVersion      string                  `json:"protocolVersion"`
+	GuestRelease         string                  `json:"guestRelease"`
+	LastOperationID      string                  `json:"lastOperationId,omitempty"`
+	LastOperationVersion int64                   `json:"lastOperationVersion,omitempty"`
+	Report               *OperationReport        `json:"operationReport,omitempty"`
+	Activity             *workspace.CPUActivity  `json:"activity,omitempty"`
+	Probes               []workspace.ProbeResult `json:"probes,omitempty"`
 }
 
 func newGuestPollRequest(protocol, release string, journal *localJournal) guestPollRequest {
@@ -66,9 +68,14 @@ func newGuestPollRequest(protocol, release string, journal *localJournal) guestP
 	return input
 }
 
-func pollAgent(ctx context.Context, client *http.Client, endpoint string, input guestPollRequest, journal *localJournal, runtime devContainer, tunnel *agentTunnel) (time.Duration, error) {
+func pollAgent(ctx context.Context, client *http.Client, endpoint string, input guestPollRequest,
+	journal *localJournal, runtime devContainer, tunnel *agentTunnel, probes *probeReporter,
+) (time.Duration, error) {
 	if !validPollEndpoint(endpoint) || input.ProtocolVersion == "" || input.GuestRelease == "" {
 		return 0, errors.New("invalid guest poll configuration")
+	}
+	if probes != nil && probes.enabled {
+		input.Probes = []workspace.ProbeResult{{ID: workspace.ProbeCodeServer, Status: probeCodeServer(ctx, probes.socket)}}
 	}
 	body, err := json.Marshal(input)
 	if err != nil {
@@ -118,6 +125,9 @@ func pollAgent(ctx context.Context, client *http.Client, endpoint string, input 
 			return 0, errGuestDispatchConflict
 		}
 		tunnel.update(ctx, offer)
+	}
+	if probes != nil {
+		probes.enabled = result.DesiredState == "running" && response.Header.Get(ProbeReportsHeader) == "1"
 	}
 	if err := applyGuestPoll(ctx, journal, runtime, result.Generation, result.DesiredState, result.Operation); err != nil {
 		return 0, err
@@ -226,17 +236,26 @@ func validPollEndpoint(endpoint string) bool {
 // ServeAgent loads the on-disk identity or enrolls from mounted recovery media,
 // then maintains authenticated contact until stopped by the supervisor.
 func ServeAgent(ctx context.Context, stateDir, seedPath, protocol, release, secretSocket string) error {
-	if !filepath.IsAbs(stateDir) || !filepath.IsAbs(seedPath) {
+	if !filepath.IsAbs(seedPath) {
+		return errors.New("invalid guest service configuration")
+	}
+	return serveAgent(ctx, stateDir, protocol, release, secretSocket, func() (AgentIdentity, error) {
+		seed, err := os.Open(seedPath)
+		if err != nil {
+			return AgentIdentity{}, errors.New("no valid guest identity or recovery media")
+		}
+		defer seed.Close()
+		return EnrollAgent(ctx, stateDir, seed, protocol, release, time.Now())
+	})
+}
+
+func serveAgent(ctx context.Context, stateDir, protocol, release, secretSocket string, enroll func() (AgentIdentity, error)) error {
+	if !filepath.IsAbs(stateDir) {
 		return errors.New("invalid guest service configuration")
 	}
 	identity, err := LoadAgentIdentity(stateDir, time.Now())
 	if err != nil {
-		seed, err := os.Open(seedPath)
-		if err != nil {
-			return errors.New("no valid guest identity or recovery media")
-		}
-		identity, err = EnrollAgent(ctx, stateDir, seed, protocol, release, time.Now())
-		seed.Close()
+		identity, err = enroll()
 		if err != nil {
 			return err
 		}
@@ -285,6 +304,7 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 				return guestGitAccessToken(ctx, client, identity.PollEndpoint)
 			},
 		}}
+	probes := &probeReporter{socket: proxy.IDESocket}
 	var sampler cpuSampler
 	firstPoll := true
 	renewAfter := guestRenewAfter(identity.Certificate.Leaf)
@@ -303,7 +323,7 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 		var delay time.Duration
 		poll := func(ctx context.Context) error {
 			var err error
-			delay, err = pollAgent(ctx, client, identity.PollEndpoint, input, journal, runtime, tunnel)
+			delay, err = pollAgent(ctx, client, identity.PollEndpoint, input, journal, runtime, tunnel, probes)
 			return err
 		}
 		if firstPoll {

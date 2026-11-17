@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Group, Modal, NativeSelect, Stack, Text, TextInput } from '@mantine/core';
+import { Anchor, Button, Group, Modal, NativeSelect, Stack, Text, TextInput } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { useQuery } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import type { operations } from '../../lib/api-types';
 import { APIProblemError, readProblem } from '../../lib/api-problem';
+import { platformImageLabel } from '../../lib/provider-label';
 import type { TemplateRevision } from './use-templates';
 
 type TemplateCatalog = operations['listTemplateCatalog']['responses'][200]['content']['application/json'];
 
-export function TemplateRevisionForm({ template, csrfToken, onClose, refresh }: {
+export function TemplateRevisionForm({ template, csrfToken, onClose, refresh, admin }: {
   template?: TemplateRevision;
+  admin?: boolean;
   csrfToken: string;
   onClose: () => void;
   refresh: () => Promise<unknown>;
@@ -97,9 +99,13 @@ export function TemplateRevisionForm({ template, csrfToken, onClose, refresh }: 
               data={[{ value: '', label: 'Select a resource profile' }, ...profiles.map(({ id, name }) => ({ value: id, label: name }))]}
               {...form.getInputProps('resourceProfileId')} />
             <NativeSelect label="Platform image" required key={form.key('platformArtifactId')}
-              data={[{ value: '', label: 'Select a platform image' }, ...images.map(({ id, name }) => ({ value: id, label: name }))]}
+              data={[{ value: '', label: 'Select a platform image' }, ...images.map(({ id, name, providerKind }) => ({ value: id, label: platformImageLabel(name, providerKind) }))]}
               {...form.getInputProps('platformArtifactId')} />
-            {(!profiles.length || !images.length) ? <Text size="sm">An administrator must configure an available resource profile and platform image.</Text> : null}
+            {!profiles.length ? <Text size="sm">
+              {admin ? <>Create a resource profile in <Anchor href="/infrastructure/">Infrastructure</Anchor>.</>
+                : 'Ask an administrator to create a resource profile.'}
+            </Text> : null}
+            {!images.length ? <Text size="sm">An administrator must configure an available platform image.</Text> : null}
           </> : null}
           <TextInput label="Network policy ID" key={form.key('networkPolicyId')} {...form.getInputProps('networkPolicyId')} />
           <TextInput label="Secret names" description="Separate references with commas." key={form.key('secretNames')} {...form.getInputProps('secretNames')} />

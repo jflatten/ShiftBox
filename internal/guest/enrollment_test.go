@@ -36,6 +36,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/release"
 	"github.com/jflatten/ShiftBox/internal/secret"
 	"github.com/jflatten/ShiftBox/internal/web"
+	"github.com/jflatten/ShiftBox/internal/workspace"
 	_ "modernc.org/sqlite"
 )
 
@@ -629,6 +630,44 @@ func TestEnrollmentGrantReplay(t *testing.T) {
 	if code := poll(hello); code != 200 {
 		t.Fatalf("registered poll = %d, want 200", code)
 	}
+	// Probe snapshots are scoped to the authenticated generation and expire
+	// even if a guest keeps polling without reporting another check.
+	t.Run("authenticated probe reports", func(t *testing.T) {
+		report := func(probes string) int {
+			return poll(strings.TrimSuffix(hello, "}") + `,"probes":` + probes + "}")
+		}
+		check := func(generation int64, stamp time.Time, want string) {
+			t.Helper()
+			tx, err := db.BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			probes, err := workspace.ReadProbeResults(ctx, tx, "work", generation, stamp)
+			if err != nil || (want == "" && len(probes) != 0) ||
+				(want != "" && (len(probes) != 1 || probes[0].ID != workspace.ProbeCodeServer || probes[0].Status != want)) {
+				t.Fatalf("probe results = %+v (%v), want code-server status %q", probes, err, want)
+			}
+		}
+		check(1, now, "")
+		if code := report(`[{"id":"code-server","status":"healthy"}]`); code != 200 {
+			t.Fatalf("valid probe poll = %d, want 200", code)
+		}
+		check(1, now, workspace.ProbeHealthy)
+		check(2, now, "")
+		if code := report(`[{"id":"code-server","status":"error"},{"id":"code-server","status":"error"}]`); code != 400 {
+			t.Fatalf("duplicate probe poll = %d, want 400", code)
+		}
+		check(1, now, workspace.ProbeHealthy)
+		if code := report(`[{"id":"code-server","status":"error"}]`); code != 200 {
+			t.Fatalf("failing probe poll = %d, want 200", code)
+		}
+		if code := poll(hello); code != 200 {
+			t.Fatalf("poll without probes = %d, want 200", code)
+		}
+		check(1, now, workspace.ProbeError)
+		check(1, now.Add(91*time.Second), "")
+	})
 	t.Run("guest Git credential authority", func(t *testing.T) {
 		// Switch provider behavior through the fixture database so the request
 		// and test goroutines need no shared mutable state.

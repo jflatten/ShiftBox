@@ -65,12 +65,14 @@ func RunOperationalConditions(ctx context.Context, db *sql.DB, dir, storage stri
 	defer clear(initial)
 	probes := operationalProbes{
 		provider: capabilities, minimumDiskBytes: minimumDiskBytes, startedAt: time.Now(),
-		space: func() (uint64, error) { return AvailableWorkspaceSpace(storage) },
 		key: func() bool {
 			current, err := cryptostore.LoadKey(keyPath)
 			defer clear(current)
 			return err == nil && subtle.ConstantTimeCompare(current, initial) == 1
 		},
+	}
+	if storage != "" {
+		probes.space = func() (uint64, error) { return AvailableWorkspaceSpace(storage) }
 	}
 	return runHistoryRetention(ctx, time.Minute, func(ctx context.Context) error {
 		return withCheckpointActivity(ctx, fence, func() error {
@@ -82,21 +84,23 @@ func RunOperationalConditions(ctx context.Context, db *sql.DB, dir, storage stri
 }
 
 func sampleOperationalConditions(ctx context.Context, db *sql.DB, probes operationalProbes, now time.Time) error {
-	probe, cancel := context.WithTimeout(ctx, 5*time.Second)
-	caps, providerErr := probes.provider(probe)
-	cancel()
-	available, spaceErr := probes.space()
-	keyHealthy := probes.key()
+	type probeResult struct {
+		condition operationalCondition
+		active    bool
+	}
+	results := []probeResult{{keyUnavailable, !probes.key()}}
+	if probes.provider != nil {
+		probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+		caps, err := probes.provider(probe)
+		cancel()
+		results = append(results, probeResult{providerUnavailable, err != nil || !caps.Create || !caps.Start || !caps.Stop || !caps.Delete})
+	}
+	if probes.space != nil {
+		available, err := probes.space()
+		results = append(results, probeResult{storageLow, err == nil && available < probes.minimumDiskBytes}, probeResult{storageUnknown, err != nil})
+	}
 	return database.Transaction(ctx, db, func(tx *sql.Tx) error {
-		for _, item := range []struct {
-			condition operationalCondition
-			active    bool
-		}{
-			{providerUnavailable, providerErr != nil || !caps.Create || !caps.Start || !caps.Stop || !caps.Delete},
-			{keyUnavailable, !keyHealthy},
-			{storageLow, spaceErr == nil && available < probes.minimumDiskBytes},
-			{storageUnknown, spaceErr != nil},
-		} {
+		for _, item := range results {
 			if err := writeOperationalCondition(ctx, tx, item.condition, item.active, now); err != nil {
 				return err
 			}

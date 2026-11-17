@@ -25,6 +25,7 @@ type PollReport struct {
 	Version         int64
 	Operation       *OperationReport
 	Activity        *workspace.CPUActivity
+	Probes          []workspace.ProbeResult
 	IDEConnected    func(workspaceID string) bool
 	ActivityPolicy  *workspace.ActivityPolicy
 }
@@ -90,6 +91,9 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 			return ErrGuestUnauthorized
 		}
 		if contact.DesiredState == "running" {
+			if err := workspace.RecordProbeResults(ctx, tx, contact.WorkspaceID, contact.Generation, now, report.Probes); err != nil {
+				return err
+			}
 			if err := tx.QueryRowContext(ctx, "SELECT preview_ports_json FROM workspaces WHERE id=$1", contact.WorkspaceID).Scan(&contact.PreviewPorts); err != nil {
 				return err
 			}

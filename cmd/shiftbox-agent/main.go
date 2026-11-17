@@ -65,5 +65,8 @@ func run(ctx context.Context, args []string) error {
 	if len(args) != 1 || args[0] != "serve" {
 		return errUsage
 	}
+	if os.Geteuid() == 0 && os.Getenv("SHIFTBOX_EC2_ENROLLMENT") == "1" {
+		return guest.ServeEC2Agent(ctx, stateDirectory, "1", agentRelease, guest.SecretSocketPath)
+	}
 	return guest.ServeAgent(ctx, stateDirectory, seedFile, "1", agentRelease, guest.SecretSocketPath)
 }

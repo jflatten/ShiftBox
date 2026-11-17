@@ -40,6 +40,10 @@ func (p *ProvisionExecutor) Observe(ctx context.Context, op operation.Operation,
 	if err != nil {
 		return "", false, err
 	}
+	if req.Ref.InstanceID == "" && got.EC2Enrollment {
+		// Reenter Create to check the original operation and finish stopping its unseeded boot.
+		return "", false, nil
+	}
 	evidence, err := p.record(ctx, req, got)
 	return evidence, err == nil, err
 }

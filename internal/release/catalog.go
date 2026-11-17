@@ -21,11 +21,12 @@ var ErrInvalidArtifact = errors.New("invalid platform artifact")
 
 const maxManifestBytes = 1 << 20
 
-// Artifact describes the checked manifest and the relative path to its UTM bundle.
+// Artifact describes a checked platform manifest and its provider-specific source.
 type Artifact struct {
 	Manifest       ArtifactManifest
 	ManifestSHA256 string
 	Bundle         string
+	EC2            *EC2Image
 }
 
 // ArtifactManifest describes a versioned platform export.

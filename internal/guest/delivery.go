@@ -3,6 +3,7 @@ package guest
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"os"
@@ -25,6 +26,9 @@ func (e *Enrollment) Deliver(ctx context.Context, operationID string, inventory 
 		now.Before(e.authority.Certificate.NotBefore) || !now.Before(e.authority.Certificate.NotAfter) ||
 		!stoppedForEnrollment(inventory, now) {
 		return "", ErrEnrollmentDenied
+	}
+	if inventory.EC2Enrollment {
+		return e.deliverEC2(ctx, operationID, inventory, now, endpoint, pollEndpoint, attach)
 	}
 	id, directory, attached, err := e.pendingMedia(ctx, operationID, inventory.Ref, now)
 	if err != nil {
@@ -76,6 +80,37 @@ func (e *Enrollment) Deliver(ctx context.Context, operationID string, inventory 
 		WHERE id=$1 AND state='issued' AND media_directory=$3`, id, now.UTC().Format(time.RFC3339Nano), directory)
 	// An interrupted write keeps the prepared media available for a retry.
 	return image, mediaWrite(updated, err)
+}
+
+// deliverEC2 issues a fresh operation-bound grant on a verified stopped
+// instance. An interrupted attempt is invalidated before another can enroll.
+func (e *Enrollment) deliverEC2(ctx context.Context, operationID string, inventory provider.Inventory, now time.Time,
+	endpoint, pollEndpoint string, attach func(context.Context, provider.EnrollmentRequest) (provider.DeliveryResult, error),
+) (string, error) {
+	token, err := e.Mint(ctx, operationID, inventory, now)
+	if err != nil {
+		return "", err
+	}
+	id := auth.TokenDigest(token)
+	ca := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.authority.Certificate.Raw})
+	seed := EnrollmentSeed{Grant: token, Endpoint: endpoint, PollEndpoint: pollEndpoint, CAPEM: string(ca)}
+	if !seed.valid() {
+		return e.failDelivery(ctx, id, "", ErrInvalidEnrollmentSeed)
+	}
+	payload, err := json.Marshal(seed)
+	if err != nil {
+		return e.failDelivery(ctx, id, "", ErrInvalidEnrollmentSeed)
+	}
+	defer clear(payload)
+	result, err := attach(ctx, provider.EnrollmentRequest{Ref: inventory.Ref, OperationID: operationID, Eligible: true, Seed: payload})
+	if err == nil && (result.MediaID == "" || result.Inventory.Ref != inventory.Ref ||
+		result.Inventory.InstanceID != inventory.InstanceID || result.Inventory.Power != provider.Stopped) {
+		err = provider.ErrOutcomeUnknown
+	}
+	if err != nil {
+		return e.failDelivery(ctx, id, "", err)
+	}
+	return result.MediaID, nil
 }
 
 func (e *Enrollment) pendingMedia(ctx context.Context, operationID string, ref provider.WorkspaceRef, now time.Time) (string, string, bool, error) {

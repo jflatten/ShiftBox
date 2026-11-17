@@ -210,3 +210,99 @@ func TestCapacityAdministration(t *testing.T) {
 	request(&budget, `"0"`, csrf, limits, 204)
 	request(&budget, `"0"`, csrf, limits, 412)
 }
+
+// TestResourceProfileCRUD protects assigned profiles, rejects stale writes,
+// and verifies that new profiles are listed with their saved resources.
+func TestResourceProfileCRUD(t *testing.T) {
+	const origin = "https://management.test"
+	const collection = "/api/v1/admin/resource-profiles"
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "profiles.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	clock := func() time.Time { return now }
+	token := strings.Repeat("A", 43)
+	seedWorkspaceLaunch(t, db, uuid.NewString(), token, now)
+	caps := provider.Capabilities{
+		Minimum: provider.Resources{CPU: 1, MemoryBytes: 512 << 20, DiskBytes: 20 << 20},
+		Maximum: provider.Resources{CPU: 8, MemoryBytes: 4096 << 20, DiskBytes: 80 << 20},
+	}
+	_, create := web.CapacityHandlers(db, origin, clock, func() string { return "new-profile" }, caps)
+	mux := http.NewServeMux()
+	mux.Handle(create.Route.Method+" /api/v1"+create.Route.Path, &create)
+	for _, handler := range web.ResourceProfileHandlers(db, origin, clock, caps) {
+		mux.Handle(handler.Route.Method+" /api/v1"+handler.Route.Path, &handler)
+	}
+	request := func(method, path, version, csrf, body string, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, origin+path, strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		req.Header.Set("Origin", origin)
+		req.Header.Set("If-Match", version)
+		req.Header.Set("X-CSRF-Token", csrf)
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, req)
+		if response.Code != want {
+			t.Fatalf("%s %s = %d %s, want %d", method, path, response.Code, response.Body, want)
+		}
+		return response
+	}
+	const original = `{"name":"Large","cpuCount":4,"memoryMiB":2048,"diskMiB":80}`
+	const edited = `{"name":"Medium","cpuCount":3,"memoryMiB":1536,"diskMiB":60,"enabled":false}`
+	item := collection + "/new-profile"
+	csrf := auth.CSRFToken(token)
+	request(http.MethodGet, collection, "", "", "", 403)
+	request(http.MethodPut, item, `"1"`, csrf, edited, 403)
+	request(http.MethodDelete, item, `"1"`, csrf, "", 403)
+	if _, err := db.ExecContext(ctx, "UPDATE users SET role='administrator' WHERE id='member'"); err != nil {
+		t.Fatal(err)
+	}
+	request(http.MethodPost, collection, "", csrf, original, 201)
+	type profileView struct {
+		ID, Name                              string
+		CPUCount, MemoryMiB, DiskMiB, Version int
+		Enabled                               bool
+	}
+	readNew := func() profileView {
+		t.Helper()
+		response := request(http.MethodGet, collection, "", "", "", 200)
+		var profiles []profileView
+		if err := json.Unmarshal(response.Body.Bytes(), &profiles); err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range profiles {
+			if entry.ID == "new-profile" {
+				return entry
+			}
+		}
+		return profileView{}
+	}
+	if got := readNew(); got.Name != "Large" || got.CPUCount != 4 || got.MemoryMiB != 2048 || got.DiskMiB != 80 || got.Version != 1 || !got.Enabled {
+		t.Fatalf("created profile = %+v", got)
+	}
+	request(http.MethodPut, item, `"1"`, "invalid", edited, 403)
+	request(http.MethodPut, item, "", csrf, edited, 428)
+	request(http.MethodPut, item, `"1"`, csrf, strings.Replace(edited, "Medium", "Small", 1), 409)
+	request(http.MethodPut, item, `"1"`, csrf, strings.Replace(edited, ":60", ":81", 1), 409)
+	request(http.MethodPut, item, `"1"`, csrf, edited, 204)
+	request(http.MethodPut, item, `"1"`, csrf, edited, 412)
+	request(http.MethodDelete, item, `"1"`, csrf, "", 412)
+	if got := readNew(); got.Name != "Medium" || got.CPUCount != 3 || got.MemoryMiB != 1536 || got.DiskMiB != 60 || got.Version != 2 || got.Enabled {
+		t.Fatalf("edited profile = %+v", got)
+	}
+	blocked := request(http.MethodDelete, collection+"/profile", `"1"`, csrf, "", 409)
+	if !strings.Contains(blocked.Body.String(), "infrastructure.resource_profile_in_use") {
+		t.Fatalf("expected assigned profile conflict, got %s", blocked.Body)
+	}
+	request(http.MethodDelete, item, `"2"`, csrf, "", 204)
+	request(http.MethodDelete, item, `"2"`, csrf, "", 404)
+	if got := readNew(); got.ID != "" {
+		t.Fatalf("deleted profile still listed = %+v", got)
+	}
+}

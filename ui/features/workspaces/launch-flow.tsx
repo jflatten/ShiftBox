@@ -3,6 +3,7 @@ import { Anchor, Button, Group, Radio, Stack, Text, TextInput, Title } from '@ma
 import { APIProblemView } from '../../components/api-problem';
 import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
+import { providerLabel } from '../../lib/provider-label';
 import { useOperation } from '../../lib/use-operation';
 import { useTemplates, type TemplateRevision } from '../templates/use-templates';
 
@@ -66,9 +67,11 @@ export function LaunchFlow({ csrfToken, userID, admin }: { csrfToken: string; us
             <Text component="dt" size="sm" c="dimmed">Dev Container configuration</Text>
             <Text component="dd" ml={0} mb="sm">{review.devcontainerPath}</Text>
             <Text component="dt" size="sm" c="dimmed">Resource profile</Text>
-            <Text component="dd" ml={0} mb="sm">{review.resourceProfileId}</Text>
+            <Text component="dd" ml={0} mb="sm">{review.resourceProfileName || 'Unavailable'}</Text>
+            <Text component="dt" size="sm" c="dimmed">Provider</Text>
+            <Text component="dd" ml={0} mb="sm">{providerLabel(review.providerKind)}</Text>
             <Text component="dt" size="sm" c="dimmed">Platform image</Text>
-            <Text component="dd" ml={0} mb="sm">{review.platformArtifactId}</Text>
+            <Text component="dd" ml={0} mb="sm">{review.platformImageName || 'Unavailable'}</Text>
             <Text component="dt" size="sm" c="dimmed">Secret references</Text>
             <Text component="dd" ml={0}>{review.secretNames?.join(', ') || 'None'}</Text>
           </dl>

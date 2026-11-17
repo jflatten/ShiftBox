@@ -26,13 +26,14 @@ type PlatformImport struct {
 	origin       string
 	installation string
 	now          func() time.Time
-	run          func(ctx context.Context, operationID, actor, folder string, makeDefault bool) error
+	providerKind string
+	run          func(ctx context.Context, operationID, actor, input string, makeDefault bool) error
 }
 
 // NewPlatformImport builds the active import handler and its worker.
 func NewPlatformImport(db *sql.DB, journal *operation.Journal, origin, installation string, now func() time.Time,
-	run func(context.Context, string, string, string, bool) error) *PlatformImport {
-	return &PlatformImport{db: db, journal: journal, origin: origin, installation: installation, now: now, run: run}
+	run func(context.Context, string, string, string, bool) error, providerKind string) *PlatformImport {
+	return &PlatformImport{db: db, journal: journal, origin: origin, installation: installation, now: now, run: run, providerKind: providerKind}
 }
 
 // Handler authorizes administrators and commits the import before booting anything.
@@ -49,8 +50,9 @@ func (p *PlatformImport) Handler() web.AuthorizedHandler {
 
 func (p *PlatformImport) admit(ctx context.Context, tx *sql.Tx, r *http.Request, actor auth.Principal, _ web.AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
 	var input struct {
-		Folder      string `json:"folder"`
-		MakeDefault bool   `json:"makeDefault"`
+		Folder      string          `json:"folder"`
+		Manifest    json.RawMessage `json:"manifest"`
+		MakeDefault bool            `json:"makeDefault"`
 	}
 	key, err := web.IdempotencyKey(r)
 	if err != nil {
@@ -59,7 +61,13 @@ func (p *PlatformImport) admit(ctx context.Context, tx *sql.Tx, r *http.Request,
 	if err := web.DecodeJSON(nil, r, &input, 8192); err != nil {
 		return nil, err
 	}
-	if !filepath.IsAbs(input.Folder) || len(input.Folder) > 4096 || strings.ContainsRune(input.Folder, 0) {
+	source := input.Folder
+	if p.providerKind == "ec2" {
+		source = string(input.Manifest)
+		if _, err := release.ReadEC2Manifest(strings.NewReader(source)); input.Folder != "" || err != nil {
+			return nil, web.Problem{Status: 400, Code: "infrastructure.invalid_import_manifest", Title: "Provide the Packer AMI manifest"}
+		}
+	} else if len(input.Manifest) != 0 || !filepath.IsAbs(source) || len(source) > 4096 || strings.ContainsRune(source, 0) {
 		return nil, web.Problem{Status: 400, Code: "infrastructure.invalid_import_folder", Title: "Enter an absolute folder on the controller"}
 	}
 	// Serialize actor-scoped keys with other installation admissions.
@@ -82,13 +90,13 @@ func (p *PlatformImport) admit(ctx context.Context, tx *sql.Tx, r *http.Request,
 		return nil, conflict
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO platform_imports(operation_id,installation_id,folder,make_default)
-		VALUES($1,$2,$3,$4) ON CONFLICT(operation_id) DO NOTHING`, op.ID, p.installation, input.Folder, defaultValue(input.MakeDefault)); err != nil {
+		VALUES($1,$2,$3,$4) ON CONFLICT(operation_id) DO NOTHING`, op.ID, p.installation, source, defaultValue(input.MakeDefault)); err != nil {
 		return nil, err
 	}
 	var matching bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM platform_imports
 		WHERE operation_id=$1 AND installation_id=$2 AND folder=$3 AND make_default=$4)`,
-		op.ID, p.installation, input.Folder, defaultValue(input.MakeDefault)).Scan(&matching); err != nil {
+		op.ID, p.installation, source, defaultValue(input.MakeDefault)).Scan(&matching); err != nil {
 		return nil, err
 	}
 	if !matching {
@@ -128,7 +136,7 @@ func (e platformImportExecutor) Observe(context.Context, operation.Operation, op
 	return "", false, nil
 }
 
-// Apply rechecks administrator authority before importing the recorded local bundle.
+// Apply rechecks administrator authority before importing the recorded image.
 func (e platformImportExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
 	if op.OriginatingAction != platformImportAction || step.Key != "import" {
 		return "", operation.ErrConflict
@@ -146,10 +154,20 @@ func (e platformImportExecutor) Apply(ctx context.Context, op operation.Operatio
 		return "", err
 	}
 	if err := e.run(ctx, op.ID, op.Actor, folder, makeDefault != 0); err != nil {
+		if e.providerKind == "ec2" {
+			if errors.Is(err, release.ErrInvalidArtifact) || errors.Is(err, release.ErrCatalogConflict) ||
+				errors.Is(err, provider.ErrCapabilityUnsupported) || errors.Is(err, errCanaryRetryRequiresNewOperation) {
+				return "", &operation.StepFailure{Detail: "Check the AMI provenance, verified enrollment, region and guest release before starting a new import."}
+			}
+			return "", &operation.StepWaiting{Detail: "Waiting for EC2 to verify the disposable image boot and cleanup.", Cause: err}
+		}
 		if errors.Is(err, release.ErrInvalidArtifact) || errors.Is(err, release.ErrCatalogConflict) || errors.Is(err, provider.ErrCapabilityUnsupported) {
 			return "", &operation.StepFailure{Detail: "Check the local bundle and manifest, the supported UTM version, and the guest release."}
 		}
 		return "", &operation.StepWaiting{Detail: "Waiting for UTM to verify the disposable platform image boot and cleanup.", Cause: err}
+	}
+	if e.providerKind == "ec2" {
+		return "The verified EC2 image is available in the regional catalog.", nil
 	}
 	return "The verified platform image is available in the local catalog.", nil
 }

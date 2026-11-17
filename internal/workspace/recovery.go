@@ -37,7 +37,7 @@ func (e *PowerExecutor) start(ctx context.Context, op operation.Operation, step 
 		start.EnrollmentMedia, err = e.recovery.enrollment.Deliver(ctx, op.ID, got, now,
 			e.recovery.mediaRoot, e.recovery.endpoint, e.recovery.pollEndpoint, e.provider.DeliverEnrollment)
 		if err != nil {
-			return got, &operation.StepWaiting{Detail: "ShiftBox could not deliver fresh enrollment media to the stopped guest. Check the VM's removable drive and controller enrollment service.", Cause: err}
+			return got, &operation.StepWaiting{Detail: "ShiftBox could not deliver fresh enrollment data to the stopped guest. Check the provider and controller enrollment service.", Cause: err}
 		}
 	}
 	// Recheck authorization after the external effect. Revocation may have

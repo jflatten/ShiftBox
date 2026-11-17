@@ -4,12 +4,15 @@ import { useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
+import { providerLabel } from '../../lib/provider-label';
 import { useOperation } from '../../lib/use-operation';
-import { workspaceName, type Workspace } from './workspace';
+import { workspaceName, workspaceState, type Workspace } from './workspace';
 import { WorkspaceStatus, WorkspaceTime } from './workspace-summary';
 import { RetentionWarning } from './retention';
 import { WorkspaceConnectionGrants } from './connection-grants';
 import { availableWorkspaceCommands, openWorkspaceEntry, useWorkspaceCommand, useWorkspaceDetail, type WorkspaceService } from './workspace-commands';
+
+const probeNames = { 'code-server': 'Code-server' } satisfies Record<NonNullable<Workspace['probes']>[number]['id'], string>;
 
 export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToken: string; admin: boolean }) {
   const workspace = useWorkspaceDetail(id);
@@ -31,6 +34,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
     });
   const busy = !!data?.currentOperationId || operationBusy || !!submitting;
   const maintenance = data?.maintenance;
+  const probes = data?.probes ?? [];
 
   useEffect(() => {
     const handoff = progressFocus.current;
@@ -119,6 +123,19 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
             <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation}
               onFinished={setOperationBusy} showFailureWarning />
           </Stack> : null}
+          <Paper component="section" aria-label="Probes" withBorder radius="md" p="md">
+            <Stack gap="md">
+              <Title order={2} size="h3">Probes</Title>
+              {probes.length ? (
+                <Group gap="xs">
+                  {probes.map(probe => (
+                    <WorkspaceStatus key={probe.id} value={probe.status}
+                      label={`${probeNames[probe.id]} · ${workspaceState(probe.status)}`} />
+                  ))}
+                </Group>
+              ) : <Text size="sm" c="dimmed">No recent probe results.</Text>}
+            </Stack>
+          </Paper>
           <Paper component="section" aria-label="Workspace configuration" withBorder radius="md" p="md">
             <Stack gap="md">
               <Title order={2} size="h3">Configuration</Title>
@@ -129,8 +146,12 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
                   <Text component="dd" m={0}>Revision {data.templateRevision}</Text>
                 </div>
                 <div>
-                  <Text component="dt" size="sm" c="dimmed">Platform release</Text>
+                  <Text component="dt" size="sm" c="dimmed">Platform image</Text>
                   <Text component="dd" m={0}>{data.platformRelease}</Text>
+                </div>
+                <div>
+                  <Text component="dt" size="sm" c="dimmed">Provider</Text>
+                  <Text component="dd" m={0}>{providerLabel(data.providerKind)}</Text>
                 </div>
                 <div>
                   <Text component="dt" size="sm" c="dimmed">Last activity</Text>

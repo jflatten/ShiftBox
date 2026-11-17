@@ -29,8 +29,10 @@ type Config struct {
 	Runtime                          *ControllerRuntime `json:"runtime,omitempty"`
 }
 
-// ControllerRuntime describes the native listeners and UTM resources for serve.
+// ControllerRuntime describes the listeners and workspace provider for serve.
 type ControllerRuntime struct {
+	Provider          string      `json:"provider,omitempty"`
+	EC2               *EC2Runtime `json:"ec2,omitempty"`
 	BrowserAddress    string      `json:"browserAddress"`
 	GuestHost         string      `json:"guestHost"`
 	EnrollmentAddress string      `json:"enrollmentAddress"`
@@ -41,6 +43,18 @@ type ControllerRuntime struct {
 	UTMMaximum        VMResources `json:"utmMaximum"`
 	DexBinary         string      `json:"dexBinary,omitempty"`
 	GitHubAppFile     string      `json:"githubAppFile,omitempty"`
+}
+
+// EC2Runtime pins account, storage, network placement and the verified image.
+type EC2Runtime struct {
+	AccountID             string `json:"accountId"`
+	Region                string `json:"region"`
+	DataVolumeID          string `json:"dataVolumeId"`
+	SubnetID              string `json:"subnetId"`
+	SecurityGroupID       string `json:"securityGroupId"`
+	Deployment            string `json:"deployment"`
+	Environment           string `json:"environment"`
+	VerifiedEnrollmentAMI string `json:"verifiedEnrollmentAmi,omitempty"`
 }
 
 // VMResources records the validated allocation bounds for the local UTM host.
@@ -102,7 +116,7 @@ func Load(path string) (Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
-	if cfg.Runtime != nil {
+	if cfg.Runtime != nil && cfg.Runtime.Provider != "ec2" {
 		cfg.Runtime.setUTMGuestDefaults()
 	}
 	return cfg, nil

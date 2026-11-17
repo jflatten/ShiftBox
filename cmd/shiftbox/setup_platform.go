@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,13 +19,14 @@ import (
 type setupPlatform struct {
 	installation, folder string
 	runtime              config.ControllerRuntime
+	cloud                *app.CloudSetup
 }
 
 func readSetupPlatform(dir, configPath, folder string) (*setupPlatform, error) {
 	if configPath == "" && folder == "" {
 		return nil, nil
 	}
-	if configPath == "" || !filepath.IsAbs(folder) {
+	if configPath == "" {
 		return nil, errors.New("platform setup requires --config and an absolute --platform-folder")
 	}
 	cfg, err := config.Load(configPath)
@@ -37,7 +39,25 @@ func readSetupPlatform(dir, configPath, folder string) (*setupPlatform, error) {
 	if err := checkControllerRuntime(*cfg.Runtime); err != nil {
 		return nil, err
 	}
-	return &setupPlatform{installation: dir, folder: folder, runtime: *cfg.Runtime}, nil
+	platform := &setupPlatform{installation: dir, folder: folder, runtime: *cfg.Runtime}
+	if cfg.Runtime.Provider != "ec2" {
+		if !filepath.IsAbs(folder) {
+			return nil, errors.New("platform setup requires an absolute --platform-folder")
+		}
+		return platform, nil
+	}
+	suffix, valid := strings.CutPrefix(cfg.Runtime.GuestHost, "guest.")
+	if !valid || cfg.DataProfile != "postgres" || folder != "" {
+		return nil, errors.New("EC2 setup requires PostgreSQL and the deployed guest DNS name")
+	}
+	ide := "{workspace}.ide." + suffix
+	preview := "{service}--{workspace}.preview." + suffix
+	if _, err := config.NewServiceHosts(cfg.ManagementOrigin, ide, preview); err != nil {
+		return nil, errors.New("EC2 setup requires valid deployed browser names")
+	}
+	platform.cloud = &app.CloudSetup{ApplicationURI: cfg.PostgresURI, ManagementOrigin: cfg.ManagementOrigin,
+		IDEHostPattern: ide, PreviewHostPattern: preview}
+	return platform, nil
 }
 
 func (p setupPlatform) validator(db *sql.DB, installationID string) func(context.Context, string, string, string) error {

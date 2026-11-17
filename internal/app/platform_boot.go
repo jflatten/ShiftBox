@@ -26,6 +26,8 @@ type PlatformBootProvider interface {
 	ImportCandidate(context.Context, provider.CreateRequest, release.Artifact) (provider.Inventory, error)
 }
 
+var errCanaryRetryRequiresNewOperation = errors.New("previous canary cleaned up; retry with a new import operation")
+
 // ValidatePlatformBoot checks a candidate with an isolated CA, database and
 // enrollment listener. Its only success signal is an authenticated poll with
 // the manifest's exact versions, followed by verified removal of the clone.
@@ -35,6 +37,19 @@ func ValidatePlatformBoot(ctx context.Context, root string, machines PlatformBoo
 	defer cancel()
 	if config.GitHub != nil || config.Secrets != nil || config.Tunnels != nil || req.Ref.InstanceID != "" || req.EnrollmentMedia != "" {
 		return provider.ErrInvalidState
+	}
+	if artifact.EC2 != nil {
+		// An earlier canary cannot authenticate against the new isolated CA.
+		_, err := machines.Inspect(ctx, req.Ref)
+		if err == nil {
+			if err := removePlatformBootVM(ctx, machines, req); err != nil {
+				return err
+			}
+			return errCanaryRetryRequiresNewOperation
+		}
+		if !errors.Is(err, provider.ErrNotFound) {
+			return err
+		}
 	}
 	if err := removePlatformBootVM(ctx, machines, req); err != nil {
 		return fmt.Errorf("reconcile validation VM %s: %w", req.Ref.WorkspaceID, err)
@@ -92,7 +107,11 @@ func ValidatePlatformBoot(ctx context.Context, root string, machines PlatformBoo
 	}()
 	// Install cleanup before import so it also handles a lost provider reply.
 	defer func() {
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 90*time.Second)
+		limit := 90 * time.Second
+		if artifact.EC2 != nil {
+			limit = 4 * time.Minute
+		}
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), limit)
 		defer cancel()
 		if err := removePlatformBootVM(cleanup, machines, req); err != nil {
 			result = errors.Join(result, fmt.Errorf("remove validation VM %s: %w", req.Ref.WorkspaceID, err))
@@ -205,18 +224,21 @@ func removePlatformBootVM(ctx context.Context, machines PlatformBootProvider, re
 	if vm.Ref != expected || vm.InstanceID == "" {
 		return provider.ErrOwnershipMismatch
 	}
-	if vm.Power == provider.Running {
+	if vm.Power == provider.Running || vm.Power == provider.Starting || vm.Power == provider.Stopping {
 		vm, err = machines.Stop(ctx, provider.StopRequest{Ref: expected, OperationID: req.OperationID, ForceRetentionDelete: true})
 		if err != nil {
 			return err
 		}
 	}
-	if vm.Ref != expected || vm.Power != provider.Stopped {
+	if vm.Ref != expected || (vm.Power != provider.Stopped && vm.Power != provider.Deleted) {
 		return provider.ErrOutcomeUnknown
 	}
-	deleted, err := machines.Delete(ctx, provider.DeleteRequest{Ref: expected, OperationID: req.OperationID})
-	if err != nil {
-		return err
+	deleted := vm
+	if vm.Power != provider.Deleted {
+		deleted, err = machines.Delete(ctx, provider.DeleteRequest{Ref: expected, OperationID: req.OperationID})
+		if err != nil {
+			return err
+		}
 	}
 	if deleted.Ref != expected || deleted.Power != provider.Deleted {
 		return provider.ErrOutcomeUnknown

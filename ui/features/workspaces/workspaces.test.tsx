@@ -74,6 +74,25 @@ test('shows workspace states as static Carbon-colored Mantine chips', async () =
   expect(within(table).getByRole('columnheader', { name: 'Target State' })).toBeVisible();
 });
 
+// Workspace detail updates the read-only probe chip as the service fails and its report expires.
+test('shows the latest code-server probe on workspace detail', async () => {
+  let probes = [{ id: 'code-server', status: 'healthy' }];
+  globalThis.fetch = jest.fn(async input => input === '/api/v1/session' ? json(session) :
+    json({ ...workspace, observedState: 'running', currentOperationId: null, probes }));
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+
+  const section = await screen.findByRole('region', { name: 'Probes' });
+  expect(within(section).getByText('Code-server · Healthy')).toBeVisible();
+  expect(within(section).queryByRole('checkbox')).not.toBeInTheDocument();
+  probes = [{ id: 'code-server', status: 'error' }];
+  await user.click(screen.getByRole('button', { name: 'Refresh' }));
+  expect(await within(section).findByText('Code-server · Error')).toBeVisible();
+  probes = [];
+  await user.click(screen.getByRole('button', { name: 'Refresh' }));
+  expect(await within(section).findByText('No recent probe results.')).toBeVisible();
+});
+
 // Opening row actions fetches the current workspace version and starts the
 // same tracked workflow as the detail page without navigating away.
 test('starts a stopped workspace from its inventory row', async () => {

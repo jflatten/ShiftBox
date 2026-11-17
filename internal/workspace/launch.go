@@ -12,6 +12,7 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/release"
 	"github.com/jflatten/ShiftBox/internal/template"
 )
 
@@ -25,6 +26,7 @@ var ErrLaunchConflict = errors.New("workspace launch intent conflict")
 type LaunchIntent struct {
 	InstallationID, WorkspaceID, OwnerID, RequestKey string
 	TemplateID, ArtifactID                           string
+	ProviderKind                                     string
 	Name                                             string
 	TemplateRevision                                 int64
 	RepositoryURL, DevcontainerPath                  string
@@ -51,6 +53,14 @@ func AdmitLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, la
 	if op, found, err := FindLaunch(ctx, tx, journal, launch); found || err != nil {
 		return op, err
 	}
+	kind := launch.ProviderKind
+	if kind == "" {
+		kind = "utm"
+	}
+	if kind == "ec2" && (launch.CPU != release.EC2CPUCount || launch.MemoryMiB != release.EC2MemoryMiB ||
+		launch.DiskMiB != release.EC2DiskMiB) {
+		return operation.Operation{}, provider.ErrCapabilityUnsupported
+	}
 
 	names := launch.SecretNames
 	if names == nil {
@@ -68,10 +78,10 @@ func AdmitLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, la
 		repository_url,repository_ref,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,
 		secret_names_json,retention_seconds,launch_retention_seconds,desired_state,observed_state,generation,ownership_marker,created_at,updated_at,version,retention_deadline,name)
 		SELECT $1,$2,$3,$4,$5,id,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,'running','unknown',1,$16,$17,$17,1,$18,$19
-		FROM platform_artifacts WHERE id=$6 AND state='available'`,
+		FROM platform_artifacts WHERE id=$6 AND state='available' AND provider_kind=$20`,
 		launch.WorkspaceID, launch.InstallationID, launch.OwnerID, launch.TemplateID, launch.TemplateRevision, launch.ArtifactID,
 		launch.RepositoryURL, launch.RepositoryRef, launch.DevcontainerPath, launch.CPU, launch.MemoryMiB, launch.DiskMiB,
-		launch.NetworkPolicyJSON, string(secretNames), launch.RetentionSeconds, launch.OwnershipMarker, stamp, deadline, launch.Name)
+		launch.NetworkPolicyJSON, string(secretNames), launch.RetentionSeconds, launch.OwnershipMarker, stamp, deadline, launch.Name, kind)
 	if err := capacityWrite(result, err); err != nil {
 		return operation.Operation{}, err
 	}

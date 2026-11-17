@@ -53,10 +53,12 @@ func (s SetupHTTP) activatePostgres(ctx context.Context, target *sql.DB, actor, 
 		if err := target.QueryRowContext(ctx, "SELECT version FROM capacity_budgets WHERE installation_id=$1", s.InstallationID).Scan(&budgetVersion); err != nil {
 			return operation.Operation{}, ErrSetupConflict
 		}
-		var err error
-		targetArtifact, err = readSetupArtifact(ctx, target)
-		if err != nil || targetArtifact == nil {
-			return operation.Operation{}, ErrSetupConflict
+		if s.Cloud == nil {
+			var err error
+			targetArtifact, err = readSetupArtifact(ctx, target)
+			if err != nil || targetArtifact == nil {
+				return operation.Operation{}, ErrSetupConflict
+			}
 		}
 	}
 	c := postgresCutover{source: s.Journal, target: operation.NewJournal(target, s.Now, s.NewID),
@@ -74,9 +76,11 @@ func (s SetupHTTP) activatePostgres(ctx context.Context, target *sql.DB, actor, 
 				currentBudget != budgetVersion {
 				return ErrSetupConflict
 			}
-			currentArtifact, err := readSetupArtifact(ctx, tx)
-			if err != nil || currentArtifact == nil || *currentArtifact != *targetArtifact {
-				return ErrSetupConflict
+			if s.Cloud == nil {
+				currentArtifact, err := readSetupArtifact(ctx, tx)
+				if err != nil || currentArtifact == nil || *currentArtifact != *targetArtifact {
+					return ErrSetupConflict
+				}
 			}
 			principal, err := s.bootstrapPrincipal(ctx, tx, token)
 			if err != nil || principal.User.ID != actor || !auth.Authorize(principal, "setup.mutate", auth.Resource{}, nil, s.Now()).Allowed {
@@ -93,8 +97,8 @@ func (s SetupHTTP) activatePostgres(ctx context.Context, target *sql.DB, actor, 
 			WHERE i.id=$1 AND i.state='configuring' AND i.data_profile='postgres'
 			  AND u.role='administrator' AND u.membership_state='active' AND u.credential_mode='local' AND u.must_change_password=0
 			  AND (SELECT COUNT(*) FROM users)=1 AND NOT EXISTS(SELECT 1 FROM sessions)
-			  AND EXISTS(SELECT 1 FROM platform_artifacts WHERE state='available' AND is_default=1
-			    AND protocol_version='1' AND guest_release IN (i.active_release,i.min_guest_release))`, c.id, actor).Scan(&snapshot)
+			  AND ($3 OR EXISTS(SELECT 1 FROM platform_artifacts WHERE state='available' AND is_default=1
+			    AND protocol_version='1' AND guest_release IN (i.active_release,i.min_guest_release)))`, c.id, actor, s.Cloud != nil).Scan(&snapshot)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrSetupConflict
 		}

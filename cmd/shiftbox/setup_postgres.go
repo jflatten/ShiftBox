@@ -62,7 +62,7 @@ func readSetupPostgresProfile(path string) (*app.PostgresProfileSetup, error) {
 	return &app.PostgresProfileSetup{DexURI: input.DexURI, CAFile: input.CAFile, Roots: roots}, nil
 }
 
-func resumeRetiredSetup(ctx context.Context, dir string, cipher *cryptostore.Store, roots *x509.CertPool) (bool, error) {
+func resumeRetiredSetup(ctx context.Context, dir string, cipher *cryptostore.Store, roots *x509.CertPool, cloud *app.CloudSetup) (bool, error) {
 	path := filepath.Join(dir, "bootstrap.db")
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -89,7 +89,7 @@ func resumeRetiredSetup(ctx context.Context, dir string, cipher *cryptostore.Sto
 	if err != nil {
 		return false, err
 	}
-	setup := app.SetupHTTP{DB: db, InstallationID: id, Cipher: cipher, CertificateRoots: roots,
+	setup := app.SetupHTTP{DB: db, InstallationID: id, Cipher: cipher, CertificateRoots: roots, Cloud: cloud,
 		Journal: operation.NewJournal(db, time.Now, uuid.NewString), Now: time.Now, NewID: uuid.NewString}
 	_, err = setup.ResumeRetiredPostgresSetup(ctx)
 	if err != nil {

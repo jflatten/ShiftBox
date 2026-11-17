@@ -30,7 +30,7 @@ const guestProtocol = "1"
 
 func serveActiveController(ctx context.Context, cfg config.Config, state *app.ControllerState, configPath string) error {
 	if cfg.Runtime == nil {
-		return errors.New("serve requires a runtime configuration for HTTPS, guest listeners, and UTM")
+		return errors.New("serve requires a runtime configuration for HTTPS, guest listeners, and the workspace provider")
 	}
 	settings := *cfg.Runtime
 	if err := checkControllerRuntime(settings); err != nil {
@@ -73,6 +73,15 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if err != nil {
 		return err
 	}
+	artifactStore := release.NewStore(state.DB)
+	var cloud *cloudEC2
+	if settings.Provider == "ec2" && settings.EC2 != nil {
+		cloud, err = newCloudEC2(ctx, *settings.EC2, artifactStore)
+		if err != nil {
+			return errors.New("cannot verify the EC2 task role, account and private network")
+		}
+		machines = cloud
+	}
 	if active.RecoveryReviewID != "" {
 		return serveRecoveryController(ctx, cfg, state, binary, assets, machines)
 	}
@@ -80,7 +89,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if err != nil {
 		return errors.New("cannot verify UTM capabilities; check the supported UTM version and macOS automation access")
 	}
-	if !caps.Create || !caps.Start || !caps.Stop || !caps.Delete {
+	if settings.Provider != "ec2" && (!caps.Create || !caps.Start || !caps.Stop || !caps.Delete) {
 		return errors.New("UTM lacks required workspace lifecycle capabilities")
 	}
 	checkpoint := &backup.WriteFence{}
@@ -100,7 +109,9 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		return err
 	}
 	policy := web.WorkspaceLaunchPolicy{Capabilities: caps, Protocols: []string{guestProtocol}, VerifyNetwork: machines.ApplyNetwork}
-	policy.AvailableDisk = func() (uint64, error) { return app.AvailableWorkspaceSpace(settings.UTMStorage) }
+	if settings.Provider != "ec2" {
+		policy.AvailableDisk = func() (uint64, error) { return app.AvailableWorkspaceSpace(settings.UTMStorage) }
+	}
 	services, err := app.NewManagementServices(state, journal, tunnels.Registry, policy, github, passwords, time.Now)
 	if err != nil {
 		return err
@@ -113,7 +124,6 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		identity.ExternalConnectorAdmin{Client: connectors}, time.Now)
 	services.Handlers[reauthorize.Route.OperationID] = reauthorize
 	services.Handlers[configureExternal.Route.OperationID] = configureExternal
-	artifactStore := release.NewStore(state.DB)
 	catalog := release.NewCatalog(artifactStore, filepath.Join(cfg.InstallationDir, "platform-artifacts"))
 	platform := setupPlatform{installation: cfg.InstallationDir, runtime: settings}
 	imports := app.NewPlatformImport(state.DB, journal, origin, active.InstallationID, time.Now,
@@ -122,9 +132,16 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 			validationID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(active.InstallationID+":platform-import:"+id)).String()
 			marker := uuid.NewSHA1(uuid.NameSpaceOID, []byte(validationID+":owner")).String()
 			ref := provider.WorkspaceRef{InstallationID: active.InstallationID, WorkspaceID: validationID, Generation: 1, OwnershipMarker: marker}
+			if settings.Provider == "ec2" {
+				if cloud == nil {
+					return provider.ErrCapabilityUnsupported
+				}
+				return cloud.importPlatform(ctx, cfg.InstallationDir, settings.GuestHost, artifactStore, catalog, ref,
+					actor, folder, active.ActiveRelease, active.MinimumGuestRelease, makeDefault)
+			}
 			return platform.importPlatform(ctx, artifactStore, catalog, machines, caps, ref,
 				actor, folder, active.ActiveRelease, active.MinimumGuestRelease, makeDefault)
-		})
+		}, settings.Provider)
 	importRoute := imports.Handler()
 	services.Handlers[importRoute.Route.OperationID] = importRoute
 	preflightRoute, preflightWorker := web.MigrationPreflightRoute(state.DB, journal, origin, active.InstallationID, time.Now,
@@ -194,6 +211,9 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	err = app.ServeController(ctx, dexDone, browser.Serve, workspaces.Serve, func(ctx context.Context) error {
 		return app.RunHistoryRetention(ctx, state.DB, cfg, checkpoint)
 	}, func(ctx context.Context) error {
+		if settings.Provider == "ec2" {
+			return app.RunOperationalConditions(ctx, state.DB, cfg.InstallationDir, "", 0, nil, checkpoint)
+		}
 		return app.RunOperationalConditions(ctx, state.DB, cfg.InstallationDir, settings.UTMStorage,
 			uint64(caps.Minimum.DiskBytes), machines.Capabilities, checkpoint)
 	}, func(ctx context.Context) error {
@@ -213,7 +233,10 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	return err
 }
 
-func controllerProvider(dir string, settings config.ControllerRuntime, state *app.ControllerState) (*utm.Provider, string, error) {
+func controllerProvider(dir string, settings config.ControllerRuntime, state *app.ControllerState) (app.PlatformBootProvider, string, error) {
+	if settings.Provider == "ec2" {
+		return pendingEC2{}, filepath.Join(dir, "enrollment-media"), nil
+	}
 	if info, err := os.Stat(settings.UTMStorage); err != nil || !info.IsDir() {
 		return nil, "", errors.New("UTM storage must be the existing UTM Documents directory")
 	}
@@ -248,8 +271,18 @@ func checkControllerRuntime(settings config.ControllerRuntime) error {
 	if settings.GuestHost == "" {
 		return errors.New("runtime requires a guest-reachable TLS hostname or IP address")
 	}
-	if !filepath.IsAbs(settings.UTMStorage) || (settings.DexBinary != "" && !filepath.IsAbs(settings.DexBinary)) {
-		return errors.New("runtime requires absolute paths for UTM storage and an explicitly configured Dex binary")
+	if settings.DexBinary != "" && !filepath.IsAbs(settings.DexBinary) {
+		return errors.New("runtime requires an absolute Dex binary path")
+	}
+	switch settings.Provider {
+	case "ec2":
+		return nil
+	case "", "utm":
+		if !filepath.IsAbs(settings.UTMStorage) {
+			return errors.New("UTM runtime requires an absolute storage path")
+		}
+	default:
+		return errors.New("runtime requires a supported workspace provider")
 	}
 	minimum, maximum := settings.UTMMinimum, settings.UTMMaximum
 	if minimum.CPU < 1 || minimum.MemoryMiB < 1 || minimum.DiskMiB < 1 ||

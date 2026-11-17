@@ -35,3 +35,7 @@ export function useInfrastructure(userId?: string) {
   }));
   return { ...query, data, alerts };
 }
+
+export function validLimit(value: string | number) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? null : 'Enter a positive whole number.';
+}

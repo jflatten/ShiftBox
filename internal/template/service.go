@@ -43,6 +43,7 @@ type View struct {
 	OwnerName       string            `json:"ownerName,omitempty"`
 	ProfileName     string            `json:"resourceProfileName,omitempty"`
 	ImageName       string            `json:"platformImageName,omitempty"`
+	ProviderKind    string            `json:"providerKind,omitempty"`
 	State           string            `json:"state"`
 	CurrentRevision int64             `json:"currentRevision"`
 	Version         int64             `json:"version"`

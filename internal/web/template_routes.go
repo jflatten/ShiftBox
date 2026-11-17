@@ -12,13 +12,15 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/auth"
+	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/template"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 type templateCatalogChoice struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	ProviderKind string `json:"providerKind,omitempty"`
 }
 
 // TemplateCatalogHandler lists the profile and image choices for template authors.
@@ -75,10 +77,17 @@ func templateCatalogProfiles(ctx context.Context, tx *sql.Tx, policy WorkspaceLa
 	return choices, rows.Err()
 }
 
+func launchProviderKind(caps provider.Capabilities) string {
+	if caps.Name == "ec2" {
+		return "ec2"
+	}
+	return "utm"
+}
+
 func templateCatalogImages(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunchPolicy) ([]templateCatalogChoice, string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.release_id,a.protocol_version,a.architecture,a.is_default FROM platform_artifacts a
-		CROSS JOIN installations i WHERE i.singleton=1 AND a.state='available'
-		AND a.guest_release IN (i.active_release,i.min_guest_release) ORDER BY a.release_id,a.id`)
+	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.release_id,a.protocol_version,a.architecture,a.is_default,a.provider_kind FROM platform_artifacts a
+		CROSS JOIN installations i WHERE i.singleton=1 AND a.state='available' AND a.provider_kind=$1
+		AND a.guest_release IN (i.active_release,i.min_guest_release) ORDER BY a.release_id,a.id`, launchProviderKind(policy.Capabilities))
 	if err != nil {
 		return nil, "", err
 	}
@@ -89,7 +98,7 @@ func templateCatalogImages(ctx context.Context, tx *sql.Tx, policy WorkspaceLaun
 		var item templateCatalogChoice
 		var protocol, architecture string
 		var isDefault int
-		if err := rows.Scan(&item.ID, &item.Name, &protocol, &architecture, &isDefault); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &protocol, &architecture, &isDefault, &item.ProviderKind); err != nil {
 			return nil, "", err
 		}
 		if policy.Capabilities.SupportsArchitecture(architecture) && slices.Contains(policy.Protocols, protocol) {

@@ -37,6 +37,9 @@ func (s SetupHTTP) activationHandler() http.Handler {
 				return nil, err
 			}
 		}
+		if s.Cloud != nil {
+			return nil, web.Problem{Status: 409, Code: "setup.postgres_required", Title: "Validate the deployed PostgreSQL database before activating"}
+		}
 		op, err := s.activateSQLiteSetup(ctx, tx, principal.User.ID, key, s.Now())
 		if errors.Is(err, ErrSetupConflict) || errors.Is(err, operation.ErrConflict) {
 			return nil, web.Problem{Status: 409, Code: "setup.activation_unavailable", Title: "Complete installation validation before activating"}

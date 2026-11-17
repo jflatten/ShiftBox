@@ -145,9 +145,8 @@ func CapacityHandlers(db *sql.DB, origin string, now func() time.Time, newID fun
 			if err := DecodeJSON(nil, r, &input, 4096); err != nil {
 				return nil, err
 			}
-			input.Name = strings.TrimSpace(input.Name)
-			if input.Name == "" || utf8.RuneCountInString(input.Name) > 120 || !input.positive() {
-				return nil, Problem{Status: 400, Code: "infrastructure.invalid_resource_profile", Title: "Enter a profile name and positive resources"}
+			if err := input.normalize(); err != nil {
+				return nil, err
 			}
 			if newID == nil {
 				return nil, errors.New("resource profile identity generator is missing")
@@ -157,9 +156,9 @@ func CapacityHandlers(db *sql.DB, origin string, now func() time.Time, newID fun
 			}, caps)
 			switch {
 			case errors.Is(err, provider.ErrCapabilityUnsupported):
-				return nil, Problem{Status: 409, Code: "infrastructure.resource_profile_unsupported", Title: "Choose resources within the provider limits"}
+				return nil, resourceProfileUnsupported()
 			case errors.Is(err, workspace.ErrCapacityConflict):
-				return nil, Problem{Status: 409, Code: "infrastructure.resource_profile_conflict", Title: "Choose a different resource profile name"}
+				return nil, resourceProfileNameConflict()
 			case err != nil:
 				return nil, err
 			}
@@ -171,6 +170,22 @@ func CapacityHandlers(db *sql.DB, origin string, now func() time.Time, newID fun
 		},
 	}
 	return budget, profile
+}
+
+func (input *profileInput) normalize() error {
+	input.Name = strings.TrimSpace(input.Name)
+	if input.Name == "" || utf8.RuneCountInString(input.Name) > 120 || !input.positive() {
+		return Problem{Status: 400, Code: "infrastructure.invalid_resource_profile", Title: "Enter a profile name and positive resources"}
+	}
+	return nil
+}
+
+func resourceProfileUnsupported() Problem {
+	return Problem{Status: 409, Code: "infrastructure.resource_profile_unsupported", Title: "Choose resources within the provider limits"}
+}
+
+func resourceProfileNameConflict() Problem {
+	return Problem{Status: 409, Code: "infrastructure.resource_profile_conflict", Title: "Choose a different resource profile name"}
 }
 
 // ApplyCapacityBudget handles the shared, versioned capacity write after the

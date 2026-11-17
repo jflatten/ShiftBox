@@ -78,9 +78,9 @@ func runRestore(ctx context.Context, args []string, in io.Reader, out, status io
 		}
 		*installation, *release = plan.Validation.Evidence.Metadata.InstallationID, plan.Validation.Evidence.Metadata.Release
 	}
-	host, err := app.BackupHostID(ctx)
+	host, err := app.BackupHostIDForRuntime(ctx, cfg.Runtime)
 	if err != nil {
-		return fail(5, "restore.host_unavailable", "Verify the original controller Mac.")
+		return fail(5, "restore.host_unavailable", "Verify the original controller recovery binding.")
 	}
 	schema, err := database.CurrentSchemaVersion(cfg.DataProfile)
 	if err != nil {

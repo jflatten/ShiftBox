@@ -620,10 +620,28 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["listResourceProfiles"];
         put?: never;
         post: operations["createResourceProfile"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/resource-profiles/{profileId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profileId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateResourceProfile"];
+        post?: never;
+        delete: operations["deleteResourceProfile"];
         options?: never;
         head?: never;
         patch?: never;
@@ -765,6 +783,8 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+            /** @enum {string} */
+            providerKind?: "utm" | "ec2";
         };
         SetupStatus: {
             /** @enum {string} */
@@ -829,6 +849,12 @@ export interface components {
             mustChangePassword?: boolean;
             version: number;
         };
+        ProbeResult: {
+            /** @enum {string} */
+            id: "code-server";
+            /** @enum {string} */
+            status: "healthy" | "error";
+        };
         Workspace: {
             /** Format: uuid */
             id: string;
@@ -840,6 +866,9 @@ export interface components {
             templateId: string;
             templateRevision: number;
             /** @enum {string} */
+            providerKind?: "utm" | "ec2";
+            platformRelease?: string;
+            /** @enum {string} */
             desiredState: "stopped" | "running" | "deleted";
             /** @enum {string} */
             observedState: "unknown" | "provisioning" | "stopped" | "starting" | "running" | "unreachable" | "stopping" | "deleting" | "deleted" | "failed";
@@ -848,6 +877,8 @@ export interface components {
             /** Format: uuid */
             currentOperationId?: string | null;
             previewPorts?: number[];
+            /** @description Recent probe results for the current guest generation, included on workspace detail only. */
+            probes?: components["schemas"]["ProbeResult"][];
             canOpenPreviews?: boolean;
             canEditPreviewPorts?: boolean;
             /** Format: date-time */
@@ -919,6 +950,8 @@ export interface components {
             ownerName?: string;
             resourceProfileName?: string;
             platformImageName?: string;
+            /** @enum {string} */
+            providerKind?: "utm" | "ec2";
             name: string;
             /** @enum {string} */
             state: "active" | "archived";
@@ -1008,15 +1041,28 @@ export interface components {
         };
         PlatformArtifactInput: {
             /** @description Absolute path on the controller containing the UTM bundle and manifest.json. */
-            folder: string;
+            folder?: string;
+            /** @description The Packer AMI manifest for a cloud EC2 controller. */
+            manifest?: Record<string, never>;
             /** @default false */
             makeDefault?: boolean;
-        };
+        } & (unknown | unknown);
         ResourceProfileInput: {
             name: string;
             cpuCount: number;
             memoryMiB: number;
             diskMiB: number;
+        };
+        ResourceProfileUpdate: {
+            name: string;
+            cpuCount: number;
+            memoryMiB: number;
+            diskMiB: number;
+            enabled: boolean;
+        };
+        ResourceProfile: components["schemas"]["ResourceProfileUpdate"] & {
+            id: string;
+            version: number;
         };
         NetworkPolicyInput: {
             name: string;
@@ -2369,6 +2415,27 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listResourceProfiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All saved resource profiles, including disabled profiles */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceProfile"][];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     createResourceProfile: {
         parameters: {
             query?: never;
@@ -2393,6 +2460,59 @@ export interface operations {
                     "application/json": components["schemas"]["ResourceProfileInput"];
                 };
             };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateResourceProfile: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                profileId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResourceProfileUpdate"];
+            };
+        };
+        responses: {
+            /** @description Resource profile updated for future launches */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteResourceProfile: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                profileId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unreferenced resource profile deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };

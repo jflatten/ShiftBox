@@ -30,6 +30,10 @@ func (s SetupHTTP) certificateHandler() http.Handler {
 		if err := web.DecodeJSON(nil, r, &input, 256<<10); err != nil {
 			return nil, err
 		}
+		if names := s.cloudNames(); names != nil && (input.Management != names.ManagementOrigin ||
+			input.IDE != names.IDEHostPattern || input.Preview != names.PreviewHostPattern) {
+			return nil, web.Problem{Status: 400, Code: "setup.invalid_service_names", Title: "Use the service names configured by the deployment"}
+		}
 		var selected bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM operations o JOIN operation_steps step ON step.operation_id=o.id

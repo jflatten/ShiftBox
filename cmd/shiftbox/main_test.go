@@ -583,3 +583,135 @@ func verifyCredentialTransfer(dir, origin, source, ownerID, temporary, replaceme
 
 	return nil
 }
+
+// TestCloudBootstrapDeliversPasswordOnlyOverTLS verifies the one-off task can
+// create its administrator and sign in entirely through the forwarded wizard.
+func TestCloudBootstrapDeliversPasswordOnlyOverTLS(t *testing.T) {
+	dex := os.Getenv("SHIFTBOX_TEST_DEX_BINARY")
+	if dex == "" {
+		t.Skip("set SHIFTBOX_TEST_DEX_BINARY to the pinned Dex binary")
+	}
+	dir := filepath.Join(t.TempDir(), "installation")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		InstallationDir: dir, DataProfile: "postgres", ManagementOrigin: "https://shiftbox.dev.example.test:8443",
+		PostgresURI:                 "postgres://shiftbox_app:fixture@postgres.dev.example.test/shiftbox?sslmode=verify-full",
+		ExternalAuthIntervalSeconds: 14400,
+		Runtime: &config.ControllerRuntime{Provider: "ec2", BrowserAddress: ":8443", GuestHost: "guest.dev.example.test",
+			EnrollmentAddress: ":19443", PollAddress: ":19444", TunnelAddress: ":19445"},
+	}
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "controller.json")
+	dexPath := filepath.Join(dir, "identity.json")
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dexPath, []byte(`{"dexUri":"postgres://shiftbox_dex:fixture@postgres.dev.example.test/shiftbox?sslmode=verify-full"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	var out, status bytes.Buffer
+	ready := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- runSetup(ctx, []string{"--installation-dir", dir, "--config", path, "--dex-binary", dex,
+			"--postgres-identity-config", dexPath}, &out, setupTestWriter(func(p []byte) (int, error) {
+			n, err := status.Write(p)
+			ready <- struct{}{}
+			return n, err
+		}))
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("cloud setup exited before serving: %v", err)
+	case <-ctx.Done():
+		t.Fatal("cloud setup did not announce its loopback listener")
+	}
+	stopped := false
+	defer func() {
+		cancel()
+		if !stopped {
+			<-done
+		}
+	}()
+	certificate, err := os.ReadFile(filepath.Join(dir, "bootstrap-tls.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(certificate) {
+		t.Fatal("setup certificate cannot be trusted")
+	}
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
+	const origin = "https://127.0.0.1:8444"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+"/api/v1/setup/administrator",
+		strings.NewReader(`{"email":"owner@example.test"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", origin)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "cloud-administrator-fixture")
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var created struct {
+		TemporaryPassword string `json:"temporaryPassword"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&created); err != nil || res.StatusCode != http.StatusCreated || len(created.TemporaryPassword) < 24 {
+		t.Fatalf("administrator creation returned %d, expected one-time password", res.StatusCode)
+	}
+	client.Jar, err = cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.CheckRedirect = func(r *http.Request, _ []*http.Request) error {
+		if r.URL.Scheme != "https" || r.URL.Host != "127.0.0.1:8444" {
+			return errors.New("login redirected outside the forwarded setup origin")
+		}
+		return nil
+	}
+	browser, err := client.Get(origin + "/auth/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	browser, err = submitDexForm(client, browser, url.Values{
+		"login": {"owner@example.test"}, "password": {created.TemporaryPassword},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	browser, err = readSetupSession(client, origin, browser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionBody, err := io.ReadAll(browser.Body)
+	browser.Body.Close()
+	if err != nil || browser.StatusCode != http.StatusOK || !bytes.Contains(sessionBody, []byte(`"mustChangePassword":true`)) {
+		t.Fatal("forwarded login did not establish a password-change session")
+	}
+	cancel()
+	err = <-done
+	stopped = true
+	if err != nil || out.Len() != 0 || strings.Contains(status.String(), created.TemporaryPassword) {
+		t.Fatal("cloud setup stopped unexpectedly or logged the temporary password")
+	}
+}
+
+type setupTestWriter func([]byte) (int, error)
+
+func (write setupTestWriter) Write(p []byte) (int, error) {
+	return write(p)
+}

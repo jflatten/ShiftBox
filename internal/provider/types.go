@@ -69,6 +69,7 @@ type OwnedResource struct {
 // Inventory records the provider evidence used to reconcile desired workspace
 // state and capacity. ObservedAt is the time of the provider check.
 type Inventory struct {
+	EC2Enrollment                                   bool
 	Ref                                             WorkspaceRef
 	InstanceID                                      string
 	Power                                           PowerState
@@ -122,6 +123,7 @@ type EnrollmentRequest struct {
 	Ref                    WorkspaceRef
 	OperationID, MediaPath string
 	Eligible               bool
+	Seed                   []byte
 }
 
 // DeliveryResult records the provider-confirmed drive and resulting VM inventory.

@@ -6,15 +6,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/backup"
+	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/database"
 )
 
-// BackupMetadata identifies the live installation, current schema and Mac.
+// BackupMetadata identifies the live installation, current schema and recovery binding.
 func (s *ControllerState) BackupMetadata(ctx context.Context) (backup.ArchiveMetadata, error) {
 	active := s.Installation
 	profile := active.Settings.DataProfile
@@ -22,12 +24,28 @@ func (s *ControllerState) BackupMetadata(ctx context.Context) (backup.ArchiveMet
 	if err != nil {
 		return backup.ArchiveMetadata{}, err
 	}
-	host, err := BackupHostID(ctx)
+	host, err := BackupHostIDForRuntime(ctx, s.runtime)
 	if err != nil {
 		return backup.ArchiveMetadata{}, err
 	}
 	return backup.ArchiveMetadata{InstallationID: active.InstallationID, Release: active.ActiveRelease,
 		Profile: profile, Schema: schema, HostID: host}, nil
+}
+
+var backupVolumeID = regexp.MustCompile(`^vol-([a-f0-9]{8}|[a-f0-9]{17})$`)
+
+// BackupHostIDForRuntime binds an AWS deployment to its retained data volume, which survives an ECS host replacement.
+func BackupHostIDForRuntime(ctx context.Context, runtime *config.ControllerRuntime) (string, error) {
+	if runtime == nil || runtime.Provider != "ec2" {
+		return BackupHostID(ctx)
+	}
+	target := runtime.EC2
+	if target == nil || target.AccountID == "" || target.Region == "" || !backupVolumeID.MatchString(target.DataVolumeID) {
+		return "", errors.New("cannot determine the AWS data volume identity for recovery")
+	}
+	binding := strings.Join([]string{"shiftbox-aws-data-volume", target.AccountID, target.Region, target.DataVolumeID}, "\x00")
+	digest := sha256.Sum256([]byte(binding))
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // BackupHostID returns a stable, opaque binding to the current Mac.

@@ -116,9 +116,11 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 	}
 	var allocation workspace.Allocation
 	var architecture, protocol, guestRelease string
+	caps := policy.Capabilities
+	intent.ProviderKind = launchProviderKind(caps)
 	err := tx.QueryRowContext(ctx, `SELECT p.cpu_count,p.memory_mib,p.disk_mib,a.architecture,a.protocol_version,a.guest_release
 		FROM resource_profiles p CROSS JOIN platform_artifacts a
-		WHERE p.id=$1 AND p.enabled=1 AND a.id=$2 AND a.state='available'`, revision.ProfileID, revision.ArtifactID).
+		WHERE p.id=$1 AND p.enabled=1 AND a.id=$2 AND a.state='available' AND a.provider_kind=$3`, revision.ProfileID, revision.ArtifactID, intent.ProviderKind).
 		Scan(&allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB, &architecture, &protocol, &guestRelease)
 	if errors.Is(err, sql.ErrNoRows) {
 		return operation.Operation{}, Problem{Status: 409, Code: "workspace.template_unavailable", Title: "The template's profile or platform release is unavailable"}
@@ -129,7 +131,6 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 	if guestRelease == "" || (guestRelease != currentGuest && guestRelease != previousGuest) {
 		return operation.Operation{}, Problem{Status: 409, Code: "workspace.platform_incompatible", Title: "The template's platform release is incompatible with this controller"}
 	}
-	caps := policy.Capabilities
 	if !caps.Create || !caps.Start || !caps.SupportsArchitecture(architecture) || !slices.Contains(policy.Protocols, protocol) {
 		return operation.Operation{}, launchCapabilityProblem()
 	}
@@ -177,6 +178,8 @@ func launchAdmissionProblem(err error) error {
 		return Problem{Status: 409, Code: "workspace.launch_conflict", Title: "This request identifier is already in use"}
 	case errors.Is(err, workspace.ErrCapacityConflict):
 		return Problem{Status: 409, Code: "workspace.admission_unavailable", Title: "Workspace launch is unavailable"}
+	case errors.Is(err, provider.ErrCapabilityUnsupported):
+		return launchCapabilityProblem()
 	}
 	return err
 }

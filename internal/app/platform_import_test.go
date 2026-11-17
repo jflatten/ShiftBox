@@ -59,7 +59,7 @@ func TestPlatformImportAdmission(t *testing.T) {
 		}
 		return nil
 	}
-	proc := NewPlatformImport(db, journal, "https://management.test", org, func() time.Time { return now }, importImage)
+	proc := NewPlatformImport(db, journal, "https://management.test", org, func() time.Time { return now }, importImage, "utm")
 	restart := func() {
 		t.Helper()
 		if err := db.Close(); err != nil {
@@ -67,7 +67,7 @@ func TestPlatformImportAdmission(t *testing.T) {
 		}
 		db = open()
 		journal = operation.NewJournal(db, func() time.Time { return now }, uuid.NewString)
-		proc = NewPlatformImport(db, journal, "https://management.test", org, func() time.Time { return now }, importImage)
+		proc = NewPlatformImport(db, journal, "https://management.test", org, func() time.Time { return now }, importImage, "utm")
 	}
 	actor := auth.Principal{User: auth.User{ID: "admin", Role: "administrator"}}
 	submit := func(key, body string) (int, string, error) {
@@ -156,5 +156,18 @@ func TestPlatformImportAdmission(t *testing.T) {
 	}
 	if op, err := journal.Get(ctx, id); err != nil || op.Status != "failed" || len(ids) != 2 {
 		t.Errorf("import after revocation = %q, %v, %d total effects; want failure without a new effect", op.Status, err, len(ids))
+	}
+}
+
+// TestEC2PlatformImportRejectsLocalFolder keeps cloud imports confined to image manifests.
+func TestEC2PlatformImportRejectsLocalFolder(t *testing.T) {
+	proc := NewPlatformImport(nil, nil, "", "", time.Now, nil, "ec2")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/platform-artifacts", strings.NewReader(`{"folder":"/controller/image"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "cloud-import-test")
+	_, err := proc.admit(t.Context(), nil, req, auth.Principal{}, web.AuthorizationTarget{}, auth.Decision{})
+	var problem web.Problem
+	if !errors.As(err, &problem) || problem.Code != "infrastructure.invalid_import_manifest" {
+		t.Fatalf("cloud import error = %v; want an invalid manifest", err)
 	}
 }

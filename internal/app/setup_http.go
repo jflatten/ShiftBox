@@ -26,14 +26,23 @@ type SetupHTTP struct {
 	Cipher           *cryptostore.Store
 	Admin            PasswordAdministrator
 	Login            *SetupLogin
+	DexWeb           http.Handler
 	BrowserAssets    http.Handler
 	CertificateRoots *x509.CertPool
 	Postgres         *PostgresProfileSetup
+	Cloud            *CloudSetup
 	Platform         func(ctx context.Context, actor, currentRelease, previousRelease string) error
 	transferPostgres PostgresCredentialTransfer
 	Journal          *operation.Journal
 	Now              func() time.Time
 	NewID            func() string
+}
+
+// CloudSetup pins the database and public browser names to the private deployment.
+// Platform admission runs after PostgreSQL activation on the normal controller.
+type CloudSetup struct {
+	ApplicationURI                                       string
+	ManagementOrigin, IDEHostPattern, PreviewHostPattern string
 }
 
 // NewSetupHandler exposes only currently implemented local bootstrap routes.
@@ -49,6 +58,9 @@ func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 	mux.HandleFunc("GET /api/v1/setup/status", setup.status)
 	mux.HandleFunc("POST /api/v1/setup/administrator", setup.administrator)
 	if setup.Login != nil {
+		if setup.DexWeb != nil {
+			mux.Handle("/dex/", setup.DexWeb)
+		}
 		destination := "/api/v1/session"
 		if setup.BrowserAssets != nil {
 			destination = "/setup/"
@@ -113,7 +125,7 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 					completed = append(completed, "data_profile")
 					if certificateConfigured {
 						completed = append(completed, "certificate")
-						if compatibleArtifact && capacityVersion > 0 {
+						if (compatibleArtifact || s.Cloud != nil) && capacityVersion > 0 {
 							completed = append(completed, "provider")
 							available = append(available, "activation")
 						} else {
@@ -132,14 +144,28 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 		managementOrigin = ""
 	}
 	writeSetupJSON(w, 200, struct {
-		State              string   `json:"state"`
-		LocalOnly          bool     `json:"localOnly"`
-		Completed          []string `json:"completedSteps"`
-		Available          []string `json:"availableSteps"`
-		CapacityVersion    int64    `json:"capacityVersion"`
-		CompatibleArtifact bool     `json:"compatibleArtifact"`
-		ManagementOrigin   string   `json:"managementOrigin,omitempty"`
-	}{state, true, completed, available, capacityVersion, compatibleArtifact, managementOrigin})
+		State              string             `json:"state"`
+		LocalOnly          bool               `json:"localOnly"`
+		Completed          []string           `json:"completedSteps"`
+		Available          []string           `json:"availableSteps"`
+		CapacityVersion    int64              `json:"capacityVersion"`
+		CompatibleArtifact bool               `json:"compatibleArtifact"`
+		ManagementOrigin   string             `json:"managementOrigin,omitempty"`
+		Cloud              *setupServiceNames `json:"cloud,omitempty"`
+	}{state, true, completed, available, capacityVersion, compatibleArtifact, managementOrigin, s.cloudNames()})
+}
+
+type setupServiceNames struct {
+	ManagementOrigin   string `json:"managementOrigin"`
+	IDEHostPattern     string `json:"ideHostPattern"`
+	PreviewHostPattern string `json:"previewHostPattern"`
+}
+
+func (s SetupHTTP) cloudNames() *setupServiceNames {
+	if s.Cloud == nil {
+		return nil
+	}
+	return &setupServiceNames{s.Cloud.ManagementOrigin, s.Cloud.IDEHostPattern, s.Cloud.PreviewHostPattern}
 }
 
 func (s SetupHTTP) administrator(w http.ResponseWriter, r *http.Request) {

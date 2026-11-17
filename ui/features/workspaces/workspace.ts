@@ -1,3 +1,5 @@
+import type { components } from '../../lib/api-types';
+
 export interface Workspace {
   id: string;
   name?: string;
@@ -5,11 +7,13 @@ export interface Workspace {
   templateId: string;
   templateRevision: number;
   platformRelease: string;
+  providerKind?: string;
   desiredState: string;
   observedState: string;
   currentOperationId: string | null;
   lastFailedOperationId?: string | null;
   canOpenIde?: boolean;
+  probes?: components['schemas']['ProbeResult'][];
   previewPorts?: number[];
   canOpenPreviews?: boolean;
   canEditPreviewPorts?: boolean;

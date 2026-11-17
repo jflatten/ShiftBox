@@ -29,6 +29,7 @@ type ControllerState struct {
 	Secrets            *secret.Service
 	cipher             *cryptostore.Store
 	browserRoots       *x509.CertPool
+	runtime            *config.ControllerRuntime
 	browserReplacement atomic.Pointer[servedBrowserCertificate]
 	retentionMaximum   *int64
 	retentionGrace     time.Duration
@@ -93,7 +94,7 @@ func loadControllerState(ctx context.Context, db *sql.DB, active ActiveInstallat
 		return nil, errors.New("cannot validate the active browser certificate")
 	}
 	state := &ControllerState{DB: db, Installation: active, BrowserTLS: browser, GuestCA: authority,
-		Secrets: secret.NewService(cipher), cipher: cipher, browserRoots: roots,
+		Secrets: secret.NewService(cipher), cipher: cipher, browserRoots: roots, runtime: cfg.Runtime,
 		retentionMaximum: cfg.WorkspaceRetentionMaximumSeconds, retentionGrace: cfg.RetentionOutageGrace()}
 	if active.Settings.DataProfile == "postgres" {
 		state.DexPostgres, err = loadPostgresDexStorage(ctx, db, active.InstallationID, cfg.PostgresURI, cipher)

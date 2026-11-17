@@ -39,13 +39,32 @@ func NewStore(db *sql.DB) *Store {
 
 // BeginImport records a release awaiting provider and guest validation.
 func (s *Store) BeginImport(ctx context.Context, id string, artifact Artifact, actor string, now time.Time) error {
-	bundle, digests, err := manifestInventory(artifact.Manifest)
-	if err != nil {
-		return err
-	}
-	if _, err := uuid.Parse(id); err != nil || artifact.Bundle != bundle ||
-		!validDigest(artifact.ManifestSHA256) || actor == "" || now.IsZero() {
+	if _, err := uuid.Parse(id); err != nil || !validDigest(artifact.ManifestSHA256) || actor == "" || now.IsZero() {
 		return ErrInvalidArtifact
+	}
+	kind := "utm"
+	var ec2Image []byte
+	var digests map[string]string
+	if artifact.EC2 == nil {
+		bundle, inventory, err := manifestInventory(artifact.Manifest)
+		if err != nil {
+			return err
+		}
+		if artifact.Bundle != bundle {
+			return ErrInvalidArtifact
+		}
+		digests = inventory
+	} else {
+		if !validEC2Artifact(artifact) {
+			return ErrInvalidArtifact
+		}
+		var err error
+		ec2Image, err = json.Marshal(artifact.EC2)
+		if err != nil {
+			return err
+		}
+		kind = "ec2"
+		digests = map[string]string{"guest": artifact.Manifest.Guest.SHA256}
 	}
 	manifest, err := json.Marshal(artifact.Manifest)
 	if err != nil {
@@ -66,11 +85,11 @@ func (s *Store) BeginImport(ctx context.Context, id string, artifact Artifact, a
 	m := artifact.Manifest
 	result, err := s.db.ExecContext(ctx, `INSERT INTO platform_artifacts
 		(id,release_id,architecture,platform_version,guest_release,protocol_version,owned_resources_json,
-		digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'validating')
+		digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state,provider_kind,ec2_image_json)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'validating',$15,$16)
 		ON CONFLICT DO NOTHING`, id, m.ReleaseID, m.Architecture, m.PlatformVersion, m.Guest.Version,
 		m.ProtocolVersion, string(resources), string(digestJSON), string(provenance), string(manifest),
-		artifact.ManifestSHA256, artifact.Bundle, actor, now.UTC().Format(time.RFC3339Nano))
+		artifact.ManifestSHA256, artifact.Bundle, actor, now.UTC().Format(time.RFC3339Nano), kind, string(ec2Image))
 	return catalogTransition(result, err)
 }
 
@@ -109,7 +128,7 @@ func (s *Store) SelectDefault(ctx context.Context, id string, protocols []string
 	})
 }
 
-const catalogColumns = `id,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state,is_default`
+const catalogColumns = `id,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state,is_default,provider_kind,ec2_image_json`
 
 // Get reads a release by its pinned catalog ID.
 func (s *Store) Get(ctx context.Context, id string) (CatalogEntry, error) {
@@ -127,14 +146,24 @@ func (s *Store) Default(ctx context.Context) (CatalogEntry, error) {
 
 func scanCatalogEntry(row *sql.Row) (CatalogEntry, error) {
 	var entry CatalogEntry
-	var manifest, stamp string
+	var manifest, stamp, kind, ami string
 	var selected int
 	if err := row.Scan(&entry.ID, &manifest, &entry.Artifact.ManifestSHA256, &entry.Artifact.Bundle,
-		&entry.ImportedBy, &stamp, &entry.State, &selected); err != nil {
+		&entry.ImportedBy, &stamp, &entry.State, &selected, &kind, &ami); err != nil {
 		return CatalogEntry{}, err
 	}
 	if err := json.Unmarshal([]byte(manifest), &entry.Artifact.Manifest); err != nil {
 		return CatalogEntry{}, fmt.Errorf("read stored platform manifest: %w", err)
+	}
+	if kind == "ec2" {
+		image := new(EC2Image)
+		if err := json.Unmarshal([]byte(ami), image); err != nil {
+			return CatalogEntry{}, ErrInvalidArtifact
+		}
+		entry.Artifact.EC2 = image
+		if !validEC2Artifact(entry.Artifact) {
+			return CatalogEntry{}, ErrInvalidArtifact
+		}
 	}
 	var err error
 	entry.ImportedAt, err = time.Parse(time.RFC3339Nano, stamp)

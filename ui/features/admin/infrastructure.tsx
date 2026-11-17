@@ -6,11 +6,13 @@ import { useForm } from '@mantine/form';
 import { APIProblemView } from '../../components/api-problem';
 import { ShiftBoxShell } from '../../components/app-shell';
 import { readProblem } from '../../lib/api-problem';
-import { useInfrastructure, type Capacity, type InfrastructureStatus } from '../../lib/use-infrastructure';
+import { providerLabel } from '../../lib/provider-label';
+import { useInfrastructure, validLimit, type Capacity, type InfrastructureStatus } from '../../lib/use-infrastructure';
 import { SignInChoices } from '../session/sign-in';
 import { useSession } from '../../lib/use-session';
 import { BrowserCertificate } from './browser-certificate';
 import { Maintenance } from './maintenance';
+import { ResourceProfiles } from './resource-profiles';
 import { Secrets } from '../secrets/secrets';
 
 const capacityFields = [
@@ -56,21 +58,24 @@ export function Infrastructure() {
             {canManageSecrets ? <Tabs.Tab value="secrets">Secrets</Tabs.Tab> : null}
           </Tabs.List>
           <Tabs.Panel value="resources" pt="lg">
-            {data ? <Stack gap="lg">
-              <ProviderDetails provider={data.provider} />
-              <Paper component="section" aria-labelledby="capacity-heading" withBorder radius="md" p="lg">
-                <Stack gap="md">
-                  <Stack gap={4}>
-                    <Title order={2} size="h3" id="capacity-heading">Capacity budget</Title>
-                    <Text size="sm" c="dimmed">Set the total resources ShiftBox can reserve across workspaces. These limits are budgets, not live usage.</Text>
-                    <Text size="sm" c="dimmed">CPU and memory remain reserved until a confirmed stop. Disk remains allocated until deletion.</Text>
+            <Stack gap="lg">
+              {data ? <>
+                <ProviderDetails provider={data.provider} />
+                <Paper component="section" aria-labelledby="capacity-heading" withBorder radius="md" p="lg">
+                  <Stack gap="md">
+                    <Stack gap={4}>
+                      <Title order={2} size="h3" id="capacity-heading">Capacity budget</Title>
+                      <Text size="sm" c="dimmed">Set the total resources ShiftBox can reserve across workspaces. These limits are budgets, not live usage.</Text>
+                      <Text size="sm" c="dimmed">CPU and memory remain reserved until a confirmed stop. Disk remains allocated until deletion.</Text>
+                    </Stack>
+                    {canManage
+                      ? <CapacityBudget status={data} csrfToken={current.csrfToken} refresh={status.refetch} />
+                      : <Text>{data.capacity.cpuCount} vCPU · {data.capacity.memoryMiB} MiB memory · {data.capacity.diskMiB} MiB disk</Text>}
                   </Stack>
-                  {canManage
-                    ? <CapacityBudget status={data} csrfToken={current.csrfToken} refresh={status.refetch} />
-                    : <Text>{data.capacity.cpuCount} vCPU · {data.capacity.memoryMiB} MiB memory · {data.capacity.diskMiB} MiB disk</Text>}
-                </Stack>
-              </Paper>
-            </Stack> : null}
+                </Paper>
+              </> : null}
+              <ResourceProfiles key={current.user.id} userId={current.user.id} csrfToken={canManage ? current.csrfToken : undefined} />
+            </Stack>
           </Tabs.Panel>
           {canManage ? <Tabs.Panel value="certificates" pt="lg">
             <Paper withBorder radius="md" p="lg">
@@ -99,7 +104,7 @@ function ProviderDetails({ provider }: { provider: InfrastructureStatus['provide
   const architectureLabels: Record<string, string> = { amd64: 'x86-64 (amd64)', arm64: 'ARM64' };
   const architectures = provider.architectures ?? [provider.architecture];
   const details = [
-    ['Provider', provider.name === 'utm' ? 'UTM' : provider.name || 'Unavailable'],
+    ['Provider', providerLabel(provider.name)],
     ['Version', provider.version || 'Unavailable'],
     ['Architecture', architectures.map(architecture => architectureLabels[architecture] ?? architecture).join(', ') || 'Unavailable'],
     ['Network modes', provider.networkModes?.map(mode => mode === 'shared' ? 'Shared' : mode).join(', ') || 'Unavailable'],
@@ -145,8 +150,6 @@ function CapacityForm({ status, csrfToken, refresh, report }: {
   refresh: () => Promise<{ data?: InfrastructureStatus; isError: boolean }>;
   report: (error: unknown, saved: boolean) => void;
 }) {
-  const validLimit = (value: string | number) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
-    ? null : 'Enter a positive whole number.';
   const form = useForm<Record<keyof Capacity, string | number>>({
     mode: 'uncontrolled',
     initialValues: status.capacity,

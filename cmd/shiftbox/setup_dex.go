@@ -24,8 +24,16 @@ import (
 	"github.com/jflatten/ShiftBox/internal/proxy"
 )
 
+type dexMode uint8
+
+const (
+	localSetupDex dexMode = iota
+	forwardedSetupDex
+	controllerDex
+)
+
 func startSetupDex(ctx context.Context, dir, binary, origin string, server tls.Certificate, postgres *identity.DexPostgres) (identity.PasswordAdmin, *app.SetupLogin, <-chan struct{}, func(), error) {
-	admin, login, _, done, cleanup, err := startDex(ctx, dir, binary, origin, server, postgres, false)
+	admin, login, _, done, cleanup, err := startDex(ctx, dir, binary, origin, server, postgres, localSetupDex)
 	return admin, login, done, cleanup, err
 }
 
@@ -36,10 +44,10 @@ func startControllerDex(ctx context.Context, dir, binary, origin string, postgre
 			return identity.PasswordAdmin{}, nil, nil, nil, nil, errors.New("retained local identity database is unavailable")
 		}
 	}
-	return startDex(ctx, dir, binary, origin, tls.Certificate{}, postgres, true)
+	return startDex(ctx, dir, binary, origin, tls.Certificate{}, postgres, controllerDex)
 }
 
-func startDex(ctx context.Context, dir, binary, origin string, server tls.Certificate, postgres *identity.DexPostgres, managementIssuer bool) (identity.PasswordAdmin, *app.SetupLogin, http.Handler, <-chan struct{}, func(), error) {
+func startDex(ctx context.Context, dir, binary, origin string, server tls.Certificate, postgres *identity.DexPostgres, mode dexMode) (identity.PasswordAdmin, *app.SetupLogin, http.Handler, <-chan struct{}, func(), error) {
 	var admin identity.PasswordAdmin
 	runtime, err := os.MkdirTemp(dir, ".dex-runtime-")
 	if err != nil {
@@ -59,7 +67,7 @@ func startDex(ctx context.Context, dir, binary, origin string, server tls.Certif
 		}
 	}()
 
-	if managementIssuer {
+	if mode == controllerDex {
 		server, err = app.EnsureBootstrapCertificate(filepath.Join(runtime, "loopback-tls.pem"), time.Now())
 		if err != nil {
 			return admin, nil, nil, nil, nil, errors.New("cannot generate managed Dex loopback TLS")
@@ -104,7 +112,7 @@ func startDex(ctx context.Context, dir, binary, origin string, server tls.Certif
 	rand.Read(secret[:])
 	webOrigin := "https://" + addresses[0]
 	issuer := webOrigin + "/dex"
-	if managementIssuer {
+	if mode != localSetupDex {
 		issuer = origin + "/dex"
 	}
 	cfg := identity.DexConfig{
@@ -148,7 +156,7 @@ func startDex(ctx context.Context, dir, binary, origin string, server tls.Certif
 	process := identity.DexProcess{BinaryPath: binary, ConfigPath: configPath,
 		HealthURL: "http://" + cfg.TelemetryAddress + "/healthz/ready",
 		Client:    &http.Client{Transport: transport, Timeout: time.Second}, PollInterval: 50 * time.Millisecond,
-		ManageExternalConnectors: managementIssuer}
+		ManageExternalConnectors: mode == controllerDex}
 	dexCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
@@ -177,7 +185,7 @@ func startDex(ctx context.Context, dir, binary, origin string, server tls.Certif
 	cleanup = append(cleanup, browserTransport.CloseIdleConnections)
 	var dexWeb http.Handler
 	clientTransport := http.RoundTripper(browserTransport)
-	if managementIssuer {
+	if mode != localSetupDex {
 		public, err := url.Parse(issuer)
 		if err != nil {
 			return admin, nil, nil, nil, nil, errors.New("invalid management identity origin")
@@ -198,7 +206,7 @@ func startDex(ctx context.Context, dir, binary, origin string, server tls.Certif
 }
 
 // dexBackchannel keeps discovery, token exchange and signing-key retrieval on
-// the private TLS listener while validating the stable management issuer.
+// the private TLS listener while validating the browser-facing issuer.
 type dexBackchannel struct {
 	issuer, target *url.URL
 	transport      http.RoundTripper

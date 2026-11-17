@@ -158,11 +158,20 @@ func (c *Catalog) ValidateImport(ctx context.Context, id string, check func(cont
 	}
 	switch entry.State {
 	case "available":
+		if entry.Artifact.EC2 != nil {
+			return nil
+		}
 		_, err := c.verifyManaged(ctx, entry)
 		return err
 	case "validating":
 	default:
 		return ErrCatalogConflict
+	}
+	if entry.Artifact.EC2 != nil {
+		if err := check(ctx, entry.Artifact); err != nil {
+			return err
+		}
+		return c.store.CompleteImport(ctx, id, entry.Artifact.ManifestSHA256, true)
 	}
 	raw, err := c.managedManifest(entry)
 	if err != nil {

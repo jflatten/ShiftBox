@@ -8,7 +8,7 @@ import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
 import { PasswordForm } from '../session/password';
 import { ActivateForm, CapacityForm, PlatformCheck, SetupComplete } from './setup-activation';
-import { CertificateForm, DatabaseForm } from './setup-configuration';
+import { CertificateForm, DatabaseForm, type CloudSetupNames } from './setup-configuration';
 
 const steps = [
   ['administrator', 'Administrator'],
@@ -26,6 +26,7 @@ interface SetupStatus {
   capacityVersion?: number;
   compatibleArtifact?: boolean;
   managementOrigin?: string;
+  cloud?: CloudSetupNames;
 }
 
 interface SetupSession {
@@ -91,14 +92,16 @@ export function SetupFlow() {
           <PasswordForm csrfToken={currentSession.csrfToken} onChanged={() => setPasswordChanged(true)} />
         ) : null}
         {!error && stage === 'data_profile' && currentSession && !passwordChanged ? (
-          <DatabaseForm csrfToken={currentSession.csrfToken} onSaved={refreshStatus} />
+          <DatabaseForm cloud={!!status.data?.cloud} csrfToken={currentSession.csrfToken} onSaved={refreshStatus} />
         ) : null}
         {!error && stage === 'certificate' && currentSession && !passwordChanged ? (
-          <CertificateForm csrfToken={currentSession.csrfToken} onSaved={refreshStatus} />
+          <CertificateForm cloud={status.data?.cloud} csrfToken={currentSession.csrfToken} onSaved={refreshStatus} />
         ) : null}
         {!error && stage === 'provider' && currentSession && !passwordChanged ? (
           <Stack gap="xl">
-            {status.data?.compatibleArtifact === true ? null : (
+            {status.data?.cloud
+              ? <Text size="sm">Register and validate the AWS platform image after activation. Workspace launch opens after that check.</Text>
+              : status.data?.compatibleArtifact === true ? null : (
               <PlatformCheck csrfToken={currentSession.csrfToken} onValidated={refreshStatus} />
             )}
             <CapacityForm csrfToken={currentSession.csrfToken} version={status.data?.capacityVersion ?? 0} onSaved={refreshStatus} />

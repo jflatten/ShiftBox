@@ -1,5 +1,7 @@
 'use client';
 
+import { platformImageLabel, providerLabel } from '../../lib/provider-label';
+
 import { useEffect, useRef, useState } from 'react';
 import { Anchor, Badge, Button, Group, Menu, Modal, Paper, SimpleGrid, Stack, Switch, Table, Text, TextInput, Title } from '@mantine/core';
 import { APIProblemView } from '../../components/api-problem';
@@ -121,7 +123,7 @@ function TemplateList({ userID, admin, csrfToken, canCreate }: {
                   </Table.Td>
                   <Table.Td style={{ maxWidth: 200, overflowWrap: 'anywhere' }}>
                     <Text size="sm">{template.resourceProfileName || 'Profile unavailable'}</Text>
-                    <Text size="xs" c="dimmed">{template.platformImageName || 'Image unavailable'}</Text>
+                    <Text size="xs" c="dimmed">{template.platformImageName ? platformImageLabel(template.platformImageName, template.providerKind) : 'Image unavailable'}</Text>
                   </Table.Td>
                   <Table.Td style={{ maxWidth: 180, overflowWrap: 'anywhere' }}>
                     <Text size="sm">{template.ownerId === userID ? 'You' : template.ownerName || 'Template owner'}</Text>
@@ -149,7 +151,7 @@ function TemplateList({ userID, admin, csrfToken, canCreate }: {
       {dialog?.action === 'share' ? <TemplateSharing template={dialog.template} csrfToken={csrfToken} onClose={close} refresh={page.refetch} /> : null}
       {dialog?.action === 'archive' ? <TemplateArchive template={dialog.template} csrfToken={csrfToken} onClose={close} refresh={page.refetch} /> : null}
       {dialog?.action === 'create' || dialog?.action === 'revise' ? <TemplateRevisionForm
-        template={dialog.action === 'revise' ? dialog.template : undefined} csrfToken={csrfToken} onClose={close} refresh={page.refetch} /> : null}
+        template={dialog.action === 'revise' ? dialog.template : undefined} admin={admin} csrfToken={csrfToken} onClose={close} refresh={page.refetch} /> : null}
     </Stack>
   );
 }
@@ -175,7 +177,8 @@ function TemplateDetails({ template, onClose }: { template: TemplateRevision; on
     ['Revision', String(template.currentRevision)], ['Owner', template.ownerName || 'Template owner'],
     ['Repository URL', template.repositoryUrl || 'Unavailable'], ['Repository ref', template.repositoryRef || 'Default branch'],
     ['Dev Container configuration', template.devcontainerPath || 'Unavailable'], ['Resource profile', template.resourceProfileName || 'Unavailable'],
-    ['Platform image', template.platformImageName || 'Unavailable'], ['Secret references', template.secretNames?.join(', ') || 'None'],
+    ['Provider', providerLabel(template.providerKind)], ['Platform image', template.platformImageName || 'Unavailable'],
+    ['Secret references', template.secretNames?.join(', ') || 'None'],
   ];
   return <Modal opened title="Template details" size="lg" onClose={onClose}
     closeButtonProps={{ 'aria-label': 'Close template details' }} transitionProps={{ duration: 0 }}>

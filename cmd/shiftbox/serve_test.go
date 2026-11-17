@@ -105,3 +105,49 @@ func TestServeDoesNotEchoSecretArguments(t *testing.T) {
 		t.Fatal("serve accepted or echoed an unrecognized credential argument")
 	}
 }
+
+// TestEC2RuntimeDoesNotRequireUTM verifies that a fresh cloud installation
+// can configure its listeners without a Mac provider or a launchable AMI.
+func TestEC2RuntimeDoesNotRequireUTM(t *testing.T) {
+	settings := config.ControllerRuntime{Provider: "ec2", GuestHost: "guest.dev.example.test",
+		BrowserAddress: ":8443", EnrollmentAddress: ":19443", PollAddress: ":19444", TunnelAddress: ":19445"}
+	if err := checkControllerRuntime(settings); err != nil {
+		t.Fatalf("EC2 runtime validation: %v", err)
+	}
+	machines, _, err := controllerProvider(t.TempDir(), settings, nil)
+	if err != nil {
+		t.Fatalf("EC2 provider composition: %v", err)
+	}
+	caps, err := machines.Capabilities(t.Context())
+	if err != nil || caps.Name != "ec2" || caps.Create {
+		t.Fatalf("initial EC2 capabilities = %+v, %v; want EC2 with launch blocked", caps, err)
+	}
+}
+
+// TestCloudSetupUsesDeployedNames verifies that cloud setup uses Terraform's
+// browser names and database, and has no local platform folder requirement.
+func TestCloudSetupUsesDeployedNames(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cloud.json")
+	cfg := config.Config{InstallationDir: dir, DataProfile: "postgres",
+		PostgresURI:      "postgres://shiftbox_app:fixture@postgres.dev.example.test/shiftbox?sslmode=verify-full",
+		ManagementOrigin: "https://shiftbox.dev.example.test:8443",
+		Runtime: &config.ControllerRuntime{Provider: "ec2", GuestHost: "guest.dev.example.test",
+			BrowserAddress: ":8443", EnrollmentAddress: ":19443", PollAddress: ":19444", TunnelAddress: ":19445"}}
+	cfg.ExternalAuthIntervalSeconds = 14400
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	platform, err := readSetupPlatform(dir, path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if platform.cloud == nil || platform.cloud.ManagementOrigin != cfg.ManagementOrigin ||
+		platform.cloud.IDEHostPattern != "{workspace}.ide.dev.example.test" || platform.cloud.ApplicationURI != cfg.PostgresURI {
+		t.Fatal("cloud setup did not bind to the deployed names and PostgreSQL")
+	}
+}

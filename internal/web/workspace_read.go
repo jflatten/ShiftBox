@@ -21,6 +21,7 @@ type workspaceView struct {
 	TemplateID         string             `json:"templateId"`
 	TemplateRevision   int64              `json:"templateRevision"`
 	PlatformRelease    string             `json:"platformRelease"`
+	ProviderKind       string             `json:"providerKind"`
 	DesiredState       string             `json:"desiredState"`
 	ObservedState      string             `json:"observedState"`
 	Generation         int64              `json:"generation"`
@@ -38,7 +39,7 @@ type workspaceResources struct {
 	DiskMiB   int64 `json:"diskMiB"`
 }
 
-const workspaceProjection = `w.id,w.owner_user_id,w.template_id,w.template_revision,a.release_id,
+const workspaceProjection = `w.id,w.owner_user_id,w.template_id,w.template_revision,a.release_id,a.provider_kind,
 	w.desired_state,w.observed_state,w.generation,w.cpu_count,w.memory_mib,w.disk_mib,
 	(SELECT o.id FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
 	   AND o.status IN ('pending','running','waiting') ORDER BY o.created_at DESC,o.id DESC LIMIT 1),
@@ -95,6 +96,13 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 			if err != nil {
 				return nil, err
 			}
+			probes := []workspace.ProbeResult{}
+			if view.DesiredState == "running" && view.ObservedState == "running" {
+				probes, err = workspace.ReadProbeResults(ctx, tx, view.ID, view.Generation, now())
+				if err != nil {
+					return nil, err
+				}
+			}
 			var lastFailedID *string
 			var canStartRepair, canRetryAfterRepair bool
 			if view.CurrentOperationID == nil {
@@ -122,6 +130,7 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 			// Expose the current entry decision without issuing a grant.
 			response := struct {
 				workspaceView
+				Probes                []workspace.ProbeResult         `json:"probes"`
 				CanOpenIDE            bool                            `json:"canOpenIde"`
 				CanOpenRepair         bool                            `json:"canOpenRepair"`
 				CanOpenPreviews       bool                            `json:"canOpenPreviews"`
@@ -133,6 +142,7 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 				Maintenance           *workspace.WorkspaceMaintenance `json:"maintenance,omitempty"`
 			}{
 				workspaceView: view,
+				Probes:        probes,
 				CanOpenIDE:    auth.Authorize(principal, entry.Action, entry.Resource, entry.Grants, now()).Allowed,
 				CanOpenRepair: auth.Authorize(principal, repairEntry.Action, repairEntry.Resource, repairEntry.Grants, now()).Allowed,
 				CanOpenPreviews: view.DesiredState == "running" && view.ObservedState == "running" && auth.Authorize(principal, entry.Action,
@@ -221,7 +231,7 @@ func listWorkspaces(ctx context.Context, tx *sql.Tx, r *http.Request, principal 
 func scanWorkspace(row interface{ Scan(...any) error }) (workspaceView, error) {
 	var view workspaceView
 	var previewJSON string
-	err := row.Scan(&view.ID, &view.OwnerID, &view.TemplateID, &view.TemplateRevision, &view.PlatformRelease,
+	err := row.Scan(&view.ID, &view.OwnerID, &view.TemplateID, &view.TemplateRevision, &view.PlatformRelease, &view.ProviderKind,
 		&view.DesiredState, &view.ObservedState, &view.Generation,
 		&view.Resources.CPUCount, &view.Resources.MemoryMiB, &view.Resources.DiskMiB,
 		&view.CurrentOperationID, &view.LastActivityAt, &view.RetentionDeadline, &view.Version, &previewJSON, &view.Name)

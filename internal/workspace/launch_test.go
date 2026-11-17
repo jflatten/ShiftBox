@@ -69,6 +69,14 @@ func TestLaunchAdmission(t *testing.T) {
 				})
 				return result, err
 			}
+			// The same amd64 architecture must not allow an EC2 deployment to
+			// pin an existing UTM bundle in its launch snapshot.
+			cloud := launch
+			cloud.ProviderKind = "ec2"
+			cloud.Allocation = Allocation{CPU: 2, MemoryMiB: 4096, DiskMiB: 32768}
+			if _, err := admit(cloud); !errors.Is(err, ErrCapacityConflict) {
+				t.Fatalf("EC2 admission with a UTM bundle = %v, want refusal", err)
+			}
 			first, err := admit(launch)
 			if err != nil || first.WorkspaceID == nil || *first.WorkspaceID != launch.WorkspaceID || first.Status != "pending" || len(first.Steps) < 4 {
 				t.Fatalf("AdmitLaunch = %+v, %v, want pending operation with persisted workflow", first, err)

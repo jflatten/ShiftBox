@@ -86,8 +86,8 @@ Every OpenAPI operation maps to exactly one action. Grouped operation IDs below 
 | `listNotices` | `notice.list` |
 | `updateNoticeReceipt` | `notice.read` or `notice.dismiss` from requested receipt state |
 | `listAuditEvents` | `audit.list` |
-| `getInfrastructureStatus` | `infrastructure.view` |
-| `replaceBrowserCertificate`, `importPlatformArtifact`, `createResourceProfile`, `updateCapacityBudget`, `createNetworkPolicy` | `infrastructure.manage` |
+| `getInfrastructureStatus`, `listResourceProfiles` | `infrastructure.view` |
+| `replaceBrowserCertificate`, `importPlatformArtifact`, `createResourceProfile`, `updateResourceProfile`, `deleteResourceProfile`, `updateCapacityBudget`, `createNetworkPolicy` | `infrastructure.manage` |
 | `listMaintenanceCampaigns` | `infrastructure.view` |
 | `createMaintenanceCampaign` | `maintenance.manage` |
 | `runMigrationPreflight` | `migration.preflight` |

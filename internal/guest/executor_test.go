@@ -153,7 +153,7 @@ func TestGuestPollSendsCommittedLifecycleEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		input := newGuestPollRequest("1", "test", journal)
-		delay, err := pollAgent(t.Context(), server.Client(), server.URL+pollPath, input, journal, runtime, nil)
+		delay, err := pollAgent(t.Context(), server.Client(), server.URL+pollPath, input, journal, runtime, nil, nil)
 		if err != nil {
 			t.Fatalf("pollAgent(%+v) = %v, want success", input, err)
 		}
@@ -194,7 +194,7 @@ func TestGuestPollCadence(t *testing.T) {
 			})
 		}))
 		delay, err := pollAgent(t.Context(), server.Client(), server.URL+pollPath,
-			newGuestPollRequest("1", "test", nil), nil, devContainer{}, nil)
+			newGuestPollRequest("1", "test", nil), nil, devContainer{}, nil, nil)
 		server.Close()
 		if err != nil || delay < tc.min || delay >= tc.max {
 			t.Errorf("pollAgent(hint %d) = %v, %v, want [%v, %v)", tc.hint, delay, err, tc.min, tc.max)

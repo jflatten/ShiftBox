@@ -45,7 +45,7 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	}
 	normalized := strings.ToLower(strings.TrimSpace(*email))
 	addr, err := mail.ParseAddress(normalized)
-	if err != nil || addr.Address != normalized || addr.Name != "" {
+	if normalized != "" && (err != nil || addr.Address != normalized || addr.Name != "") {
 		return errors.New("setup requires a valid administrator email")
 	}
 	if *dex == "" {
@@ -58,12 +58,25 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	if !filepath.IsAbs(*dex) {
 		return errors.New("Dex binary path must be absolute")
 	}
-	if *reset {
+	if *reset && normalized != "" {
 		return resetSetupPassword(ctx, *dir, *dex, normalized, out)
 	}
 	platform, err := readSetupPlatform(*dir, *configPath, *platformFolder)
 	if err != nil {
 		return err
+	}
+	var cloud *app.CloudSetup
+	address := "127.0.0.1:0"
+	if platform != nil {
+		cloud = platform.cloud
+	}
+	if cloud != nil {
+		if normalized != "" || *reset || *postgresPath == "" {
+			return errors.New("EC2 setup requires the scoped PostgreSQL configuration and creates the administrator in the browser")
+		}
+		address = "127.0.0.1:8444"
+	} else if normalized == "" {
+		return errors.New("setup requires a valid administrator email")
 	}
 	postgres, err := readSetupPostgresProfile(*postgresPath)
 	if err != nil {
@@ -93,7 +106,7 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	if err != nil {
 		return errors.New("cannot load system certificate trust")
 	}
-	resumed, err := resumeRetiredSetup(ctx, *dir, cipher, roots)
+	resumed, err := resumeRetiredSetup(ctx, *dir, cipher, roots, cloud)
 	if err != nil {
 		return err
 	}
@@ -105,7 +118,7 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	var dexDone <-chan struct{}
 	closeDex := func() {}
 	defer func() { closeDex() }()
-	server, err := app.ListenBootstrap("127.0.0.1:0", cert, func(origin string) (http.Handler, error) {
+	server, err := app.ListenBootstrap(address, cert, func(origin string) (http.Handler, error) {
 		db, id, err := database.OpenBootstrap(ctx, filepath.Join(*dir, "bootstrap.db"), database.BootstrapSeed{
 			ID: uuid.NewString(), Organization: "ShiftBox", Origin: origin,
 			IDEPattern: "{workspace}.ide.invalid", PreviewPattern: "{service}--{workspace}.preview.invalid",
@@ -118,15 +131,19 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 			db.Close()
 			return nil, err
 		}
-		admin, login, done, cleanup, err := startSetupDex(ctx, *dir, *dex, origin, cert, nil)
+		mode := localSetupDex
+		if cloud != nil {
+			mode = forwardedSetupDex
+		}
+		admin, login, dexWeb, done, cleanup, err := startDex(ctx, *dir, *dex, origin, cert, nil, mode)
 		if err != nil {
 			db.Close()
 			return nil, err
 		}
 		dexDone, closeDex = done, cleanup
-		setup = app.SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Admin: admin, Login: login, BrowserAssets: assets, CertificateRoots: roots, Postgres: postgres,
+		setup = app.SetupHTTP{DB: db, InstallationID: id, Origin: origin, Cipher: cipher, Admin: admin, Login: login, DexWeb: dexWeb, BrowserAssets: assets, CertificateRoots: roots, Postgres: postgres, Cloud: cloud,
 			Journal: operation.NewJournal(db, time.Now, uuid.NewString), Now: time.Now, NewID: uuid.NewString}
-		if platform != nil {
+		if platform != nil && cloud == nil {
 			setup.Platform = platform.validator(db, id)
 		}
 		setup = setup.WithPostgresTransfer(func(ctx context.Context, storage identity.DexPostgres, email, userID string) error {
@@ -148,8 +165,10 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	}
 	defer setup.DB.Close()
 	defer server.Close()
-	if err := deliverAdministrator(ctx, setup, normalized, out); err != nil {
-		return err
+	if cloud == nil {
+		if err := deliverAdministrator(ctx, setup, normalized, out); err != nil {
+			return err
+		}
 	}
 
 	served := make(chan error, 1)

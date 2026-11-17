@@ -54,12 +54,25 @@ Request:
     "cpuPercent": 6.2,
     "ideConnections": 1
   },
+  "probes": [
+    { "id": "code-server", "status": "healthy" }
+  ],
   "tunnel": {
     "connected": true,
     "sessionId": "opaque"
   }
 }
 ```
+
+`probes` is optional. A successful poll with the response header
+`Shiftbox-Probe-Reports: 1` enables reporting on the next poll while the desired
+state is running. The code-server probe checks the local IDE socket and reports
+`healthy` when its health endpoint responds successfully, including while the
+editor is idle. An unavailable socket or unsuccessful health response produces
+`error`. The controller validates IDs and statuses and records the results
+against the authenticated workspace generation. An omitted or empty report
+leaves the previous result to expire 90 seconds after receipt. The controller
+uses these reports for display only.
 
 Response:
 

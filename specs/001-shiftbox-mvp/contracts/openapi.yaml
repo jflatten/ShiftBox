@@ -929,6 +929,18 @@ paths:
         default: { $ref: '#/components/responses/Error' }
 
   /admin/resource-profiles:
+    get:
+      tags: [Infrastructure]
+      operationId: listResourceProfiles
+      responses:
+        '200':
+          description: All saved resource profiles, including disabled profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ResourceProfile' }
+        default: { $ref: '#/components/responses/Error' }
     post:
       tags: [Infrastructure]
       operationId: createResourceProfile
@@ -945,6 +957,37 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ResourceProfileInput' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/resource-profiles/{profileId}:
+    parameters:
+      - name: profileId
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [Infrastructure]
+      operationId: updateResourceProfile
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResourceProfileUpdate' }
+      responses:
+        '204': { description: Resource profile updated for future launches }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Infrastructure]
+      operationId: deleteResourceProfile
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Unreferenced resource profile deleted }
+        '409': { $ref: '#/components/responses/Error' }
         default: { $ref: '#/components/responses/Error' }
 
   /admin/capacity:
@@ -1214,6 +1257,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
+        providerKind: { type: string, enum: [utm, ec2] }
     SetupStatus:
       type: object
       required: [state, localOnly, completedSteps, availableSteps]
@@ -1274,6 +1318,13 @@ components:
         mustChangePassword: { type: boolean }
         version: { type: integer, minimum: 1 }
 
+    ProbeResult:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string, enum: [code-server] }
+        status: { type: string, enum: [healthy, error] }
+
     Workspace:
       type: object
       required: [id, ownerId, templateId, templateRevision, desiredState, observedState, generation, resources, version]
@@ -1283,6 +1334,8 @@ components:
         ownerId: { type: string, format: uuid }
         templateId: { type: string, format: uuid }
         templateRevision: { type: integer, minimum: 1 }
+        providerKind: { type: string, enum: [utm, ec2] }
+        platformRelease: { type: string }
         desiredState: { type: string, enum: [stopped, running, deleted] }
         observedState: { type: string, enum: [unknown, provisioning, stopped, starting, running, unreachable, stopping, deleting, deleted, failed] }
         generation: { type: integer, minimum: 1 }
@@ -1291,6 +1344,10 @@ components:
         previewPorts:
           type: array
           items: { type: integer, minimum: 1, maximum: 65535 }
+        probes:
+          description: Recent probe results for the current guest generation, included on workspace detail only.
+          type: array
+          items: { $ref: '#/components/schemas/ProbeResult' }
         canOpenPreviews: { type: boolean }
         canEditPreviewPorts: { type: boolean }
         lastActivityAt: { type: [string, 'null'], format: date-time }
@@ -1361,6 +1418,7 @@ components:
         ownerName: { type: string, description: Current owner display name or email. }
         resourceProfileName: { type: string }
         platformImageName: { type: string }
+        providerKind: { type: string, enum: [utm, ec2] }
         name: { type: string }
         state: { type: string, enum: [active, archived] }
         currentRevision: { type: integer, minimum: 1 }
@@ -1449,13 +1507,18 @@ components:
     PlatformArtifactInput:
       type: object
       additionalProperties: false
-      required: [folder]
+      oneOf:
+        - required: [folder]
+        - required: [manifest]
       properties:
         folder:
           type: string
           minLength: 1
           maxLength: 4096
           description: Absolute path on the controller containing the UTM bundle and manifest.json.
+        manifest:
+          type: object
+          description: The Packer AMI manifest for a cloud EC2 controller.
         makeDefault: { type: boolean, default: false }
 
     ResourceProfileInput:
@@ -1467,6 +1530,25 @@ components:
         cpuCount: { type: integer, minimum: 1 }
         memoryMiB: { type: integer, minimum: 1 }
         diskMiB: { type: integer, minimum: 1 }
+
+    ResourceProfileUpdate:
+      type: object
+      required: [name, cpuCount, memoryMiB, diskMiB, enabled]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        cpuCount: { type: integer, minimum: 1 }
+        memoryMiB: { type: integer, minimum: 1 }
+        diskMiB: { type: integer, minimum: 1 }
+        enabled: { type: boolean }
+
+    ResourceProfile:
+      allOf:
+        - $ref: '#/components/schemas/ResourceProfileUpdate'
+        - type: object
+          required: [id, version]
+          properties:
+            id: { type: string }
+            version: { type: integer, minimum: 1 }
 
     NetworkPolicyInput:
       type: object

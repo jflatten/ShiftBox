@@ -5,25 +5,26 @@ import { workspaceState } from './workspace';
 const progress = '#0043ce';
 const inactive = '#6f6f6f';
 const unknown = '#8a3ffc';
-const running = '#24a148';
+const healthy = '#24a148';
+const error = '#da1e28';
 const unreachable = '#ff832b';
 const chipHeight = 23;
 const statusColors = new Map([
-  ['running', running],
+  ['running', healthy], ['healthy', healthy],
   ['provisioning', progress], ['starting', progress], ['stopping', progress], ['deleting', progress],
   ['stopped', inactive], ['deleted', inactive],
-  ['unreachable', unreachable], ['failed', '#da1e28'],
+  ['unreachable', unreachable], ['failed', error], ['error', error],
 ]);
 
-/** Report observed state without implying that a running VM has a ready IDE. */
-export function WorkspaceStatus({ value, transitioning = false }: { value: string; transitioning?: boolean }) {
+/** Display an observed workspace or probe status as a read-only chip. */
+export function WorkspaceStatus({ value, label, transitioning = false }: { value: string; label?: string; transitioning?: boolean }) {
   const color = statusColors.get(value) ?? unknown;
-  const textColor = color === running || color === unreachable ? '#161616' : '#ffffff';
+  const textColor = color === healthy || color === unreachable ? '#161616' : '#ffffff';
   const chip = (
     <Chip checked readOnly hidden icon={false} color={color} variant="filled" size="xs"
       vars={() => ({ root: { '--chip-size': rem(chipHeight) } })}
       styles={{ label: { color: textColor, pointerEvents: 'none' } }}>
-      {workspaceState(value)}
+      {label ?? workspaceState(value)}
     </Chip>
   );
   return transitioning ? <Group gap="xs" wrap="nowrap">

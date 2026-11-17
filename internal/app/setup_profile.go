@@ -28,6 +28,12 @@ func (s SetupHTTP) profileHandler(preflight func(context.Context, database.Postg
 		if err := web.DecodeJSON(nil, r, &input, 16<<10); err != nil {
 			return nil, err
 		}
+		if s.Cloud != nil {
+			if input.Profile != "postgres" || input.ConnectionURI != "" || input.SetupConnectionURI != nil {
+				return nil, invalidProfile()
+			}
+			input.ConnectionURI = s.Cloud.ApplicationURI
+		}
 		if input.Profile == "postgres" {
 			return s.selectPostgresProfile(ctx, tx, r, p, key, input, preflight)
 		}
