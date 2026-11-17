@@ -10,6 +10,7 @@ import { workspaceName, workspaceState, type Workspace } from './workspace';
 import { WorkspaceStatus, WorkspaceTime } from './workspace-summary';
 import { RetentionWarning } from './retention';
 import { WorkspaceConnectionGrants } from './connection-grants';
+import { WorkspaceKeepAlive } from './keep-alive';
 import { availableWorkspaceCommands, openWorkspaceEntry, useWorkspaceCommand, useWorkspaceDetail, type WorkspaceService } from './workspace-commands';
 
 const probeNames = { 'code-server': 'Code-server' } satisfies Record<NonNullable<Workspace['probes']>[number]['id'], string>;
@@ -101,6 +102,8 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
                 ) : null}
               </Group>
               {error !== undefined && !confirmDelete ? <APIProblemView error={error} /> : null}
+              <WorkspaceKeepAlive key={data.id} workspace={data} csrfToken={csrfToken}
+                disabled={busy || data.desiredState === 'deleted'} refresh={workspace.refetch} />
               <Text size="sm">Stop and start preserve project files, the developer home, and named application volumes. Rebuilding also preserves this data and replaces the container’s writable layer.</Text>
               {data.canStartRepair || data.canOpenRepair || data.canRetryAfterRepair ? (
                 <Text id={repairDescriptionId} size="sm">Repair opens your project files in a separate IDE and skips project hooks, tasks, and extensions.</Text>

@@ -1,6 +1,7 @@
 package guest
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,6 +26,13 @@ const secretReplyLimit = 384 << 10
 type secretReply struct {
 	Name  string  `json:"name"`
 	Value *string `json:"value"`
+}
+
+// SecretKey describes one available secret name and effective display scope.
+type SecretKey = secret.Key
+
+type secretListReply struct {
+	Keys []SecretKey `json:"keys"`
 }
 
 func listenSecretSocket(ctx context.Context, path string, client *http.Client, pollEndpoint string) (func(), error) {
@@ -65,6 +74,10 @@ func listenSecretSocket(ctx context.Context, path string, client *http.Client, p
 		BaseContext: func(net.Listener) context.Context { return socketCtx },
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
+			if r.URL.RequestURI() == "/secrets" && r.Method == http.MethodGet && r.ContentLength == 0 {
+				localSecretList(w, r, client, endpoint)
+				return
+			}
 			if r.URL.RequestURI() == "/git" && r.Method == http.MethodPost && r.ContentLength == 0 {
 				localGitToken(w, r, client, pollEndpoint)
 				return
@@ -123,6 +136,90 @@ func listenSecretSocket(ctx context.Context, path string, client *http.Client, p
 		_ = listener.Close()
 		<-done
 	}, nil
+}
+
+// ListLocalSecrets requests current effective keys through the local agent.
+// It returns names and scopes only, with no cached result after a failed lookup.
+func ListLocalSecrets(ctx context.Context, socket string) ([]SecretKey, error) {
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+	}}
+	defer transport.CloseIdleConnections()
+	client := http.Client{Transport: transport, Timeout: 20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://shiftbox.local/secrets", nil)
+	if err != nil {
+		return nil, err
+	}
+	reply, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer reply.Body.Close()
+	if reply.StatusCode == http.StatusForbidden {
+		return nil, ErrGuestUnauthorized
+	}
+	if reply.StatusCode != http.StatusOK {
+		return nil, errors.New("workspace secret service is unavailable")
+	}
+	return decodeSecretListReply(reply.Body)
+}
+
+func localSecretList(w http.ResponseWriter, r *http.Request, client *http.Client, endpoint *url.URL) {
+	target := *endpoint
+	target.Path, target.RawPath = SecretListPath, ""
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target.String(), nil)
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	if response.StatusCode != http.StatusOK {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	keys, err := decodeSecretListReply(response.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(secretListReply{Keys: keys})
+}
+
+func decodeSecretListReply(body io.Reader) ([]SecretKey, error) {
+	raw, err := io.ReadAll(io.LimitReader(body, secretReplyLimit+1))
+	defer clear(raw)
+	if err != nil || len(raw) > secretReplyLimit {
+		return nil, errors.New("invalid secret list response")
+	}
+	var reply secretListReply
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&reply); err != nil || reply.Keys == nil {
+		return nil, errors.New("invalid secret list response")
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return nil, errors.New("invalid secret list response")
+	}
+	seen := make(map[string]bool, len(reply.Keys))
+	for _, key := range reply.Keys {
+		if !secret.ValidName(key.Name) || seen[key.Name] || (key.Scope != "user" && key.Scope != "project" && key.Scope != "organization") {
+			return nil, errors.New("invalid secret list response")
+		}
+		seen[key.Name] = true
+	}
+	slices.SortFunc(reply.Keys, func(a, b SecretKey) int { return strings.Compare(a.Name, b.Name) })
+	return reply.Keys, nil
 }
 
 // ReadLocalSecret requests one secret through the workspace's local agent.

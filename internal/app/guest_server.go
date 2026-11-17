@@ -100,6 +100,10 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		internal.Handle(guest.GitAccessTokenPath, web.GuestGitTokenHandler(enrollment.Authenticate, config.GitHub.AccessToken, now))
 	}
 	if config.Secrets != nil {
+		internal.Handle("GET "+guest.SecretListPath, web.GuestSecretListHandler(
+			func(ctx context.Context, leaf *x509.Certificate, stamp time.Time) ([]secret.Key, error) {
+				return enrollment.ListSecrets(ctx, leaf, stamp, config.Secrets)
+			}, now))
 		internal.Handle("POST "+guest.SecretResolvePrefix, web.GuestSecretHandler(
 			func(ctx context.Context, leaf *x509.Certificate, stamp time.Time, name string) ([]byte, string, error) {
 				return enrollment.ResolveSecret(ctx, leaf, stamp, config.Secrets, name)

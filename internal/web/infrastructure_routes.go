@@ -76,6 +76,10 @@ func InfrastructureStatusHandler(db *sql.DB, origin string, now func() time.Time
 			if err != nil {
 				return nil, err
 			}
+			keepAlivePolicy, err := workspace.ReadKeepAlivePolicy(ctx, tx)
+			if err != nil {
+				return nil, err
+			}
 			conditions, err := browserCertificateConditions(ctx, tx, now())
 			if err != nil {
 				return nil, err
@@ -99,11 +103,12 @@ func InfrastructureStatusHandler(db *sql.DB, origin string, now func() time.Time
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(version, 10)))
 				_ = json.NewEncoder(w).Encode(struct {
-					Provider   infrastructureProvider    `json:"provider"`
-					Capacity   workspaceResources        `json:"capacity"`
-					Conditions []infrastructureCondition `json:"conditions"`
-					Version    int64                     `json:"version"`
-				}{Provider: providerView, Capacity: capacity, Conditions: conditions, Version: version})
+					Provider        infrastructureProvider    `json:"provider"`
+					Capacity        workspaceResources        `json:"capacity"`
+					Conditions      []infrastructureCondition `json:"conditions"`
+					Version         int64                     `json:"version"`
+					KeepAlivePolicy workspace.KeepAlivePolicy `json:"keepAlivePolicy"`
+				}{Provider: providerView, Capacity: capacity, Conditions: conditions, Version: version, KeepAlivePolicy: keepAlivePolicy})
 			}), nil
 		},
 	}

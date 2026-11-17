@@ -35,6 +35,22 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
+// Cost controls belong in the requested capacity section so administrators can
+// discover the inactivity limit beside their overall cloud resource budget.
+test('places keep-alive settings inside the capacity budget section', async () => {
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json({ ...status,
+      keepAlivePolicy: { maximumMinutes: 0, allowedMinutes: [30, 60, 120, 240, 480, 720, 0], defaultMinutes: 30, version: 1 } });
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
+    throw new Error('unexpected request');
+  });
+  render(<Providers><Infrastructure /></Providers>);
+  const capacity = await screen.findByRole('region', { name: 'Capacity budget' });
+  expect(within(capacity).getByRole('textbox', { name: 'Maximum inactivity timeout' })).toHaveValue('Unlimited');
+  expect(within(capacity).getByRole('combobox', { name: 'Default keep-alive' })).toHaveValue('30 minutes');
+});
+
 // Clearing individual limits must persist Unlimited without changing finite
 // dimensions. Refreshed unlimited values stay blank and discard restores them.
 test('saves independent unlimited limits and restores saved blanks when discarding', async () => {

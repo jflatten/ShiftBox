@@ -31,6 +31,8 @@ type workspaceView struct {
 	LastActivityAt     *string            `json:"lastActivityAt"`
 	RetentionDeadline  *string            `json:"retentionDeadline"`
 	Version            int64              `json:"version"`
+	keepAliveOverride  *int64
+	createdAt          string
 }
 
 type workspaceResources struct {
@@ -43,7 +45,8 @@ const workspaceProjection = `w.id,w.owner_user_id,w.template_id,w.template_revis
 	w.desired_state,w.observed_state,w.generation,w.cpu_count,w.memory_mib,w.disk_mib,
 	(SELECT o.id FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
 	   AND o.status IN ('pending','running','waiting') ORDER BY o.created_at DESC,o.id DESC LIMIT 1),
-	w.last_activity_at,w.retention_deadline,w.version,w.preview_ports_json,COALESCE(NULLIF(w.name,''),w.id)`
+	w.last_activity_at,w.retention_deadline,w.version,w.preview_ports_json,COALESCE(NULLIF(w.name,''),w.id),
+	w.keep_alive_minutes,w.created_at`
 
 const workspaceFrom = ` FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id`
 
@@ -75,6 +78,28 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 			view, err := scanWorkspace(tx.QueryRowContext(ctx, `SELECT `+workspaceProjection+workspaceFrom+` WHERE w.id=$1`, target.Resource.ID))
 			if err != nil {
 				return nil, err
+			}
+			keepAlivePolicy, err := workspace.ReadKeepAlivePolicy(ctx, tx)
+			if err != nil {
+				return nil, err
+			}
+			keepAliveMinutes := keepAlivePolicy.EffectiveMinutes(view.keepAliveOverride)
+			var shutdownAt *string
+			var inactivityMinutes int64
+			if view.DesiredState == "running" {
+				baseline := view.createdAt
+				if view.LastActivityAt != nil {
+					baseline = *view.LastActivityAt
+				}
+				last, err := time.Parse(time.RFC3339Nano, baseline)
+				if err != nil {
+					return nil, err
+				}
+				inactivityMinutes = max(0, int64(now().Sub(last)/time.Minute))
+				if keepAliveMinutes > 0 {
+					deadline := last.Add(time.Duration(keepAliveMinutes) * time.Minute).UTC().Format(time.RFC3339Nano)
+					shutdownAt = &deadline
+				}
 			}
 			resource, _, err := serviceWorkspace(ctx, tx, view.ID, "ide")
 			if err != nil {
@@ -130,16 +155,22 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 			// Expose the current entry decision without issuing a grant.
 			response := struct {
 				workspaceView
-				Probes                []workspace.ProbeResult         `json:"probes"`
-				CanOpenIDE            bool                            `json:"canOpenIde"`
-				CanOpenRepair         bool                            `json:"canOpenRepair"`
-				CanOpenPreviews       bool                            `json:"canOpenPreviews"`
-				CanEditPreviewPorts   bool                            `json:"canEditPreviewPorts"`
-				CanStartRepair        bool                            `json:"canStartRepair"`
-				CanRetryAfterRepair   bool                            `json:"canRetryAfterRepair"`
-				LastFailedOperationID *string                         `json:"lastFailedOperationId"`
-				Retention             *WorkspaceRetentionStatus       `json:"retention,omitempty"`
-				Maintenance           *workspace.WorkspaceMaintenance `json:"maintenance,omitempty"`
+				Probes                   []workspace.ProbeResult         `json:"probes"`
+				CanOpenIDE               bool                            `json:"canOpenIde"`
+				CanOpenRepair            bool                            `json:"canOpenRepair"`
+				CanOpenPreviews          bool                            `json:"canOpenPreviews"`
+				CanEditPreviewPorts      bool                            `json:"canEditPreviewPorts"`
+				CanEditKeepAlive         bool                            `json:"canEditKeepAlive"`
+				KeepAlivePolicy          workspace.KeepAlivePolicy       `json:"keepAlivePolicy"`
+				KeepAliveMinutes         int64                           `json:"keepAliveMinutes"`
+				KeepAliveOverrideMinutes *int64                          `json:"keepAliveOverrideMinutes"`
+				InactivityShutdownAt     *string                         `json:"inactivityShutdownAt"`
+				InactivityMinutes        int64                           `json:"inactivityMinutes"`
+				CanStartRepair           bool                            `json:"canStartRepair"`
+				CanRetryAfterRepair      bool                            `json:"canRetryAfterRepair"`
+				LastFailedOperationID    *string                         `json:"lastFailedOperationId"`
+				Retention                *WorkspaceRetentionStatus       `json:"retention,omitempty"`
+				Maintenance              *workspace.WorkspaceMaintenance `json:"maintenance,omitempty"`
 			}{
 				workspaceView: view,
 				Probes:        probes,
@@ -147,11 +178,17 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 				CanOpenRepair: auth.Authorize(principal, repairEntry.Action, repairEntry.Resource, repairEntry.Grants, now()).Allowed,
 				CanOpenPreviews: view.DesiredState == "running" && view.ObservedState == "running" && auth.Authorize(principal, entry.Action,
 					auth.Resource{Type: "workspace", ID: view.ID, OwnerID: view.OwnerID, Eligible: true}, entry.Grants, now()).Allowed,
-				CanEditPreviewPorts:   auth.Authorize(principal, "workspace.update_policy", target.Resource, nil, now()).Allowed,
-				CanStartRepair:        canStartRepair,
-				CanRetryAfterRepair:   canRetryAfterRepair,
-				LastFailedOperationID: lastFailedID,
-				Maintenance:           maintenance,
+				CanEditPreviewPorts:      auth.Authorize(principal, "workspace.update_policy", target.Resource, nil, now()).Allowed,
+				CanEditKeepAlive:         auth.Authorize(principal, "workspace.update_policy", target.Resource, nil, now()).Allowed,
+				KeepAlivePolicy:          keepAlivePolicy,
+				KeepAliveMinutes:         keepAliveMinutes,
+				KeepAliveOverrideMinutes: view.keepAliveOverride,
+				InactivityShutdownAt:     shutdownAt,
+				InactivityMinutes:        inactivityMinutes,
+				CanStartRepair:           canStartRepair,
+				CanRetryAfterRepair:      canRetryAfterRepair,
+				LastFailedOperationID:    lastFailedID,
+				Maintenance:              maintenance,
 			}
 			if retention != nil && view.RetentionDeadline != nil {
 				status := retention(now())
@@ -234,7 +271,8 @@ func scanWorkspace(row interface{ Scan(...any) error }) (workspaceView, error) {
 	err := row.Scan(&view.ID, &view.OwnerID, &view.TemplateID, &view.TemplateRevision, &view.PlatformRelease, &view.ProviderKind,
 		&view.DesiredState, &view.ObservedState, &view.Generation,
 		&view.Resources.CPUCount, &view.Resources.MemoryMiB, &view.Resources.DiskMiB,
-		&view.CurrentOperationID, &view.LastActivityAt, &view.RetentionDeadline, &view.Version, &previewJSON, &view.Name)
+		&view.CurrentOperationID, &view.LastActivityAt, &view.RetentionDeadline, &view.Version, &previewJSON, &view.Name,
+		&view.keepAliveOverride, &view.createdAt)
 	if err != nil {
 		return view, err
 	}

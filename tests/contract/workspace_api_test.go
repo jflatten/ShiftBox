@@ -535,7 +535,7 @@ func seedStoppedAPIWorkspace(t *testing.T, db *sql.DB, templateID, workspaceID s
 		platform_artifact_id,repository_url,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,
 		desired_state,observed_state,generation,ownership_marker,provider_instance_id,created_at,updated_at,version)
 		SELECT $1,id,'member',$2,1,'artifact','https://github.com/example/repo','devcontainer.json',2,1024,40,'{"mode":"shared"}',
-		'stopped','stopped',1,'fixture',$3,'now','now',1 FROM installations`, workspaceID, templateID, "fixture-"+workspaceID); err != nil {
+		'stopped','stopped',1,'fixture',$3,created_at,updated_at,1 FROM installations`, workspaceID, templateID, "fixture-"+workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO reservations(workspace_id,cpu_count,memory_mib,disk_mib,cpu_memory_state,
@@ -563,6 +563,11 @@ func seedWorkspaceLaunch(t *testing.T, db *sql.DB, templateID, token string, now
 			if _, err := tx.ExecContext(ctx, stmt); err != nil {
 				return err
 			}
+		}
+		// Workspace fixtures inherit the controller's real launch timestamp so
+		// lifecycle and inactivity APIs exercise the same clock as production.
+		if _, err := tx.ExecContext(ctx, "UPDATE installations SET created_at=$1,updated_at=$1", now.UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO project_templates(id,owner_user_id,name,state,current_revision,created_at,updated_at,version)
 			VALUES($1,'owner','Project','active',1,'now','now',1)`, templateID); err != nil {

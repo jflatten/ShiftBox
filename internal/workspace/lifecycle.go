@@ -125,8 +125,9 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		}
 	}
 	result, err = tx.ExecContext(ctx, `UPDATE workspaces SET desired_state=$2,updated_at=$3,version=version+1,
+		last_activity_at=CASE WHEN $5 THEN $3 ELSE last_activity_at END,
 		deletion_commit_at=CASE WHEN $2='deleted' THEN $3 ELSE deletion_commit_at END
-		WHERE id=$1 AND version=$4`, intent.WorkspaceID, desired, now.UTC().Format(time.RFC3339Nano), version)
+		WHERE id=$1 AND version=$4`, intent.WorkspaceID, desired, now.UTC().Format(time.RFC3339Nano), version, intent.Action == "start")
 	if err := capacityWrite(result, err); err != nil {
 		if errors.Is(err, ErrCapacityConflict) {
 			return operation.Operation{}, ErrVersionMismatch

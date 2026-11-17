@@ -41,6 +41,7 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 		RetentionSeconds json.RawMessage `json:"retentionSeconds"`
 		NetworkPolicyID  json.RawMessage `json:"networkPolicyId"`
 		PreviewPorts     json.RawMessage `json:"previewPorts"`
+		KeepAliveMinutes json.RawMessage `json:"keepAliveMinutes"`
 	}
 	if err := DecodeJSON(nil, r, &input, 4096); err != nil {
 		return nil, err
@@ -79,13 +80,27 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 		value := string(encoded)
 		previewJSON = &value
 	}
-	if input.RetentionSeconds == nil && network == nil && previewJSON == nil {
+	var keepAlive *int64
+	if input.KeepAliveMinutes != nil && json.Unmarshal(input.KeepAliveMinutes, &keepAlive) != nil {
+		return nil, invalidAuthorizationFields()
+	}
+	if input.RetentionSeconds == nil && network == nil && previewJSON == nil && input.KeepAliveMinutes == nil {
 		return nil, invalidAuthorizationFields()
 	}
 	// Share the lifecycle admission lock so a policy decision cannot race the
 	// start, stop, or retention operation it checks below.
 	if _, err := tx.ExecContext(ctx, "UPDATE installations SET version=version WHERE singleton=1"); err != nil {
 		return nil, err
+	}
+	if keepAlive != nil {
+		settings, err := workspace.ReadKeepAlivePolicy(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		if !slices.Contains(settings.AllowedMinutes, *keepAlive) ||
+			(settings.MaximumMinutes > 0 && (*keepAlive == 0 || *keepAlive > settings.MaximumMinutes)) {
+			return nil, Problem{Status: 409, Code: "workspace.keep_alive_unavailable", Title: "Choose one of the administrator's keep-alive values"}
+		}
 	}
 	view, err := scanWorkspace(tx.QueryRowContext(ctx, "SELECT "+workspaceProjection+workspaceFrom+" WHERE w.id=$1", id))
 	if err != nil {
@@ -145,10 +160,13 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 		retention_seconds=CASE WHEN $1 THEN CAST($2 AS BIGINT) ELSE retention_seconds END,
 		retention_deadline=CASE WHEN $1 THEN CAST($7 AS TEXT) ELSE retention_deadline END,
 		network_policy_override_json=COALESCE(CAST($3 AS TEXT),network_policy_override_json),
-		preview_ports_json=COALESCE(CAST($9 AS TEXT),preview_ports_json),updated_at=$4,version=version+1
+		preview_ports_json=COALESCE(CAST($9 AS TEXT),preview_ports_json),
+		keep_alive_minutes=CASE WHEN $10 THEN CAST($11 AS BIGINT) ELSE keep_alive_minutes END,
+		updated_at=$4,version=version+1
 		WHERE id=$5 AND version=$6 AND EXISTS (SELECT 1 FROM installations WHERE singleton=1 AND state='active')
 		AND ($8='' OR COALESCE(last_activity_at,created_at)=$8)`,
-		input.RetentionSeconds != nil, retention, network, now.UTC().Format(time.RFC3339Nano), id, version, deadline, baseline, previewJSON)
+		input.RetentionSeconds != nil, retention, network, now.UTC().Format(time.RFC3339Nano), id, version, deadline, baseline, previewJSON,
+		input.KeepAliveMinutes != nil, keepAlive)
 	if err != nil {
 		return nil, err
 	}

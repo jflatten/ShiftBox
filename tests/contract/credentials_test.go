@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -74,8 +75,11 @@ func TestGuestCredentialContext(t *testing.T) {
 			{secret.Scope{Type: "user", ID: "owner"}, "TOKEN", "author-private"},
 			{secret.Scope{Type: "user", ID: "owner"}, "AUTHOR_ONLY", "author-private"},
 			{secret.Scope{Type: "user", ID: "member"}, "TOKEN", ""},
+			{secret.Scope{Type: "user", ID: "member"}, "USER_ONLY", "user-value"},
 			{secret.Scope{Type: "template", ID: template}, "TOKEN", "project-value"},
+			{secret.Scope{Type: "template", ID: template}, "PROJECT_ONLY", "project-value"},
 			{secret.Scope{Type: "organization", ID: installation}, "TOKEN", "organization-value"},
+			{secret.Scope{Type: "organization", ID: installation}, "ORG_ONLY", "organization-value"},
 		} {
 			if err := secrets.Set(ctx, tx, fixture.scope, fixture.name, []byte(fixture.value), "owner", now); err != nil {
 				return err
@@ -111,13 +115,39 @@ func TestGuestCredentialContext(t *testing.T) {
 	resolve := func(ctx context.Context, leaf *x509.Certificate, stamp time.Time, name string) ([]byte, string, error) {
 		return enrollment.ResolveSecret(ctx, leaf, stamp, secrets, name)
 	}
-	server := httptest.NewUnstartedServer(web.GuestSecretHandler(resolve, func() time.Time { return now }))
+	mux := http.NewServeMux()
+	mux.Handle("POST "+guest.SecretResolvePrefix, web.GuestSecretHandler(resolve, func() time.Time { return now }))
+	mux.Handle("GET "+guest.SecretListPath, web.GuestSecretListHandler(func(ctx context.Context, leaf *x509.Certificate, stamp time.Time) ([]secret.Key, error) {
+		return enrollment.ListSecrets(ctx, leaf, stamp, secrets)
+	}, func() time.Time { return now }))
+	server := httptest.NewUnstartedServer(mux)
 	server.TLS = guest.ServerTLS(serverLeaf, authority)
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	transport := &http.Transport{TLSClientConfig: guest.ClientTLS(tls.Certificate{Certificate: [][]byte{leaf}, PrivateKey: key}, authority, "127.0.0.1")}
 	t.Cleanup(transport.CloseIdleConnections)
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	// Listing uses the same live certificate and owner context, but returns only
+	// sorted keys and winning scopes without disclosing any protected value.
+	checkList := func(status int, want []secret.Key) {
+		t.Helper()
+		response, err := client.Get(server.URL + guest.SecretListPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		raw, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result struct {
+			Keys []secret.Key `json:"keys"`
+		}
+		if err := json.Unmarshal(raw, &result); err != nil || response.StatusCode != status || !slices.Equal(result.Keys, want) ||
+			strings.Contains(string(raw), `"value"`) || strings.Contains(string(raw), "-value") || strings.Contains(string(raw), "author-private") {
+			t.Errorf("list keys = %d %s (%v), want status %d and keys %+v without secret values", response.StatusCode, raw, err, status, want)
+		}
+	}
 	request := func(path, body string, want int) []byte {
 		t.Helper()
 		res, err := client.Post(server.URL+guest.SecretResolvePrefix+path, "application/json", strings.NewReader(body))
@@ -146,12 +176,14 @@ func TestGuestCredentialContext(t *testing.T) {
 	request("TOKEN:resolve?ownerId=owner", "", http.StatusBadRequest)
 	request("TOKEN:resolve", `{"scope":"user","scopeId":"owner"}`, http.StatusBadRequest)
 	checkToken("", "user")
+	checkList(http.StatusOK, []secret.Key{{Name: "ORG_ONLY", Scope: "organization"}, {Name: "PROJECT_ONLY", Scope: "project"}, {Name: "TOKEN", Scope: "user"}, {Name: "USER_ONLY", Scope: "user"}})
 	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
 		return secrets.Delete(ctx, tx, secret.Scope{Type: "user", ID: "member"}, "TOKEN", "member", now)
 	}); err != nil {
 		t.Fatal(err)
 	}
 	checkToken("project-value", "template")
+	checkList(http.StatusOK, []secret.Key{{Name: "ORG_ONLY", Scope: "organization"}, {Name: "PROJECT_ONLY", Scope: "project"}, {Name: "TOKEN", Scope: "project"}, {Name: "USER_ONLY", Scope: "user"}})
 	if _, err := db.ExecContext(ctx, "UPDATE project_templates SET state='archived',archived_at='now' WHERE id=$1", template); err != nil {
 		t.Fatal(err)
 	}
@@ -160,4 +192,15 @@ func TestGuestCredentialContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkToken("organization-value", "organization")
+	checkList(http.StatusOK, []secret.Key{{Name: "ORG_ONLY", Scope: "organization"}, {Name: "TOKEN", Scope: "organization"}, {Name: "USER_ONLY", Scope: "user"}})
+	for _, query := range []string{
+		"UPDATE workspaces SET generation=2 WHERE id='workspace'",
+		"UPDATE workspaces SET generation=1,desired_state='stopped' WHERE id='workspace'",
+		"UPDATE workspaces SET desired_state='running'; UPDATE users SET membership_state='disabled' WHERE id='member'",
+	} {
+		if _, err := db.ExecContext(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+		checkList(http.StatusForbidden, nil)
+	}
 }

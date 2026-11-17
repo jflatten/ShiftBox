@@ -40,7 +40,7 @@ func ListenBrowser(address string, state *ControllerState, management http.Handl
 	service := web.ServiceProxyHandler(state.DB, hosts, tunnels.Registry, now, tunnels.Forward)
 	entry := checkpointRequest(fence, service)
 	workspaceService := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == web.ServiceEntryPath {
+		if r.URL.Path == web.ServiceEntryPath || r.URL.Path == proxy.HumanActivityPath {
 			entry.ServeHTTP(w, r)
 			return
 		}

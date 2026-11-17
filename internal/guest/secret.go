@@ -14,6 +14,9 @@ import (
 // SecretResolvePrefix is the workspace secret endpoint on the mTLS listener.
 const SecretResolvePrefix = "/internal/v1/guest/secrets/"
 
+// SecretListPath lists effective secret names on the authenticated guest listener.
+const SecretListPath = "/internal/v1/guest/secrets"
+
 // ResolveSecret authenticates the leaf and selects the secret within one
 // transaction. The request supplies only the name.
 func (e *Enrollment) ResolveSecret(ctx context.Context, leaf *x509.Certificate, now time.Time,
@@ -37,4 +40,27 @@ func (e *Enrollment) ResolveSecret(ctx context.Context, leaf *x509.Certificate, 
 		return nil, "", err
 	}
 	return value, scope, nil
+}
+
+// ListSecrets authenticates the current guest and derives available key names
+// in the same transaction, without retrieving any protected secret values.
+func (e *Enrollment) ListSecrets(ctx context.Context, leaf *x509.Certificate, now time.Time,
+	service *secret.Service,
+) ([]secret.Key, error) {
+	var keys []secret.Key
+	err := database.Transaction(ctx, e.db, func(tx *sql.Tx) error {
+		contact, err := e.authenticate(ctx, tx, leaf, now, false)
+		if err != nil {
+			return err
+		}
+		keys, err = service.ListWorkspace(ctx, tx, contact.WorkspaceID, contact.Generation)
+		if errors.Is(err, secret.ErrWorkspaceDenied) {
+			return ErrGuestUnauthorized
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return keys, nil
 }

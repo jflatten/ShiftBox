@@ -40,6 +40,23 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
+// Owners choose the inactivity shutdown period beside Start/Stop, with the
+// server's current inactivity and retained-data guidance visible in that panel.
+test('places keep-alive selection in the workspace controls', async () => {
+  globalThis.fetch = jest.fn(async input => input === '/api/v1/session' ? json(session) : json({
+    ...workspace, desiredState: 'running', observedState: 'running', currentOperationId: null,
+    keepAlivePolicy: { maximumMinutes: 0, allowedMinutes: [30, 60, 120, 240, 480, 720, 0], defaultMinutes: 30, version: 1 },
+    keepAliveMinutes: 30, keepAliveOverrideMinutes: null, canEditKeepAlive: true,
+    inactivityMinutes: 5, inactivityShutdownAt: '2026-11-17T22:30:00Z',
+  }));
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  const controls = await screen.findByRole('region', { name: 'Workspace controls' });
+  expect(within(controls).getByRole('button', { name: 'Stop workspace' })).toBeVisible();
+  expect(within(controls).getByRole('combobox', { name: 'Shutdown after inactivity' })).toHaveValue('Administrator default (30 minutes)');
+  expect(within(controls).getByText(/Inactive for 5 minutes/)).toBeVisible();
+  expect(within(controls).getByText(/Stop and start preserve project files/)).toBeVisible();
+});
+
 // Inventory rows show the observed state with Carbon colors and no input control.
 test('shows workspace states as static Carbon-colored Mantine chips', async () => {
   const states = [

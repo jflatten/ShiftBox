@@ -49,10 +49,9 @@ Request:
     },
     "problem": null
   },
-  "activity": {
+  "watchedProcesses": {
     "sampledAt": "2026-11-13T20:10:00Z",
-    "cpuPercent": 6.2,
-    "ideConnections": 1
+    "active": true
   },
   "probes": [
     { "id": "code-server", "status": "healthy" }
@@ -63,6 +62,24 @@ Request:
   }
 }
 ```
+
+`watchedProcesses` is optional. It reports an explicit `shiftbox watch <PID>`
+lease, sampled by the guest agent. Only fresh active samples (at most 90 seconds
+old, never in the future) renew the controller-owned activity clock. A watch
+ends when its original process exits, becomes a zombie, changes identity through
+PID reuse, or the foreground command is cancelled. Local heartbeats arrive every
+5 seconds and expire after 15 seconds if the command is killed. Open IDE
+connections and background CPU activity do not renew inactivity; legacy
+`activity` payloads remain accepted for compatibility but are ignored.
+
+Human IDE activity is reported on its already-authorized browser service origin
+via `POST /_shiftbox/activity` with a same-origin Origin header, the input marker
+header, and an empty JSON object. The workbench listener observes trusted keyboard
+and pointer events in a visible, focused document; it sends no key contents and
+throttles reports to once every 15 seconds. Loading or focusing a tab, background
+requests, and timers alone do not create reports. Preview origins cannot report
+activity. The server rechecks current cookie/session/grant authority and uses
+controller receipt time, workspace identity, and generation.
 
 `probes` is optional. A successful poll with the response header
 `Shiftbox-Probe-Reports: 1` enables reporting on the next poll while the desired
@@ -127,6 +144,20 @@ Response:
 No command accepts an arbitrary executable, shell string, or controller credential.
 
 ## Secret retrieval
+
+`GET /internal/v1/guest/secrets` lists effective key metadata only:
+
+```json
+{"keys":[{"name":"DATABASE_URL","scope":"user"}]}
+```
+
+Keys are sorted and deduplicated using User → Project → Organization precedence;
+the winning scope is `user`, `project`, or `organization`. The endpoint rechecks
+the current verified leaf, workspace generation, running state, and owner
+eligibility. Bodies, query parameters, and client scope hints are rejected.
+Responses use `Cache-Control: no-store`; listing neither decrypts nor returns
+secret values. The guest forwards local `GET /secrets` to this authenticated
+endpoint. `shiftbox secrets list` prints each key as `KEY_NAME (scope)`.
 
 `POST /internal/v1/guest/secrets/{name}:resolve`
 

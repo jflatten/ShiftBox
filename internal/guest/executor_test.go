@@ -492,7 +492,7 @@ func TestDevContainerLifecycle(t *testing.T) {
 			"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", "shiftbox.container=development",
 			"--mount", "type=bind,source=/run/shiftbox-ide,target=/run/shiftbox-ide",
 			"--mount", "type=bind,source=/run/shiftbox-credentials,target=/run/shiftbox-credentials",
-			"--mount", "type=bind,source=/run/shiftbox-credentials/shiftbox,target=/usr/local/bin/shiftbox",
+			"--mount", "type=bind,source=/run/shiftbox-credentials/shiftbox-launcher,target=/usr/local/bin/shiftbox",
 			"--config", workspace + "/.devcontainer/go/devcontainer.json", "--skip-non-blocking-commands",
 			"--skip-post-attach", "--include-merged-configuration"},
 		{"/usr/bin/docker", "cp", source + "/.", id + ":/opt/shiftbox-code-server"},

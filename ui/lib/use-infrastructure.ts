@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { readProblem } from './api-problem';
 import type { components } from './api-types';
+import type { KeepAlivePolicy } from './keep-alive';
 
 export type Capacity = { cpuCount: number; memoryMiB: number; diskMiB: number };
 type Condition = { key: string; severity: 'info' | 'warning' | 'critical'; active: boolean; detail?: string };
@@ -12,6 +13,7 @@ export interface InfrastructureStatus {
   capacity: Capacity;
   version: number;
   conditions: Condition[];
+  keepAlivePolicy?: KeepAlivePolicy;
 }
 
 const conditionTitles: Record<string, string> = {

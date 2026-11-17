@@ -136,7 +136,8 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 
 func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, error) {
 	offboarding := op.OriginatingAction == "user.disable" && op.Type == "stop" && step.Key == "stop"
-	if (!offboarding && !isRepairRetry(op) && op.OriginatingAction != "workspace."+op.Type) ||
+	inactivity := op.OriginatingAction == inactivityStopAction && op.Type == "stop" && step.Key == "stop" && op.Actor == "controller"
+	if (!offboarding && !inactivity && !isRepairRetry(op) && op.OriginatingAction != "workspace."+op.Type) ||
 		op.WorkspaceID == nil || op.StartedAt == nil || op.Status != "running" || step.Status != "active" ||
 		!validPowerStep(op.Type, step.Key) {
 		return provider.CreateRequest{}, provider.ErrInvalidState
@@ -147,17 +148,18 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 		w.platform_artifact_id,a.release_id,COALESCE(w.network_policy_override_json,w.network_policy_snapshot_json)
 		FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id
 		JOIN installations i ON i.id=w.installation_id JOIN users owner ON owner.id=w.owner_user_id
-		JOIN users actor ON actor.id=$3 JOIN operations o ON o.id=$5 AND o.workspace_id=w.id AND o.generation=w.generation
+		LEFT JOIN users actor ON actor.id=$3 JOIN operations o ON o.id=$5 AND o.workspace_id=w.id AND o.generation=w.generation
 		WHERE w.id=$1 AND w.generation=$2 AND ($6 OR w.provider_instance_id IS NOT NULL) AND w.observed_state<>'deleted'
 		  AND i.state='active' AND o.status='running' AND o.originating_action=$7
 		  AND (($6 AND owner.membership_state IN ('pending','disabled')) OR
-		       (NOT $6 AND actor.membership_state='active' AND (actor.id=owner.id OR actor.role='administrator')))
+		       ($8 AND o.requested_by='controller' AND owner.membership_state='active') OR
+		       (NOT $6 AND NOT $8 AND actor.membership_state='active' AND (actor.id=owner.id OR actor.role='administrator')))
 		  AND (($4='stop' AND w.desired_state='stopped') OR
 		       ($4 IN ('start','rebuild','repair') AND w.desired_state='running' AND owner.membership_state='active'
 		        AND ($4='start' OR w.observed_state='running')
 		        AND EXISTS (SELECT 1 FROM reservations r WHERE r.workspace_id=w.id
 		                     AND r.cpu_memory_state='reserved' AND r.disk_state='reserved')))`,
-		req.Ref.WorkspaceID, op.Generation, op.Actor, op.Type, op.ID, offboarding, op.OriginatingAction).
+		req.Ref.WorkspaceID, op.Generation, op.Actor, op.Type, op.ID, offboarding, op.OriginatingAction, inactivity).
 		Scan(&req.Ref.InstallationID, &req.Ref.OwnershipMarker, &req.Ref.InstanceID, &req.ArtifactID, &req.Release, &policy)
 	if err != nil {
 		return provider.CreateRequest{}, err

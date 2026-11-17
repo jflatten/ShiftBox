@@ -68,7 +68,26 @@ func TestWorkspaceRetentionSchedule(t *testing.T) {
 	checked := probes
 	scheduler.maximum = nil
 	tick(time.Hour, 2)
-	if probes != checked {
-		t.Fatal("disabled retention still inspected the provider")
+	if probes != checked+1 {
+		t.Fatal("disabled deletion must still probe the provider for inactivity shutdown")
+	}
+}
+
+// TestInactivityScheduleWithoutDeletion keeps inactivity shutdown running when
+// destructive retention is disabled and the provider supports only stop.
+func TestInactivityScheduleWithoutDeletion(t *testing.T) {
+	now := time.Now().UTC()
+	calls := 0
+	scheduler := workspaceRetentionSchedule{
+		grace: time.Minute, now: func() time.Time { return now },
+		probe:   func(context.Context) (provider.Capabilities, error) { return provider.Capabilities{Stop: true}, nil },
+		process: func(context.Context, time.Time, time.Time) error { calls++; return nil },
+	}
+	if err := scheduler.tick(t.Context()); err != nil || calls != 0 {
+		t.Fatalf("startup tick = %v, %d calls, want recovery grace", err, calls)
+	}
+	now = now.Add(time.Minute)
+	if err := scheduler.tick(t.Context()); err != nil || calls != 1 {
+		t.Errorf("inactivity tick without deletion = %v, %d calls, want one shutdown pass", err, calls)
 	}
 }

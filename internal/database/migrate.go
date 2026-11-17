@@ -122,6 +122,8 @@ func CheckSchema(ctx context.Context, db *sql.DB, profile string) error {
 		"SELECT email,user_id,role,credential_json FROM local_user_creations WHERE 1=0",
 		"SELECT id,name,mode,rules_json,required_exceptions_json,provider_capability_version,enabled,version FROM network_policies WHERE 1=0",
 		"SELECT network_policy_override_json,instance_type FROM workspaces WHERE 1=0",
+		"SELECT keep_alive_minutes FROM workspaces WHERE 1=0",
+		"SELECT keep_alive_maximum_minutes,keep_alive_allowed_minutes_json,keep_alive_default_minutes,keep_alive_version FROM installations WHERE 1=0",
 		"SELECT instance_type FROM resource_profiles WHERE 1=0",
 		"SELECT launch_reference,public_data,guest_key_proof FROM ec2_launch_enrollment WHERE 1=0",
 		"SELECT nonce,operation_id,guest_key_proof,issued_at,expires_at FROM ec2_launch_challenges WHERE 1=0",

@@ -124,6 +124,10 @@ func (s serviceProxy) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer unregister()
+	if r.URL.Path == proxy.HumanActivityPath || r.URL.Path == proxy.HumanActivityScriptPath {
+		s.humanActivity(w, r.WithContext(active), authority, cookies[0].Value, origin)
+		return
+	}
 	outgoing := r.Clone(active)
 	proxy.StripAuthorityCookies(outgoing)
 	s.forward(w, outgoing, workspace, authority.Scope.Generation, service, RequestID(ctx))

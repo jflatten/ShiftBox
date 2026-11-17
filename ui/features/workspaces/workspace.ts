@@ -1,4 +1,5 @@
 import type { components } from '../../lib/api-types';
+import type { KeepAlivePolicy } from '../../lib/keep-alive';
 
 export interface Workspace {
   id: string;
@@ -17,6 +18,12 @@ export interface Workspace {
   previewPorts?: number[];
   canOpenPreviews?: boolean;
   canEditPreviewPorts?: boolean;
+  keepAlivePolicy?: KeepAlivePolicy;
+  keepAliveMinutes?: number;
+  keepAliveOverrideMinutes?: number | null;
+  inactivityShutdownAt?: string | null;
+  inactivityMinutes?: number;
+  canEditKeepAlive?: boolean;
   canOpenRepair?: boolean;
   canStartRepair?: boolean;
   canRetryAfterRepair?: boolean;

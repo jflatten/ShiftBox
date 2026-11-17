@@ -20,7 +20,7 @@ type CPUActivity struct {
 	Percent   float64   `json:"cpuPercent"`
 }
 
-// RecordActivity advances retention using controller receipt time. It ignores
+// RecordActivity advances inactivity shutdown and retention using controller receipt time. It ignores
 // stopped workspaces, stale generations and observations after deletion commits.
 func RecordActivity(ctx context.Context, db interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row

@@ -176,7 +176,7 @@ func (d devContainer) command(ctx context.Context, stage string, options ...stri
 		// The command file is a runtime copy, separate from the agent binary.
 		args = append(args,
 			"--mount", "type=bind,source="+credentialDirectory+",target="+credentialDirectory,
-			"--mount", "type=bind,source="+credentialDirectory+"/shiftbox,target=/usr/local/bin/shiftbox")
+			"--mount", "type=bind,source="+credentialDirectory+"/shiftbox-launcher,target=/usr/local/bin/shiftbox")
 	}
 	if d.config != "" {
 		if !validDevContainerPath(d.config) {

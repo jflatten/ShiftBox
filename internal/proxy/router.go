@@ -40,12 +40,19 @@ func tunnelProxy(open openTunnelStream, workspace string, generation int64, serv
 			protocol = "websocket"
 		}
 		header := StreamHeader{ServiceKey: service, RequestID: requestID, Protocol: protocol}
+		workbench := (service == "ide" || service == "repair") && protocol == "http" && r.Method == http.MethodGet && r.URL.Path == "/"
 		transport := tunnelTransport(open, workspace, generation, header)
 		defer transport.CloseIdleConnections()
 		forward := httputil.ReverseProxy{
 			Transport: transport,
 			Rewrite: func(req *httputil.ProxyRequest) {
 				Sanitize(req.Out)
+				if workbench {
+					req.Out.Header.Set("Accept-Encoding", "identity")
+					for _, name := range []string{"If-None-Match", "If-Modified-Since", "Range"} {
+						req.Out.Header.Del(name)
+					}
+				}
 				req.Out.Trailer = nil
 				req.Out.URL.Scheme = "http"
 				req.Out.URL.Host = tunnelHTTPHost
@@ -55,7 +62,15 @@ func tunnelProxy(open openTunnelStream, workspace string, generation int64, serv
 					req.Out.Header.Set("Upgrade", "websocket")
 				}
 			},
-			ModifyResponse: sanitizeServiceResponse,
+			ModifyResponse: func(response *http.Response) error {
+				if err := sanitizeServiceResponse(response); err != nil {
+					return err
+				}
+				if workbench {
+					return instrumentWorkbench(response)
+				}
+				return nil
+			},
 			ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
 				http.Error(w, "Workspace service unavailable", http.StatusBadGateway)
 			},

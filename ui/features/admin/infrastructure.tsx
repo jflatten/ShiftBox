@@ -14,6 +14,7 @@ import { BrowserCertificate } from './browser-certificate';
 import { Maintenance } from './maintenance';
 import { ResourceProfiles } from './resource-profiles';
 import { Secrets } from '../secrets/secrets';
+import { KeepAliveSettings } from './keep-alive';
 
 const capacityFields = [
   { name: 'cpuCount', label: 'CPU limit', description: 'Total virtual CPUs available to workspaces.' },
@@ -72,6 +73,8 @@ export function Infrastructure() {
                     {canManage
                       ? <CapacityBudget status={data} csrfToken={current.csrfToken} refresh={status.refetch} />
                       : <Text>{capacitySummary(data.capacity)}</Text>}
+                    {data.keepAlivePolicy ? <KeepAliveSettings policy={data.keepAlivePolicy}
+                      csrfToken={canManage ? current.csrfToken : undefined} refresh={status.refetch} /> : null}
                   </Stack>
                 </Paper>
               </> : null}

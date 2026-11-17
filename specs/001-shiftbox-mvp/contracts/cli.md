@@ -106,17 +106,46 @@ Requires a verified management backup, all retained guests current, compatible t
 
 ## Guest commands
 
+### `shiftbox`, `shiftbox help`, and `shiftbox --help`
+
+Print the complete guest command help. Unknown commands or command options also
+print help and return exit 2; explicit help and no arguments return exit 0.
+
+### `shiftbox watch <PID>`
+
+Run in the foreground and keep the workspace alive while the original process
+exists in this container's PID namespace. Sleeping processes count as alive;
+exited/zombie processes and reused PIDs do not. Ctrl+C ends the watch without
+terminating the watched process. A killed watch command's local lease expires
+after 15 seconds. Watch heartbeats renew every 5 seconds, and the agent reports
+them through authenticated polling. Background CPU use alone does not keep a
+workspace alive.
+
+### `shiftbox secrets list`
+
+List sorted effective secret keys with their winning scope, without reading
+values. Duplicate names resolve User → Project → Organization.
+
+```text
+DATABASE_URL (project)
+EXAMPLE_TOKEN (user)
+SHARED_ENDPOINT (organization)
+```
+
 ### `shiftbox-agent serve`
 
 Runs only under the platform supervisor. Configuration and enrollment paths are fixed by the platform image and protected from the development container. It has no arbitrary execute subcommand.
 
-### `shiftbox secrets get-secret <name>`
+### `shiftbox secrets get <name>`
 
 Returns the effective authorized secret value to stdout and nothing else. Diagnostics go to stderr.
 
 ```text
-shiftbox secrets get-secret DATABASE_URL
+shiftbox secrets get DATABASE_URL
 ```
+
+`shiftbox secrets get-secret <name>` remains a compatibility alias. Values are
+written exactly, without an extra newline.
 
 Rules:
 

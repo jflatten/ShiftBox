@@ -52,9 +52,6 @@ func (s *ControllerState) workspaceRetentionStatus(now time.Time) web.WorkspaceR
 }
 
 func (s *workspaceRetentionSchedule) tick(ctx context.Context) error {
-	if s.maximum == nil {
-		return nil
-	}
 	now := s.now()
 	if !s.lastProbe.IsZero() && (!now.After(s.lastProbe) || now.Sub(s.lastProbe) > 2*retentionScanInterval) {
 		s.reconciledAt = time.Time{}
@@ -62,7 +59,7 @@ func (s *workspaceRetentionSchedule) tick(ctx context.Context) error {
 	}
 	s.lastProbe = now
 	capabilities, err := s.probe(ctx)
-	if err != nil || !capabilities.Stop || !capabilities.Delete {
+	if err != nil || !capabilities.Stop || (s.maximum != nil && !capabilities.Delete) {
 		s.reconciledAt = time.Time{}
 		s.publishStatus()
 		return ctx.Err()
@@ -97,7 +94,7 @@ func (s *workspaceRetentionSchedule) run(ctx context.Context) error {
 		if err != nil && ctx.Err() == nil {
 			s.reconciledAt = time.Time{}
 			s.publishStatus()
-			slog.WarnContext(ctx, "Workspace retention check failed; automatic cleanup is paused through recovery grace")
+			slog.WarnContext(ctx, "Workspace inactivity check failed; automatic shutdown and cleanup are paused through recovery grace")
 		}
 		select {
 		case <-ctx.Done():
@@ -111,23 +108,30 @@ func newWorkspaceRetention(state *ControllerState, store *workspace.Store, machi
 	journal *operation.Journal, registry *proxy.Registry, now func() time.Time,
 ) *workspaceRetentionSchedule {
 	maximum, grace := state.retentionMaximum, state.retentionGrace
-	if maximum == nil {
-		return nil
-	}
 	return &workspaceRetentionSchedule{
 		maximum: maximum, grace: grace, now: now, probe: machines.Capabilities,
 		publish: func(snapshot retentionSnapshot) { state.retentionStatus.Store(&snapshot) },
 		process: func(ctx context.Context, stamp, reconciled time.Time) error {
+			inactive, err := store.InactivityCandidates(ctx, state.Installation.InstallationID, stamp)
+			if err != nil {
+				return err
+			}
+			for _, id := range inactive {
+				_, err := store.CommitInactivityStop(ctx, journal, id, now())
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return err
+				}
+			}
+			if maximum == nil {
+				return nil
+			}
 			policy := workspace.RetentionEligibility{MaximumSeconds: maximum, ReconciledAt: reconciled, OutageGrace: grace}
 			list, err := store.RetentionCandidates(ctx, state.Installation.InstallationID, stamp, policy, machines.Inspect)
 			if err != nil {
 				return err
 			}
 			for _, candidate := range list {
-				err := registry.IfIDEDisconnected(candidate.Ref.WorkspaceID, func() error {
-					_, err := store.CommitRetentionDeletion(ctx, journal, candidate, now(), policy)
-					return err
-				})
+				_, err := store.CommitRetentionDeletion(ctx, journal, candidate, now(), policy)
 				if err != nil && !errors.Is(err, sql.ErrNoRows) {
 					return err
 				}

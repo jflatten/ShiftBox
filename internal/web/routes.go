@@ -66,6 +66,7 @@ func ManagementRoutes() []ManagementRoute {
 		{Method: "PUT", Path: "/admin/resource-profiles/{profileId}", OperationID: "updateResourceProfile", Action: "infrastructure.manage"},
 		{Method: "DELETE", Path: "/admin/resource-profiles/{profileId}", OperationID: "deleteResourceProfile", Action: "infrastructure.manage"},
 		{Method: "PUT", Path: "/admin/capacity", OperationID: "updateCapacityBudget", Action: "infrastructure.manage"},
+		{Method: "PUT", Path: "/admin/keep-alive", OperationID: "updateKeepAlivePolicy", Action: "infrastructure.manage"},
 		{Method: "POST", Path: "/admin/network-policies", OperationID: "createNetworkPolicy", Action: "infrastructure.manage"},
 		{Method: "GET", Path: "/admin/maintenance", OperationID: "listMaintenanceCampaigns", Action: "infrastructure.view"},
 		{Method: "POST", Path: "/admin/maintenance", OperationID: "createMaintenanceCampaign", Action: "maintenance.manage"},

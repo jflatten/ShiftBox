@@ -52,7 +52,7 @@ func TestAdministratorConnectionGrantRevocation(t *testing.T) {
 			repository_url,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,desired_state,observed_state,
 			generation,ownership_marker,provider_instance_id,created_at,updated_at,version)
 			SELECT $1,id,'member','template',1,'artifact','https://github.com/example/repo','devcontainer.json',1,512,100,'{}',
-			'running','running',1,$1,$1,'now','now',1 FROM installations`, ws)
+			'running','running',1,$1,$1,$2,$2,1 FROM installations`, ws, now.Format(time.RFC3339Nano))
 	}
 	exec(`INSERT INTO resource_grants(id,subject_user_id,resource_type,resource_id,action,granted_by,granted_at)
 		VALUES($1,'owner','workspace',$2,'workspace.connect_admin','owner',$3)`, grant, id, now.Format(time.RFC3339Nano))
@@ -154,7 +154,7 @@ func TestWorkspaceEntryGrantAdmission(t *testing.T) {
 			repository_url,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,desired_state,observed_state,
 			generation,ownership_marker,provider_instance_id,created_at,updated_at,version)
 			SELECT $1,id,$2,'template',1,'artifact','https://github.com/example/repo','devcontainer.json',1,512,100,'{}',
-			'running','running',1,$1,$1,'now','now',1 FROM installations`, id, owner); err != nil {
+			'running','running',1,$1,$1,$3,$3,1 FROM installations`, id, owner, now.Format(time.RFC3339Nano)); err != nil {
 			t.Fatal(err)
 		}
 	}

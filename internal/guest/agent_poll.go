@@ -43,13 +43,14 @@ func (identity AgentIdentity) pollClient(serverName string) *http.Client {
 }
 
 type guestPollRequest struct {
-	ProtocolVersion      string                  `json:"protocolVersion"`
-	GuestRelease         string                  `json:"guestRelease"`
-	LastOperationID      string                  `json:"lastOperationId,omitempty"`
-	LastOperationVersion int64                   `json:"lastOperationVersion,omitempty"`
-	Report               *OperationReport        `json:"operationReport,omitempty"`
-	Activity             *workspace.CPUActivity  `json:"activity,omitempty"`
-	Probes               []workspace.ProbeResult `json:"probes,omitempty"`
+	ProtocolVersion      string                     `json:"protocolVersion"`
+	GuestRelease         string                     `json:"guestRelease"`
+	LastOperationID      string                     `json:"lastOperationId,omitempty"`
+	LastOperationVersion int64                      `json:"lastOperationVersion,omitempty"`
+	Report               *OperationReport           `json:"operationReport,omitempty"`
+	Activity             *workspace.CPUActivity     `json:"activity,omitempty"`
+	WatchedProcesses     *workspace.ProcessActivity `json:"watchedProcesses,omitempty"`
+	Probes               []workspace.ProbeResult    `json:"probes,omitempty"`
 }
 
 func newGuestPollRequest(protocol, release string, journal *localJournal) guestPollRequest {
@@ -276,11 +277,26 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 	client := identity.pollClient("")
 	defer client.CloseIdleConnections()
 	if secretSocket != "" {
+		executable, err := os.Executable()
+		if err != nil {
+			return errors.New("cannot identify the running workspace command")
+		}
+		if err := prepareWorkspaceCommand(executable, filepath.Dir(secretSocket)); err != nil {
+			return err
+		}
 		stopSecrets, err := listenSecretSocket(ctx, secretSocket, client, identity.PollEndpoint)
 		if err != nil {
 			return err
 		}
 		defer stopSecrets()
+	}
+	watches := newProcessWatches(time.Now)
+	if secretSocket != "" {
+		stopWatches, err := listenProcessWatchSocket(ctx, filepath.Join(filepath.Dir(secretSocket), "activity.sock"), watches)
+		if err != nil {
+			return err
+		}
+		defer stopWatches()
 	}
 	tunnel := &agentTunnel{protocol: protocol, tls: client.Transport.(*http.Transport).TLSClientConfig.Clone(),
 		retry: 5 * time.Second, serve: ServeTunnel}
@@ -305,7 +321,6 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 			},
 		}}
 	probes := &probeReporter{socket: proxy.IDESocket}
-	var sampler cpuSampler
 	firstPoll := true
 	renewAfter := guestRenewAfter(identity.Certificate.Leaf)
 	for {
@@ -319,7 +334,7 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 			// the pending key even across a supervisor restart.
 		}
 		input := newGuestPollRequest(protocol, release, journal)
-		input.Activity = sampler.sample(now)
+		input.WatchedProcesses = watches.sample(now)
 		var delay time.Duration
 		poll := func(ctx context.Context) error {
 			var err error

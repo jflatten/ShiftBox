@@ -663,6 +663,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/keep-alive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Updates inactivity shutdown settings. Removed workspace choices inherit the current default. Zero minutes means Unlimited. */
+        put: operations["updateKeepAlivePolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/network-policies": {
         parameters: {
             query?: never;
@@ -892,6 +909,15 @@ export interface components {
             lastActivityAt?: string | null;
             /** Format: date-time */
             retentionDeadline?: string | null;
+            keepAlivePolicy?: components["schemas"]["KeepAlivePolicy"];
+            /** @description Effective inactivity shutdown period, included on detail only. Zero means Unlimited. */
+            keepAliveMinutes?: number;
+            /** @description Owner selection; null inherits the current default. Removed selections also resolve to the default. */
+            keepAliveOverrideMinutes?: number | null;
+            canEditKeepAlive?: boolean;
+            /** Format: date-time */
+            inactivityShutdownAt?: string | null;
+            inactivityMinutes?: number;
             maintenance?: {
                 releaseId: string;
                 /** Format: date-time */
@@ -908,6 +934,13 @@ export interface components {
             cpuCount: number;
             memoryMiB: number;
             diskMiB: number;
+        };
+        /** @description Administrator workspace inactivity policy. Zero minutes means Unlimited. A finite maximum requires finite choices within it. */
+        KeepAlivePolicy: {
+            maximumMinutes: number;
+            allowedMinutes: number[];
+            defaultMinutes: number;
+            version: number;
         };
         /** @description Each limit is independent. Zero means Unlimited and disables capacity budget enforcement for that resource. Fresh installations default to Unlimited. */
         CapacityBudget: {
@@ -1072,6 +1105,7 @@ export interface components {
         InfrastructureStatus: {
             provider: components["schemas"]["InfrastructureProvider"];
             capacity: components["schemas"]["CapacityBudget"];
+            keepAlivePolicy?: components["schemas"]["KeepAlivePolicy"];
             conditions: {
                 key: string;
                 /** @enum {string} */
@@ -1594,6 +1628,8 @@ export interface operations {
             content: {
                 "application/json": {
                     retentionSeconds?: number | null;
+                    /** @description Select an administrator-allowed inactivity shutdown period in minutes. Zero means Unlimited; null inherits the current administrator default. */
+                    keepAliveMinutes?: number | null;
                     /** Format: uuid */
                     networkPolicyId?: string;
                     /** @description Manually configured workspace VM loopback preview ports. An empty array revokes every preview. */
@@ -2634,6 +2670,36 @@ export interface operations {
         };
         responses: {
             /** @description Capacity budget updated without evicting existing workspaces */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateKeepAlivePolicy: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    maximumMinutes: number;
+                    allowedMinutes: number[];
+                    defaultMinutes: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Keep-alive policy updated */
             204: {
                 headers: {
                     [name: string]: unknown;

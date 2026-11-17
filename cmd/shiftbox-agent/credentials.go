@@ -13,8 +13,8 @@ import (
 )
 
 func secretCommand(ctx context.Context, args []string, stdout, stderr io.Writer, resolve func(context.Context, string) (string, error)) int {
-	if len(args) != 3 || args[1] != "get-secret" || !secret.ValidName(args[2]) {
-		fmt.Fprintln(stderr, "usage: shiftbox secrets get-secret <name>")
+	if len(args) != 3 || (args[1] != "get" && args[1] != "get-secret") || !secret.ValidName(args[2]) {
+		fmt.Fprintln(stderr, "usage: shiftbox secrets get <key>")
 		return 2
 	}
 	value, err := resolve(ctx, args[2])

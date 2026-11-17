@@ -146,12 +146,13 @@ func GuestPollHandler(compatibility GuestCompatibility,
 			return
 		}
 		var input struct {
-			ProtocolVersion      string                  `json:"protocolVersion"`
-			GuestRelease         string                  `json:"guestRelease"`
-			LastOperationID      *string                 `json:"lastOperationId"`
-			LastOperationVersion int64                   `json:"lastOperationVersion"`
-			OperationReport      *guest.OperationReport  `json:"operationReport"`
-			Probes               []workspace.ProbeResult `json:"probes"`
+			ProtocolVersion      string                     `json:"protocolVersion"`
+			GuestRelease         string                     `json:"guestRelease"`
+			LastOperationID      *string                    `json:"lastOperationId"`
+			LastOperationVersion int64                      `json:"lastOperationVersion"`
+			OperationReport      *guest.OperationReport     `json:"operationReport"`
+			Probes               []workspace.ProbeResult    `json:"probes"`
+			WatchedProcesses     *workspace.ProcessActivity `json:"watchedProcesses"`
 			Activity             *struct {
 				SampledAt      time.Time `json:"sampledAt"`
 				CPUPercent     float64   `json:"cpuPercent"`
@@ -180,7 +181,7 @@ func GuestPollHandler(compatibility GuestCompatibility,
 		}
 		stamp := now().UTC()
 		report := guest.PollReport{GuestRelease: input.GuestRelease, ProtocolVersion: input.ProtocolVersion,
-			Version: input.LastOperationVersion, Operation: input.OperationReport, Probes: input.Probes}
+			Version: input.LastOperationVersion, Operation: input.OperationReport, Probes: input.Probes, WatchedProcesses: input.WatchedProcesses}
 		if input.Activity != nil {
 			report.Activity = &workspace.CPUActivity{SampledAt: input.Activity.SampledAt, Percent: input.Activity.CPUPercent}
 		}

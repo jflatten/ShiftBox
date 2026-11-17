@@ -1,0 +1,46 @@
+# Workspace inactivity shutdown
+
+Requested November 17, 2026. Builds on the approved controller-owned activity clock,
+IDE connection and guest CPU signals, durable workspace operations, and provider-confirmed stop.
+Shutdown preserves workspace disks. Architecture reference documents remain unchanged.
+
+- [x] T001 Inspect approved architecture and existing activity, lifecycle, infrastructure, and deployment paths; define the implementation contract.
+- [x] T002 [P] Add tests first, persistence, administrator keep-alive policy API, workspace selection/default enforcement, and OpenAPI contract. Model and HTTP tests cover authorization, stale writes, invalid lists, default inheritance, removed selections, Unlimited, and unchanged activity clocks; web/workspace/database/app suites pass. The schema-34 upgrade test verifies existing installation/workspace defaults and preservation of lifecycle, resources, activity, and destructive retention.
+- [x] T003 [P] Add tests first and Mantine controls for administrator maximum/options/default and workspace keep-alive selection in the requested sections.
+- [x] T004 Add tests first and controller inactivity shutdown scheduling using current activity, final transactional checks, existing stop reconciliation, and safe restart timing. Focused scheduler/start/lost-reply tests and full workspace suite pass.
+- [x] T005 Run relevant checks, review changes, migrate and deploy to shiftbox-demo through Terraform, verify the live feature, and clean up test resources. Verified 167 UI tests, TypeScript/build/embedded assets, Go package suites and vet, SQLite and TLS PostgreSQL migration/activity/stop tests, and contract checks. Verified management backup before schema 35 migration; deployed controller revision 22 with digest `sha256:4e87936369a461e0cdee647c1a0936b5658cf1beaca4de44191017da664de7b8`. Both ECS services report COMPLETED, running 1/desired 1. Live checks verified requested defaults and workspace options, then (with explicit approval) saved/reloaded a finite maximum and restored/reloaded the requested Unlimited policy. Automatic expiration and lost provider replies were verified in automated tests; no existing workspace was started or stopped for the live UI check. Temporary task definitions, helper ECR image, and PostgreSQL fixtures were removed; protected management backup retained.
+
+## Implementation contract
+
+- Policy: `maximumMinutes`, `allowedMinutes`, `defaultMinutes`, `version`.
+- User-selected initial policy: Unlimited maximum; 30m, 1h, 2h, 4h, 8h, 12h, Unlimited options; 30m default.
+- Zero minutes means Unlimited for maximum, option, default, or override. A finite maximum requires finite choices within it. Null remains inheritance.
+- Persist policy on the installation and nullable `workspaces.keep_alive_minutes` as the owner's override.
+- Removed/disallowed overrides resolve to the administrator default. Null inherits the current default.
+- Administrator endpoint: `PUT /admin/keep-alive` with If-Match for the policy version; infrastructure response includes `keepAlivePolicy`.
+- Workspace detail includes `keepAlivePolicy`, `keepAliveMinutes` (effective), `keepAliveOverrideMinutes` (nullable), `inactivityShutdownAt` (nullable), `inactivityMinutes`, and `canEditKeepAlive`.
+- Workspace PATCH accepts `keepAliveMinutes` (allowed integer minutes or null to inherit); new launches inherit the administrator default.
+- Workspace package exports `KeepAlivePolicy`, `ReadKeepAlivePolicy(ctx, query)` and `KeepAlivePolicy.EffectiveMinutes(override *int64)` for scheduler and API use.
+- Human input and explicit process watches reset shutdown timing, as specified in the follow-up contract below. Idle/stale/missing polls do not reset it. A start initializes a fresh timer.
+- Scan once per minute. Reuse controller/provider recovery grace and durable stop workflows; serialize against activity, policy edits, lifecycle actions, and maintenance. Release CPU/RAM only after confirmed stop.
+
+## Human activity and guest CLI follow-up
+
+User confirmed live 5-minute shutdown on November 17, 2026 and replaced the
+original connection/CPU activity behavior with human input plus an explicit
+process-watch keep-alive. This user instruction supersedes the initial activity
+signal choice; architecture reference documents remain unchanged.
+
+- [x] T006 Inspect guest CLI, credential socket, browser proxy, and telemetry integration; define human input and process-watch behavior.
+- [x] T007 [P] Write tests first and implement guest CLI help triggers and `shiftbox watch <PID>`, with a process-scoped local watch lease and poll telemetry that ends on exit, cancellation, or stale heartbeat. Full guest/CLI suites and focused race checks pass; disposable Linux-container tests verify real sleeping-process/zombie detection, PID-reuse fencing, cancellation, lease expiry, and CLI help/secret/Git compatibility. Signed selected agents publish an atomically replaced directory-mounted command behind a stable launcher; new/rebuilt containers receive the updated helper without exposing private guest state.
+- [x] T008 [P] Write tests first and add `shiftbox secrets list` and `shiftbox secrets get <key>` using current authenticated User → Project → Organization lookup; list keys only and preserve existing get-secret compatibility. Listing displays each effective `KEYNAME (scope)` once, sorted, with user/project/organization labels. Unit, Unix socket, existing read, and real mTLS contract tests verify precedence, revocation, denied stale/inactive authority, no values/decryption, malformed response rejection, and no cached results after outages.
+- [x] T009 Write tests first and replace connection/CPU keep-alive with trusted IDE keyboard/pointer events, authenticate and validate activity reports, remove the open-IDE shutdown veto, and consume explicit process-watch telemetry. Updated UI wording and protocol contracts. Verified same-origin/current-authority reports, ignored CPU telemetry, fresh watch samples, idle/synthetic/hidden input rejection, throttling, HTML/CSP/gzip framing, and generation/state fencing. Full Go suite/vet and 168 UI tests, TypeScript and production build pass.
+- [x] T010 Run checks, publish controller and guest updates through the existing signed guest-update workflow, deploy shiftbox-demo through Terraform, verify behavior and CLI, and clean up temporary test resources. Full Go suite/vet, focused race/Linux watch checks, 168 UI tests, TypeScript, production build, and embedded assets passed. Fixed and regression-tested the cloud guest catalog path to use the persistent installation directory; the affected command package suite/vet also passed. Deployed controller revision 24 with digest `sha256:422811fb4698779840d3e2d50cd67c301989714aab6c8ffa3ba958dec4f8995c`; controller and PostgreSQL report COMPLETED, running 1/desired 1. Published and independently verified the signed guest digest `4accb7c20160d69c962f1440faeacb9dd565f9b48740da15a5f73ad4e0f0d35d`. With explicit user approval, completed groundtruth's signed guest update and container rebuild; retained project files remained present. Live CLI checks verified no-argument/help/--help success, unknown-command help with exit 2, `TEST_SECRET (organization)` listing, and a 75-second process watch that renewed controller activity and returned automatically on process exit. With the IDE tab left open and no subsequent browser input, AWS confirmed groundtruth stopped automatically at approximately 3:24 PM Pacific after the final 3:18 PM activity, retaining its original EBS volume. UI confirmed observed/desired Stopped. Temporary publisher task definitions, tasks, and ECR image were removed; the signed product catalog remains. The first failed catalog-path campaign remains visible in maintenance history; the subsequent signed-update campaign completed successfully. Live CLI proof: `.cache/aws-demo/human-input/live-cli.jpg`.
+- [x] T010a [P] Verify the existing demo guest-update catalog and approved artifact/campaign publication path; prepare the exact signed-update rollout inputs without changing architecture or existing immutable releases. The demo inspection found no release catalog. Prepared the first private `development` bundle using existing approved component pins and actual new controller/guest hashes, signed through the existing publisher CLI, and independently verified the signature against the AMI-pinned publisher key. No existing artifact was replaced and this preparation made no AWS mutations.
+
+Follow-up contract: keyboard/pointer input observed in the IDE updates the
+controller-owned clock; loading/focusing an idle tab and CPU activity do not.
+The foreground watch command renews a short-lived lease while the original PID
+exists (excluding zombies/PID reuse) in its own process namespace. Guest polls
+report `watchedProcesses: {sampledAt, active}`; only fresh active reports extend
+the clock. Help appears for no arguments, `help`, `--help`, and unknown commands.

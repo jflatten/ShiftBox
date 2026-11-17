@@ -42,9 +42,17 @@ go run ./platform/packer/sign-guest-update /absolute/path/to/releases <release-i
 ```
 
 The signer reads an Ed25519 PKCS#8 PEM key from standard input. Deploy only
-the manifest, binary, and detached signature to the controller's release
-directory. Run a maintenance campaign for each architecture using its
+the manifest, binary, and detached signature to
+`<installationDir>/releases/<release-id>/` (directories 0700, files 0600).
+The catalog belongs to persistent installation storage even when the cloud
+launcher generates its configuration in a temporary directory.
+Run a maintenance campaign for each architecture using its
 matching signed guest binary.
+
+Updated agents publish the selected signed executable behind a stable
+workspace CLI launcher. Containers created with the older binary file mount
+need one normal rebuild to adopt the launcher; retained project, home, and
+persistent application data follow the existing rebuild contract.
 
 The build creates a disposable VM under a unique name and provisions it
 using a temporary SSH key. The shutdown step removes the build key,

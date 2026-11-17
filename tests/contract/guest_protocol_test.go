@@ -239,6 +239,19 @@ func TestGuestPollContract(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `UPDATE workspaces SET observed_state='running' WHERE id=$1`, workspaceID); err != nil {
 		t.Fatal(err)
 	}
+	// Legacy CPU/connection telemetry does not prove human activity. Only a
+	// fresh, explicit process-watch report may renew the clock through polls.
+	postGuestContract(t, registered, pollURL, map[string]any{"protocolVersion": "1", "guestRelease": "current",
+		"activity": map[string]any{"sampledAt": now, "cpuPercent": 99, "ideConnections": 1}}, http.StatusOK, "")
+	var activity sql.NullString
+	if err := db.QueryRowContext(ctx, "SELECT last_activity_at FROM workspaces WHERE id=$1", workspaceID).Scan(&activity); err != nil || activity.Valid {
+		t.Fatalf("CPU-only activity=%v (%v), want unset", activity, err)
+	}
+	postGuestContract(t, registered, pollURL, map[string]any{"protocolVersion": "1", "guestRelease": "current",
+		"watchedProcesses": workspace.ProcessActivity{SampledAt: now, Active: true}}, http.StatusOK, "")
+	if err := db.QueryRowContext(ctx, "SELECT last_activity_at FROM workspaces WHERE id=$1", workspaceID).Scan(&activity); err != nil || activity.String != now.Format(time.RFC3339Nano) {
+		t.Fatalf("watched process activity=%v (%v), want controller receipt", activity, err)
+	}
 	for _, index := range []int{0, 1, 2} {
 		if err := journal.StartStep(ctx, claim, index); err != nil {
 			t.Fatal(err)

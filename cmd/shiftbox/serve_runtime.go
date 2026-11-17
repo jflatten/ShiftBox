@@ -153,7 +153,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	services.Handlers[importRoute.Route.OperationID] = importRoute
 	preflightRoute, preflightWorker := web.MigrationPreflightRoute(state.DB, journal, origin, active.InstallationID, time.Now,
 		func(ctx context.Context, id string) (release.MigrationReport, error) {
-			manifest, err := release.ReadLocalMigrationRelease(filepath.Join(filepath.Dir(configPath), "releases"), id)
+			manifest, err := release.ReadLocalMigrationRelease(filepath.Join(cfg.InstallationDir, "releases"), id)
 			if err != nil {
 				return release.MigrationReport{}, err
 			}
@@ -200,9 +200,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		EnrollmentAddress: settings.EnrollmentAddress, PollAddress: settings.PollAddress,
 		TunnelAddress: settings.TunnelAddress, PublicHost: settings.GuestHost, Tunnels: tunnels, GitHub: github, Checkpoint: checkpoint,
 		EC2Region: ec2Region, EC2Account: ec2Account,
-		GuestUpdates: func(ctx context.Context, id string) (release.GuestUpdate, error) {
-			return release.ReadLocalGuestUpdate(ctx, filepath.Join(filepath.Dir(configPath), "releases"), id, compatibility.Protocol)
-		},
+		GuestUpdates: controllerGuestUpdateLoader(cfg, compatibility.Protocol),
 	}, compatibility, journal, machines, media, time.Now)
 	if err != nil {
 		return err
