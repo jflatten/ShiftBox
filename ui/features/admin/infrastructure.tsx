@@ -52,7 +52,7 @@ export function Infrastructure() {
         // Persistent conditions remain outside the tabs in the shared shell.
         <Tabs value={activeSection} onChange={setSection} keepMounted keepMountedMode="display-none">
           <Tabs.List aria-label="Infrastructure settings">
-            <Tabs.Tab value="resources">Resources</Tabs.Tab>
+            <Tabs.Tab value="resources">Platform</Tabs.Tab>
             {canManage ? <Tabs.Tab value="certificates">Certificates</Tabs.Tab> : null}
             {canMaintain ? <Tabs.Tab value="maintenance">Maintenance</Tabs.Tab> : null}
             {canManageSecrets ? <Tabs.Tab value="secrets">Secrets</Tabs.Tab> : null}

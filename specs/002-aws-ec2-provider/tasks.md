@@ -77,6 +77,8 @@ Every implementation task starts with a small, commented test or an applicable e
 
 ## Dependencies & Execution Order
 
+- [x] T031 Rename the Infrastructure tab from Resources to Platform and update existing UI checks. Verified all 14 infrastructure unit tests and the production UI build; deployment held for the user's bundled UI changes.
+
 - [x] T030 Remove the `groundtruth-single-boot` review workspace through ShiftBox, verify instance, volume, and network-interface cleanup, and confirm temporary migration resources are absent while the demo remains healthy. EC2 termination and EBS/ENI removal verified; migration tasks inactive, helper image absent, existing workspace preserved, and both demo services completed.
 
 - [x] T028 Launch a new workspace from `groundtruth - large` and verify its pinned image and actual EC2 instance use the verified single-boot AMI. `groundtruth-single-boot` reached Running with a healthy code-server probe; EC2 instance `i-0b589ed3f65ba6b26` uses `ami-0eea624c1e5701eb3`, m6i.xlarge, and encrypted 32 GiB gp3 EBS.

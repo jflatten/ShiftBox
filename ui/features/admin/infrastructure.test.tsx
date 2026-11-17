@@ -290,7 +290,7 @@ test('keeps certificate and maintenance forms distinct after status loads', asyn
     const user = userEvent.setup();
     render(<Providers><Infrastructure /></Providers>);
     expect(await screen.findByRole('heading', { name: 'Provider' })).toBeVisible();
-    expect(screen.getByRole('tab', { name: 'Resources' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Platform' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByRole('button', { name: 'Replace certificate' })).toBeNull();
     await user.click(screen.getByRole('tab', { name: 'Certificates' }));
     expect(screen.getAllByRole('button', { name: 'Replace certificate' })).toHaveLength(1);
@@ -390,7 +390,7 @@ test('retries a certificate upload and shows the committed replacement', async (
   const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
   await user.upload(inputs[0], file('chain fixture', 'chain.pem'));
   await user.upload(inputs[1], file('key fixture', 'private.pem'));
-  await user.click(screen.getByRole('tab', { name: 'Resources' }));
+  await user.click(screen.getByRole('tab', { name: 'Platform' }));
   await user.click(screen.getByRole('tab', { name: 'Certificates' }));
   expect(screen.getByText('private.pem')).toBeVisible();
   await user.click(submit);
@@ -450,7 +450,7 @@ test('preserves a capacity draft across tabs and discards it explicitly', async 
   expect(screen.getByText('You have unsaved capacity changes.')).toBeVisible();
   await user.click(screen.getByRole('tab', { name: 'Certificates' }));
   expect(screen.getByText('Browser certificate expires soon')).toBeVisible();
-  await user.click(screen.getByRole('tab', { name: 'Resources' }));
+  await user.click(screen.getByRole('tab', { name: 'Platform' }));
   expect(cpu).toHaveValue('5');
   expect(save).toBeEnabled();
   await user.click(screen.getByRole('button', { name: 'Discard changes' }));

@@ -425,7 +425,7 @@ test('maintenance and certificate progress', async ({ page }) => {
     if (path.endsWith('/certificate')) return route.fulfill({ json: operation(certificateLabels) });
   }, operation(maintenanceLabels));
   await page.goto('/infrastructure/');
-  await tabTo(page, page.getByRole('tab', { name: 'Resources' }));
+  await tabTo(page, page.getByRole('tab', { name: 'Platform' }));
   await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('tab', { name: 'Certificates' })).toHaveAttribute('aria-selected', 'true');
   const replace = page.getByRole('button', { name: 'Replace certificate' });
@@ -470,7 +470,7 @@ test('Infrastructure categories preserve drafts and warnings on a narrow screen'
   await page.keyboard.press('ControlOrMeta+A');
   await page.keyboard.insertText('6');
   await expect(save).toBeEnabled();
-  for (const [current, next] of [['Resources', 'Certificates'], ['Certificates', 'Maintenance'], ['Maintenance', 'Secrets'], ['Secrets', 'Resources']]) {
+  for (const [current, next] of [['Platform', 'Certificates'], ['Certificates', 'Maintenance'], ['Maintenance', 'Secrets'], ['Secrets', 'Platform']]) {
     await tabTo(page, page.getByRole('tab', { name: current }));
     await page.keyboard.press('ArrowRight');
     await expect(page.getByRole('tab', { name: next })).toHaveAttribute('aria-selected', 'true');
@@ -483,7 +483,7 @@ test('Infrastructure categories preserve drafts and warnings on a narrow screen'
   await activate(page, page.getByRole('button', { name: 'Discard changes' }));
   await expect(cpu).toHaveValue('2');
   await expect(save).toBeDisabled();
-  await tabTo(page, page.getByRole('tab', { name: 'Resources' }));
+  await tabTo(page, page.getByRole('tab', { name: 'Platform' }));
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('textbox', { name: 'Target release ID' })).toHaveValue('draft-release');
