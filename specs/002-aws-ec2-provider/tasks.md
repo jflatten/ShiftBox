@@ -78,7 +78,7 @@ Every implementation task starts with a small, commented test or an applicable e
 ## Dependencies & Execution Order
 
 - [x] T035 Deploy all bundled changes to shiftbox-demo with a verified management backup, schema 34 upgrade, reviewed Terraform rollout, live UI checks, and cleanup. Controller revision 20 and both healthy ECS services verified; user confirmed the deployment. See `documentation/validation/ui-bundle.md`.
-- [ ] T036 Commit all changes and push to the MVP branch after the user confirmed the live deployment.
+- [x] T036 Commit all changes and push to the MVP branch after the user confirmed the live deployment. Bundle commit `2782428` pushed to `origin/feature/mvp`.
 
 - [x] T033 [P] Add an accessible header light/dark toggle with browser-persisted preference and branding in both modes; verified 15 shell unit tests, UI typecheck, and Chrome persistence/keyboard/320px-header checks. Deployment held.
 - [x] T034 [P] Replace user-facing Templates/template wording with Projects/project across the UI and associated checks; hold deployment. Verified 75 tests across nine targeted UI suites, the final audit paging/label checks, and UI typecheck. Kept routes, API identifiers, permissions, and raw audit codes intact.
