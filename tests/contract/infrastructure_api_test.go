@@ -162,10 +162,10 @@ func TestCapacityAdministration(t *testing.T) {
 	now := time.Now().UTC()
 	token := strings.Repeat("A", 43)
 	seedWorkspaceLaunch(t, db, uuid.NewString(), token, now)
-	budget, profile := web.CapacityHandlers(db, origin, func() time.Time { return now }, uuid.NewString, provider.Capabilities{
+	budget, profile := web.CapacityHandlers(db, origin, func() time.Time { return now }, uuid.NewString, web.WorkspaceLaunchPolicy{Capabilities: provider.Capabilities{
 		Minimum: provider.Resources{CPU: 1, MemoryBytes: 512 << 20, DiskBytes: 20 << 20},
 		Maximum: provider.Resources{CPU: 8, MemoryBytes: 4096 << 20, DiskBytes: 40 << 20},
-	})
+	}})
 	request := func(h *web.AuthorizedHandler, version, csrf, body string, want int) {
 		t.Helper()
 		r := httptest.NewRequest(h.Route.Method, origin+"/api/v1"+h.Route.Path, strings.NewReader(body))
@@ -233,10 +233,10 @@ func TestResourceProfileCRUD(t *testing.T) {
 		Minimum: provider.Resources{CPU: 1, MemoryBytes: 512 << 20, DiskBytes: 20 << 20},
 		Maximum: provider.Resources{CPU: 8, MemoryBytes: 4096 << 20, DiskBytes: 80 << 20},
 	}
-	_, create := web.CapacityHandlers(db, origin, clock, func() string { return "new-profile" }, caps)
+	_, create := web.CapacityHandlers(db, origin, clock, func() string { return "new-profile" }, web.WorkspaceLaunchPolicy{Capabilities: caps})
 	mux := http.NewServeMux()
 	mux.Handle(create.Route.Method+" /api/v1"+create.Route.Path, &create)
-	for _, handler := range web.ResourceProfileHandlers(db, origin, clock, caps) {
+	for _, handler := range web.ResourceProfileHandlers(db, origin, clock, web.WorkspaceLaunchPolicy{Capabilities: caps}) {
 		mux.Handle(handler.Route.Method+" /api/v1"+handler.Route.Path, &handler)
 	}
 	request := func(method, path, version, csrf, body string, want int) *httptest.ResponseRecorder {
@@ -333,11 +333,18 @@ func TestEC2ResourceProfileShape(t *testing.T) {
 	caps := provider.Capabilities{Name: "ec2", Architecture: "amd64", Minimum: provider.Resources{DiskBytes: 32 << 30},
 		Maximum:       provider.Resources{DiskBytes: 2047 << 30},
 		InstanceTypes: []provider.InstanceType{{Name: "m6i.xlarge", Architecture: "amd64", CPUCount: 4, MemoryMiB: 16384}}}
+
+	if _, err := db.ExecContext(ctx, `INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,
+	 owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state,provider_kind,ec2_image_json)
+	 VALUES('ec2-image','EC2 fixture','amd64','test','release','1','[]','{}','{}','{}','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','fixture','member','now','available','ec2','{"amiId":"ami-profile","minimumRootDiskGiB":32}')`); err != nil {
+		t.Fatal(err)
+	}
+	policy := web.WorkspaceLaunchPolicy{Capabilities: caps, Protocols: []string{"1"}, EC2VerifiedAMIs: []string{"ami-profile"}}
 	clock := func() time.Time { return now }
-	_, create := web.CapacityHandlers(db, origin, clock, func() string { return "ec2-profile" }, caps)
+	_, create := web.CapacityHandlers(db, origin, clock, func() string { return "ec2-profile" }, policy)
 	mux := http.NewServeMux()
 	mux.Handle("POST "+collection, &create)
-	for _, handler := range web.ResourceProfileHandlers(db, origin, clock, caps) {
+	for _, handler := range web.ResourceProfileHandlers(db, origin, clock, policy) {
 		mux.Handle(handler.Route.Method+" /api/v1"+handler.Route.Path, &handler)
 	}
 	request := func(method, path, body string, want int) *httptest.ResponseRecorder {
@@ -355,22 +362,24 @@ func TestEC2ResourceProfileShape(t *testing.T) {
 		return result
 	}
 	request(http.MethodPost, collection, `{"name":"Large","instanceType":"unavailable.example","diskMiB":65536}`, 409)
-	request(http.MethodPost, collection, `{"name":"Large","instanceType":"m6i.xlarge","diskMiB":32769}`, 409)
-	request(http.MethodPost, collection, `{"name":"Large","instanceType":"m6i.xlarge","diskMiB":31744}`, 409)
-	request(http.MethodPost, collection, `{"name":"Large","instanceType":"m6i.xlarge","diskMiB":65536,"cpuCount":1,"memoryMiB":1}`, 201)
-	request(http.MethodPut, collection+"/ec2-profile", `{"name":"Large","instanceType":"m6i.xlarge","diskMiB":98304,"enabled":false}`, 204)
+	request(http.MethodPost, collection, `{"name":"Large","instanceType":"m6i.xlarge","platformArtifactId":"ec2-image","diskMiB":32769}`, 409)
+	request(http.MethodPost, collection, `{"name":"Large","instanceType":"m6i.xlarge","platformArtifactId":"ec2-image","diskMiB":31744}`, 409)
+	request(http.MethodPost, collection, `{"name":"Large","instanceType":"m6i.xlarge","diskMiB":65536}`, 409)
+	request(http.MethodPost, collection, `{"name":"Large","instanceType":"m6i.xlarge","platformArtifactId":"missing-image","diskMiB":65536}`, 409)
+	request(http.MethodPost, collection, `{"name":"Large","instanceType":"m6i.xlarge","platformArtifactId":"ec2-image","diskMiB":65536,"cpuCount":1,"memoryMiB":1}`, 201)
+	request(http.MethodPut, collection+"/ec2-profile", `{"name":"Large","instanceType":"m6i.xlarge","platformArtifactId":"ec2-image","diskMiB":98304,"enabled":false}`, 204)
 
 	var profiles []struct {
-		ID, InstanceType             string
-		CPUCount, MemoryMiB, DiskMiB int
-		Enabled                      bool
+		ID, InstanceType, PlatformArtifactID string
+		CPUCount, MemoryMiB, DiskMiB         int
+		Enabled                              bool
 	}
 	view := request(http.MethodGet, collection, "", 200)
 	if err := json.Unmarshal(view.Body.Bytes(), &profiles); err != nil || len(profiles) != 2 {
 		t.Fatalf("profiles = %+v, %v; want two profiles", profiles, err)
 	}
 	current, legacy := profiles[0], profiles[1]
-	if current.InstanceType != "m6i.xlarge" || current.CPUCount != 4 || current.MemoryMiB != 16384 ||
+	if current.PlatformArtifactID != "ec2-image" || current.InstanceType != "m6i.xlarge" || current.CPUCount != 4 || current.MemoryMiB != 16384 ||
 		current.DiskMiB != 98304 || current.Enabled || legacy.InstanceType != "t3.medium" {
 		t.Fatalf("profiles = %+v; want edited m6i.xlarge and legacy t3.medium", profiles)
 	}

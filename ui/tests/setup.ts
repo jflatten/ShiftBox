@@ -19,3 +19,5 @@ global.ResizeObserver = class {
   unobserve() {}
   disconnect() {}
 };
+// Mantine scrolls the selected combobox option into view when reopening it.
+Element.prototype.scrollIntoView = () => {};

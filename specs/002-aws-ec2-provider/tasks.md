@@ -68,7 +68,20 @@ Every implementation task starts with a small, commented test or an applicable e
 
 - [x] T024 Remove the single-boot and cold-start test workspaces through ShiftBox, verify EC2 termination and EBS deletion, archive the review template, remove temporary validation images, and preserve the existing workspaces and healthy demo services. Record cleanup in `documentation/validation/ide-websocket.md`.
 
+## Resource profile AMI ownership
+
+- [x] T025 Make AWS resource profiles own the selected platform AMI, compatible EC2 instance type, and independent EBS disk size. AWS templates select a profile without selecting an AMI; future launches use that profile's image and existing workspaces retain their pinned image.
+  - [x] T025a [P] Write backend and migration tests first, persist and validate the profile AMI, expose approved image metadata, and resolve AWS template launches through the resource profile. Verified profile validation, template creation without an AMI, launch snapshots and replay, catalog filtering, SQLite schema 32→33 backfill, and the Go backend suites and vet; PostgreSQL migration test is available with the disposable fixture.
+  - [x] T025b [P] Write UI tests first, add AMI selection and compatible instance filtering to the profile dialog, and remove independent AMI selection from AWS templates. Verified 25 infrastructure/template/sharing tests and UI typecheck.
+  - [x] T025c Verify integration, migrate and deploy `shiftbox-demo` through Terraform, and check the live profile and template flows using disposable records. Schema 33 and controller revision 19 verified; both ECS services completed. See `documentation/validation/resource-profile-ami.md`.
+
 ## Dependencies & Execution Order
+
+- [x] T028 Launch a new workspace from `groundtruth - large` and verify its pinned image and actual EC2 instance use the verified single-boot AMI. `groundtruth-single-boot` reached Running with a healthy code-server probe; EC2 instance `i-0b589ed3f65ba6b26` uses `ami-0eea624c1e5701eb3`, m6i.xlarge, and encrypted 32 GiB gp3 EBS.
+
+- [x] T027 Assign the verified single-boot AMI to `EC2 Large` in the demo and verify persistence after reload. Selected `ami-0eea624c1e5701eb3`; retained m6i.xlarge, 32 GiB EBS, and enabled state.
+
+- [x] T026 Assign the verified single-boot AMI to the existing `AWS demo · t3.medium` resource profile in the demo and verify persistence after reload. Selected `ami-0eea624c1e5701eb3`; retained t3.medium, 32 GiB EBS, and enabled state.
 
 - Setup T001, T002 and T003 can run in separate worktrees or subagents because their build paths are independent.
 - T004 and T005 build on T002. T006 establishes provider configuration before AWS-only setup. US1 needs the image, AWS foundation, host and role boundaries.

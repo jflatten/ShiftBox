@@ -107,6 +107,27 @@ func Save(ctx context.Context, tx *sql.Tx, intent SaveIntent, now time.Time) (Vi
 		return View{}, err
 	}
 
+	var profileImage string
+	err = tx.QueryRowContext(ctx, "SELECT COALESCE(platform_artifact_id,'') FROM resource_profiles WHERE id=$1 AND enabled=1", input.ProfileID).Scan(&profileImage)
+	if errors.Is(err, sql.ErrNoRows) {
+		return View{}, ErrUnavailable
+	}
+	if err != nil {
+		return View{}, err
+	}
+	if profileImage != "" {
+		input.ArtifactID = profileImage
+	} else if input.ArtifactID != "" {
+		// A legacy unbound AWS profile needs an administrator's AMI choice.
+		// An old template image cannot become an implicit profile assignment.
+		var ec2 bool
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM platform_artifacts WHERE id=$1 AND provider_kind='ec2')", input.ArtifactID).Scan(&ec2); err != nil {
+			return View{}, err
+		}
+		if ec2 {
+			return View{}, ErrUnavailable
+		}
+	}
 	view := View{Input: input, ID: intent.NewID, OwnerID: intent.Actor, State: "active", CurrentRevision: 1, Version: 1}
 	if intent.TemplateID != "" {
 		view.ID = intent.TemplateID

@@ -74,6 +74,9 @@ test('creates an EC2 resource profile with an instance type and separate EBS siz
     if (input === '/api/v1/admin/infrastructure') return json({
       ...status, provider: { ...status.provider, name: 'ec2', instanceTypes, minimumDiskGiB: 32, maximumDiskGiB: 2047 },
     });
+    if (input === '/api/v1/templates/catalog') return json({ platformImages: [
+      { id: 'amd-image', name: 'Ubuntu AMD64', providerKind: 'ec2', architecture: 'amd64', amiId: 'ami-amd' },
+    ] });
     if (input === collection && init?.method === 'POST') {
       profiles = [{ ...JSON.parse(String(init.body)), cpuCount: 4, memoryMiB: 16384, id: 'profile', enabled: true, version: 1 }];
       return json({});
@@ -88,6 +91,9 @@ test('creates an EC2 resource profile with an instance type and separate EBS siz
   await user.click(screen.getByRole('button', { name: 'New resource profile' }));
   const dialog = within(await screen.findByRole('dialog', { name: 'New resource profile' }));
   await user.type(dialog.getByRole('textbox', { name: 'Profile name' }), 'AWS compute');
+  expect(dialog.getByRole('combobox', { name: 'EC2 instance type' })).toBeDisabled();
+  await user.click(await dialog.findByRole('combobox', { name: 'AMI image' }));
+  await user.click(await screen.findByRole('option', { name: 'Ubuntu AMD64' }));
   await user.click(dialog.getByRole('combobox', { name: 'EC2 instance type' }));
   await user.click(await screen.findByRole('option', { name: 'm6i.xlarge' }));
   expect(dialog.getByRole('textbox', { name: 'vCPUs' })).toHaveValue('4');
@@ -100,8 +106,122 @@ test('creates an EC2 resource profile with an instance type and separate EBS siz
   expect(await screen.findByText('Resource profile created.')).toBeVisible();
   expect(screen.getByRole('row', { name: /AWS compute.*m6i.xlarge/ })).toBeVisible();
   expect(fetch).toHaveBeenCalledWith(collection, expect.objectContaining({
-    method: 'POST', body: JSON.stringify({ name: 'AWS compute', instanceType: 'm6i.xlarge', diskMiB: 65536 }),
+    method: 'POST', body: JSON.stringify({ name: 'AWS compute', platformArtifactId: 'amd-image', instanceType: 'm6i.xlarge', diskMiB: 65536 }),
   }));
+});
+
+// Switching AMI architecture clears an incompatible type and compute while retaining the chosen EBS size.
+test('filters EC2 types by AMI and clears an incompatible selection', async () => {
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json({ ...status, provider: { name: 'ec2',
+      instanceTypes: [
+        { name: 't3.medium', architecture: 'amd64', cpuCount: 2, memoryMiB: 4096 },
+        { name: 'm7g.large', architecture: 'arm64', cpuCount: 2, memoryMiB: 8192 },
+      ], minimumDiskGiB: 32, maximumDiskGiB: 2047 } });
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
+    if (input === '/api/v1/templates/catalog') return json({ platformImages: [
+      { id: 'amd-image', name: 'Ubuntu AMD64', providerKind: 'ec2', architecture: 'amd64' },
+      { id: 'arm-image', name: 'Ubuntu ARM64', providerKind: 'ec2', architecture: 'arm64' },
+    ] });
+    throw new Error('unexpected request');
+  });
+  const user = userEvent.setup();
+  render(<Providers><MantineProvider env="test"><Infrastructure /></MantineProvider></Providers>);
+  await screen.findByText('AWS EC2');
+  await user.click(screen.getByRole('button', { name: 'New resource profile' }));
+  const dialog = within(screen.getByRole('dialog', { name: 'New resource profile' }));
+  const image = await dialog.findByRole('combobox', { name: 'AMI image' });
+  await user.click(image);
+  await user.click(await screen.findByRole('option', { name: 'Ubuntu AMD64' }));
+  await user.click(dialog.getByRole('combobox', { name: 'EC2 instance type' }));
+  expect(screen.queryByRole('option', { name: 'm7g.large' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('option', { name: 't3.medium' }));
+  expect(dialog.getByRole('textbox', { name: 'vCPUs' })).toHaveValue('2');
+  const disk = dialog.getByRole('textbox', { name: 'EBS disk (GiB)' });
+  await user.clear(disk);
+  await user.type(disk, '64');
+  await user.click(dialog.getByRole('combobox', { name: 'AMI image' }));
+  await user.click(await screen.findByRole('option', { name: 'Ubuntu ARM64' }));
+  expect(dialog.getByRole('combobox', { name: 'EC2 instance type' })).toHaveValue('');
+  expect(dialog.getByRole('textbox', { name: 'vCPUs' })).toHaveValue('');
+  expect(dialog.getByRole('textbox', { name: 'Memory (MiB)' })).toHaveValue('');
+  expect(disk).toHaveValue('64');
+  await user.click(dialog.getByRole('combobox', { name: 'EC2 instance type' }));
+  expect(screen.queryByRole('option', { name: 't3.medium' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('option', { name: 'm7g.large' }));
+  expect(dialog.getByRole('textbox', { name: 'Memory (MiB)' })).toHaveValue('8,192');
+});
+
+// An unavailable AMI catalog blocks creation until an explicit retry succeeds; an empty catalog explains the next step.
+test('recovers the AMI catalog and explains missing images', async () => {
+  let fail = true;
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json({ ...status, provider: { name: 'ec2',
+      instanceTypes: [{ name: 't3.medium', architecture: 'amd64', cpuCount: 2, memoryMiB: 4096 }],
+      minimumDiskGiB: 32, maximumDiskGiB: 2047 } });
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
+    if (input === '/api/v1/templates/catalog') {
+      if (fail) throw new Error('Offline');
+      return json({ platformImages: [] });
+    }
+    throw new Error('unexpected request');
+  });
+  const user = userEvent.setup();
+  render(<Providers><MantineProvider env="test"><Infrastructure /></MantineProvider></Providers>);
+  await screen.findByText('AWS EC2');
+  await user.click(screen.getByRole('button', { name: 'New resource profile' }));
+  const dialog = within(screen.getByRole('dialog', { name: 'New resource profile' }));
+  const retry = await dialog.findByRole('button', { name: 'Retry loading AMI images' });
+  expect(dialog.getByRole('button', { name: 'Create resource profile' })).toBeDisabled();
+  fail = false;
+  await user.click(retry);
+  expect(await dialog.findByText('No approved AMI images are available. Import and validate a platform image first.')).toBeVisible();
+  expect(dialog.getByRole('combobox', { name: 'EC2 instance type' })).toBeDisabled();
+});
+
+// Editing restores the saved AMI and type and refuses a disk smaller than the selected image's root volume.
+test('edits the saved AMI binding and validates the image root disk minimum', async () => {
+  const profile = { id: 'profile', name: 'AWS Small', platformArtifactId: 'amd-image', platformImageName: 'Ubuntu AMD64',
+    instanceType: 't3.medium', cpuCount: 2, memoryMiB: 4096, diskMiB: 32768, enabled: true, version: 3 };
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json({ ...status, provider: { name: 'ec2',
+      instanceTypes: [{ name: 't3.medium', architecture: 'amd64', cpuCount: 2, memoryMiB: 4096 }],
+      minimumDiskGiB: 32, maximumDiskGiB: 2047 } });
+    if (input === '/api/v1/admin/resource-profiles') return json([profile]);
+    if (input === '/api/v1/templates/catalog') return json({ platformImages: [
+      { id: 'amd-image', name: 'Ubuntu AMD64', providerKind: 'ec2', architecture: 'amd64', minimumDiskGiB: 32 },
+      { id: 'large-image', name: 'Ubuntu large root', providerKind: 'ec2', architecture: 'amd64', minimumDiskGiB: 64 },
+    ] });
+    if (input === '/api/v1/admin/resource-profiles/profile' && init?.method === 'PUT') return json({});
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><MantineProvider env="test"><Infrastructure /></MantineProvider></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Actions for AWS Small' }));
+  expect(within(screen.getByRole('table', { name: 'Resource profiles' })).getByText('Ubuntu AMD64')).toBeVisible();
+  await user.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+  const dialog = within(screen.getByRole('dialog', { name: 'Edit resource profile' }));
+  await waitFor(() => expect(dialog.getByRole('combobox', { name: 'AMI image' })).toHaveValue('Ubuntu AMD64'));
+  expect(dialog.getByRole('combobox', { name: 'EC2 instance type' })).toHaveValue('t3.medium');
+  expect(dialog.getByRole('textbox', { name: 'vCPUs' })).toHaveValue('2');
+  await user.click(dialog.getByRole('combobox', { name: 'AMI image' }));
+  await user.click(await screen.findByRole('option', { name: 'Ubuntu large root' }));
+  expect(dialog.getByRole('combobox', { name: 'EC2 instance type' })).toHaveValue('t3.medium');
+  await user.click(dialog.getByRole('button', { name: 'Save changes' }));
+  expect(await dialog.findByText('Enter a whole number from 64 to 2,047 GiB.')).toBeVisible();
+  expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
+  const disk = dialog.getByRole('textbox', { name: 'EBS disk (GiB)' });
+  await user.clear(disk);
+  await user.type(disk, '64');
+  await user.click(dialog.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/admin/resource-profiles/profile', expect.objectContaining({
+    method: 'PUT', headers: expect.objectContaining({ 'If-Match': '"3"' }),
+    body: JSON.stringify({ name: 'AWS Small', platformArtifactId: 'large-image', instanceType: 't3.medium', diskMiB: 65536, enabled: true }),
+  })));
 });
 
 // Editing refreshes the displayed name and state. A referenced profile remains

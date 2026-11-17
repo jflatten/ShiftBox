@@ -43,14 +43,14 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 	getOperation, streamEvents := web.OperationHandlers(db, origin, now, journal, registry)
 	listTemplates, createTemplate, reviseTemplate := web.TemplateHandlers(db, origin, now, uuid.NewString)
 	grantTemplate, revokeTemplate := web.TemplateGrantHandlers(db, origin, now)
-	budget, resourceProfile := web.CapacityHandlers(db, origin, now, uuid.NewString, launchPolicy.Capabilities)
+	budget, resourceProfile := web.CapacityHandlers(db, origin, now, uuid.NewString, launchPolicy)
 	publishNotice, listNotices, noticeReceipt := web.NoticeHandlers(db, origin, now, uuid.NewString)
 	listMaintenance, createMaintenance := web.MaintenanceHandlers(db, origin, now, journal)
 	handlers := web.GitAuthorizationHandlers(db, origin, now, github)
 	for id, handler := range web.SecretHandlers(db, origin, state.Secrets, now) {
 		handlers[id] = handler
 	}
-	for _, handler := range web.ResourceProfileHandlers(db, origin, now, launchPolicy.Capabilities) {
+	for _, handler := range web.ResourceProfileHandlers(db, origin, now, launchPolicy) {
 		handlers[handler.Route.OperationID] = handler
 	}
 	var passwordChange sync.Mutex

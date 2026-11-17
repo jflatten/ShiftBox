@@ -50,3 +50,9 @@ Deliver a Terraform-deployed private EC2-only installation for phase II. A singl
 | `tests/contract/`, `tests/release/` | Focused authorization, reconciliation and exact-stack validation. |
 
 See [data model](data-model.md), [contracts](contracts/aws-provider.md), and [quickstart](quickstart.md).
+
+## Resource profile AMI ownership (T025)
+
+The user-approved follow-up makes an AWS resource profile the owner of its platform artifact, EC2 type, and EBS size. Reuse the admitted regional image catalog and zone offerings. Persist the platform artifact reference in both database dialects and validate the image's availability, architecture, and minimum root disk against the selected instance and disk. Backfill only an unambiguous EC2 image referenced by an existing profile's template revisions; an unresolved profile requires administrator selection.
+
+AWS template forms select a resource profile without an independent AMI control. The server derives the template's stored image reference for compatibility with existing revision storage, while new workspace admission resolves the current profile image and captures it in the immutable workspace binding. Existing workspaces and the UTM image-selection flow retain their behavior. Test migration, rejected image/type combinations, AMI changes between launches, UI filtering, and profile persistence before applying schema 33 and deploying the demo.

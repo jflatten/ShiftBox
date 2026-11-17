@@ -9,19 +9,20 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/auth"
-	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
 type resourceProfileView struct {
 	profileInput
-	ID      string `json:"id"`
-	Enabled bool   `json:"enabled"`
-	Version int64  `json:"version"`
+	ID                string `json:"id"`
+	Enabled           bool   `json:"enabled"`
+	Version           int64  `json:"version"`
+	PlatformImageName string `json:"platformImageName,omitempty"`
 }
 
 // ResourceProfileHandlers returns the read, update, and delete routes for the administrator catalog.
-func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, caps provider.Capabilities) []AuthorizedHandler {
+func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, policy WorkspaceLaunchPolicy) []AuthorizedHandler {
+	caps := policy.Capabilities
 	const collection = "/admin/resource-profiles"
 	const item = collection + "/{profileId}"
 	list := AuthorizedHandler{
@@ -31,8 +32,9 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, ca
 			return AuthorizationTarget{Action: "infrastructure.view"}, nil
 		},
 		Apply: func(ctx context.Context, tx *sql.Tx, _ *http.Request, _ auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
-			rows, err := tx.QueryContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib,enabled,version,instance_type
-				FROM resource_profiles ORDER BY name,id`)
+			rows, err := tx.QueryContext(ctx, `SELECT p.id,p.name,p.cpu_count,p.memory_mib,p.disk_mib,p.enabled,p.version,p.instance_type,
+				COALESCE(p.platform_artifact_id,''),COALESCE(a.release_id,'')
+				FROM resource_profiles p LEFT JOIN platform_artifacts a ON a.id=p.platform_artifact_id ORDER BY p.name,p.id`)
 			if err != nil {
 				return nil, err
 			}
@@ -41,7 +43,7 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, ca
 			for rows.Next() {
 				var profile resourceProfileView
 				if err := rows.Scan(&profile.ID, &profile.Name, &profile.CPUCount, &profile.MemoryMiB, &profile.DiskMiB,
-					&profile.Enabled, &profile.Version, &profile.InstanceType); err != nil {
+					&profile.Enabled, &profile.Version, &profile.InstanceType, &profile.PlatformArtifactID, &profile.PlatformImageName); err != nil {
 					return nil, err
 				}
 				if caps.Name == "ec2" {
@@ -71,6 +73,9 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, ca
 			if err := input.normalize(caps); err != nil {
 				return err
 			}
+			if err := input.validateAMI(ctx, tx, policy); err != nil {
+				return err
+			}
 			if input.Enabled == nil {
 				return Problem{Status: 400, Code: "infrastructure.invalid_resource_profile", Title: "Choose whether the profile is enabled"}
 			}
@@ -82,9 +87,9 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, ca
 				enabled = 1
 			}
 			result, err := tx.ExecContext(ctx, `UPDATE resource_profiles SET name=$2,cpu_count=$3,memory_mib=$4,disk_mib=$5,
-				enabled=$6,instance_type=$7,version=version+1 WHERE id=$1
+				enabled=$6,instance_type=$7,platform_artifact_id=NULLIF($8,''),version=version+1 WHERE id=$1
 				AND NOT EXISTS (SELECT 1 FROM resource_profiles WHERE name=$2 AND id<>$1)`,
-				id, input.Name, input.CPUCount, input.MemoryMiB, input.DiskMiB, enabled, input.InstanceType)
+				id, input.Name, input.CPUCount, input.MemoryMiB, input.DiskMiB, enabled, input.InstanceType, input.PlatformArtifactID)
 			return checkResourceProfileWrite(result, err, resourceProfileNameConflict())
 		})
 	remove := resourceProfileMutation(db, origin, now,

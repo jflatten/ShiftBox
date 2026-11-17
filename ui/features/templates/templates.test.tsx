@@ -122,3 +122,31 @@ test('uses the installation platform default for a new template', async () => {
     method: 'POST', body: expect.stringContaining('"platformArtifactId":"arm-image"'),
   })));
 });
+
+// AWS template authors select only a resource profile; its AMI remains owned and resolved by the profile.
+test('creates an AWS template without selecting or submitting an AMI', async () => {
+  const fetch = jest.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
+    if (path === '/api/v1/session') return json({ ...session, permissions: ['template.create'] });
+    if (path === '/api/v1/templates/catalog') return json({ providerKind: 'ec2',
+      resourceProfiles: [{ id: 'aws-profile', name: 'AWS Small', providerKind: 'ec2', platformArtifactId: 'profile-image' }],
+      platformImages: [],
+    });
+    if (init?.method === 'POST') return json({ id: 'new-template' });
+    return json({ items: [] });
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Templates /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'New template' }));
+  const dialog = within(screen.getByRole('dialog', { name: 'New template' }));
+  await dialog.findByRole('combobox', { name: 'Resource profile' });
+  expect(dialog.queryByRole('combobox', { name: 'Platform image' })).not.toBeInTheDocument();
+  await user.type(dialog.getByRole('textbox', { name: /^Name/ }), 'AWS project');
+  await user.type(dialog.getByRole('textbox', { name: 'Repository URL' }), project.repositoryUrl);
+  await user.selectOptions(dialog.getByRole('combobox', { name: 'Resource profile' }), 'aws-profile');
+  await user.click(dialog.getByRole('button', { name: 'Create template' }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/templates', expect.objectContaining({ method: 'POST' })));
+  const request = fetch.mock.calls.find(([path, init]) => path === '/api/v1/templates' && init?.method === 'POST');
+  expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({ resourceProfileId: 'aws-profile' });
+  expect(JSON.parse(String(request?.[1]?.body))).not.toHaveProperty('platformArtifactId');
+});

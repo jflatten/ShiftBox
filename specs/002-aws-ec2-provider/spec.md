@@ -73,6 +73,7 @@ An authorized owner can recover access after a long stop and remove a workspace 
 - **FR-006** ShiftBox MUST provide an EC2-only startup path and retain the standalone Mac/UTM path. AWS workspaces MUST retain their provider, target and image identity. Use the existing private IDE, repair, rebuild and real-time workflow behavior.
 - **FR-007** Preserve retained workspace files through ordinary lifecycle operations. Reconcile uncertain AWS outcomes and release capacity only after verified stop or removal. Remove owned resources and preserve shared ones.
 - **FR-008** Recover an eligible stopped EC2 workspace using a fresh single-use grant and preserve the existing maintenance, retention and management backup boundaries.
+- **FR-009** AWS resource profiles MUST own the approved platform AMI, compatible offered EC2 instance type, and independent EBS disk size. Selecting an AMI narrows the instance types to its architecture. AWS templates select a resource profile without selecting an AMI. Future launches resolve the profile's current AMI and pin it on the new workspace; existing workspaces retain their captured image. This ownership change was explicitly requested by the user on November 17, 2026.
 
 ### Key Entities
 

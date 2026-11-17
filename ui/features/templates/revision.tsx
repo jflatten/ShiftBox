@@ -30,6 +30,7 @@ export function TemplateRevisionForm({ template, csrfToken, onClose, refresh, ad
   });
   const profiles = catalog.data?.resourceProfiles ?? [];
   const images = catalog.data?.platformImages ?? [];
+  const ec2 = catalog.data?.providerKind === 'ec2' || profiles.some(profile => profile.providerKind === 'ec2');
   const form = useForm({
     mode: 'uncontrolled',
     initialValues: {
@@ -44,7 +45,7 @@ export function TemplateRevisionForm({ template, csrfToken, onClose, refresh, ad
     },
     validate: {
       resourceProfileId: value => profiles.some(profile => profile.id === value) ? null : 'Select an available resource profile.',
-      platformArtifactId: value => images.some(image => image.id === value) ? null : 'Select an available platform image.',
+      platformArtifactId: value => ec2 || images.some(image => image.id === value) ? null : 'Select an available platform image.',
     },
   });
 
@@ -61,6 +62,7 @@ export function TemplateRevisionForm({ template, csrfToken, onClose, refresh, ad
     setError(undefined);
     const body = JSON.stringify({
       ...values,
+      ...(ec2 ? { platformArtifactId: undefined } : {}),
       secretNames: values.secretNames.split(',').map(name => name.trim()).filter(Boolean),
     });
     if (request.current?.body !== body) request.current = { body, key: crypto.randomUUID() };
@@ -98,14 +100,14 @@ export function TemplateRevisionForm({ template, csrfToken, onClose, refresh, ad
             <NativeSelect label="Resource profile" required key={form.key('resourceProfileId')}
               data={[{ value: '', label: 'Select a resource profile' }, ...profiles.map(({ id, name }) => ({ value: id, label: name }))]}
               {...form.getInputProps('resourceProfileId')} />
-            <NativeSelect label="Platform image" required key={form.key('platformArtifactId')}
+            {ec2 ? <Text size="sm" c="dimmed">The resource profile defines the AMI image, EC2 instance type, and EBS disk size.</Text> : <NativeSelect label="Platform image" required key={form.key('platformArtifactId')}
               data={[{ value: '', label: 'Select a platform image' }, ...images.map(({ id, name, providerKind }) => ({ value: id, label: platformImageLabel(name, providerKind) }))]}
-              {...form.getInputProps('platformArtifactId')} />
+              {...form.getInputProps('platformArtifactId')} />}
             {!profiles.length ? <Text size="sm">
               {admin ? <>Create a resource profile in <Anchor href="/infrastructure/">Infrastructure</Anchor>.</>
                 : 'Ask an administrator to create a resource profile.'}
             </Text> : null}
-            {!images.length ? <Text size="sm">An administrator must configure an available platform image.</Text> : null}
+            {!ec2 && !images.length ? <Text size="sm">An administrator must configure an available platform image.</Text> : null}
           </> : null}
           <TextInput label="Network policy ID" key={form.key('networkPolicyId')} {...form.getInputProps('networkPolicyId')} />
           <TextInput label="Secret names" description="Separate references with commas." key={form.key('secretNames')} {...form.getInputProps('secretNames')} />
@@ -113,7 +115,7 @@ export function TemplateRevisionForm({ template, csrfToken, onClose, refresh, ad
           <Group justify="flex-end">
             <Button variant="default" disabled={form.submitting} onClick={onClose}>Cancel</Button>
             {stale ? <Button onClick={async () => { await refresh(); onClose(); }}>Refresh templates</Button>
-              : <Button type="submit" loading={form.submitting} disabled={!catalog.isSuccess || !profiles.length || !images.length}>
+              : <Button type="submit" loading={form.submitting} disabled={!catalog.isSuccess || !profiles.length || (!ec2 && !images.length)}>
                 {template ? 'Save revision' : 'Create template'}
               </Button>}
           </Group>

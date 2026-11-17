@@ -16,7 +16,8 @@ var ErrCapacityConflict = errors.New("workspace capacity configuration conflict"
 
 // ResourceProfile describes an allocation that can be selected for new workspaces.
 type ResourceProfile struct {
-	ID, Name string
+	ID, Name           string
+	PlatformArtifactID string
 	Allocation
 	Enabled bool
 	Version int64
@@ -52,9 +53,9 @@ func CreateResourceProfileInTx(ctx context.Context, tx *sql.Tx, profile Resource
 	if profile.Enabled {
 		enabled = 1
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO resource_profiles(id,name,cpu_count,memory_mib,disk_mib,enabled,version,instance_type)
-		VALUES($1,$2,$3,$4,$5,$6,1,$7) ON CONFLICT DO NOTHING`, profile.ID, profile.Name,
-		profile.CPU, profile.MemoryMiB, profile.DiskMiB, enabled, resources.InstanceType)
+	result, err := tx.ExecContext(ctx, `INSERT INTO resource_profiles(id,name,cpu_count,memory_mib,disk_mib,enabled,version,instance_type,platform_artifact_id)
+		VALUES($1,$2,$3,$4,$5,$6,1,$7,NULLIF($8,'')) ON CONFLICT DO NOTHING`, profile.ID, profile.Name,
+		profile.CPU, profile.MemoryMiB, profile.DiskMiB, enabled, resources.InstanceType, profile.PlatformArtifactID)
 	return capacityWrite(result, err)
 }
 
@@ -62,9 +63,9 @@ func CreateResourceProfileInTx(ctx context.Context, tx *sql.Tx, profile Resource
 func (s *Store) ResourceProfile(ctx context.Context, id string) (ResourceProfile, error) {
 	var profile ResourceProfile
 	var enabled int
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib,enabled,version,instance_type
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib,enabled,version,instance_type,COALESCE(platform_artifact_id,'')
 		FROM resource_profiles WHERE id=$1`, id).Scan(&profile.ID, &profile.Name, &profile.CPU,
-		&profile.MemoryMiB, &profile.DiskMiB, &enabled, &profile.Version, &profile.InstanceType)
+		&profile.MemoryMiB, &profile.DiskMiB, &enabled, &profile.Version, &profile.InstanceType, &profile.PlatformArtifactID)
 	profile.Enabled = enabled == 1
 	return profile, err
 }

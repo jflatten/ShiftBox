@@ -33,12 +33,12 @@ func Update(ctx context.Context, tx *sql.Tx, id string, version int64, name, sta
 
 const templateViewQuery = `SELECT t.id,t.owner_user_id,t.name,t.state,t.current_revision,t.version,
 		r.repository_url,COALESCE(r.repository_ref,''),r.devcontainer_path,r.resource_profile_id,
-		r.platform_artifact_id,COALESCE(r.network_policy_id,''),r.secret_names_json,
-		COALESCE(NULLIF(u.display_name,''),u.primary_email),p.name,a.release_id,a.provider_kind
+		CASE WHEN a.provider_kind='ec2' THEN COALESCE(p.platform_artifact_id,'') ELSE r.platform_artifact_id END,COALESCE(r.network_policy_id,''),r.secret_names_json,
+		COALESCE(NULLIF(u.display_name,''),u.primary_email),p.name,CASE WHEN a.provider_kind='ec2' AND p.platform_artifact_id IS NULL THEN '' ELSE a.release_id END,a.provider_kind
 		FROM project_templates t JOIN template_revisions r ON r.template_id=t.id AND r.revision=t.current_revision
 		JOIN users u ON u.id=t.owner_user_id
 		JOIN resource_profiles p ON p.id=r.resource_profile_id
-		JOIN platform_artifacts a ON a.id=r.platform_artifact_id`
+		JOIN platform_artifacts a ON a.id=COALESCE(p.platform_artifact_id,r.platform_artifact_id)`
 
 func scanView(row interface{ Scan(...any) error }) (View, error) {
 	var view View

@@ -439,6 +439,7 @@ paths:
                 properties:
                   resourceProfiles: { type: array, items: { $ref: '#/components/schemas/TemplateCatalogChoice' } }
                   platformImages: { type: array, items: { $ref: '#/components/schemas/TemplateCatalogChoice' } }
+                  providerKind: { type: string, enum: [utm, ec2] }
                   defaultPlatformArtifactId: { type: string, description: The compatible installation default when available }
         default: { $ref: '#/components/responses/Error' }
   /templates:
@@ -1258,6 +1259,10 @@ components:
         id: { type: string, format: uuid }
         name: { type: string }
         providerKind: { type: string, enum: [utm, ec2] }
+        architecture: { type: string, enum: [amd64, arm64] }
+        amiId: { type: string, description: Verified regional AWS image identifier. }
+        minimumDiskGiB: { type: integer, minimum: 1 }
+        platformArtifactId: { type: string, description: AMI owned by an AWS resource profile. }
     SetupStatus:
       type: object
       required: [state, localOnly, completedSteps, availableSteps]
@@ -1439,14 +1444,14 @@ components:
     TemplateInput:
       type: object
       additionalProperties: false
-      required: [name, repositoryUrl, resourceProfileId, platformArtifactId]
+      required: [name, repositoryUrl, resourceProfileId]
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
         repositoryUrl: { type: string, format: uri }
         repositoryRef: { type: [string, 'null'] }
         devcontainerPath: { type: string, default: .devcontainer/devcontainer.json }
         resourceProfileId: { type: string, format: uuid }
-        platformArtifactId: { type: string, format: uuid }
+        platformArtifactId: { type: string, format: uuid, description: Required for UTM; AWS derives the AMI from the resource profile. }
         networkPolicyId: { type: [string, 'null'], format: uuid }
         secretNames: { type: array, items: { type: string } }
 
@@ -1554,12 +1559,13 @@ components:
       required: [name, diskMiB]
       anyOf:
         - required: [cpuCount, memoryMiB]
-        - required: [instanceType]
+        - required: [instanceType, platformArtifactId]
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
         cpuCount: { type: integer, minimum: 1, description: CPU count for manually sized providers. }
         memoryMiB: { type: integer, minimum: 1, description: Memory for manually sized providers. }
         diskMiB: { type: integer, minimum: 1, description: EC2 disk size must be a whole GiB expressed in MiB. }
+        platformArtifactId: { type: string, description: Approved platform AMI selected on the AWS profile. }
         instanceType: { type: string, description: EC2 type offered in the workspace Availability Zone. }
 
     ResourceProfileUpdate:
@@ -1568,12 +1574,13 @@ components:
       required: [name, diskMiB, enabled]
       anyOf:
         - required: [cpuCount, memoryMiB]
-        - required: [instanceType]
+        - required: [instanceType, platformArtifactId]
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
         cpuCount: { type: integer, minimum: 1 }
         memoryMiB: { type: integer, minimum: 1 }
         diskMiB: { type: integer, minimum: 1 }
+        platformArtifactId: { type: string, description: Approved platform AMI selected on the AWS profile. }
         instanceType: { type: string }
         enabled: { type: boolean }
 
@@ -1586,8 +1593,10 @@ components:
         cpuCount: { type: integer }
         memoryMiB: { type: integer }
         diskMiB: { type: integer }
+        platformArtifactId: { type: string, description: Approved platform AMI selected on the AWS profile. }
         instanceType: { type: string }
         enabled: { type: boolean }
+        platformImageName: { type: string }
         version: { type: integer, minimum: 1 }
 
     NetworkPolicyInput:

@@ -7,7 +7,7 @@ import (
 	"slices"
 )
 
-// verifyEC2LaunchImage accepts only the selected template AMI for the instance architecture.
+// verifyEC2LaunchImage accepts only the selected profile AMI for the instance architecture.
 func verifyEC2LaunchImage(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunchPolicy, artifactID, architecture, current, previous string) (bool, error) {
 	var protocol, image string
 	err := tx.QueryRowContext(ctx, `SELECT protocol_version,ec2_image_json FROM platform_artifacts

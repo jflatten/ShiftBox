@@ -14,7 +14,7 @@ import (
 )
 
 // TestEC2LaunchImageMatchesArchitecture verifies that launch rejects a mismatched
-// template AMI even when another verified AMI matches the selected type.
+// profile AMI even when another verified AMI matches the selected type.
 func TestEC2LaunchImageMatchesArchitecture(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -39,8 +39,8 @@ func TestEC2LaunchImageMatchesArchitecture(t *testing.T) {
 	CREATE TABLE installations(id TEXT, singleton INTEGER, active_release TEXT, min_guest_release TEXT);
 	INSERT INTO installations VALUES ('install',1,'current','previous');
 	CREATE TABLE operations(id TEXT, requested_by TEXT, request_key TEXT);
-	CREATE TABLE resource_profiles(id TEXT, enabled INTEGER, cpu_count INTEGER, memory_mib INTEGER, disk_mib INTEGER, instance_type TEXT);
-	INSERT INTO resource_profiles VALUES ('profile',1,2,8192,32768,'m7g.large');`)
+	CREATE TABLE resource_profiles(id TEXT, enabled INTEGER, cpu_count INTEGER, memory_mib INTEGER, disk_mib INTEGER, instance_type TEXT,platform_artifact_id TEXT);
+	INSERT INTO resource_profiles VALUES ('profile',1,2,8192,32768,'m7g.large','template-amd64');`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestEC2LaunchImageMatchesArchitecture(t *testing.T) {
 	_, err = applyWorkspaceLaunch(t.Context(), tx, nil, "member", input, policy, time.Now())
 	var problem Problem
 	if !errors.As(err, &problem) || problem.Status != http.StatusConflict || problem.Code != "workspace.platform_incompatible" ||
-		!strings.Contains(problem.Detail, "verified arm64 AMI in a new template revision") {
-		t.Fatalf("launch refusal = %+v (%v); want conflict with explicit ARM64 template revision guidance", problem, err)
+		!strings.Contains(problem.Detail, "verified arm64 AMI on the resource profile") {
+		t.Fatalf("launch refusal = %+v (%v); want conflict with explicit ARM64 resource profile guidance", problem, err)
 	}
 }

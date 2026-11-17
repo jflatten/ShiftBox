@@ -19,8 +19,9 @@ import (
 
 type profileInput struct {
 	workspaceResources
-	Name         string `json:"name"`
-	InstanceType string `json:"instanceType,omitempty"`
+	Name               string `json:"name"`
+	InstanceType       string `json:"instanceType,omitempty"`
+	PlatformArtifactID string `json:"platformArtifactId,omitempty"`
 }
 
 type infrastructureProvider struct {
@@ -132,7 +133,8 @@ func browserCertificateConditions(ctx context.Context, tx *sql.Tx, now time.Time
 
 // CapacityHandlers returns the reviewed administrator budget and profile routes.
 // Provider bounds come from the controller's validated provider configuration.
-func CapacityHandlers(db *sql.DB, origin string, now func() time.Time, newID func() string, caps provider.Capabilities) (AuthorizedHandler, AuthorizedHandler) {
+func CapacityHandlers(db *sql.DB, origin string, now func() time.Time, newID func() string, policy WorkspaceLaunchPolicy) (AuthorizedHandler, AuthorizedHandler) {
+	caps := policy.Capabilities
 	resolve := func(context.Context, *sql.Tx, *http.Request, auth.Principal) (AuthorizationTarget, error) {
 		return AuthorizationTarget{Action: "infrastructure.manage"}, nil
 	}
@@ -158,11 +160,14 @@ func CapacityHandlers(db *sql.DB, origin string, now func() time.Time, newID fun
 			if err := input.normalize(caps); err != nil {
 				return nil, err
 			}
+			if err := input.validateAMI(ctx, tx, policy); err != nil {
+				return nil, err
+			}
 			if newID == nil {
 				return nil, errors.New("resource profile identity generator is missing")
 			}
 			err := workspace.CreateResourceProfileInTx(ctx, tx, workspace.ResourceProfile{
-				ID: newID(), Name: input.Name, Allocation: input.profileAllocation(), Enabled: true,
+				ID: newID(), Name: input.Name, Allocation: input.profileAllocation(), Enabled: true, PlatformArtifactID: input.PlatformArtifactID,
 			}, caps)
 			switch {
 			case errors.Is(err, provider.ErrCapabilityUnsupported):

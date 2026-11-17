@@ -785,6 +785,13 @@ export interface components {
             name: string;
             /** @enum {string} */
             providerKind?: "utm" | "ec2";
+            /** @enum {string} */
+            architecture?: "amd64" | "arm64";
+            /** @description Verified regional AWS image identifier. */
+            amiId?: string;
+            minimumDiskGiB?: number;
+            /** @description AMI owned by an AWS resource profile. */
+            platformArtifactId?: string;
         };
         SetupStatus: {
             /** @enum {string} */
@@ -979,8 +986,11 @@ export interface components {
             devcontainerPath?: string;
             /** Format: uuid */
             resourceProfileId: string;
-            /** Format: uuid */
-            platformArtifactId: string;
+            /**
+             * Format: uuid
+             * @description Required for UTM; AWS derives the AMI from the resource profile.
+             */
+            platformArtifactId?: string;
             /** Format: uuid */
             networkPolicyId?: string | null;
             secretNames?: string[];
@@ -1070,6 +1080,8 @@ export interface components {
             memoryMiB?: number;
             /** @description EC2 disk size must be a whole GiB expressed in MiB. */
             diskMiB: number;
+            /** @description Approved platform AMI selected on the AWS profile. */
+            platformArtifactId?: string;
             /** @description EC2 type offered in the workspace Availability Zone. */
             instanceType?: string;
         } | unknown | unknown;
@@ -1078,6 +1090,8 @@ export interface components {
             cpuCount?: number;
             memoryMiB?: number;
             diskMiB: number;
+            /** @description Approved platform AMI selected on the AWS profile. */
+            platformArtifactId?: string;
             instanceType?: string;
             enabled: boolean;
         } | unknown | unknown;
@@ -1087,8 +1101,11 @@ export interface components {
             cpuCount: number;
             memoryMiB: number;
             diskMiB: number;
+            /** @description Approved platform AMI selected on the AWS profile. */
+            platformArtifactId?: string;
             instanceType?: string;
             enabled: boolean;
+            platformImageName?: string;
             version: number;
         };
         NetworkPolicyInput: {
@@ -1755,6 +1772,8 @@ export interface operations {
                     "application/json": {
                         resourceProfiles: components["schemas"]["TemplateCatalogChoice"][];
                         platformImages: components["schemas"]["TemplateCatalogChoice"][];
+                        /** @enum {string} */
+                        providerKind?: "utm" | "ec2";
                         /** @description The compatible installation default when available */
                         defaultPlatformArtifactId?: string;
                     };

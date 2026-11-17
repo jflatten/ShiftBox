@@ -18,9 +18,13 @@ import (
 )
 
 type templateCatalogChoice struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	ProviderKind string `json:"providerKind,omitempty"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	ProviderKind       string `json:"providerKind,omitempty"`
+	Architecture       string `json:"architecture,omitempty"`
+	AMIID              string `json:"amiId,omitempty"`
+	MinimumDiskGiB     int64  `json:"minimumDiskGiB,omitempty"`
+	PlatformArtifactID string `json:"platformArtifactId,omitempty"`
 }
 
 // TemplateCatalogHandler lists the profile and image choices for template authors.
@@ -36,7 +40,8 @@ func TemplateCatalogHandler(db *sql.DB, origin string, now func() time.Time, pol
 				ResourceProfiles          []templateCatalogChoice `json:"resourceProfiles"`
 				PlatformImages            []templateCatalogChoice `json:"platformImages"`
 				DefaultPlatformArtifactID string                  `json:"defaultPlatformArtifactId,omitempty"`
-			}{ResourceProfiles: []templateCatalogChoice{}, PlatformImages: []templateCatalogChoice{}}
+				ProviderKind              string                  `json:"providerKind"`
+			}{ResourceProfiles: []templateCatalogChoice{}, PlatformImages: []templateCatalogChoice{}, ProviderKind: launchProviderKind(policy.Capabilities)}
 			if policy.Capabilities.Create && policy.Capabilities.Start {
 				var err error
 				result.ResourceProfiles, err = templateCatalogProfiles(ctx, tx, policy)
@@ -46,6 +51,12 @@ func TemplateCatalogHandler(db *sql.DB, origin string, now func() time.Time, pol
 				result.PlatformImages, result.DefaultPlatformArtifactID, err = templateCatalogImages(ctx, tx, policy)
 				if err != nil {
 					return nil, err
+				}
+				if policy.Capabilities.Name == "ec2" {
+					// Templates cannot repair an unassigned or unavailable profile AMI.
+					result.ResourceProfiles = slices.DeleteFunc(result.ResourceProfiles, func(profile templateCatalogChoice) bool {
+						return !slices.ContainsFunc(result.PlatformImages, func(image templateCatalogChoice) bool { return image.ID == profile.PlatformArtifactID })
+					})
 				}
 			}
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -57,7 +68,7 @@ func TemplateCatalogHandler(db *sql.DB, origin string, now func() time.Time, pol
 }
 
 func templateCatalogProfiles(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunchPolicy) ([]templateCatalogChoice, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib,instance_type FROM resource_profiles
+	rows, err := tx.QueryContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib,instance_type,COALESCE(platform_artifact_id,'') FROM resource_profiles
 		WHERE enabled=1 ORDER BY name,id`)
 	if err != nil {
 		return nil, err
@@ -67,10 +78,13 @@ func templateCatalogProfiles(ctx context.Context, tx *sql.Tx, policy WorkspaceLa
 	for rows.Next() {
 		var item templateCatalogChoice
 		var allocation workspace.Allocation
-		if err := rows.Scan(&item.ID, &item.Name, &allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB, &allocation.InstanceType); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB, &allocation.InstanceType, &item.PlatformArtifactID); err != nil {
 			return nil, err
 		}
 		if _, err := workspace.ProfileResources(allocation, policy.Capabilities); err == nil {
+			if policy.Capabilities.Name == "ec2" {
+				item.ProviderKind = "ec2"
+			}
 			choices = append(choices, item)
 		}
 	}
@@ -105,6 +119,17 @@ func templateCatalogImages(ctx context.Context, tx *sql.Tx, policy WorkspaceLaun
 			continue
 		}
 		if policy.Capabilities.SupportsArchitecture(architecture) && slices.Contains(policy.Protocols, protocol) {
+			item.Architecture = architecture
+			if item.ProviderKind == "ec2" {
+				var metadata struct {
+					AMIID          string `json:"amiId"`
+					MinimumDiskGiB int64  `json:"minimumRootDiskGiB"`
+				}
+				if err := json.Unmarshal([]byte(image), &metadata); err != nil {
+					return nil, "", err
+				}
+				item.AMIID, item.MinimumDiskGiB = metadata.AMIID, metadata.MinimumDiskGiB
+			}
 			choices = append(choices, item)
 			if isDefault == 1 {
 				defaultID = item.ID
@@ -164,7 +189,7 @@ func saveTemplate(now func() time.Time, newID func() string) func(context.Contex
 		if err := DecodeJSON(nil, r, &intent.Input, 16<<10); err != nil {
 			return nil, err
 		}
-		if !ValidUUID(intent.Input.ProfileID) || !ValidUUID(intent.Input.ArtifactID) ||
+		if !ValidUUID(intent.Input.ProfileID) || intent.Input.ArtifactID != "" && !ValidUUID(intent.Input.ArtifactID) ||
 			intent.Input.NetworkPolicyID != "" && !ValidUUID(intent.Input.NetworkPolicyID) {
 			return nil, Problem{Status: 400, Code: "template.invalid_input", Title: "Check the template settings"}
 		}
