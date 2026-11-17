@@ -53,6 +53,7 @@ the developer and AI development agents.
 ## AWS Practices
 
 - Always use Terraform to manage AWS resources
+- Always clean up your test resources when completing your task.
 - Ensure all resources that are taggable are tagged with:
   - project = shiftbox
   - cluster_name = `<name of deployment>`

@@ -31,7 +31,7 @@ The replay instrument logged `ShiftBox single-boot acceptance: exact successful 
 
 The initial browser check reported a WebSocket failure and a subsequent expired management session. T022 subsequently added WebSocket launch readiness and verified first access on a fresh t3.medium, plus terminal use, editing, saving and reload on `single-boot-review`. See [IDE WebSocket validation](ide-websocket.md) for evidence and the controller revision 18 follow-up deployment.
 
-The review template and running workspace are retained for human review. Open [the workspace](https://shiftbox.demo.shiftbox.internal:8443/workspaces/?id=15518f23-9390-4e9e-abf2-a29e6483b34d) after signing in.
+The review template and running workspace were retained for human review, then cleaned up at the user's request on November 17, 2026. Both test workspaces and their disks were deleted, and the review template was archived. See [cleanup verification](ide-websocket.md#cleanup).
 
 ## Deployment
 

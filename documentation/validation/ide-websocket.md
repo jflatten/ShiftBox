@@ -50,10 +50,29 @@ opening a new tab or reloading established a fresh connection. This is distinct
 from the first-open acceptance test. Code-server also logged a nonfatal GitHub
 authentication-provider timeout while the workbench remained usable.
 
-The retained review workspace contains `/workspaces/project/shiftbox-ide-review.txt`
-with `ShiftBox IDE verified after controller 18 deployment.` It is left running
-for [human review](https://shiftbox.demo.shiftbox.internal:8443/workspaces/?id=15518f23-9390-4e9e-abf2-a29e6483b34d).
+During review, the workspace contained `/workspaces/project/shiftbox-ide-review.txt`
+with `ShiftBox IDE verified after controller 18 deployment.` The workspace was
+subsequently deleted at the user's request, as recorded below.
 
 Local rollout plans, logs, image verification, and redacted EC2 evidence are in
 `.cache/aws-demo/ide-readiness/`. The additional cold-start acceptance workspace
-is stopped after verification, preserving its files.
+was stopped after verification, then deleted during cleanup.
+
+## Cleanup
+
+T024 completed on November 17, 2026, after the user confirmed permanent deletion
+of both test workspaces and removal of the review template. Both workspace
+deletion operations completed through ShiftBox. AWS confirmed that
+`i-0c56b0eb800277ad0` and `i-070b1e66387a8529c` were terminated and neither
+workspace had a remaining EBS volume, removing 64 GiB of test storage.
+
+`Single-boot EC2 review` was archived through the supported template lifecycle,
+preventing new launches while retaining its audit history. Seven temporary
+validation, probe, failed-build, and migration container images were removed.
+The deployed controller and previous final release images were preserved.
+
+All temporary Terraform helper states contained no managed AWS resources. The
+existing `groundtruth` workspace, release AMIs, demo infrastructure, and
+management backup were preserved. Controller and PostgreSQL each reported one
+running task and `COMPLETED` after cleanup. Local verification receipts and the
+workspace screenshot are under `.cache/aws-demo/test-cleanup/`.

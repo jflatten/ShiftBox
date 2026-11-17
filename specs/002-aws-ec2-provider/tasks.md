@@ -66,6 +66,8 @@ Every implementation task starts with a small, commented test or an applicable e
 
 - [x] T022 Diagnose and fix IDE WebSocket failures on `shiftbox-demo`, deploy on `feature/mvp`, and verify opening the IDE, terminal commands, editing, saving and reconnecting in `single-boot-review`.
 
+- [x] T024 Remove the single-boot and cold-start test workspaces through ShiftBox, verify EC2 termination and EBS deletion, archive the review template, remove temporary validation images, and preserve the existing workspaces and healthy demo services. Record cleanup in `documentation/validation/ide-websocket.md`.
+
 ## Dependencies & Execution Order
 
 - Setup T001, T002 and T003 can run in separate worktrees or subagents because their build paths are independent.
