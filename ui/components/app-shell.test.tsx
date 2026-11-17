@@ -21,9 +21,61 @@ afterEach(() => { jest.restoreAllMocks(); jest.clearAllMocks(); });
 test('shows member navigation and the approved brand', () => {
   render(<MantineProvider><ShiftBoxShell session={{ role: 'member', mode: 'normal', installationState: 'active', permissions: ['template.create'] }} alerts={[]}><h1>Workspaces</h1></ShiftBoxShell></MantineProvider>);
   expect(screen.getByRole('link', { name: 'Workspaces' })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/templates/');
   expect(screen.queryByRole('link', { name: 'Infrastructure' })).not.toBeInTheDocument();
   expect(screen.getByAltText('ShiftBox')).toHaveAttribute('src', '/brand/shiftbox-logo-light.svg');
   expect(screen.getByRole('link', { name: 'ShiftBox home' })).toHaveAttribute('href', '/workspaces/');
+});
+
+// A keyboard selection changes both theme and brand, and a remounted app
+// restores the user's explicit choice from browser storage.
+test('persists the header dark mode choice and restores it on remount', async () => {
+  localStorage.removeItem('mantine-color-scheme-value');
+  const user = userEvent.setup();
+  const shell = <Providers><ShiftBoxShell session={{ role: 'member', mode: 'normal', installationState: 'active',
+    permissions: [] }} alerts={[]}><h1>Workspaces</h1></ShiftBoxShell></Providers>;
+  try {
+    const first = render(shell);
+    const toggle = screen.getByRole('button', { name: 'Dark mode' });
+    expect(screen.getByRole('banner')).toContainElement(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    toggle.focus();
+    await user.keyboard('{Enter}');
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(document.documentElement).toHaveAttribute('data-mantine-color-scheme', 'dark');
+    expect(screen.getByAltText('ShiftBox')).toHaveAttribute('src', '/brand/shiftbox-logo-dark.svg');
+    expect(localStorage.getItem('mantine-color-scheme-value')).toBe('dark');
+    first.unmount();
+    render(shell);
+    const restored = screen.getByRole('button', { name: 'Dark mode' });
+    expect(restored).toHaveAttribute('aria-pressed', 'true');
+    restored.focus();
+    await user.keyboard(' ');
+    expect(restored).toHaveAttribute('aria-pressed', 'false');
+    expect(document.documentElement).toHaveAttribute('data-mantine-color-scheme', 'light');
+    expect(screen.getByAltText('ShiftBox')).toHaveAttribute('src', '/brand/shiftbox-logo-light.svg');
+    expect(localStorage.getItem('mantine-color-scheme-value')).toBe('light');
+  } finally { localStorage.removeItem('mantine-color-scheme-value'); }
+});
+
+// Without an explicit choice the system theme remains authoritative. The
+// first toggle must select the opposite of the resolved system appearance.
+test('toggles from the system dark theme to an explicit light preference', async () => {
+  localStorage.removeItem('mantine-color-scheme-value');
+  const media = window.matchMedia('(prefers-color-scheme: dark)');
+  jest.spyOn(window, 'matchMedia').mockImplementation(query => ({ ...media, media: query,
+    matches: query === '(prefers-color-scheme: dark)',
+  }));
+  try {
+    const user = userEvent.setup();
+    render(<Providers><ShiftBoxShell alerts={[]}><h1>Sign in</h1></ShiftBoxShell></Providers>);
+    const toggle = screen.getByRole('button', { name: 'Dark mode' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(localStorage.getItem('mantine-color-scheme-value')).toBeNull();
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(localStorage.getItem('mantine-color-scheme-value')).toBe('light');
+  } finally { localStorage.removeItem('mantine-color-scheme-value'); }
 });
 
 // Restricted administrator sessions must not retain the navigation of a normal active session.

@@ -42,3 +42,17 @@ export function useInfrastructure(userId?: string) {
 export function validLimit(value: string | number) {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? null : 'Enter a positive whole number.';
 }
+
+/** Blank capacity fields remove the budget for that dimension. Profiles still require positive resources. */
+export function validCapacityLimit(value: string | number) {
+  return value === '' ? null : validLimit(value);
+}
+
+/** Describe unlimited budgets without presenting them as zero available resources. */
+export function capacitySummary(capacity: Capacity) {
+  return [
+    capacity.cpuCount === 0 ? 'Unlimited CPU' : `${capacity.cpuCount} vCPU`,
+    capacity.memoryMiB === 0 ? 'Unlimited memory' : `${capacity.memoryMiB} MiB memory`,
+    capacity.diskMiB === 0 ? 'Unlimited disk' : `${capacity.diskMiB} MiB disk`,
+  ].join(' · ');
+}

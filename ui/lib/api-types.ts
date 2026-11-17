@@ -909,6 +909,15 @@ export interface components {
             memoryMiB: number;
             diskMiB: number;
         };
+        /** @description Each limit is independent. Zero means Unlimited and disables capacity budget enforcement for that resource. Fresh installations default to Unlimited. */
+        CapacityBudget: {
+            /** @default 0 */
+            cpuCount: number;
+            /** @default 0 */
+            memoryMiB: number;
+            /** @default 0 */
+            diskMiB: number;
+        };
         Operation: {
             /** Format: uuid */
             id: string;
@@ -1037,7 +1046,7 @@ export interface components {
         };
         InfrastructureStatus: {
             provider: components["schemas"]["InfrastructureProvider"];
-            capacity: components["schemas"]["Resources"];
+            capacity: components["schemas"]["CapacityBudget"];
             conditions: {
                 key: string;
                 /** @enum {string} */
@@ -2574,7 +2583,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Resources"];
+                "application/json": components["schemas"]["CapacityBudget"];
             };
         };
         responses: {

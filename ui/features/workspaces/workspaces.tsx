@@ -98,7 +98,7 @@ function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfTo
             <Text fw={600}>{cursor ? 'No workspaces on this page.' : state ? 'No workspaces match this filter.' : 'No workspaces yet.'}</Text>
             <Text size="sm" c="dimmed">{state ? 'Choose another state or clear the filters.' :
               cursor ? 'Return to the previous page to see more workspaces.' :
-              showDeleted ? 'Launch a workspace from a project template to get started.' : 'Launch a workspace to get started, or show deleted workspaces to view history.'}</Text>
+              showDeleted ? 'Launch a workspace from a project to get started.' : 'Launch a workspace to get started, or show deleted workspaces to view history.'}</Text>
           </Stack> : null}
           {data && data.items.length > 0 ? (
             <Table.ScrollContainer minWidth={680}>

@@ -23,7 +23,7 @@ export function Templates() {
   const normal = current?.mode === 'normal' && current.installationState === 'active';
   return (
     <ShiftBoxShell session={session.session} alerts={[]} error={session.error ?? undefined}>
-      {!normal ? <Title order={1}>Templates</Title> : null}
+      {!normal ? <Title order={1}>Projects</Title> : null}
       {session.isPending ? <Text role="status">Checking your session…</Text> : null}
       {session.data === null ? <SignInChoices /> : null}
       {normal ? <TemplateList key={current.user.id} userID={current.user.id} admin={current.role === 'administrator'} csrfToken={current.csrfToken}
@@ -63,13 +63,13 @@ function TemplateList({ userID, admin, csrfToken, canCreate }: {
     <Stack gap="lg">
       <Group justify="space-between" align="flex-start">
         <Stack gap={4}>
-          <Title order={1} ref={heading} tabIndex={-1}>Templates</Title>
+          <Title order={1} ref={heading} tabIndex={-1}>Projects</Title>
           <Text size="sm" c="dimmed">Reusable project configurations for new workspaces.</Text>
         </Stack>
-        {canCreate && dialog?.action !== 'secrets' ? <Button onClick={event => open({ action: 'create' }, event.currentTarget)}>New template</Button> : null}
+        {canCreate && dialog?.action !== 'secrets' ? <Button onClick={event => open({ action: 'create' }, event.currentTarget)}>New project</Button> : null}
       </Group>
       {dialog?.action === 'secrets' ? <Stack>
-        <Button variant="default" style={{ alignSelf: 'flex-start' }} onClick={close}>Back to templates</Button>
+        <Button variant="default" style={{ alignSelf: 'flex-start' }} onClick={close}>Back to projects</Button>
         <Paper withBorder radius="md" p="md">
           <Stack gap="md">
             <Title order={2} size="h3">{dialog.template.name}</Title>
@@ -82,30 +82,30 @@ function TemplateList({ userID, admin, csrfToken, canCreate }: {
           <Group justify="space-between" align="flex-end">
             <form onSubmit={event => { event.preventDefault(); setSearch(searchDraft.trim()); setCursors([]); }} style={{ flex: '1 1 280px' }}>
               <Group align="flex-end" gap="xs">
-                <TextInput type="search" label="Search templates" placeholder="Name or repository" value={searchDraft} maxLength={200}
+                <TextInput type="search" label="Search projects" placeholder="Name or repository" value={searchDraft} maxLength={200}
                   onChange={event => setSearchDraft(event.currentTarget.value)} style={{ flex: '1 1 160px' }} />
                 <Button type="submit" variant="default">Search</Button>
                 {search || searchDraft ? <Button variant="subtle" onClick={() => { setSearchDraft(''); setSearch(''); setCursors([]); }}>Clear search</Button> : null}
               </Group>
             </form>
-            {admin ? <Switch label="Archived templates" checked={archived} mb={8} onChange={event => {
+            {admin ? <Switch label="Archived projects" checked={archived} mb={8} onChange={event => {
               setCursors([]); setShowArchived(event.currentTarget.checked);
             }} /> : null}
             <Button variant="default" loading={page.isFetching} onClick={() => void page.refetch()}>Refresh</Button>
           </Group>
           <Text size="xs" c="dimmed">{archived
-            ? 'Showing archived templates. Restore a template to allow new launches; existing workspaces and grants are preserved.'
-            : 'Showing active templates. New revisions apply to future launches; existing workspaces keep their configuration.'}</Text>
+            ? 'Showing archived projects. Restore a project to allow new launches; existing workspaces and grants are preserved.'
+            : 'Showing active projects. New revisions apply to future launches; existing workspaces keep their configuration.'}</Text>
           {page.isError ? <Stack align="flex-start">
             <APIProblemView error={page.error} />
             <Button variant="default" onClick={() => void page.refetch()}>Retry</Button>
           </Stack> : null}
-          {page.isPending ? <Text role="status">Loading templates…</Text> : null}
+          {page.isPending ? <Text role="status">Loading projects…</Text> : null}
           {items && items.length > 0 ? (
             <Table.ScrollContainer minWidth={680}>
-              <Table aria-label="Templates" highlightOnHover verticalSpacing="md">
+              <Table aria-label="Projects" highlightOnHover verticalSpacing="md">
                 <Table.Thead><Table.Tr>
-                  <Table.Th>Template</Table.Th><Table.Th>Repository</Table.Th><Table.Th>Configuration</Table.Th>
+                  <Table.Th>Project</Table.Th><Table.Th>Repository</Table.Th><Table.Th>Configuration</Table.Th>
                   <Table.Th>Owner</Table.Th><Table.Th>Actions</Table.Th>
                 </Table.Tr></Table.Thead>
                 <Table.Tbody>{items.map(template => <Table.Tr key={template.id}>
@@ -126,19 +126,19 @@ function TemplateList({ userID, admin, csrfToken, canCreate }: {
                     <Text size="xs" c="dimmed">{template.platformImageName ? platformImageLabel(template.platformImageName, template.providerKind) : 'Image unavailable'}</Text>
                   </Table.Td>
                   <Table.Td style={{ maxWidth: 180, overflowWrap: 'anywhere' }}>
-                    <Text size="sm">{template.ownerId === userID ? 'You' : template.ownerName || 'Template owner'}</Text>
+                    <Text size="sm">{template.ownerId === userID ? 'You' : template.ownerName || 'Project owner'}</Text>
                   </Table.Td>
                   <Table.Td>{template.ownerId === userID || admin ? <TemplateActions template={template} open={open} /> : <Text size="sm" c="dimmed">Shared with you</Text>}</Table.Td>
                 </Table.Tr>)}</Table.Tbody>
               </Table>
             </Table.ScrollContainer>
           ) : items ? <Stack align="center" gap="xs" py="xl">
-            <Text fw={600}>{search ? 'No templates match your search.' : cursor ? 'No templates on this page.' : archived ? 'No archived templates.' : 'No templates yet.'}</Text>
-            <Text size="sm" c="dimmed">{search ? 'Try a different name or repository, or clear the search.' : cursor ? 'Return to the previous page.' : archived ? 'Archived templates will appear here.' :
-              canCreate ? 'Create a template to define a repeatable workspace configuration.' : 'Ask a template owner to share launch access with you.'}</Text>
+            <Text fw={600}>{search ? 'No projects match your search.' : cursor ? 'No projects on this page.' : archived ? 'No archived projects.' : 'No projects yet.'}</Text>
+            <Text size="sm" c="dimmed">{search ? 'Try a different name or repository, or clear the search.' : cursor ? 'Return to the previous page.' : archived ? 'Archived projects will appear here.' :
+              canCreate ? 'Create a project to define a repeatable workspace configuration.' : 'Ask a project owner to share launch access with you.'}</Text>
           </Stack> : null}
           <Group justify="space-between">
-            <Text size="sm" c="dimmed" role="status">{items ? `${items.length} ${items.length === 1 ? 'template' : 'templates'} on this page` : page.isPending ? 'Loading…' : 'Template list unavailable'}</Text>
+            <Text size="sm" c="dimmed" role="status">{items ? `${items.length} ${items.length === 1 ? 'project' : 'projects'} on this page` : page.isPending ? 'Loading…' : 'Project list unavailable'}</Text>
             <Group gap="xs">
               <Button variant="default" disabled={!cursor || page.isFetching} onClick={() => setCursors(current => current.slice(0, -1))}>Previous page</Button>
               <Text size="sm">Page {cursors.length + 1}</Text>
@@ -167,21 +167,21 @@ function TemplateActions({ template, open }: { template: TemplateRevision; open:
       <Menu.Item onClick={() => run('share')}>{archived ? 'Manage launch grants' : 'Share launch access'}</Menu.Item>
       {!archived ? <Menu.Item onClick={() => run('secrets')}>Project secrets</Menu.Item> : null}
       <Menu.Divider />
-      <Menu.Item color={archived ? undefined : 'red'} onClick={() => run('archive')}>{archived ? 'Restore template' : 'Archive template'}</Menu.Item>
+      <Menu.Item color={archived ? undefined : 'red'} onClick={() => run('archive')}>{archived ? 'Restore project' : 'Archive project'}</Menu.Item>
     </Menu.Dropdown>
   </Menu>;
 }
 
 function TemplateDetails({ template, onClose }: { template: TemplateRevision; onClose: () => void }) {
   const fields = [
-    ['Revision', String(template.currentRevision)], ['Owner', template.ownerName || 'Template owner'],
+    ['Revision', String(template.currentRevision)], ['Owner', template.ownerName || 'Project owner'],
     ['Repository URL', template.repositoryUrl || 'Unavailable'], ['Repository ref', template.repositoryRef || 'Default branch'],
     ['Dev Container configuration', template.devcontainerPath || 'Unavailable'], ['Resource profile', template.resourceProfileName || 'Unavailable'],
     ['Provider', providerLabel(template.providerKind)], ['Platform image', template.platformImageName || 'Unavailable'],
     ['Secret references', template.secretNames?.join(', ') || 'None'],
   ];
-  return <Modal opened title="Template details" size="lg" onClose={onClose}
-    closeButtonProps={{ 'aria-label': 'Close template details' }} transitionProps={{ duration: 0 }}>
+  return <Modal opened title="Project details" size="lg" onClose={onClose}
+    closeButtonProps={{ 'aria-label': 'Close project details' }} transitionProps={{ duration: 0 }}>
     <Stack gap="md">
       <Title order={2} size="h3" style={{ overflowWrap: 'anywhere' }}>{template.name}</Title>
       <Text size="sm" c="dimmed">This revision defines future launches. Secret references are names, not saved values.</Text>

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { TextEncoder } from 'node:util';
 import { Providers } from '../../app/providers';
 import { SetupFlow } from './setup-flow';
+import { CapacityForm } from './setup-activation';
 
 const bootstrap = (available: string, completed: string[] = []) => ({
   state: 'configuring', localOnly: true, completedSteps: completed, availableSteps: [available],
@@ -17,6 +18,26 @@ beforeEach(() => { globalThis.TextEncoder = TextEncoder as typeof globalThis.Tex
 afterEach(() => {
   globalThis.fetch = originalFetch;
   globalThis.TextEncoder = originalEncoder;
+});
+
+// A new installation starts with no capacity caps; untouched blank inputs
+// must save Unlimited for every dimension instead of blocking setup.
+test('saves unlimited capacity defaults for a fresh installation', async () => {
+  const onSaved = jest.fn(async () => {});
+  globalThis.fetch = jest.fn(async () => response(204) as Response);
+  const user = userEvent.setup();
+  render(<Providers><CapacityForm csrfToken="fixture" version={0} onSaved={onSaved} /></Providers>);
+  const limits = screen.getAllByPlaceholderText('Unlimited');
+  expect(limits).toHaveLength(3);
+  for (const input of limits) {
+    expect(input).toHaveValue('');
+    expect(input).not.toBeRequired();
+  }
+  await user.click(screen.getByRole('button', { name: 'Save capacity' }));
+  expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/admin/capacity', expect.objectContaining({
+    body: JSON.stringify({ cpuCount: 0, memoryMiB: 0, diskMiB: 0 }),
+  }));
+  expect(onSaved).toHaveBeenCalledTimes(1);
 });
 
 // The delivered password stays visible only until the operator acknowledges it.

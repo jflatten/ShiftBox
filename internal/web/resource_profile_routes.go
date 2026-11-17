@@ -99,7 +99,7 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, po
 			result, err := tx.ExecContext(ctx, `DELETE FROM resource_profiles WHERE id=$1
 				AND NOT EXISTS (SELECT 1 FROM template_revisions WHERE resource_profile_id=$1)`, id)
 			return checkResourceProfileWrite(result, err, Problem{Status: 409, Code: "infrastructure.resource_profile_in_use",
-				Title: "A template revision uses this resource profile", Detail: "You can disable the profile to prevent future workspace launches that use it."})
+				Title: "A project revision uses this resource profile", Detail: "You can disable the profile to prevent future workspace launches that use it."})
 		})
 	return []AuthorizedHandler{list, update, remove}
 }

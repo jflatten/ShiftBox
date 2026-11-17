@@ -88,6 +88,41 @@ const (
 	testStamp        = "2026-11-14T00:00:00Z"
 )
 
+// TestUnlimitedCapacityConfiguration persists independent unlimited limits and
+// rejects negative writes without changing the saved budget or its revision.
+func TestUnlimitedCapacityConfiguration(t *testing.T) {
+	for _, profile := range []string{"sqlite", "postgres"} {
+		t.Run(profile, func(t *testing.T) {
+			db := openWorkspaceDatabase(t, profile)
+			store := NewStore(db)
+			now := time.Unix(10000, 0).UTC()
+			t.Cleanup(func() {
+				if _, err := db.Exec("DELETE FROM capacity_budgets WHERE installation_id=$1", testInstallation); err != nil {
+					t.Errorf("remove unlimited budget fixture: %v", err)
+				}
+			})
+			for version, limit := range []Allocation{{}, {CPU: 4}, {MemoryMiB: 4096}, {DiskMiB: 100}} {
+				if err := store.SetCapacityBudget(t.Context(), testInstallation, limit, int64(version), "admin", now); err != nil {
+					t.Fatalf("SetCapacityBudget(%+v, version %d) = %v, want saved", limit, version, err)
+				}
+				got, revision, err := store.CapacityBudget(t.Context(), testInstallation)
+				if err != nil || got != limit || revision != int64(version+1) {
+					t.Errorf("CapacityBudget(%q) = %+v, version %d, %v, want %+v, version %d", testInstallation, got, revision, err, limit, version+1)
+				}
+			}
+			for _, limit := range []Allocation{{CPU: -1}, {MemoryMiB: -1}, {DiskMiB: -1}} {
+				if err := store.SetCapacityBudget(t.Context(), testInstallation, limit, 4, "admin", now); err == nil {
+					t.Errorf("SetCapacityBudget(%+v, version 4) = nil, want invalid budget error", limit)
+				}
+			}
+			got, revision, err := store.CapacityBudget(t.Context(), testInstallation)
+			if err != nil || got != (Allocation{DiskMiB: 100}) || revision != 4 {
+				t.Errorf("CapacityBudget after negative writes = %+v, version %d, %v, want disk 100, version 4", got, revision, err)
+			}
+		})
+	}
+}
+
 func openWorkspaceDatabase(t *testing.T, profile string) *sql.DB {
 	t.Helper()
 	ctx := context.Background()

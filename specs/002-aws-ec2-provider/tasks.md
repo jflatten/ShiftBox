@@ -77,6 +77,19 @@ Every implementation task starts with a small, commented test or an applicable e
 
 ## Dependencies & Execution Order
 
+- [x] T035 Deploy all bundled changes to shiftbox-demo with a verified management backup, schema 34 upgrade, reviewed Terraform rollout, live UI checks, and cleanup. Controller revision 20 and both healthy ECS services verified; user confirmed the deployment. See `documentation/validation/ui-bundle.md`.
+- [ ] T036 Commit all changes and push to the MVP branch after the user confirmed the live deployment.
+
+- [x] T033 [P] Add an accessible header light/dark toggle with browser-persisted preference and branding in both modes; verified 15 shell unit tests, UI typecheck, and Chrome persistence/keyboard/320px-header checks. Deployment held.
+- [x] T034 [P] Replace user-facing Templates/template wording with Projects/project across the UI and associated checks; hold deployment. Verified 75 tests across nine targeted UI suites, the final audit paging/label checks, and UI typecheck. Kept routes, API identifiers, permissions, and raw audit codes intact.
+
+Bundle validation: all 153 UI unit tests, production UI build, generated API checks, seven Chrome browser journeys, full Go suite and vet pass. SQLite/PostgreSQL upgrade and reservation tests pass with a disposable fixture; no demo deployment or data changes were made.
+
+- [x] T032 Support independently unlimited CPU, memory, and disk capacity budgets; blank fields and fresh installation defaults mean Unlimited. Verified the full Go suite, Go vet, UI build, SQLite/PostgreSQL migration and reservation tests, and three Chrome browser checks. Deployment held for bundled UI review.
+  - [x] T032a [P] Test and implement persisted unlimited limits, admission enforcement, and SQLite/PostgreSQL schema upgrades while preserving existing budgets. Added schema 34; workspace/database suites and vet pass locally, with PostgreSQL fixture verification included in integration.
+  - [x] T032b [P] Test and implement blank-as-Unlimited inputs, fresh setup defaults, and readable budget summaries in the Mantine UI. Verified 29 infrastructure/setup/maintenance tests and UI typecheck.
+  - [x] T032c Test and update capacity API validation/contracts, verify integration, and review the final change locally.
+
 - [x] T031 Rename the Infrastructure tab from Resources to Platform and update existing UI checks. Verified all 14 infrastructure unit tests and the production UI build; deployment held for the user's bundled UI changes.
 
 - [x] T030 Remove the `groundtruth-single-boot` review workspace through ShiftBox, verify instance, volume, and network-interface cleanup, and confirm temporary migration resources are absent while the demo remains healthy. EC2 termination and EBS/ENI removal verified; migration tasks inactive, helper image absent, existing workspace preserved, and both demo services completed.

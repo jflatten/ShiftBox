@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -190,7 +191,7 @@ func TestCapacityAdministration(t *testing.T) {
 	request(&budget, `"1"`, "invalid", limits, 403)
 	request(&budget, "", csrf, limits, 428)
 	request(&budget, `"0"`, csrf, limits, 412)
-	request(&budget, `"1"`, csrf, strings.Replace(limits, ":400", ":0", 1), 400)
+	request(&budget, `"1"`, csrf, strings.Replace(limits, ":400", ":-1", 1), 400)
 	request(&budget, `"1"`, csrf, limits, 204)
 	request(&budget, `"1"`, csrf, limits, 412)
 	request(&profile, "", csrf, strings.Replace(small, ":40", ":400", 1), 409)
@@ -209,6 +210,89 @@ func TestCapacityAdministration(t *testing.T) {
 	request(&budget, `"1"`, csrf, limits, 412)
 	request(&budget, `"0"`, csrf, limits, 204)
 	request(&budget, `"0"`, csrf, limits, 412)
+}
+
+// TestUnlimitedCapacityAPI verifies independent unlimited limits survive a
+// versioned write and read, while invalid and stale writes preserve the budget.
+func TestUnlimitedCapacityAPI(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "unlimited.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	const origin = "https://management.test"
+	now := time.Now().UTC()
+	token := strings.Repeat("A", 43)
+	seedWorkspaceLaunch(t, db, uuid.NewString(), token, now)
+	if _, err := db.ExecContext(ctx, "UPDATE users SET role='administrator' WHERE id='member'"); err != nil {
+		t.Fatal(err)
+	}
+	clock := func() time.Time { return now }
+	budget, _ := web.CapacityHandlers(db, origin, clock, uuid.NewString, web.WorkspaceLaunchPolicy{})
+	status := web.InfrastructureStatusHandler(db, origin, clock, provider.Capabilities{})
+	type limits struct {
+		CPUCount  int   `json:"cpuCount"`
+		MemoryMiB int64 `json:"memoryMiB"`
+		DiskMiB   int64 `json:"diskMiB"`
+	}
+	request := func(body, version string, want int) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPut, origin+"/api/v1/admin/capacity", strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		req.Header.Set("Origin", origin)
+		req.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+		req.Header.Set("If-Match", version)
+		response := httptest.NewRecorder()
+		budget.ServeHTTP(response, req)
+		if response.Code != want {
+			t.Fatalf("PUT capacity(%s, %s) = %d %s, want %d", body, version, response.Code, response.Body, want)
+		}
+	}
+	for i, want := range []limits{
+		{MemoryMiB: 1024, DiskMiB: 40},
+		{CPUCount: 2, DiskMiB: 40},
+		{CPUCount: 2, MemoryMiB: 1024},
+		{},
+	} {
+		body, err := json.Marshal(want)
+		if err != nil {
+			t.Fatal(err)
+		}
+		version := strconv.Quote(strconv.Itoa(i + 1))
+		request(string(body), version, http.StatusNoContent)
+		request(string(body), version, http.StatusPreconditionFailed)
+		req := httptest.NewRequest(http.MethodGet, origin+"/api/v1/admin/infrastructure", nil)
+		req.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		response := httptest.NewRecorder()
+		status.ServeHTTP(response, req)
+		var view struct {
+			Capacity limits
+			Version  int
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil || response.Code != http.StatusOK ||
+			view.Capacity != want || view.Version != i+2 || response.Header().Get("ETag") != strconv.Quote(strconv.Itoa(i+2)) {
+			t.Fatalf("GET capacity after %s = %+v, status %d (%v), want %+v, version %d", body, view, response.Code, err, want, i+2)
+		}
+	}
+	for _, invalid := range []string{
+		`{"cpuCount":-1,"memoryMiB":0,"diskMiB":0}`,
+		`{"cpuCount":0,"memoryMiB":-1,"diskMiB":0}`,
+		`{"cpuCount":0,"memoryMiB":0,"diskMiB":-1}`,
+		`{"cpuCount":0.5,"memoryMiB":0,"diskMiB":0}`,
+		`{"cpuCount":"Unlimited","memoryMiB":0,"diskMiB":0}`,
+	} {
+		request(invalid, `"5"`, http.StatusBadRequest)
+	}
+	var saved limits
+	var version int
+	if err := db.QueryRowContext(ctx, "SELECT cpu_limit,memory_mib_limit,disk_mib_limit,version FROM capacity_budgets").
+		Scan(&saved.CPUCount, &saved.MemoryMiB, &saved.DiskMiB, &version); err != nil || saved != (limits{}) || version != 5 {
+		t.Errorf("capacity after invalid writes = %+v, version %d (%v), want unlimited and version 5", saved, version, err)
+	}
 }
 
 // TestResourceProfileCRUD protects assigned profiles, rejects stale writes,

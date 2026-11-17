@@ -51,6 +51,48 @@ func TestCapacityAfterBudgetReduction(t *testing.T) {
 	}
 }
 
+// TestUnlimitedCapacityAdmission skips only zero-valued budget dimensions;
+// finite dimensions still reject starts and invalid allocations remain invalid.
+func TestUnlimitedCapacityAdmission(t *testing.T) {
+	used := Allocation{CPU: 8, MemoryMiB: 8192, DiskMiB: 100}
+	pinned := Allocation{CPU: 2, MemoryMiB: 1024, DiskMiB: 40}
+	for _, test := range []struct {
+		name         string
+		limit        Allocation
+		wantResource string
+	}{
+		{name: "all unlimited"},
+		{name: "unlimited CPU", limit: Allocation{MemoryMiB: 9216, DiskMiB: 140}},
+		{name: "unlimited memory", limit: Allocation{CPU: 10, DiskMiB: 140}},
+		{name: "unlimited disk", limit: Allocation{CPU: 10, MemoryMiB: 9216}},
+		{name: "finite CPU exhausted", limit: Allocation{CPU: 8}, wantResource: "cpu"},
+		{name: "finite memory exhausted", limit: Allocation{MemoryMiB: 8192}, wantResource: "memory"},
+		{name: "finite disk exhausted", limit: Allocation{DiskMiB: 100}, wantResource: "disk"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := CheckCapacity(test.limit, used, pinned, false)
+			if test.wantResource == "" {
+				if err != nil {
+					t.Errorf("CheckCapacity(%+v, %+v, %+v, false) = %v, want accepted", test.limit, used, pinned, err)
+				}
+				return
+			}
+			var capacity *CapacityError
+			if !errors.As(err, &capacity) || capacity.Resource != test.wantResource {
+				t.Errorf("CheckCapacity(%+v, %+v, %+v, false) = %v, want %s refusal", test.limit, used, pinned, err, test.wantResource)
+			}
+		})
+	}
+	for _, limit := range []Allocation{{CPU: -1}, {MemoryMiB: -1}, {DiskMiB: -1}} {
+		if err := CheckCapacity(limit, used, pinned, false); err == nil {
+			t.Errorf("CheckCapacity(%+v, %+v, %+v, false) = nil, want invalid budget error", limit, used, pinned)
+		}
+	}
+	if err := CheckCapacity(Allocation{}, used, Allocation{}, false); err == nil {
+		t.Errorf("CheckCapacity(unlimited, %+v, zero allocation, false) = nil, want invalid allocation error", used)
+	}
+}
+
 // TestProfileCapabilityBounds verifies exact MiB conversion and rejects
 // unsupported allocations and missing provider limits.
 func TestProfileCapabilityBounds(t *testing.T) {

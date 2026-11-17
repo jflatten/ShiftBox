@@ -15,26 +15,29 @@ function json(payload: unknown, link?: string) {
   return { ok: true, status: 200, headers: new Headers(link ? { Link: link } : {}), json: async () => payload } as Response;
 }
 
-// Server filters survive cursor navigation; exact identifiers remain in expandable details.
+// Server filters retain template action codes while project labels and exact
+// identifiers remain usable through cursor navigation and expandable details.
 test('filters and pages through audit events', async () => {
+  const projectEvent = { ...event, action: 'template.create', resourceType: 'project_template' };
   globalThis.fetch = jest.fn(async input => {
     if (input === '/api/v1/session') return json(session);
-    if (input === path) return json([{ ...event, action: 'user.disable' }]);
-    if (input === path + '?action=user.approve') return json([event], '</api/v1/admin/audit?action=user.approve&cursor=12>; rel="next"');
-    if (input === path + '?action=user.approve&cursor=12') return json([{ ...event, id: 'two', reasonCode: 'older_event' }]);
+    if (input === path) return json([{ ...projectEvent, action: 'template.archive' }]);
+    if (input === path + '?action=template.create') return json([projectEvent], '</api/v1/admin/audit?action=template.create&cursor=12>; rel="next"');
+    if (input === path + '?action=template.create&cursor=12') return json([{ ...projectEvent, id: 'two', reasonCode: 'older_event' }]);
     throw new Error('unexpected request ' + input);
   });
   const user = userEvent.setup();
   render(<Providers><Audit /></Providers>);
-  expect(await screen.findByText('Disable user')).toBeVisible();
+  expect(await screen.findByText('Archive project')).toBeVisible();
+  expect(screen.getByText('Project', { exact: true })).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Filter full history' }));
-  await user.type(await screen.findByRole('textbox', { name: 'Action code' }), 'user.approve');
+  await user.type(await screen.findByRole('textbox', { name: 'Action code' }), 'template.create');
   await user.click(screen.getByRole('button', { name: 'Apply filters' }));
-  expect(await screen.findByText('Approve user')).toBeVisible();
+  expect(await screen.findByText('Create project')).toBeVisible();
   expect(screen.queryByText(event.resourceId)).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Show event details' }));
   expect(screen.getByText(event.resourceId)).toBeVisible();
-  expect(screen.getByText(event.action)).toBeVisible();
+  expect(screen.getByText(projectEvent.action)).toBeVisible();
   expect(screen.queryByText('ignored fixture')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Next page' }));
   expect(await screen.findByText('Page 2')).toBeVisible();

@@ -70,6 +70,8 @@ test('restores keyboard focus after cancelling workspace deletion', async () => 
   await user.tab();
   expect(screen.getByRole('link', { name: 'ShiftBox home' })).toHaveFocus();
   await user.tab();
+  expect(screen.getByRole('button', { name: 'Dark mode' })).toHaveFocus();
+  await user.tab();
   expect(screen.getByRole('button', { name: 'User menu' })).toHaveFocus();
   await user.tab();
   const nav = within(screen.getByRole('navigation', { name: 'Main navigation' }));

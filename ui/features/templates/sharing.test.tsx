@@ -35,15 +35,15 @@ test('explains when no platform image is available', async () => {
     : { items: [] });
   const user = userEvent.setup();
   render(<Providers><Templates /></Providers>);
-  await user.click(await screen.findByRole('button', { name: 'New template' }));
-  const dialog = screen.getByRole('dialog', { name: 'New template' });
+  await user.click(await screen.findByRole('button', { name: 'New project' }));
+  const dialog = screen.getByRole('dialog', { name: 'New project' });
   expect(await within(dialog).findByText(/an administrator must configure/i)).toBeVisible();
-  expect(within(dialog).getByRole('button', { name: 'Create template' })).toBeDisabled();
+  expect(within(dialog).getByRole('button', { name: 'Create project' })).toBeDisabled();
 });
 
 // A template owner must explicitly acknowledge project secret access
 // before a grant can be submitted. Members never get the archive filter.
-test('requires project secret acknowledgement when sharing a template', async () => {
+test('requires project secret acknowledgement when sharing a project', async () => {
   fixture('member', path => path === '/api/v1/templates' ? { items: [project] } : null);
   const user = userEvent.setup();
   render(<Providers><Templates /></Providers>);
@@ -61,12 +61,12 @@ test('requires project secret acknowledgement when sharing a template', async ()
     headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String), 'X-CSRF-Token': 'fixture' }),
     body: JSON.stringify({ userId: memberID, acknowledgeProjectSecretExposure: true }),
   }));
-  expect(screen.queryByRole('switch', { name: 'Archived templates' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('switch', { name: 'Archived projects' })).not.toBeInTheDocument();
 });
 
 // Administrators explicitly switch to the archived list before restoring
 // a template. Restoring sends the version the administrator reviewed.
-test('filters archived templates and restores with the reviewed version', async () => {
+test('filters archived projects and restores with the reviewed version', async () => {
   let archived = true;
   fixture('administrator', (path, init) => {
     if (path === '/api/v1/templates/template' && init?.method === 'PATCH') {
@@ -78,14 +78,14 @@ test('filters archived templates and restores with the reviewed version', async 
   });
   const user = userEvent.setup();
   render(<Providers><Templates /></Providers>);
-  await screen.findByText('No templates yet.');
+  await screen.findByText('No projects yet.');
   expect(globalThis.fetch).not.toHaveBeenCalledWith('/api/v1/templates?archived=true', expect.anything());
-  await user.click(screen.getByRole('switch', { name: 'Archived templates' }));
+  await user.click(screen.getByRole('switch', { name: 'Archived projects' }));
   await user.click(await screen.findByRole('button', { name: 'Actions for Sample' }));
-  await user.click(await screen.findByRole('menuitem', { name: 'Restore template' }));
-  const dialog = screen.getByRole('dialog', { name: 'Restore template' });
-  await user.click(within(dialog).getByRole('button', { name: 'Restore template' }));
-  expect(await screen.findByText('No archived templates.')).toBeVisible();
+  await user.click(await screen.findByRole('menuitem', { name: 'Restore project' }));
+  const dialog = screen.getByRole('dialog', { name: 'Restore project' });
+  await user.click(within(dialog).getByRole('button', { name: 'Restore project' }));
+  expect(await screen.findByText('No archived projects.')).toBeVisible();
   expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/templates/template', expect.objectContaining({
     method: 'PATCH', body: '{"state":"active"}', headers: expect.objectContaining({ 'If-Match': '"4"' }),
   }));
@@ -93,7 +93,7 @@ test('filters archived templates and restores with the reviewed version', async 
 
 // Revising a template preserves its current fields and submits the observed
 // version so a concurrent edit cannot silently replace the current revision.
-test('creates a new revision from the reviewed template', async () => {
+test('creates a new revision from the reviewed project', async () => {
   let current = project;
   fixture('member', (path, init) => {
     if (path === '/api/v1/templates/catalog') return {

@@ -575,7 +575,7 @@ test('keeps the owner filter when paging from People', async () => {
 
 // Launch requires review of the selected revision and preserves the reviewed
 // request identity when capacity refusal leaves the form available for retry.
-test('reviews a template revision and reports a capacity refusal', async () => {
+test('reviews a project revision and reports a capacity refusal', async () => {
   const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/templates') return json({ items: [launchTemplate], nextCursor: null });
@@ -599,7 +599,7 @@ test('reviews a template revision and reports a capacity refusal', async () => {
   await user.type(screen.getByRole('textbox', { name: /workspace name/i }), 'My development workspace');
   await user.click(screen.getByRole('button', { name: 'Launch workspace' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('insufficient CPU capacity');
-  await user.click(screen.getByRole('button', { name: 'Back to templates' }));
+  await user.click(screen.getByRole('button', { name: 'Back to projects' }));
   await user.click(screen.getByRole('button', { name: 'Review launch' }));
   await user.click(screen.getByRole('button', { name: 'Launch workspace' }));
   const submitted = fetch.mock.calls.filter(([, init]) => init?.method === 'POST');

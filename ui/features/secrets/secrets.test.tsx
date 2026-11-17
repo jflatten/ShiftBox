@@ -105,7 +105,7 @@ test('opens organization secrets with the server-provided scope', async () => {
 });
 
 // A launch-only user cannot open a project's secret manager.
-test('offers project secret management only for templates the user manages', async () => {
+test('offers project secret management only for projects the user manages', async () => {
   globalThis.fetch = jest.fn(async (path: string) => ({
     ok: true, status: 200, json: async () => {
       if (path === '/api/v1/session') return { user: { id: 'owner', role: 'member' }, mode: 'normal',
@@ -124,6 +124,6 @@ test('offers project secret management only for templates the user manages', asy
   expect(within(shared).queryByRole('button', { name: /Actions for/ })).not.toBeInTheDocument();
   await user.click(within(own).getByRole('button', { name: 'Actions for My project' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Project secrets' }));
-  await screen.findByRole('heading', { name: 'Project template secrets' });
+  await screen.findByRole('heading', { name: 'Project secrets' });
   expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/secrets?scope=template&scopeId=own-project', expect.anything());
 });

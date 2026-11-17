@@ -10,6 +10,7 @@ import (
 )
 
 // Allocation is the persisted CPU, memory, disk, and optional EC2 type of a workspace.
+// When used as a capacity budget, a zero dimension means unlimited capacity.
 type Allocation struct {
 	InstanceType       string
 	CPU                int
@@ -18,6 +19,10 @@ type Allocation struct {
 
 func (a Allocation) positive() bool {
 	return a.CPU > 0 && a.MemoryMiB > 0 && a.DiskMiB > 0
+}
+
+func (a Allocation) nonnegative() bool {
+	return a.CPU >= 0 && a.MemoryMiB >= 0 && a.DiskMiB >= 0
 }
 
 // EC2Type returns the pinned type or the unambiguous type of a legacy EC2 allocation.
@@ -41,8 +46,9 @@ func (err *CapacityError) Error() string {
 
 // CheckCapacity evaluates an accepted start against existing reservations. A
 // restart with retained disk adds only CPU and memory to the current usage.
+// A zero budget dimension is unlimited; positive dimensions remain enforced.
 func CheckCapacity(limit, used, pinned Allocation, diskReserved bool) error {
-	if !limit.positive() || !pinned.positive() || used.CPU < 0 || used.MemoryMiB < 0 || used.DiskMiB < 0 {
+	if !limit.nonnegative() || !pinned.positive() || !used.nonnegative() {
 		return errors.New("invalid capacity inputs")
 	}
 	additionalDisk := pinned.DiskMiB
@@ -54,7 +60,7 @@ func CheckCapacity(limit, used, pinned Allocation, diskReserved bool) error {
 		{Resource: "memory", Limit: limit.MemoryMiB, Used: used.MemoryMiB, Requested: pinned.MemoryMiB},
 		{Resource: "disk", Limit: limit.DiskMiB, Used: used.DiskMiB, Requested: additionalDisk},
 	} {
-		if dimension.Requested > 0 && dimension.Requested > dimension.Limit-dimension.Used {
+		if dimension.Limit > 0 && dimension.Requested > 0 && dimension.Requested > dimension.Limit-dimension.Used {
 			return &dimension
 		}
 	}

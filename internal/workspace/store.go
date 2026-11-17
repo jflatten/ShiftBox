@@ -71,7 +71,8 @@ func (s *Store) ResourceProfile(ctx context.Context, id string) (ResourceProfile
 }
 
 // SetCapacityBudget creates the first budget at version zero or updates a
-// specific existing revision. Budget changes affect future admissions.
+// specific existing revision. Budget changes affect future admissions, and a
+// zero dimension removes the capacity limit for that resource.
 func (s *Store) SetCapacityBudget(ctx context.Context, installation string, limit Allocation, expected int64, actor string, now time.Time) error {
 	return database.Transaction(ctx, s.db, func(tx *sql.Tx) error {
 		return SetCapacityBudgetInTx(ctx, tx, installation, limit, expected, actor, now)
@@ -80,7 +81,7 @@ func (s *Store) SetCapacityBudget(ctx context.Context, installation string, limi
 
 // SetCapacityBudgetInTx applies a versioned budget in the caller's management transaction.
 func SetCapacityBudgetInTx(ctx context.Context, tx *sql.Tx, installation string, limit Allocation, expected int64, actor string, now time.Time) error {
-	if installation == "" || !limit.positive() || expected < 0 || actor == "" || now.IsZero() {
+	if installation == "" || !limit.nonnegative() || expected < 0 || actor == "" || now.IsZero() {
 		return errors.New("invalid capacity budget")
 	}
 	stamp := now.UTC().Format(time.RFC3339Nano)

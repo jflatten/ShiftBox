@@ -81,16 +81,16 @@ export function LaunchFlow({ csrfToken, userID, admin }: { csrfToken: string; us
             <Button variant="default" disabled={submitting} onClick={() => {
               setReview(undefined);
               setError(undefined);
-            }}>Back to templates</Button>
+            }}>Back to projects</Button>
           </Group>
         </Stack>
       ) : (
         <Stack align="flex-start">
           {templates.isError ? <APIProblemView error={templates.error} /> : null}
-          {templates.isPending ? <Text role="status">Loading templates…</Text> : null}
-          {data?.items.length === 0 ? <Text>No templates on this page.</Text> : null}
+          {templates.isPending ? <Text role="status">Loading projects…</Text> : null}
+          {data?.items.length === 0 ? <Text>No projects on this page.</Text> : null}
           {!!data?.items.length ? (
-            <Radio.Group label="Choose a template" value={selected} onChange={setSelected}>
+            <Radio.Group label="Choose a project" value={selected} onChange={setSelected}>
               <Stack gap="sm" mt="sm">
                 {data.items.map(item => <Radio key={templateKey(item)} value={templateKey(item)}
                   label={`${item.name} · Revision ${item.currentRevision}`} />)}

@@ -27,6 +27,88 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
+// Clearing individual limits must persist Unlimited without changing finite
+// dimensions. Refreshed unlimited values stay blank and discard restores them.
+test('saves independent unlimited limits and restores saved blanks when discarding', async () => {
+  let current = { ...status, capacity: { ...status.capacity } };
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json(current);
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
+    if (input === '/api/v1/admin/capacity' && init?.method === 'PUT') {
+      current = { ...current, capacity: JSON.parse(String(init.body)), version: current.version + 1 };
+      return json(null);
+    }
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Infrastructure /></Providers>);
+  await user.clear(await screen.findByRole('textbox', { name: 'CPU limit' }));
+  await user.click(screen.getByRole('button', { name: 'Save capacity budget' }));
+  expect(await screen.findByText('Capacity budget saved.')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/admin/capacity', expect.objectContaining({
+    body: JSON.stringify({ cpuCount: 0, memoryMiB: 8192, diskMiB: 131072 }),
+  }));
+  expect(screen.getByRole('textbox', { name: 'CPU limit' })).toHaveValue('');
+  expect(screen.getByRole('textbox', { name: 'CPU limit' })).toHaveAttribute('placeholder', 'Unlimited');
+  expect(screen.getByRole('textbox', { name: 'CPU limit' })).not.toBeRequired();
+  expect(screen.getByRole('button', { name: 'Save capacity budget' })).toBeDisabled();
+  await user.clear(screen.getByRole('textbox', { name: 'Memory limit (MiB)' }));
+  await user.clear(screen.getByRole('textbox', { name: 'Disk limit (MiB)' }));
+  await user.click(screen.getByRole('button', { name: 'Save capacity budget' }));
+  expect(await screen.findByText('Capacity budget saved.')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/admin/capacity', expect.objectContaining({
+    body: JSON.stringify({ cpuCount: 0, memoryMiB: 0, diskMiB: 0 }),
+  }));
+  expect(screen.getAllByPlaceholderText('Unlimited')).toHaveLength(3);
+  await user.type(screen.getByRole('textbox', { name: 'CPU limit' }), '8');
+  await user.click(screen.getByRole('button', { name: 'Discard changes' }));
+  expect(screen.getByRole('textbox', { name: 'CPU limit' })).toHaveValue('');
+  expect(screen.getByRole('button', { name: 'Save capacity budget' })).toBeDisabled();
+  await user.type(screen.getByRole('textbox', { name: 'CPU limit' }), '8');
+  await user.click(screen.getByRole('button', { name: 'Save capacity budget' }));
+  expect(await screen.findByText('Capacity budget saved.')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/admin/capacity', expect.objectContaining({
+    body: JSON.stringify({ cpuCount: 8, memoryMiB: 0, diskMiB: 0 }),
+  }));
+  expect(screen.getByRole('textbox', { name: 'CPU limit' })).toHaveValue('8');
+});
+
+// Zero is the API representation of Unlimited; entered limits must still
+// be positive whole numbers so an invalid draft never sends a mutation.
+test('rejects an invalid numeric capacity draft before sending it', async () => {
+  const fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json(status);
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Infrastructure /></Providers>);
+  const cpu = await screen.findByRole('textbox', { name: 'CPU limit' });
+  await user.clear(cpu);
+  await user.type(cpu, '0');
+  await user.click(screen.getByRole('button', { name: 'Save capacity budget' }));
+  expect(await screen.findByText('Enter a positive whole number.')).toBeVisible();
+  expect(cpu).toHaveFocus();
+  expect(fetch.mock.calls.every(([input]) => input !== '/api/v1/admin/capacity')).toBe(true);
+});
+
+// Administrators without write permission must see unlimited budget labels
+// rather than zero resource amounts, including alongside a finite limit.
+test('shows unlimited limits in a read-only capacity summary', async () => {
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json({ ...session, permissions: ['infrastructure.view'] });
+    if (input === '/api/v1/admin/infrastructure') return json({ ...status, capacity: { cpuCount: 0, memoryMiB: 8192, diskMiB: 0 } });
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
+    throw new Error('unexpected request');
+  });
+  render(<Providers><Infrastructure /></Providers>);
+  expect(await screen.findByText('Unlimited CPU · 8192 MiB memory · Unlimited disk')).toBeVisible();
+});
+
 // A fresh UTM installation can create a profile and see it in the table immediately.
 test('lists a resource profile after creation', async () => {
   const profiles: unknown[] = [];
@@ -240,7 +322,7 @@ test('edits a profile and explains why deletion is blocked', async () => {
     if (input === collection + '/profile' && init?.method === 'DELETE') {
       return { ok: false, status: 409, headers: new Headers({ 'Content-Type': 'application/problem+json' }),
         json: async () => ({ type: 'about:blank', status: 409, requestId: 'ref',
-          code: 'infrastructure.resource_profile_in_use', title: 'A template revision uses this resource profile' }),
+          code: 'infrastructure.resource_profile_in_use', title: 'A project revision uses this resource profile' }),
       } as Response;
     }
     throw new Error('unexpected request');
@@ -267,7 +349,7 @@ test('edits a profile and explains why deletion is blocked', async () => {
   const remove = await screen.findByRole('dialog', { name: 'Delete resource profile' });
   await waitFor(() => expect(within(remove).getByRole('button', { name: 'Cancel' })).toHaveFocus());
   await user.click(within(remove).getByRole('button', { name: 'Delete resource profile' }));
-  expect(await within(remove).findByText('A template revision uses this resource profile')).toBeVisible();
+  expect(await within(remove).findByText('A project revision uses this resource profile')).toBeVisible();
   expect(fetch).toHaveBeenCalledWith(collection + '/profile', expect.objectContaining({
     method: 'DELETE', headers: expect.objectContaining({ 'If-Match': '"2"', 'X-CSRF-Token': 'fixture' }),
   }));

@@ -1002,7 +1002,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/Resources' }
+            schema: { $ref: '#/components/schemas/CapacityBudget' }
       responses:
         '204': { description: Capacity budget updated without evicting existing workspaces }
         default: { $ref: '#/components/responses/Error' }
@@ -1376,6 +1376,15 @@ components:
         memoryMiB: { type: integer, minimum: 1 }
         diskMiB: { type: integer, minimum: 1 }
 
+    CapacityBudget:
+      type: object
+      description: Each limit is independent. Zero means Unlimited and disables capacity budget enforcement for that resource. Fresh installations default to Unlimited.
+      required: [cpuCount, memoryMiB, diskMiB]
+      properties:
+        cpuCount: { type: integer, minimum: 0, default: 0 }
+        memoryMiB: { type: integer, minimum: 0, default: 0 }
+        diskMiB: { type: integer, minimum: 0, default: 0 }
+
     Operation:
       type: object
       required: [id, type, status, steps, createdAt, version]
@@ -1496,7 +1505,7 @@ components:
       required: [provider, capacity, conditions, version]
       properties:
         provider: { $ref: '#/components/schemas/InfrastructureProvider' }
-        capacity: { $ref: '#/components/schemas/Resources' }
+        capacity: { $ref: '#/components/schemas/CapacityBudget' }
         conditions:
           type: array
           items:

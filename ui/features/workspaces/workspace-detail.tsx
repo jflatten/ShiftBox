@@ -142,7 +142,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
               <Text fw={600}>{data.resources.cpuCount} vCPU · {data.resources.memoryMiB} MiB memory · {data.resources.diskMiB} MiB disk</Text>
               <SimpleGrid component="dl" cols={{ base: 1, sm: 2 }} spacing="md" m={0}>
                 <div>
-                  <Text component="dt" size="sm" c="dimmed">Template revision</Text>
+                  <Text component="dt" size="sm" c="dimmed">Project revision</Text>
                   <Text component="dd" m={0}>Revision {data.templateRevision}</Text>
                 </div>
                 <div>

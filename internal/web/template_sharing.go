@@ -48,7 +48,7 @@ func TemplateUpdateHandler(db *sql.DB, origin string, now func() time.Time) Auth
 			stamp := now()
 			view, err := template.Update(ctx, tx, target.Resource.ID, version, change.Name, change.State, stamp)
 			if errors.Is(err, template.ErrVersionMismatch) {
-				return nil, Problem{Status: 412, Code: "request.version_mismatch", Title: "Refresh the template before saving changes"}
+				return nil, Problem{Status: 412, Code: "request.version_mismatch", Title: "Refresh the project before saving changes"}
 			}
 			if err != nil {
 				return nil, err
@@ -93,7 +93,7 @@ func TemplateGrantHandlers(db *sql.DB, origin string, now func() time.Time) (Aut
 			err = template.GrantLaunch(ctx, tx, target.Resource.ID, input.UserID, actor.User.ID, key, now())
 			switch {
 			case errors.Is(err, template.ErrUnavailable):
-				return nil, Problem{Status: 409, Code: "template.grant_unavailable", Title: "Choose an active template and user"}
+				return nil, Problem{Status: 409, Code: "template.grant_unavailable", Title: "Choose an active project and user"}
 			case errors.Is(err, template.ErrRequestConflict):
 				return nil, Problem{Status: 409, Code: "request.idempotency_conflict", Title: "This request identifier was already used for a different change"}
 			case err != nil:

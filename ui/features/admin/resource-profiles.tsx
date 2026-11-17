@@ -72,7 +72,7 @@ export function ResourceProfiles({ userId, csrfToken, provider }: {
       <Group justify="space-between" align="flex-end">
         <Stack gap={4}>
           <Title order={2} size="h3" id="resource-profiles-heading">Resource profiles</Title>
-          <Text size="sm" c="dimmed">Set the resources a template allocates to each workspace.</Text>
+          <Text size="sm" c="dimmed">Set the resources a project allocates to each workspace.</Text>
         </Stack>
         {csrfToken ? <Button ref={addButton} disabled={!canEdit} onClick={event => open({ action: 'create' }, event.currentTarget)}>New resource profile</Button> : null}
       </Group>
@@ -278,7 +278,7 @@ function ProfileDialog({ dialog, userId, csrfToken, provider, close, saved, relo
           </Text> : null}
           <Select label="AMI image" required searchable allowDeselect={false}
             placeholder="Select an approved AMI image" nothingFoundMessage="No matching AMI images"
-            description={selectedImage ? `${selectedImage.architecture === 'arm64' ? 'ARM64' : 'x86-64 (amd64)'}${selectedImage.amiId ? ` · ${selectedImage.amiId}` : ''}` : 'The resource profile supplies this image to templates.'}
+            description={selectedImage ? `${selectedImage.architecture === 'arm64' ? 'ARM64' : 'x86-64 (amd64)'}${selectedImage.amiId ? ` · ${selectedImage.amiId}` : ''}` : 'The resource profile supplies this image to projects.'}
             data={images.map(image => ({ value: image.id, label: image.name }))}
             disabled={busy || !catalog.isSuccess || !images.length}
             key={form.key('platformArtifactId')} {...form.getInputProps('platformArtifactId')}

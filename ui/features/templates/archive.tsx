@@ -14,7 +14,7 @@ export function TemplateArchive({ template, csrfToken, onClose, refresh }: {
   const [error, setError] = useState<unknown>();
   const stale = error instanceof APIProblemError && error.problem.status === 412;
   const restoring = template.state === 'archived';
-  const title = restoring ? 'Restore template' : 'Archive template';
+  const title = restoring ? 'Restore project' : 'Archive project';
 
   async function save() {
     if (busy || stale) return;
@@ -52,7 +52,7 @@ export function TemplateArchive({ template, csrfToken, onClose, refresh }: {
         {error !== undefined ? <APIProblemView error={error} /> : null}
         <Group justify="flex-end">
           <Button variant="default" disabled={busy} onClick={onClose} data-autofocus>Cancel</Button>
-          {stale ? <Button onClick={() => void refreshAndClose()}>Refresh templates</Button>
+          {stale ? <Button onClick={() => void refreshAndClose()}>Refresh projects</Button>
             : <Button color={restoring ? undefined : 'red'} loading={busy} onClick={() => void save()}>{title}</Button>}
         </Group>
       </Stack>

@@ -197,7 +197,8 @@ func TestSetupAPILifecycle(t *testing.T) {
 		strings.Repeat("a", 64), admin.userID, now.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
-	request(http.MethodPut, "/api/v1/admin/capacity", "", map[string]int{"cpuCount": 4, "memoryMiB": 4096, "diskMiB": 10240}, http.StatusNoContent)
+	// A fresh installation accepts the UI's blank defaults as unlimited budgets.
+	request(http.MethodPut, "/api/v1/admin/capacity", "", map[string]int{"cpuCount": 0, "memoryMiB": 0, "diskMiB": 0}, http.StatusNoContent)
 	completed := request(http.MethodPost, activate, activationRequest, nil, http.StatusAccepted)
 	cookies := completed.Result().Cookies()
 	if len(cookies) != 1 || cookies[0].MaxAge >= 0 || cookies[0].Value != "" {
@@ -209,6 +210,11 @@ func TestSetupAPILifecycle(t *testing.T) {
 	if err := db.QueryRowContext(t.Context(), `SELECT i.state,s.revocation_reason FROM installations i CROSS JOIN sessions s
 		WHERE i.id=$1 AND s.id=$2 AND s.revoked_at IS NOT NULL`, installation, session.ID).Scan(&state, &revocation); err != nil || state != "active" || revocation != "setup_activated" {
 		t.Fatalf("activation state/revocation = %q/%q, %v; want active/setup_activated", state, revocation, err)
+	}
+	var cpu, memory, disk int64
+	if err := db.QueryRowContext(t.Context(), "SELECT cpu_limit,memory_mib_limit,disk_mib_limit FROM capacity_budgets").
+		Scan(&cpu, &memory, &disk); err != nil || cpu != 0 || memory != 0 || disk != 0 {
+		t.Errorf("fresh activated capacity = %d/%d/%d (%v), want all Unlimited", cpu, memory, disk, err)
 	}
 }
 

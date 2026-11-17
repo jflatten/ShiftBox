@@ -15,7 +15,7 @@ const json = (data: unknown) => ({ ok: true, status: 200, json: async () => data
 
 // Shared users can inspect readable configuration without gaining edit or
 // secret-management controls, and closing details returns keyboard focus.
-test('shows named template details and respects shared access', async () => {
+test('shows named project details and respects shared access', async () => {
   globalThis.fetch = jest.fn(async input => json(input === '/api/v1/session' ? session : { items: [project], nextCursor: null }));
   const user = userEvent.setup();
   render(<Providers><Templates /></Providers>);
@@ -26,8 +26,8 @@ test('shows named template details and respects shared access', async () => {
   expect(screen.queryByText('profile-id')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Actions for/ })).not.toBeInTheDocument();
   await user.click(view);
-  const details = screen.getByRole('dialog', { name: 'Template details' });
-  expect(within(details).getByRole('button', { name: 'Close template details' })).toBeVisible();
+  const details = screen.getByRole('dialog', { name: 'Project details' });
+  expect(within(details).getByRole('button', { name: 'Close project details' })).toBeVisible();
   expect(within(details).getByText('.devcontainer/devcontainer.json')).toBeVisible();
   expect(within(details).getByText('API_KEY')).toBeVisible();
   await user.click(within(details).getByRole('button', { name: 'Done' }));
@@ -46,10 +46,10 @@ test('searches across pages and preserves archive scope', async () => {
   await screen.findByRole('button', { name: 'View Example project' });
   await user.click(screen.getByRole('button', { name: 'Next page' }));
   await screen.findByText('Page 2');
-  await user.type(screen.getByRole('searchbox', { name: 'Search templates' }), 'Example{Enter}');
+  await user.type(screen.getByRole('searchbox', { name: 'Search projects' }), 'Example{Enter}');
   await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/templates?q=Example', expect.anything()));
   expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
-  await user.click(screen.getByRole('switch', { name: 'Archived templates' }));
+  await user.click(screen.getByRole('switch', { name: 'Archived projects' }));
   await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/templates?archived=true&q=Example', expect.anything()));
   await user.click(screen.getByRole('button', { name: 'Clear search' }));
   await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/templates?archived=true', expect.anything()));
@@ -69,14 +69,14 @@ test('recovers from list errors and explains empty search results', async () => 
   const retry = await screen.findByRole('button', { name: 'Retry' });
   fail = false;
   await user.click(retry);
-  expect(await screen.findByText('No templates yet.')).toBeVisible();
-  await user.type(screen.getByRole('searchbox', { name: 'Search templates' }), 'missing{Enter}');
-  expect(await screen.findByText('No templates match your search.')).toBeVisible();
+  expect(await screen.findByText('No projects yet.')).toBeVisible();
+  await user.type(screen.getByRole('searchbox', { name: 'Search projects' }), 'missing{Enter}');
+  expect(await screen.findByText('No projects match your search.')).toBeVisible();
 });
 
 // Templates shows only the current server page and follows the cursor when
 // a user's permitted templates span more than one page.
-test('lists current template revisions and follows the server cursor', async () => {
+test('lists current project revisions and follows the server cursor', async () => {
   globalThis.fetch = jest.fn(async input => {
     const responses: Record<string, unknown> = {
       '/api/v1/session': { user: { id: 'member', role: 'member' }, mode: 'normal', installationState: 'active', permissions: [], csrfToken: 'fixture' },
@@ -96,7 +96,7 @@ test('lists current template revisions and follows the server cursor', async () 
 });
 
 // An installation default is preselected and saved when creating a template.
-test('uses the installation platform default for a new template', async () => {
+test('uses the installation platform default for a new project', async () => {
   const fetch = jest.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
     if (path === '/api/v1/session') return json({ ...session, permissions: ['template.create'] });
     if (path === '/api/v1/templates/catalog') return json({
@@ -110,21 +110,21 @@ test('uses the installation platform default for a new template', async () => {
   globalThis.fetch = fetch;
   const user = userEvent.setup();
   render(<Providers><Templates /></Providers>);
-  await user.click(await screen.findByRole('button', { name: 'New template' }));
-  const dialog = within(screen.getByRole('dialog', { name: 'New template' }));
+  await user.click(await screen.findByRole('button', { name: 'New project' }));
+  const dialog = within(screen.getByRole('dialog', { name: 'New project' }));
   const image = await dialog.findByRole('combobox', { name: 'Platform image' });
   expect(image).toHaveValue('arm-image');
   await user.type(dialog.getByRole('textbox', { name: /^Name/ }), 'Native project');
   await user.type(dialog.getByRole('textbox', { name: 'Repository URL' }), project.repositoryUrl);
   await user.selectOptions(dialog.getByRole('combobox', { name: 'Resource profile' }), 'profile-id');
-  await user.click(dialog.getByRole('button', { name: 'Create template' }));
+  await user.click(dialog.getByRole('button', { name: 'Create project' }));
   await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/templates', expect.objectContaining({
     method: 'POST', body: expect.stringContaining('"platformArtifactId":"arm-image"'),
   })));
 });
 
 // AWS template authors select only a resource profile; its AMI remains owned and resolved by the profile.
-test('creates an AWS template without selecting or submitting an AMI', async () => {
+test('creates an AWS project without selecting or submitting an AMI', async () => {
   const fetch = jest.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
     if (path === '/api/v1/session') return json({ ...session, permissions: ['template.create'] });
     if (path === '/api/v1/templates/catalog') return json({ providerKind: 'ec2',
@@ -137,14 +137,14 @@ test('creates an AWS template without selecting or submitting an AMI', async () 
   globalThis.fetch = fetch;
   const user = userEvent.setup();
   render(<Providers><Templates /></Providers>);
-  await user.click(await screen.findByRole('button', { name: 'New template' }));
-  const dialog = within(screen.getByRole('dialog', { name: 'New template' }));
+  await user.click(await screen.findByRole('button', { name: 'New project' }));
+  const dialog = within(screen.getByRole('dialog', { name: 'New project' }));
   await dialog.findByRole('combobox', { name: 'Resource profile' });
   expect(dialog.queryByRole('combobox', { name: 'Platform image' })).not.toBeInTheDocument();
   await user.type(dialog.getByRole('textbox', { name: /^Name/ }), 'AWS project');
   await user.type(dialog.getByRole('textbox', { name: 'Repository URL' }), project.repositoryUrl);
   await user.selectOptions(dialog.getByRole('combobox', { name: 'Resource profile' }), 'aws-profile');
-  await user.click(dialog.getByRole('button', { name: 'Create template' }));
+  await user.click(dialog.getByRole('button', { name: 'Create project' }));
   await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/templates', expect.objectContaining({ method: 'POST' })));
   const request = fetch.mock.calls.find(([path, init]) => path === '/api/v1/templates' && init?.method === 'POST');
   expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({ resourceProfileId: 'aws-profile' });

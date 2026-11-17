@@ -3,6 +3,7 @@ import { Alert, Button, Checkbox, NumberInput, Stack, Text, Title } from '@manti
 import { useForm } from '@mantine/form';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
+import { validCapacityLimit } from '../../lib/use-infrastructure';
 
 export function PlatformCheck({ csrfToken, onValidated }: {
   csrfToken: string;
@@ -42,12 +43,10 @@ export function CapacityForm({ csrfToken, version, onSaved }: {
   onSaved: () => Promise<void>;
 }) {
   const [error, setError] = useState<unknown>();
-  const positive = (value: string | number) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
-    ? null : 'Enter a positive whole number.';
   const form = useForm({
     mode: 'uncontrolled',
     initialValues: { cpuCount: '' as string | number, memoryMiB: '' as string | number, diskMiB: '' as string | number },
-    validate: { cpuCount: positive, memoryMiB: positive, diskMiB: positive },
+    validate: { cpuCount: validCapacityLimit, memoryMiB: validCapacityLimit, diskMiB: validCapacityLimit },
   });
   const save = async (values: typeof form.values) => {
     setError(undefined);
@@ -55,7 +54,7 @@ export function CapacityForm({ csrfToken, version, onSaved }: {
       const response = await fetch('/api/v1/admin/capacity', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'If-Match': `"${version}"` },
-        body: JSON.stringify(values),
+        body: JSON.stringify({ cpuCount: Number(values.cpuCount), memoryMiB: Number(values.memoryMiB), diskMiB: Number(values.diskMiB) }),
       });
       if (!response.ok) throw await readProblem(response);
       await onSaved();
@@ -66,14 +65,15 @@ export function CapacityForm({ csrfToken, version, onSaved }: {
   return (
     <Stack>
       <Title order={2}>Workspace capacity</Title>
+      <Text size="sm">Leave a limit blank for Unlimited. No capacity budget is enforced for that resource.</Text>
       {version > 0 ? <Text size="sm">Capacity limits are saved.</Text> : null}
       <form noValidate onSubmit={form.onSubmit(save, errors => form.getInputNode(Object.keys(errors)[0])?.focus())}>
         <Stack>
-          <NumberInput label="vCPU limit" required min={1} allowDecimal={false}
+          <NumberInput label="vCPU limit" placeholder="Unlimited" allowNegative={false} allowDecimal={false}
             key={form.key('cpuCount')} {...form.getInputProps('cpuCount')} />
-          <NumberInput label="Memory limit (MiB)" required min={1} allowDecimal={false}
+          <NumberInput label="Memory limit (MiB)" placeholder="Unlimited" allowNegative={false} allowDecimal={false}
             key={form.key('memoryMiB')} {...form.getInputProps('memoryMiB')} />
-          <NumberInput label="Disk limit (MiB)" required min={1} allowDecimal={false}
+          <NumberInput label="Disk limit (MiB)" placeholder="Unlimited" allowNegative={false} allowDecimal={false}
             key={form.key('diskMiB')} {...form.getInputProps('diskMiB')} />
           {error !== undefined ? <APIProblemView error={error} /> : null}
           <Stack align="flex-start" gap="xs">

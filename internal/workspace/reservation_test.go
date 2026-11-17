@@ -181,6 +181,60 @@ func TestCapacityConcurrentStarts(t *testing.T) {
 	}
 }
 
+// TestUnlimitedCapacityReservations retains accounting while limits are
+// unlimited, so a later finite CPU, memory, or disk budget sees existing usage.
+func TestUnlimitedCapacityReservations(t *testing.T) {
+	for _, profile := range []string{"sqlite", "postgres"} {
+		t.Run(profile, func(t *testing.T) {
+			db := openWorkspaceDatabase(t, profile)
+			seedReservationWorkspaces(t, db, "unlimited-first", "unlimited-second", "unlimited-third")
+			store := NewStore(db)
+			now := time.Unix(10000, 0).UTC()
+			t.Cleanup(func() {
+				if _, err := db.Exec("DELETE FROM capacity_budgets WHERE installation_id=$1", testInstallation); err != nil {
+					t.Errorf("remove unlimited reservations budget fixture: %v", err)
+				}
+			})
+			if err := store.SetCapacityBudget(t.Context(), testInstallation, Allocation{}, 0, "admin", now); err != nil {
+				t.Fatal(err)
+			}
+			reserve := func(id string) error {
+				return database.Transaction(t.Context(), db, func(tx *sql.Tx) error {
+					return ReserveStart(t.Context(), tx, testInstallation, id, 1, now)
+				})
+			}
+			for _, id := range []string{"unlimited-first", "unlimited-second"} {
+				if err := reserve(id); err != nil {
+					t.Fatalf("ReserveStart(%q, unlimited) = %v, want accepted", id, err)
+				}
+				checkReservation(t, db, id, "reserved", "reserved")
+			}
+			for version, test := range []struct {
+				limit    Allocation
+				resource string
+			}{
+				{limit: Allocation{CPU: 4}, resource: "cpu"},
+				{limit: Allocation{MemoryMiB: 2048}, resource: "memory"},
+				{limit: Allocation{DiskMiB: 80}, resource: "disk"},
+			} {
+				if err := store.SetCapacityBudget(t.Context(), testInstallation, test.limit, int64(version+1), "admin", now); err != nil {
+					t.Fatal(err)
+				}
+				var refused *CapacityError
+				if err := reserve("unlimited-third"); !errors.As(err, &refused) || refused.Resource != test.resource {
+					t.Errorf("ReserveStart(third, budget %+v) = %v, want %s refusal", test.limit, err, test.resource)
+				}
+			}
+			if err := store.SetCapacityBudget(t.Context(), testInstallation, Allocation{}, 4, "admin", now); err != nil {
+				t.Fatal(err)
+			}
+			if err := reserve("unlimited-third"); err != nil {
+				t.Errorf("ReserveStart(third, unlimited) = %v, want accepted", err)
+			}
+		})
+	}
+}
+
 func checkReservation(t *testing.T, db *sql.DB, workspace, wantCompute, wantDisk string) {
 	t.Helper()
 	var compute, disk string

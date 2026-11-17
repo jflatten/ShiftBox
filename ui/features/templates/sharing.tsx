@@ -79,7 +79,7 @@ export function TemplateSharing({ template, csrfToken, onClose, refresh }: {
           </> : <Text size="sm">No launch grants.</Text>}
           {template.state !== 'archived' ? <>
             <TextInput label="User ID" value={userID} disabled={busy} onChange={event => setUserID(event.currentTarget.value)} data-autofocus />
-            <Alert color="yellow">Authorized workspace code can retrieve project secrets when this user launches from the template.</Alert>
+            <Alert color="yellow">Authorized workspace code can retrieve project secrets when this user launches from the project.</Alert>
             <Checkbox label="I acknowledge project secret access" checked={acknowledged} disabled={busy}
               onChange={event => setAcknowledged(event.currentTarget.checked)} />
           </> : null}

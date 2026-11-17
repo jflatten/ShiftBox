@@ -5,7 +5,7 @@ import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
 
 type Scope = 'user' | 'template' | 'organization';
-const scopeLabels = { user: 'Personal', template: 'Project template', organization: 'Organization' };
+const scopeLabels = { user: 'Personal', template: 'Project', organization: 'Organization' };
 const namePattern = /^[A-Z][A-Z0-9_]{0,126}$/;
 
 interface SecretMetadata {
@@ -92,21 +92,21 @@ export function Secrets({ scope, scopeID, userID, csrfToken, description }: {
 }
 
 function fallbackLabel(scope: Scope, fallback?: Scope) {
-  if (scope === 'user') return fallback === 'organization' ? 'Project template or Organization' : 'Project template, if available';
+  if (scope === 'user') return fallback === 'organization' ? 'Project or Organization' : 'Project, if available';
   return fallback === 'organization' ? 'Organization' : 'None';
 }
 
 function fallbackWarning(scope: Scope, fallback?: Scope) {
   if (scope === 'user') {
     return fallback === 'organization'
-      ? 'An authorized Project template value will take effect where available. Otherwise the Organization value will take effect.'
-      : 'An authorized Project template value will take effect where available. Other workspaces will have no value for this name.';
+      ? 'An authorized Project value will take effect where available. Otherwise the Organization value will take effect.'
+      : 'An authorized Project value will take effect where available. Other workspaces will have no value for this name.';
   }
   return fallback === 'organization'
     ? 'The Organization value will take effect where no Personal override applies.'
     : scope === 'template'
       ? 'Workspaces without a Personal override will have no value for this name.'
-      : 'Workspaces without a Personal or Project template override will have no value for this name.';
+      : 'Workspaces without a Personal or Project override will have no value for this name.';
 }
 
 function SecretDialog({ editor, scope, scopeID, csrfToken, onClose, onSaved }: {

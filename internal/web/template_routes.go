@@ -173,7 +173,7 @@ func resolveTemplateRevision(ctx context.Context, tx *sql.Tx, r *http.Request, _
 
 func loadTemplateResource(ctx context.Context, tx *sql.Tx, id string) (auth.Resource, error) {
 	if !ValidUUID(id) {
-		return auth.Resource{}, Problem{Status: 400, Code: "request.invalid_id", Title: "Invalid template identifier"}
+		return auth.Resource{}, Problem{Status: 400, Code: "request.invalid_id", Title: "Invalid project identifier"}
 	}
 	resource := auth.Resource{Type: "template", ID: id}
 	err := tx.QueryRowContext(ctx, "SELECT owner_user_id,state FROM project_templates WHERE id=$1", id).Scan(&resource.OwnerID, &resource.State)
@@ -191,7 +191,7 @@ func saveTemplate(now func() time.Time, newID func() string) func(context.Contex
 		}
 		if !ValidUUID(intent.Input.ProfileID) || intent.Input.ArtifactID != "" && !ValidUUID(intent.Input.ArtifactID) ||
 			intent.Input.NetworkPolicyID != "" && !ValidUUID(intent.Input.NetworkPolicyID) {
-			return nil, Problem{Status: 400, Code: "template.invalid_input", Title: "Check the template settings"}
+			return nil, Problem{Status: 400, Code: "template.invalid_input", Title: "Check the project settings"}
 		}
 		key, err := IdempotencyKey(r)
 		if err != nil {
@@ -212,13 +212,13 @@ func saveTemplate(now func() time.Time, newID func() string) func(context.Contex
 		view, err := template.Save(ctx, tx, intent, now())
 		switch {
 		case errors.Is(err, template.ErrInvalidInput):
-			return nil, Problem{Status: 400, Code: "template.invalid_input", Title: "Check the template settings"}
+			return nil, Problem{Status: 400, Code: "template.invalid_input", Title: "Check the project settings"}
 		case errors.Is(err, template.ErrUnavailable):
-			return nil, Problem{Status: 409, Code: "template.unavailable", Title: "The template or its launch configuration is unavailable"}
+			return nil, Problem{Status: 409, Code: "template.unavailable", Title: "The project or its launch configuration is unavailable"}
 		case errors.Is(err, template.ErrRequestConflict):
 			return nil, Problem{Status: 409, Code: "request.idempotency_conflict", Title: "This request identifier was already used for a different change"}
 		case errors.Is(err, template.ErrVersionMismatch):
-			return nil, Problem{Status: 412, Code: "request.version_mismatch", Title: "Refresh the template before creating a revision"}
+			return nil, Problem{Status: 412, Code: "request.version_mismatch", Title: "Refresh the project before creating a revision"}
 		case err != nil:
 			return nil, err
 		}
@@ -240,7 +240,7 @@ func listTemplates(ctx context.Context, tx *sql.Tx, r *http.Request, p auth.Prin
 	cursor, archived := query.Get("cursor"), query.Get("archived")
 	search := strings.TrimSpace(query.Get("q"))
 	if cursor != "" && !ValidUUID(cursor) || archived != "" && archived != "true" && archived != "false" || len(search) > 200 {
-		return nil, Problem{Status: 400, Code: "request.invalid_filter", Title: "Check the template filters"}
+		return nil, Problem{Status: 400, Code: "request.invalid_filter", Title: "Check the project filters"}
 	}
 	admin := p.User.Role == "administrator"
 	state := "active"

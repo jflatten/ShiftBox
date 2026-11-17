@@ -489,6 +489,43 @@ test('Infrastructure categories preserve drafts and warnings on a narrow screen'
   await expect(page.getByRole('textbox', { name: 'Target release ID' })).toHaveValue('draft-release');
 });
 
+// Clearing individual budgets must show Unlimited after saving and reloading,
+// while a finite memory limit remains configured.
+test('blank capacity limits persist as Unlimited', async ({ page }) => {
+  let capacity = { ...resources };
+  let version = 1;
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) return route.fulfill({ json: admin(['infrastructure.view', 'infrastructure.manage']) });
+    if (path.endsWith('/workspaces')) return route.fulfill({ json: { items: [] } });
+    if (path.endsWith('/resource-profiles')) return route.fulfill({ json: [] });
+    if (path.endsWith('/infrastructure')) return route.fulfill({ json: {
+      provider: { name: 'utm', version: 'fixture', architecture: 'amd64' }, capacity, version, conditions: [],
+    } });
+    if (path.endsWith('/capacity') && route.request().method() === 'PUT') {
+      expect(route.request().headers()['if-match']).toBe('"1"');
+      capacity = route.request().postDataJSON();
+      expect(capacity).toEqual({ cpuCount: 0, memoryMiB: 1024, diskMiB: 0 });
+      version++;
+      return route.fulfill({ status: 204 });
+    }
+  });
+  await page.goto('/infrastructure/');
+  await expect(page.getByRole('tab', { name: 'Platform' })).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('textbox', { name: 'CPU limit' }).fill('');
+  await page.getByRole('textbox', { name: 'Disk limit (MiB)' }).fill('');
+  await page.getByRole('button', { name: 'Save capacity budget' }).click();
+  await expect(page.getByText('Capacity budget saved.', { exact: true })).toBeVisible();
+  await page.reload();
+  for (const name of ['CPU limit', 'Disk limit (MiB)']) {
+    const field = page.getByRole('textbox', { name });
+    await expect(field).toHaveValue('');
+    await expect(field).toHaveAttribute('placeholder', 'Unlimited');
+    await expect(field).not.toHaveAttribute('required');
+  }
+  await expect(page.getByRole('textbox', { name: 'Memory limit (MiB)' })).toHaveValue('1024');
+  await expect(page.getByRole('button', { name: 'Save capacity budget' })).toBeDisabled();
+});
+
 // People dialogs start on Cancel. The keyboard reaches the stop operation
 // and can acknowledge the one-time password before closing the reset dialog.
 test('offboarding and administrator password reset', async ({ page }) => {
@@ -616,7 +653,7 @@ for (const [heading, action, endpoint, fields] of [
 
 // Template authors pick readable catalog names while the request retains
 // the resource profile and platform artifact identifiers.
-test('creates a template with named catalog choices', async ({ page }) => {
+test('creates a project with named catalog choices', async ({ page }) => {
   let submitted: Record<string, string> | undefined;
   await fixture(page, (route, path) => {
     if (path.endsWith('/session')) return route.fulfill({ json: admin(['template.create']) });
@@ -631,22 +668,22 @@ test('creates a template with named catalog choices', async ({ page }) => {
     if (path.endsWith('/templates')) return route.fulfill({ json: { items: [] } });
   });
   await page.goto('/templates/');
-  await activate(page, page.getByRole('button', { name: 'New template' }));
-  const dialog = page.getByRole('dialog', { name: 'New template' });
+  await activate(page, page.getByRole('button', { name: 'New project' }));
+  const dialog = page.getByRole('dialog', { name: 'New project' });
   await enter(page, dialog.getByRole('textbox', { name: 'Name', exact: true }), 'Catalog fixture');
   await enter(page, dialog.getByRole('textbox', { name: 'Repository URL' }), 'https://github.com/example/project');
   await dialog.getByRole('combobox', { name: 'Resource profile' }).selectOption({ label: 'Small' });
   await dialog.getByRole('combobox', { name: 'Platform image' }).selectOption({ label: 'Ubuntu 24.04' });
-  await activate(page, dialog.getByRole('button', { name: 'Create template' }));
+  await activate(page, dialog.getByRole('button', { name: 'Create project' }));
   await expect(dialog).toBeHidden();
   expect(submitted).toMatchObject({ resourceProfileId: 'profile-fixture', platformArtifactId: 'artifact-fixture' });
 });
 
 // Template details and action dialogs remain reachable on narrow screens;
 // cancel returns focus to the menu trigger, and removing a row has a stable target.
-test('template inventory keyboard dialogs and archive focus', async ({ page }) => {
+test('project inventory keyboard dialogs and archive focus', async ({ page }) => {
   let archived = false;
-  const project = { id: templateID, name: 'Keyboard template', ownerId: 'admin', ownerName: 'Template author',
+  const project = { id: templateID, name: 'Keyboard project', ownerId: 'admin', ownerName: 'Project author',
     currentRevision: 2, version: 4, state: 'active', repositoryUrl: 'https://github.com/example/project',
     devcontainerPath: '.devcontainer/devcontainer.json', resourceProfileName: 'Small', platformImageName: 'Ubuntu release', secretNames: [] };
   await fixture(page, (route, path) => {
@@ -658,20 +695,20 @@ test('template inventory keyboard dialogs and archive focus', async ({ page }) =
     if (path.endsWith('/templates')) return route.fulfill({ json: { items: archived ? [] : [project] } });
   });
   await page.goto('/templates/');
-  const details = page.getByRole('button', { name: 'View Keyboard template' });
+  const details = page.getByRole('button', { name: 'View Keyboard project' });
   await activate(page, details);
-  await expect(page.getByRole('dialog', { name: 'Template details' })).toContainText('Small');
+  await expect(page.getByRole('dialog', { name: 'Project details' })).toContainText('Small');
   await activate(page, page.getByRole('button', { name: 'Done', exact: true }));
   await expect(details).toBeFocused();
-  const actions = page.getByRole('button', { name: 'Actions for Keyboard template' });
+  const actions = page.getByRole('button', { name: 'Actions for Keyboard project' });
   await activate(page, actions);
   await expect(page.getByRole('menu').locator('[data-autofocus]')).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(page.getByRole('menuitem', { name: 'New revision' })).toBeFocused();
   await page.keyboard.press('End');
-  await expect(page.getByRole('menuitem', { name: 'Archive template' })).toBeFocused();
+  await expect(page.getByRole('menuitem', { name: 'Archive project' })).toBeFocused();
   await page.keyboard.press('Enter');
-  const dialog = page.getByRole('dialog', { name: 'Archive template' });
+  const dialog = page.getByRole('dialog', { name: 'Archive project' });
   await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(actions).toBeFocused();
@@ -681,9 +718,9 @@ test('template inventory keyboard dialogs and archive focus', async ({ page }) =
   await expect(page.getByRole('menuitem', { name: 'New revision' })).toBeFocused();
   await page.keyboard.press('End');
   await page.keyboard.press('Enter');
-  await activate(page, dialog.getByRole('button', { name: 'Archive template' }));
-  await expect(page.getByText('No templates yet.')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Templates', exact: true })).toBeFocused();
+  await activate(page, dialog.getByRole('button', { name: 'Archive project' }));
+  await expect(page.getByText('No projects yet.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeFocused();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 

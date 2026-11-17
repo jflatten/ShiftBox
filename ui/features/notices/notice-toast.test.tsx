@@ -9,7 +9,7 @@ const session = { user: { id: 'member' }, role: 'member' as const, mode: 'normal
   csrfToken: 'fixture', permissions: ['notice.list', 'notice.read', 'notice.dismiss'] };
 const notices = [
   { id: 'one', title: 'Maintenance tonight', body: 'Save your work.', severity: 'warning' },
-  { id: 'two', title: 'New templates', body: 'Explore the catalog.', severity: 'info' },
+  { id: 'two', title: 'New projects', body: 'Explore the catalog.', severity: 'info' },
 ];
 const json = (data: unknown) => ({ ok: true, status: 200, headers: new Headers(), json: async () => data }) as Response;
 
@@ -30,10 +30,10 @@ test('shows one app-wide toast and persists dismissal', async () => {
   const user = userEvent.setup();
   render(<Providers><ShiftBoxShell session={session} alerts={[]}><h1>Workspaces</h1></ShiftBoxShell></Providers>);
   expect(await screen.findByText('Maintenance tonight')).toBeVisible();
-  expect(screen.queryByText('New templates')).toBeNull();
+  expect(screen.queryByText('New projects')).toBeNull();
   expect(screen.getByRole('link', { name: 'View notices' })).toHaveAttribute('href', '/notices/');
   await user.click(screen.getByRole('button', { name: 'Dismiss Maintenance tonight' }));
-  expect(await screen.findByText('New templates')).toBeVisible();
+  expect(await screen.findByText('New projects')).toBeVisible();
   expect(states).toEqual(['read', 'dismissed']);
 });
 
@@ -48,7 +48,7 @@ test('keeps the toast when saving dismissal fails', async () => {
   await user.click(await screen.findByRole('button', { name: 'Dismiss Maintenance tonight' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Dismiss Maintenance tonight' })).toBeEnabled());
   expect(screen.getByText('Maintenance tonight')).toBeVisible();
-  expect(screen.queryByText('New templates')).toBeNull();
+  expect(screen.queryByText('New projects')).toBeNull();
   expect(screen.getByText('Unable to complete the request')).toBeVisible();
 });
 

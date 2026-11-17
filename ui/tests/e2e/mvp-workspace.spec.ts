@@ -134,7 +134,7 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
   const marker = `shiftbox-retained-${Date.now()}`;
   let workspaceURL = resumeWorkspaceID ? new URL(`/workspaces/?id=${resumeWorkspaceID}`, managementOrigin).href : '';
 
-  await test.step('Authorize GitHub and create a template', async () => {
+  await test.step('Authorize GitHub and create a project', async () => {
     if (resumeWorkspaceID) return;
     await page.goto(new URL('/account/', managementOrigin).href);
     const connected = page.getByText('GitHub is connected.', { exact: true });
@@ -154,15 +154,15 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
       await expect(connected).toBeVisible({ timeout: startupTimeout });
     }
     await page.goto(new URL('/templates/', managementOrigin).href);
-    await activate(page.getByRole('button', { name: 'New template' }));
-    const form = page.getByRole('dialog', { name: 'New template' });
+    await activate(page.getByRole('button', { name: 'New project' }));
+    const form = page.getByRole('dialog', { name: 'New project' });
     await enter(form.getByRole('textbox', { name: /^Name(?:\s*\*)?$/ }), templateName);
     await enter(form.getByLabel('Repository URL'), fixture.repositoryURL);
     if (fixture.repositoryRef) await enter(form.getByLabel('Repository ref'), fixture.repositoryRef);
     await enter(form.getByLabel('Dev Container configuration'), fixture.devcontainerPath);
     await form.getByRole('combobox', { name: 'Resource profile' }).selectOption(fixture.profileID);
     await form.getByRole('combobox', { name: 'Platform image' }).selectOption(fixture.artifactID);
-    await activate(form.getByRole('button', { name: 'Create template' }));
+    await activate(form.getByRole('button', { name: 'Create project' }));
     await expect(form).toBeHidden({ timeout: 15_000 });
   });
 

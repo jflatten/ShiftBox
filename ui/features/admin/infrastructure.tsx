@@ -7,7 +7,7 @@ import { APIProblemView } from '../../components/api-problem';
 import { ShiftBoxShell } from '../../components/app-shell';
 import { readProblem } from '../../lib/api-problem';
 import { providerLabel } from '../../lib/provider-label';
-import { useInfrastructure, validLimit, type Capacity, type InfrastructureStatus } from '../../lib/use-infrastructure';
+import { capacitySummary, useInfrastructure, validCapacityLimit, type Capacity, type InfrastructureStatus } from '../../lib/use-infrastructure';
 import { SignInChoices } from '../session/sign-in';
 import { useSession } from '../../lib/use-session';
 import { BrowserCertificate } from './browser-certificate';
@@ -67,10 +67,11 @@ export function Infrastructure() {
                       <Title order={2} size="h3" id="capacity-heading">Capacity budget</Title>
                       <Text size="sm" c="dimmed">Set the total resources ShiftBox can reserve across workspaces. These limits are budgets, not live usage.</Text>
                       <Text size="sm" c="dimmed">CPU and memory remain reserved until a confirmed stop. Disk remains allocated until deletion.</Text>
+                      <Text size="sm" c="dimmed">Leave a limit blank for Unlimited. No capacity budget is enforced for that resource.</Text>
                     </Stack>
                     {canManage
                       ? <CapacityBudget status={data} csrfToken={current.csrfToken} refresh={status.refetch} />
-                      : <Text>{data.capacity.cpuCount} vCPU · {data.capacity.memoryMiB} MiB memory · {data.capacity.diskMiB} MiB disk</Text>}
+                      : <Text>{capacitySummary(data.capacity)}</Text>}
                   </Stack>
                 </Paper>
               </> : null}
@@ -91,7 +92,7 @@ export function Infrastructure() {
             <Paper withBorder radius="md" p="lg">
               <Secrets key={current.user.id + current.organizationSecretScopeId} scope="organization" scopeID={current.organizationSecretScopeId}
                 userID={current.user.id} csrfToken={current.csrfToken} />
-              <Text size="sm" c="dimmed" mt="md">Organization values are used when no personal or project-template override applies. Saved secret values cannot be viewed.</Text>
+              <Text size="sm" c="dimmed" mt="md">Organization values are used when no personal or project override applies. Saved secret values cannot be viewed.</Text>
             </Paper>
           </Tabs.Panel> : null}
         </Tabs>
@@ -152,9 +153,13 @@ function CapacityForm({ status, csrfToken, refresh, report }: {
 }) {
   const form = useForm<Record<keyof Capacity, string | number>>({
     mode: 'uncontrolled',
-    initialValues: status.capacity,
+    initialValues: {
+      cpuCount: status.capacity.cpuCount || '',
+      memoryMiB: status.capacity.memoryMiB || '',
+      diskMiB: status.capacity.diskMiB || '',
+    },
     onValuesChange: () => report(undefined, false),
-    validate: { cpuCount: validLimit, memoryMiB: validLimit, diskMiB: validLimit },
+    validate: { cpuCount: validCapacityLimit, memoryMiB: validCapacityLimit, diskMiB: validCapacityLimit },
   });
   const save = async (values: typeof form.values) => {
     report(undefined, false);
@@ -162,7 +167,7 @@ function CapacityForm({ status, csrfToken, refresh, report }: {
       const response = await fetch('/api/v1/admin/capacity', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'If-Match': `"${status.version}"` },
-        body: JSON.stringify(values),
+        body: JSON.stringify({ cpuCount: Number(values.cpuCount), memoryMiB: Number(values.memoryMiB), diskMiB: Number(values.diskMiB) }),
       });
       if (!response.ok) {
         const problem = await readProblem(response);
@@ -183,7 +188,7 @@ function CapacityForm({ status, csrfToken, refresh, report }: {
       <Stack gap="md">
         <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
           {capacityFields.map(({ name, label, description }) => (
-            <NumberInput key={form.key(name)} label={label} description={description} required allowNegative={false} allowDecimal={false}
+            <NumberInput key={form.key(name)} label={label} description={description} placeholder="Unlimited" allowNegative={false} allowDecimal={false}
               disabled={form.submitting} {...form.getInputProps(name)} />
           ))}
         </SimpleGrid>

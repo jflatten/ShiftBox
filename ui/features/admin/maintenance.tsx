@@ -9,7 +9,7 @@ import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
 import { useOperation } from '../../lib/use-operation';
 import type { components } from '../../lib/api-types';
-import type { Capacity } from '../../lib/use-infrastructure';
+import { capacitySummary, type Capacity } from '../../lib/use-infrastructure';
 
 const endpoint = '/api/v1/admin/maintenance';
 const campaignQuery = ['maintenance-campaigns'];
@@ -83,7 +83,7 @@ export function Maintenance({ userId, csrfToken, capacity }: { userId: string; c
       <Title order={2} size="h3">Maintenance</Title>
       <Text size="sm">Schedule guest updates for retained workspaces. The deadline uses your browser’s local time.</Text>
       <Title order={3} size="h4" mt="sm">Affected workspaces</Title>
-      {capacity ? <Text size="sm">Capacity budget · {capacity.cpuCount} vCPU · {capacity.memoryMiB} MiB memory · {capacity.diskMiB} MiB disk</Text> : null}
+      {capacity ? <Text size="sm">Capacity budget · {capacitySummary(capacity)}</Text> : null}
       {workspaces.isPending ? <Text role="status">Loading retained workspaces…</Text> : null}
       {workspaces.isError ? <Group align="flex-start">
         <APIProblemView error={workspaces.error} />

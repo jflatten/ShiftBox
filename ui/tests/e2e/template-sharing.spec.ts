@@ -35,7 +35,7 @@ test.skip(({ browserName }) => browserName !== 'chromium', 'The native sharing j
 // template. Revoke its template launch grant before running this test, and
 // seed an exact workspace.connect_admin resource grant for the administrator.
 // The repository must be private and covered for both fixture GitHub accounts.
-test('shares a template while preserving workspace and guest owner authority', async ({ browser }) => {
+test('shares a project while preserving workspace and guest owner authority', async ({ browser }) => {
   test.setTimeout(12 * 60_000);
   if (resultPath && !isAbsolute(resultPath)) throw new Error('SHIFTBOX_SHARING_RESULT must be an absolute file path');
   const fixture = await readFixture();
@@ -61,7 +61,7 @@ test('shares a template while preserving workspace and guest owner authority', a
     expect(templateList.status()).toBe(200);
     const templates: { items: { id: string; ownerId: string; name: string; currentRevision: number }[] } = await templateList.json();
     const template = templates.items.find(item => item.name === fixture.templateName);
-    if (!template || template.ownerId !== adminSession.user.id) throw new Error('The sharing fixture needs an active template owned by its administrator');
+    if (!template || template.ownerId !== adminSession.user.id) throw new Error('The sharing fixture needs an active project owned by its administrator');
     const templateGrantsAPI = `/api/v1/templates/${template.id}/grants`;
     const assertLaunchDenied = async () => {
       const response = await member.request.post('/api/v1/workspaces', {
@@ -115,7 +115,7 @@ test('shares a template while preserving workspace and guest owner authority', a
       await verifyGuestSecret(memberTerminal, secretKey, values.organization);
       await verifyGuestSecret(memberTerminal, projectOnlyKey, undefined);
 
-      await administrator.getByRole('button', { name: 'Back to templates' }).click();
+      await administrator.getByRole('button', { name: 'Back to projects' }).click();
       await templateAction(administrator, fixture.templateName, 'Share launch access');
       const share = administrator.getByRole('dialog', { name: 'Share launch access' });
       await expect(share.getByText(/authorized workspace code can retrieve project secrets/i)).toBeVisible();
@@ -179,22 +179,22 @@ test('shares a template while preserving workspace and guest owner authority', a
     await test.step('Preserve existing workspace access through archive, then revoke the exact permissions', async () => {
       await member.getByRole('button', { name: `Delete ${secretKey}` }).click();
       const deleteOverride = member.getByRole('dialog', { name: 'Delete secret' });
-      await expect(deleteOverride.getByText(/project template value will take effect/i)).toBeVisible();
+      await expect(deleteOverride.getByText(/project value will take effect/i)).toBeVisible();
       await deleteOverride.getByRole('button', { name: 'Confirm deletion' }).click();
       await expect(deleteOverride).toBeHidden();
       await verifyGuestSecret(memberTerminal, secretKey, values.project);
 
       await administrator.goto('/templates/');
-      await templateAction(administrator, fixture.templateName, 'Archive template');
-      const archive = administrator.getByRole('dialog', { name: 'Archive template' });
+      await templateAction(administrator, fixture.templateName, 'Archive project');
+      const archive = administrator.getByRole('dialog', { name: 'Archive project' });
       await expect(archive.getByText(/existing workspaces, files, and grants are preserved/i)).toBeVisible();
-      await archive.getByRole('button', { name: 'Archive template' }).click();
+      await archive.getByRole('button', { name: 'Archive project' }).click();
       await expect(archive).toBeHidden();
       await expect(templateRow(administrator, fixture.templateName)).toHaveCount(0);
       await assertLaunchDenied();
       await verifyGuestSecret(memberTerminal, projectOnlyKey, values.project);
 
-      await administrator.getByLabel('Archived templates').check();
+      await administrator.getByLabel('Archived projects').check();
       await templateAction(administrator, fixture.templateName, 'Manage launch grants');
       const share = administrator.getByRole('dialog', { name: 'Share launch access' });
       await share.getByRole('button', { name: `Revoke launch access for ${fixture.member.email}` }).click();

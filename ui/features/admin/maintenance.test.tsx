@@ -12,6 +12,18 @@ afterEach(() => {
   else Reflect.deleteProperty(globalThis, 'EventSource');
 });
 
+// Maintenance review must describe uncapped dimensions as Unlimited, since
+// zero allocations would imply that scheduling cannot reserve resources.
+test('shows unlimited capacity dimensions during maintenance review', async () => {
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/workspaces') return { ok: true, json: async () => ({ items: [] }) } as Response;
+    if (input === '/api/v1/admin/maintenance') return { ok: true, json: async () => [] } as Response;
+    throw new Error('unexpected request');
+  });
+  render(<Providers><Maintenance userId="admin" csrfToken="fixture" capacity={{ cpuCount: 0, memoryMiB: 4096, diskMiB: 0 }} /></Providers>);
+  expect(await screen.findByText('Capacity budget · Unlimited CPU · 4096 MiB memory · Unlimited disk')).toBeVisible();
+});
+
 // An administrator supplies a release and an explicit local deadline. The
 // accepted operation is presented using its server-defined steps. Review
 // includes both pages of retained workspaces and their resource requirements.

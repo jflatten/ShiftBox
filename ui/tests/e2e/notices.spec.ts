@@ -8,7 +8,7 @@ for (const width of [1280, 390]) {
     const notices = [
       { id: 'maintenance', title: 'Planned maintenance', body: 'Save your work before tonight’s update. Workspaces will restart.',
         severity: 'warning', effectiveAt: '2026-11-15T10:00:00Z', readAt: null as string | null, dismissedAt: null as string | null },
-      { id: 'templates', title: 'New development templates', body: 'The template catalog now includes updated development environments.',
+      { id: 'templates', title: 'New development projects', body: 'The project catalog now includes updated development environments.',
         severity: 'info', effectiveAt: '2026-11-15T09:00:00Z', readAt: null as string | null, dismissedAt: null as string | null },
     ];
     const receipts: string[] = [];
@@ -53,13 +53,13 @@ for (const width of [1280, 390]) {
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
     expect(bounds!.y).toBeGreaterThanOrEqual(72);
-    await expect(page.getByText('New development templates', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('New development projects', { exact: true })).toHaveCount(0);
     await banner.getByRole('button', { name: 'Dismiss Planned maintenance' }).focus();
     await page.keyboard.press('Enter');
-    await expect(banner.getByText('New development templates', { exact: true })).toBeVisible();
+    await expect(banner.getByText('New development projects', { exact: true })).toBeVisible();
     expect(receipts).toEqual(['read', 'dismissed']);
     await page.reload();
-    await expect(banner.getByText('New development templates', { exact: true })).toBeVisible();
+    await expect(banner.getByText('New development projects', { exact: true })).toBeVisible();
     await expect(page.getByText('Planned maintenance', { exact: true })).toHaveCount(0);
     await banner.getByRole('link', { name: 'View notices' }).click();
     await expect(page.getByRole('heading', { name: 'Notices', exact: true })).toBeVisible();

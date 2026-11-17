@@ -162,7 +162,7 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 			return operation.Operation{}, err
 		}
 		if guestRelease == "" || (guestRelease != currentGuest && guestRelease != previousGuest) {
-			return operation.Operation{}, Problem{Status: 409, Code: "workspace.platform_incompatible", Title: "The template's platform release is incompatible with this controller"}
+			return operation.Operation{}, Problem{Status: 409, Code: "workspace.platform_incompatible", Title: "The project's platform release is incompatible with this controller"}
 		}
 		if !caps.SupportsArchitecture(architecture) || !slices.Contains(policy.Protocols, protocol) {
 			return operation.Operation{}, launchCapabilityProblem()
@@ -204,7 +204,7 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 }
 
 func templateLaunchUnavailable() Problem {
-	return Problem{Status: 409, Code: "workspace.template_unavailable", Title: "The template's profile or platform release is unavailable"}
+	return Problem{Status: 409, Code: "workspace.template_unavailable", Title: "The project's profile or platform release is unavailable"}
 }
 
 func launchAdmissionProblem(err error) error {
@@ -223,5 +223,5 @@ func launchAdmissionProblem(err error) error {
 }
 
 func launchCapabilityProblem() Problem {
-	return Problem{Status: 409, Code: "workspace.capability_unavailable", Title: "The provider cannot launch this template"}
+	return Problem{Status: 409, Code: "workspace.capability_unavailable", Title: "The provider cannot launch this project"}
 }

@@ -67,7 +67,7 @@ export default function Account() {
           </Paper> : null}
           {canManageSecrets ? <Paper withBorder radius="md" p="lg" component="section" aria-label="Personal secrets">
             <Secrets key={current.user.id} scope="user" scopeID={current.user.id} userID={current.user.id} csrfToken={current.csrfToken}
-              description="Personal secrets override project template and organization values for your workspaces. Workspace code can retrieve these values; saved values cannot be viewed here." />
+              description="Personal secrets override project and organization values for your workspaces. Workspace code can retrieve these values; saved values cannot be viewed here." />
           </Paper> : null}
         </> : null}
       </Stack>

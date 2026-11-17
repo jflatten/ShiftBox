@@ -15,14 +15,16 @@ interface AuditEvent {
   action: string; resourceType: string; resourceId?: string; outcome: string; reasonCode?: string;
 }
 interface Person { id: string; displayName?: string | null; primaryEmail?: string }
-const words = (value: string) => value.replace(/[._-]+/g, ' ').replace(/^./, letter => letter.toUpperCase());
+const words = (value: string) => value.replace(/[._-]+/g, ' ')
+  .replace(/\b(?:project )?templates?\b/g, term => term.endsWith('s') ? 'projects' : 'project')
+  .replace(/^./, letter => letter.toUpperCase());
 const actionLabels: Record<string, string> = {
   'session.change_password': 'Change password', 'session.external_reauthorize': 'Renew external authorization',
   'user.create': 'Create user', 'user.approve': 'Approve user', 'user.disable': 'Disable user',
   'user.change_role': 'Change user role', 'user.reset_password': 'Reset user password',
   'workspace.launch': 'Launch workspace', 'workspace.start': 'Start workspace', 'workspace.stop': 'Stop workspace',
   'workspace.delete': 'Delete workspace', 'workspace.rebuild': 'Rebuild workspace', 'workspace.repair': 'Repair workspace',
-  'template.create': 'Create template', 'template.archive': 'Archive template',
+  'template.create': 'Create project', 'template.archive': 'Archive project',
 };
 const actionLabel = (action: string) => actionLabels[action] ?? words(action);
 const outcomeColor = (outcome: string) => ['denied', 'failed', 'rejected'].includes(outcome) ? 'red'

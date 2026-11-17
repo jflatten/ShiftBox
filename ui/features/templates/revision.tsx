@@ -81,7 +81,7 @@ export function TemplateRevisionForm({ template, csrfToken, onClose, refresh, ad
   }
 
   return (
-    <Modal opened title={template ? 'New revision' : 'New template'} onClose={onClose}
+    <Modal opened title={template ? 'New revision' : 'New project'} onClose={onClose}
       closeOnEscape={!form.submitting} closeOnClickOutside={!form.submitting}
       withCloseButton={!form.submitting} transitionProps={{ duration: 0 }}>
       <form onSubmit={form.onSubmit(save)}>
@@ -114,9 +114,9 @@ export function TemplateRevisionForm({ template, csrfToken, onClose, refresh, ad
           {error !== undefined ? <APIProblemView error={error} /> : null}
           <Group justify="flex-end">
             <Button variant="default" disabled={form.submitting} onClick={onClose}>Cancel</Button>
-            {stale ? <Button onClick={async () => { await refresh(); onClose(); }}>Refresh templates</Button>
+            {stale ? <Button onClick={async () => { await refresh(); onClose(); }}>Refresh projects</Button>
               : <Button type="submit" loading={form.submitting} disabled={!catalog.isSuccess || !profiles.length || (!ec2 && !images.length)}>
-                {template ? 'Save revision' : 'Create template'}
+                {template ? 'Save revision' : 'Create project'}
               </Button>}
           </Group>
         </Stack>

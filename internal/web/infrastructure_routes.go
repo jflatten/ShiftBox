@@ -232,8 +232,10 @@ func ApplyCapacityBudget(ctx context.Context, tx *sql.Tx, r *http.Request, insta
 	if err := DecodeJSON(nil, r, &input, 4096); err != nil {
 		return nil, err
 	}
-	if !input.positive() {
-		return nil, Problem{Status: 400, Code: "infrastructure.invalid_capacity", Title: "Enter positive capacity limits"}
+	// Zero removes enforcement for a budget dimension; workspace allocations
+	// and resource profiles still require positive resources.
+	if input.CPUCount < 0 || input.MemoryMiB < 0 || input.DiskMiB < 0 || int64(int(input.CPUCount)) != input.CPUCount {
+		return nil, Problem{Status: 400, Code: "infrastructure.invalid_capacity", Title: "Enter nonnegative whole capacity limits; zero means Unlimited"}
 	}
 	err = workspace.SetCapacityBudgetInTx(ctx, tx, installation, input.allocation(), version, actor, now)
 	if errors.Is(err, workspace.ErrCapacityConflict) {
