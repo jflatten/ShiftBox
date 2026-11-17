@@ -54,8 +54,26 @@ At the user's request, launched `groundtruth-single-boot` from `groundtruth - la
 - EBS volume `vol-0bc7e3e85f2f51764` is encrypted gp3, 32 GiB, and in use.
 - Provisioning, authenticated guest enrollment, container setup, and IDE readiness completed. The workspace displayed Running and a healthy code-server probe, with Open IDE enabled.
 
-The requested workspace remains running for the user. No disposable diagnostic resources were created. This check confirms the selected AMI and readiness; it does not independently recount kernel boots or replay the enrollment proof.
+The requested workspace was retained for the user's IDE review, then removed in T030 after the user confirmed verification. No disposable diagnostic resources were created. This check confirms the selected AMI and readiness; it does not independently recount kernel boots or replay the enrollment proof.
 
 Workspace URL: <https://shiftbox.demo.shiftbox.internal:8443/workspaces/?id=baa31673-6496-4b13-985b-4d5ba20ea77f>.
 
 Redacted EC2 evidence and the ready-state screenshot are under `.cache/aws-demo/ami-profile-schema33/groundtruth-launch-instance.json` and `.cache/aws-demo/ami-profile-schema33/groundtruth-single-boot-workspace.jpg`.
+
+## T030: Cleanup after human IDE verification
+
+On November 17, 2026, the user confirmed IDE verification and requested cleanup. Deleted `groundtruth-single-boot` through ShiftBox's normal deletion workflow. The UI reported Deleted and completed graceful shutdown, stopped-state verification, and retained-file deletion.
+
+Independent AWS checks confirmed:
+
+- Instance `i-0b589ed3f65ba6b26` is terminated.
+- Root EBS volume `vol-0bc7e3e85f2f51764` is absent.
+- Network interface `eni-0de3ea8d71fd87299` is absent.
+- Both schema 33 backup/migration task definitions are inactive; their Terraform state contains no managed resources.
+- Temporary migration image `sha256:786bcbfdc69204b28a8a96bd943105537c3cd1a07b81bcd087d2388d802d610d` is absent from ECR.
+- The existing `groundtruth` instance `i-0ec0e862c0ed5a3ac` remains stopped.
+- Controller and PostgreSQL each have one desired and running task and report `COMPLETED`.
+
+The shared verified AMI, updated resource profiles, templates, deployed controller image, and protected management backup remain in place. The disposable profile used in T025 was already deleted. No temporary change-specific compute, volume, network interface, active helper task definition, or helper image remains.
+
+Cleanup evidence is local under `.cache/aws-demo/ami-profile-schema33/cleanup-final.json` and `review-workspace-deleted.jpg`.
