@@ -52,6 +52,20 @@ Every implementation task starts with a small, commented test or an applicable e
 
 - [ ] T019 Execute one live private deployment acceptance run using `specs/002-aws-ec2-provider/quickstart.md` and `tests/release/`, covering protected setup, persistent state after task and host replacement, private IDE, retained files, expired trust, verified delete, task-role isolation and no Terraform ownership drift. Record any unsupported path.
 
+## EC2 resource profiles
+
+- [x] T020 List compatible EC2 types offered in the workspace Availability Zone, derive compute from the selected type, require an administrator-selected AMI for its architecture, and pin the type, AMI, and independently configured EBS disk through launch and reconciliation. Preserve existing EC2 and UTM profiles. Verified locally with the Go and UI suites, SQLite and PostgreSQL upgrade tests, and an exported Chrome fixture.
+  - [x] Verify an encrypted management backup, apply PostgreSQL schema 31, and deploy `shiftbox-demo-controller:13` in `us-east-2`.
+  - [x] Verify live EC2 profile creation, persistence, editing, enable and disable, and deletion. Confirm AWS-derived compute, independent EBS sizing and validation, and preservation of the existing `t3.medium` profile.
+
+- [x] T021 Validate EC2 instance identity with a challenge-bound STS request, implement single-boot enrollment for new EC2 workspaces, and verify boot count and replay rejection on `shiftbox-demo`.
+  - [x] Verify that regional STS returns the built-in EC2 role for the exact disposable instance and rejects a modified signed challenge.
+  - [x] Implement the opt-in single-boot flow, durable nonce consumption and key-bound grants. Test concurrent replay, mismatched instance, cancellation, expiry, lost grant response and lost EC2 launch response locally.
+  - [x] Apply verified PostgreSQL schema 32, publish candidate AMI `ami-0eea624c1e5701eb3`, and deploy validation controller revision `16`. Verify both ECS services reach `COMPLETED` and the demo login endpoint responds over verified TLS.
+  - [x] Register the candidate AMI, launch `single-boot-review`, and verify one kernel boot, one `RunInstances` event and rejection of the exact successful proof replay. Deploy final controller revision `17`, verify its digest and both ECS services reach `COMPLETED`, and remove the temporary registration page. Record results and the interactive IDE verification limitation in `documentation/validation/ec2-single-boot.md`.
+
+- [x] T022 Diagnose and fix IDE WebSocket failures on `shiftbox-demo`, deploy on `feature/mvp`, and verify opening the IDE, terminal commands, editing, saving and reconnecting in `single-boot-review`.
+
 ## Dependencies & Execution Order
 
 - Setup T001, T002 and T003 can run in separate worktrees or subagents because their build paths are independent.

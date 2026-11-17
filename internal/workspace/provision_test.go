@@ -21,7 +21,7 @@ func TestProvisionRecoversLostCreateReply(t *testing.T) {
 }
 
 // TestProvisionReconcilesInertEC2Boot verifies that an observed initial EC2
-// boot reenters Create to confirm the launch and stop the instance.
+// boot reenters Create with the pinned EC2 type and disk before stopping the instance.
 func TestProvisionReconcilesInertEC2Boot(t *testing.T) {
 	testProvisionRecoversLostCreateReply(t, true)
 }
@@ -32,12 +32,26 @@ func testProvisionRecoversLostCreateReply(t *testing.T, ec2 bool) {
 	db := openWorkspaceDatabase(t, "sqlite")
 	seedReservationWorkspaces(t, db)
 	t.Cleanup(func() {
-		if _, err := db.Exec("DELETE FROM guest_registrations; DELETE FROM provider_resources; DELETE FROM reservations; DELETE FROM workspaces"); err != nil {
+		if _, err := db.Exec("DELETE FROM guest_registrations; DELETE FROM provider_resources; DELETE FROM reservations; DELETE FROM workspaces; DELETE FROM platform_artifacts WHERE id='ec2-fixture'"); err != nil {
 			t.Errorf("clean up provision fixture: %v", err)
 		}
 	})
 	now := time.Now()
 	allocation := Allocation{CPU: 2, MemoryMiB: 1024, DiskMiB: 40}
+	kind, artifact := "utm", "reservation-artifact"
+	if ec2 {
+		kind, artifact = "ec2", "ec2-fixture"
+		allocation = Allocation{InstanceType: "m6i.xlarge", CPU: 4, MemoryMiB: 16384, DiskMiB: 65536}
+		if _, err := db.ExecContext(ctx, `INSERT INTO platform_artifacts
+			(id,release_id,architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,
+			 manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state,provider_kind,ec2_image_json)
+			SELECT $1,'ec2-release',architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,
+			 manifest_json,manifest_sha256,'ami-fixture',imported_by,imported_at,state,'ec2','{}'
+			FROM platform_artifacts WHERE id='reservation-artifact'`, artifact); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	if err := NewStore(db).SetCapacityBudget(ctx, testInstallation, allocation, 0, "reservation-owner", now); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +62,7 @@ func testProvisionRecoversLostCreateReply(t *testing.T, ec2 bool) {
 		var err error
 		op, err = AdmitLaunch(ctx, tx, journal, LaunchIntent{
 			InstallationID: testInstallation, WorkspaceID: id, OwnerID: "reservation-owner",
-			TemplateID: "template", TemplateRevision: 1, ArtifactID: "reservation-artifact",
+			TemplateID: "template", TemplateRevision: 1, ArtifactID: artifact, ProviderKind: kind,
 			RequestKey: "test-provision-key", NetworkPolicyJSON: `{"mode":"nat"}`,
 			RepositoryURL: "https://github.com/example/repo", DevcontainerPath: ".devcontainer/devcontainer.json",
 			Allocation: allocation, OwnershipMarker: "owned",
@@ -98,6 +112,16 @@ func testProvisionRecoversLostCreateReply(t *testing.T, ec2 bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if ec2 {
+		want := provider.Resources{InstanceType: "m6i.xlarge", CPU: 4, MemoryBytes: 16 << 30, DiskBytes: 64 << 30}
+		if got.Effective != want {
+			t.Fatalf("provisioned EC2 resources = %+v; want %+v", got.Effective, want)
+		}
+		if _, err := db.ExecContext(ctx, "UPDATE workspaces SET instance_type='t3.medium' WHERE id=$1", id); err == nil {
+			t.Fatal("workspace launch snapshot permitted an instance type change")
+		}
+	}
+
 	got.Resources = got.Resources[:2]
 	req := provider.CreateRequest{Ref: ref, ArtifactID: got.ArtifactID, Release: got.Release,
 		NetworkMode: got.NetworkMode, Resources: got.Effective}

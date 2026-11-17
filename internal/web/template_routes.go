@@ -57,7 +57,7 @@ func TemplateCatalogHandler(db *sql.DB, origin string, now func() time.Time, pol
 }
 
 func templateCatalogProfiles(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunchPolicy) ([]templateCatalogChoice, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib FROM resource_profiles
+	rows, err := tx.QueryContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib,instance_type FROM resource_profiles
 		WHERE enabled=1 ORDER BY name,id`)
 	if err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ func templateCatalogProfiles(ctx context.Context, tx *sql.Tx, policy WorkspaceLa
 	for rows.Next() {
 		var item templateCatalogChoice
 		var allocation workspace.Allocation
-		if err := rows.Scan(&item.ID, &item.Name, &allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB, &allocation.InstanceType); err != nil {
 			return nil, err
 		}
 		if _, err := workspace.ProfileResources(allocation, policy.Capabilities); err == nil {
@@ -85,7 +85,7 @@ func launchProviderKind(caps provider.Capabilities) string {
 }
 
 func templateCatalogImages(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunchPolicy) ([]templateCatalogChoice, string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.release_id,a.protocol_version,a.architecture,a.is_default,a.provider_kind FROM platform_artifacts a
+	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.release_id,a.protocol_version,a.architecture,a.is_default,a.provider_kind,a.ec2_image_json FROM platform_artifacts a
 		CROSS JOIN installations i WHERE i.singleton=1 AND a.state='available' AND a.provider_kind=$1
 		AND a.guest_release IN (i.active_release,i.min_guest_release) ORDER BY a.release_id,a.id`, launchProviderKind(policy.Capabilities))
 	if err != nil {
@@ -96,10 +96,13 @@ func templateCatalogImages(ctx context.Context, tx *sql.Tx, policy WorkspaceLaun
 	var defaultID string
 	for rows.Next() {
 		var item templateCatalogChoice
-		var protocol, architecture string
+		var protocol, architecture, image string
 		var isDefault int
-		if err := rows.Scan(&item.ID, &item.Name, &protocol, &architecture, &isDefault, &item.ProviderKind); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &protocol, &architecture, &isDefault, &item.ProviderKind, &image); err != nil {
 			return nil, "", err
+		}
+		if item.ProviderKind == "ec2" && !ec2ImageVerified(policy.EC2VerifiedAMIs, image) {
+			continue
 		}
 		if policy.Capabilities.SupportsArchitecture(architecture) && slices.Contains(policy.Protocols, protocol) {
 			choices = append(choices, item)

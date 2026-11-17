@@ -57,48 +57,74 @@ func EnrollAgent(ctx context.Context, directory string, input io.Reader, protoco
 	if err != nil {
 		return AgentIdentity{}, err
 	}
-	body, err := json.Marshal(map[string]string{
-		"grant": seed.Grant, "protocolVersion": protocol, "guestRelease": release,
-		"csrPem": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr})),
-	})
+	client, err := enrollmentClient(seed.CAPEM)
 	if err != nil {
 		return AgentIdentity{}, err
 	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM([]byte(seed.CAPEM)) {
-		return AgentIdentity{}, ErrInvalidEnrollmentSeed
+	defer client.CloseIdleConnections()
+	certificate, err := requestAgentCertificate(ctx, client, seed.Endpoint, seed.Grant, protocol, release, csr)
+	if err != nil {
+		return AgentIdentity{}, err
 	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}}
-	defer transport.CloseIdleConnections()
-	client := http.Client{
-		Transport: transport, Timeout: 15 * time.Second,
+	record := agentIdentityFile{CertificatePEM: certificate, KeyPEM: keyPEM, CAPEM: seed.CAPEM, PollEndpoint: seed.PollEndpoint}
+	return persistAgentEnrollment(directory, keyPath, record, now)
+}
+
+func enrollmentClient(ca string) (*http.Client, error) {
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(ca)) {
+		return nil, ErrInvalidEnrollmentSeed
+	}
+	client := &http.Client{
+		Transport:     &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}},
+		Timeout:       20 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, seed.Endpoint, bytes.NewReader(body))
+	return client, nil
+}
+
+func requestAgentCertificate(ctx context.Context, client *http.Client, endpoint, grant, protocol, release string, csr []byte) (string, error) {
+	input := map[string]string{"grant": grant, "protocolVersion": protocol, "guestRelease": release,
+		"csrPem": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr}))}
+	var result struct {
+		ProtocolVersion string `json:"protocolVersion"`
+		CertificatePEM  string `json:"certificatePem"`
+	}
+	if err := postEnrollmentJSON(ctx, client, endpoint, input, &result); err != nil {
+		return "", err
+	}
+	if result.ProtocolVersion != protocol {
+		return "", errors.New("invalid guest enrollment response")
+	}
+	return result.CertificatePEM, nil
+}
+
+func postEnrollmentJSON(ctx context.Context, client *http.Client, endpoint string, input, result any) error {
+	body, err := json.Marshal(input)
 	if err != nil {
-		return AgentIdentity{}, ErrInvalidEnrollmentSeed
+		return err
+	}
+	defer clear(body)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return ErrInvalidEnrollmentSeed
 	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
-			return AgentIdentity{}, ctx.Err()
+			return ctx.Err()
 		}
-		return AgentIdentity{}, errors.New("guest enrollment HTTPS exchange failed")
+		return errors.New("guest enrollment HTTPS exchange failed")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return AgentIdentity{}, ErrEnrollmentDenied
+		return ErrEnrollmentDenied
 	}
-	var result struct {
-		ProtocolVersion string `json:"protocolVersion"`
-		CertificatePEM  string `json:"certificatePem"`
-	}
-	if err := decodeAgentJSON(response.Body, &result); err != nil || result.ProtocolVersion != protocol {
-		return AgentIdentity{}, errors.New("invalid guest enrollment response")
-	}
+	return decodeAgentJSON(response.Body, result)
+}
 
-	record := agentIdentityFile{CertificatePEM: result.CertificatePEM, KeyPEM: keyPEM, CAPEM: seed.CAPEM, PollEndpoint: seed.PollEndpoint}
+func persistAgentEnrollment(directory, keyPath string, record agentIdentityFile, now time.Time) (AgentIdentity, error) {
 	identity, err := record.identity(now)
 	if err != nil {
 		return AgentIdentity{}, err

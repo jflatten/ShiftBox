@@ -3,8 +3,12 @@ package guest_test
 import (
 	"bufio"
 	"context"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -118,6 +122,33 @@ func TestGuestTunnelHTTP(t *testing.T) {
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Received-Path", r.URL.Path)
 		w.Header().Set("X-Received-Cookie", r.Header.Get("Cookie"))
+		if r.Header.Get("Upgrade") == "websocket" {
+			if r.Host == "slow.ide.test" {
+				<-r.Context().Done()
+				return
+			}
+			if r.Host == "cold.ide.test" {
+				http.Error(w, "WebSocket backend still starting", http.StatusServiceUnavailable)
+				return
+			}
+			if r.Header.Get("Origin") != "https://"+r.Host || r.Header.Get("Sec-WebSocket-Version") != "13" {
+				t.Error("IDE readiness upgrade did not match the browser origin and WebSocket version")
+			}
+			accept := sha1.Sum([]byte(r.Header.Get("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+			value := base64.StdEncoding.EncodeToString(accept[:])
+			if r.Host == "invalid-upgrade.ide.test" {
+				value = "invalid"
+			}
+			conn, buffer, err := http.NewResponseController(w).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer conn.Close()
+			fmt.Fprintf(buffer, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: %s\r\n\r\n", value)
+			buffer.Flush()
+			return
+		}
 		if r.URL.Path == "/" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			switch r.Host {
@@ -250,10 +281,17 @@ func TestGuestTunnelHTTP(t *testing.T) {
 	if err := tunnels.ProbeIDE(ctx, "workspace", 5, "workspace.ide.test"); err == nil {
 		t.Error("ProbeIDE(stale generation) = nil, want denial")
 	}
-	for _, host := range []string{"starting.ide.test", "redirect.ide.test", "oversized.ide.test", "truncated.ide.test"} {
+	// A workbench document alone must not mark a cold or broken WebSocket backend ready.
+	for _, host := range []string{"starting.ide.test", "redirect.ide.test", "oversized.ide.test", "truncated.ide.test", "cold.ide.test", "invalid-upgrade.ide.test"} {
 		if err := tunnels.ProbeIDE(ctx, "workspace", 4, host); err == nil {
 			t.Errorf("ProbeIDE(%s) = nil, want invalid workbench response", host)
 		}
+	}
+	// A slow first upgrade must respect cancellation so the operation can retry.
+	probeCtx, cancelProbe := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancelProbe()
+	if err := tunnels.ProbeIDE(probeCtx, "workspace", 4, "slow.ide.test"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("ProbeIDE(slow upgrade) = %v, want context deadline exceeded", err)
 	}
 	for _, attempt := range []struct {
 		key        string

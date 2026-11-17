@@ -50,6 +50,8 @@ Ed25519 verification key.
 platform/packer/aws/build-image.sh v0.1.0 /path/to/guest-update.pub /path/to/deployment.local.pkrvars.hcl
 ```
 
+Set `GUEST_AGENT_RELEASE` when a new AMI artifact ID must stay within the controller's existing guest release compatibility window. The build uses that value in both the guest binary and the manifest. By default it uses the artifact's release ID.
+
 Packer builds a private AMI, locks the temporary Ubuntu login, disables
 SSH on subsequent boots, and clears build-time machine identity and
 cloud-init history before capture. The output path printed after the

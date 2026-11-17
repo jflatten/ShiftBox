@@ -101,8 +101,10 @@ func TestEC2CatalogPinsValidatedRegionalAMI(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := store.EC2Image(ctx, entry.ID, image.Region, image.AccountID)
-	if err != nil || got != *image {
-		t.Fatalf("lookup validated AMI = %+v, %v, want %+v", got, err, image)
+	want := *image
+	want.Architecture = EC2ReferenceArchitecture
+	if err != nil || got != want {
+		t.Fatalf("lookup validated AMI = %+v, %v, want %+v", got, err, want)
 	}
 	if _, err := store.EC2Image(ctx, entry.ID, "us-east-1", image.AccountID); !errors.Is(err, ErrCatalogConflict) {
 		t.Fatalf("lookup in different region = %v, want catalog conflict", err)

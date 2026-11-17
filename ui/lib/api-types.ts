@@ -1026,9 +1026,7 @@ export interface components {
             };
         };
         InfrastructureStatus: {
-            provider: {
-                [key: string]: unknown;
-            };
+            provider: components["schemas"]["InfrastructureProvider"];
             capacity: components["schemas"]["Resources"];
             conditions: {
                 key: string;
@@ -1038,6 +1036,23 @@ export interface components {
                 detail?: string;
             }[];
             version: number;
+        };
+        InfrastructureProvider: {
+            name: string;
+            version: string;
+            architecture: string;
+            architectures?: string[];
+            networkModes: string[] | null;
+            /** @description EC2 types offered in the configured workspace Availability Zone. */
+            instanceTypes?: {
+                name: string;
+                /** @enum {string} */
+                architecture: "amd64" | "arm64";
+                cpuCount: number;
+                memoryMiB: number;
+            }[];
+            minimumDiskGiB?: number;
+            maximumDiskGiB?: number;
         };
         PlatformArtifactInput: {
             /** @description Absolute path on the controller containing the UTM bundle and manifest.json. */
@@ -1049,19 +1064,31 @@ export interface components {
         } & (unknown | unknown);
         ResourceProfileInput: {
             name: string;
-            cpuCount: number;
-            memoryMiB: number;
+            /** @description CPU count for manually sized providers. */
+            cpuCount?: number;
+            /** @description Memory for manually sized providers. */
+            memoryMiB?: number;
+            /** @description EC2 disk size must be a whole GiB expressed in MiB. */
             diskMiB: number;
-        };
+            /** @description EC2 type offered in the workspace Availability Zone. */
+            instanceType?: string;
+        } | unknown | unknown;
         ResourceProfileUpdate: {
+            name: string;
+            cpuCount?: number;
+            memoryMiB?: number;
+            diskMiB: number;
+            instanceType?: string;
+            enabled: boolean;
+        } | unknown | unknown;
+        ResourceProfile: {
+            id: string;
             name: string;
             cpuCount: number;
             memoryMiB: number;
             diskMiB: number;
+            instanceType?: string;
             enabled: boolean;
-        };
-        ResourceProfile: components["schemas"]["ResourceProfileUpdate"] & {
-            id: string;
             version: number;
         };
         NetworkPolicyInput: {

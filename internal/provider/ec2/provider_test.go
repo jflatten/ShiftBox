@@ -23,7 +23,7 @@ func TestCreateReconcilesLostResponse(t *testing.T) {
 	mock := &lostLaunchAPI{cfg: cfg}
 	p := &Provider{cfg: cfg, client: mock, poll: time.Millisecond, now: time.Now,
 		resolve: func(context.Context, string, string) (Image, error) {
-			return Image{ID: imageID, RootDeviceName: "/dev/sda1"}, nil
+			return Image{ID: imageID, RootDeviceName: "/dev/sda1", Architecture: "amd64"}, nil
 		}}
 	if _, err := p.Create(t.Context(), request); !errors.Is(err, provider.ErrOutcomeUnknown) {
 		t.Fatalf("Create after lost response = %v, want uncertain result", err)
@@ -34,6 +34,37 @@ func TestCreateReconcilesLostResponse(t *testing.T) {
 	}
 	if mock.launches != 1 || mock.stops != 1 || mock.token != launchToken(request) {
 		t.Fatalf("AWS mutations = %d launches and %d stops, want one each with a stable token", mock.launches, mock.stops)
+	}
+}
+
+// TestCreateSelectedShape proves the pinned instance type and EBS size reach AWS
+// and that reconciliation reports the observed disk size.
+func TestCreateSelectedShape(t *testing.T) {
+	resources := provider.Resources{InstanceType: "m6i.xlarge", CPU: 4, MemoryBytes: 16 << 30, DiskBytes: 64 << 30}
+	req := provider.CreateRequest{
+		Ref:         provider.WorkspaceRef{InstallationID: "install", WorkspaceID: "workspace", Generation: 1, OwnershipMarker: "marker"},
+		OperationID: "operation", ArtifactID: "artifact", Release: "release", NetworkMode: NetworkMode, Resources: resources,
+	}
+	cfg := Config{AccountID: "123456789012", SubnetID: "subnet-test", SecurityGroupID: "sg-test", Deployment: "demo"}
+	mock := &lostLaunchAPI{cfg: cfg}
+	p := &Provider{cfg: cfg, client: mock, poll: time.Millisecond, now: time.Now,
+		instanceTypes: map[string]provider.InstanceType{"m6i.xlarge": {Name: "m6i.xlarge", Architecture: "amd64", CPUCount: 4, MemoryMiB: 16384}}}
+	image := Image{ID: "ami-11112222333344445", RootDeviceName: "/dev/sda1", Architecture: "amd64"}
+	wrong := image
+	wrong.Architecture = "arm64"
+	if _, err := p.CreateCandidate(t.Context(), req, wrong); !errors.Is(err, provider.ErrCapabilityUnsupported) || mock.launches != 0 {
+		t.Fatalf("CreateCandidate with mismatched AMI = %v and %d launches; want refusal before AWS mutation", err, mock.launches)
+	}
+	if _, err := p.CreateCandidate(t.Context(), req, image); !errors.Is(err, provider.ErrOutcomeUnknown) {
+		t.Fatalf("CreateCandidate after lost response = %v, want uncertain result", err)
+	}
+	got, err := p.CreateCandidate(t.Context(), req, image)
+	if err != nil || got.Effective != resources || mock.launches != 1 || mock.instance.InstanceType != types.InstanceType("m6i.xlarge") || aws.ToInt32(mock.volume.Size) != 64 {
+		t.Fatalf("CreateCandidate effective = %+v, %v; type/disk = %s/%d; want %+v and one launch", got.Effective, err, mock.instance.InstanceType, aws.ToInt32(mock.volume.Size), resources)
+	}
+	mock.volume.Size = aws.Int32(32)
+	if _, err := p.CreateCandidate(t.Context(), req, image); !errors.Is(err, provider.ErrOutcomeUnknown) {
+		t.Fatalf("CreateCandidate after disk capacity drift = %v, want uncertain result", err)
 	}
 }
 
@@ -59,10 +90,11 @@ func (m *lostLaunchAPI) DescribeInstances(context.Context, *api.DescribeInstance
 func (m *lostLaunchAPI) RunInstances(_ context.Context, input *api.RunInstancesInput, _ ...func(*api.Options)) (*api.RunInstancesOutput, error) {
 	m.launches++
 	m.token = aws.ToString(input.ClientToken)
+	m.userData = aws.ToString(input.UserData)
 	tags := input.TagSpecifications[0].Tags
 	m.instance = &types.Instance{
-		InstanceId: aws.String("i-test"), State: &types.InstanceState{Name: types.InstanceStateNameRunning},
-		InstanceType: types.InstanceTypeT3Medium, ImageId: input.ImageId, Tags: tags, RootDeviceName: aws.String("/dev/sda1"),
+		InstanceId: aws.String("i-test"), ClientToken: input.ClientToken, State: &types.InstanceState{Name: types.InstanceStateNameRunning},
+		InstanceType: input.InstanceType, Architecture: types.ArchitectureValuesX8664, ImageId: input.ImageId, Tags: tags, RootDeviceName: aws.String("/dev/sda1"),
 		MetadataOptions: &types.InstanceMetadataOptionsResponse{HttpTokens: types.HttpTokensStateRequired,
 			HttpEndpoint: types.InstanceMetadataEndpointStateEnabled, HttpPutResponseHopLimit: aws.Int32(1)},
 		SubnetId: aws.String(m.cfg.SubnetID), SecurityGroups: []types.GroupIdentifier{{GroupId: aws.String(m.cfg.SecurityGroupID)}},
@@ -71,7 +103,7 @@ func (m *lostLaunchAPI) RunInstances(_ context.Context, input *api.RunInstancesI
 		BlockDeviceMappings: []types.InstanceBlockDeviceMapping{{DeviceName: aws.String("/dev/sda1"),
 			Ebs: &types.EbsInstanceBlockDevice{VolumeId: aws.String("vol-test"), DeleteOnTermination: aws.Bool(true)}}},
 	}
-	m.volume = types.Volume{VolumeId: aws.String("vol-test"), Size: aws.Int32(32), Encrypted: aws.Bool(true), Tags: tags,
+	m.volume = types.Volume{VolumeId: aws.String("vol-test"), Size: input.BlockDeviceMappings[0].Ebs.VolumeSize, Encrypted: aws.Bool(true), Tags: tags,
 		Attachments: []types.VolumeAttachment{{InstanceId: aws.String("i-test")}}}
 	m.network = types.NetworkInterface{NetworkInterfaceId: aws.String("eni-test"), TagSet: tags, SubnetId: aws.String(m.cfg.SubnetID),
 		Groups:     []types.GroupIdentifier{{GroupId: aws.String(m.cfg.SecurityGroupID)}},
@@ -114,7 +146,7 @@ func TestDeliverEnrollmentConfirmsLostResponse(t *testing.T) {
 	p := &Provider{cfg: cfg, client: mock, poll: time.Millisecond, now: time.Now}
 	req := provider.CreateRequest{Ref: ref, OperationID: "operation", ArtifactID: "artifact", Release: "release",
 		NetworkMode: NetworkMode, Resources: ReferenceResources()}
-	image := Image{ID: "ami-11112222333344445", RootDeviceName: "/dev/sda1"}
+	image := Image{ID: "ami-11112222333344445", RootDeviceName: "/dev/sda1", Architecture: "amd64"}
 	if _, err := p.CreateCandidate(t.Context(), req, image); !errors.Is(err, provider.ErrOutcomeUnknown) {
 		t.Fatalf("CreateCandidate after lost response = %v, want uncertain result", err)
 	}

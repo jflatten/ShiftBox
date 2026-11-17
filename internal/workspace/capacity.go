@@ -6,16 +6,26 @@ import (
 	"math"
 
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/release"
 )
 
-// Allocation is the CPU, memory and disk allocation persisted for a workspace.
+// Allocation is the persisted CPU, memory, disk, and optional EC2 type of a workspace.
 type Allocation struct {
+	InstanceType       string
 	CPU                int
 	MemoryMiB, DiskMiB int64
 }
 
 func (a Allocation) positive() bool {
 	return a.CPU > 0 && a.MemoryMiB > 0 && a.DiskMiB > 0
+}
+
+// EC2Type returns the pinned type or the unambiguous type of a legacy EC2 allocation.
+func (a Allocation) EC2Type() string {
+	if a.InstanceType == "" && a.CPU == release.EC2CPUCount && a.MemoryMiB == release.EC2MemoryMiB && a.DiskMiB == release.EC2DiskMiB {
+		return release.EC2InstanceType
+	}
+	return a.InstanceType
 }
 
 // CapacityError reports the first resource that prevents admission.
@@ -55,11 +65,23 @@ func CheckCapacity(limit, used, pinned Allocation, diskReserved bool) error {
 // every configured value against the provider's validated bounds.
 func ProfileResources(profile Allocation, caps provider.Capabilities) (provider.Resources, error) {
 	const mib = 1 << 20
-	if !profile.positive() || profile.MemoryMiB > math.MaxInt64/mib || profile.DiskMiB > math.MaxInt64/mib ||
-		caps.Minimum.CPU < 1 || caps.Minimum.MemoryBytes < 1 || caps.Minimum.DiskBytes < 1 {
+	if !profile.positive() || profile.MemoryMiB > math.MaxInt64/mib || profile.DiskMiB > math.MaxInt64/mib {
 		return provider.Resources{}, provider.ErrCapabilityUnsupported
 	}
 	request := provider.Resources{CPU: profile.CPU, MemoryBytes: profile.MemoryMiB * mib, DiskBytes: profile.DiskMiB * mib}
+	if caps.Name == "ec2" {
+		request.InstanceType = profile.EC2Type()
+		instance, ok := caps.LookupInstanceType(request.InstanceType)
+		if !ok || instance.CPUCount != profile.CPU || instance.MemoryMiB != profile.MemoryMiB ||
+			caps.Minimum.DiskBytes < 1 || request.DiskBytes < caps.Minimum.DiskBytes ||
+			request.DiskBytes > caps.Maximum.DiskBytes || request.DiskBytes%(1<<30) != 0 {
+			return provider.Resources{}, provider.ErrCapabilityUnsupported
+		}
+		return request, nil
+	}
+	if profile.InstanceType != "" || caps.Minimum.CPU < 1 || caps.Minimum.MemoryBytes < 1 || caps.Minimum.DiskBytes < 1 {
+		return provider.Resources{}, provider.ErrCapabilityUnsupported
+	}
 	if request.CPU < caps.Minimum.CPU || request.CPU > caps.Maximum.CPU ||
 		request.MemoryBytes < caps.Minimum.MemoryBytes || request.MemoryBytes > caps.Maximum.MemoryBytes ||
 		request.DiskBytes < caps.Minimum.DiskBytes || request.DiskBytes > caps.Maximum.DiskBytes {

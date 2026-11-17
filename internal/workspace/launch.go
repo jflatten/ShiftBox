@@ -2,7 +2,9 @@ package workspace
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -12,7 +14,6 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
-	"github.com/jflatten/ShiftBox/internal/release"
 	"github.com/jflatten/ShiftBox/internal/template"
 )
 
@@ -27,6 +28,7 @@ type LaunchIntent struct {
 	InstallationID, WorkspaceID, OwnerID, RequestKey string
 	TemplateID, ArtifactID                           string
 	ProviderKind                                     string
+	SingleBoot                                       bool
 	Name                                             string
 	TemplateRevision                                 int64
 	RepositoryURL, DevcontainerPath                  string
@@ -57,8 +59,12 @@ func AdmitLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, la
 	if kind == "" {
 		kind = "utm"
 	}
-	if kind == "ec2" && (launch.CPU != release.EC2CPUCount || launch.MemoryMiB != release.EC2MemoryMiB ||
-		launch.DiskMiB != release.EC2DiskMiB) {
+	if kind == "ec2" {
+		launch.InstanceType = launch.EC2Type()
+		if launch.InstanceType == "" || launch.DiskMiB%1024 != 0 {
+			return operation.Operation{}, provider.ErrCapabilityUnsupported
+		}
+	} else if launch.InstanceType != "" {
 		return operation.Operation{}, provider.ErrCapabilityUnsupported
 	}
 
@@ -76,12 +82,12 @@ func AdmitLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, la
 	result, err = tx.ExecContext(ctx, `INSERT INTO workspaces
 		(id,installation_id,owner_user_id,template_id,template_revision,platform_artifact_id,
 		repository_url,repository_ref,devcontainer_path,cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,
-		secret_names_json,retention_seconds,launch_retention_seconds,desired_state,observed_state,generation,ownership_marker,created_at,updated_at,version,retention_deadline,name)
-		SELECT $1,$2,$3,$4,$5,id,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,'running','unknown',1,$16,$17,$17,1,$18,$19
+		secret_names_json,retention_seconds,launch_retention_seconds,desired_state,observed_state,generation,ownership_marker,created_at,updated_at,version,retention_deadline,name,instance_type)
+		SELECT $1,$2,$3,$4,$5,id,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,'running','unknown',1,$16,$17,$17,1,$18,$19,$21
 		FROM platform_artifacts WHERE id=$6 AND state='available' AND provider_kind=$20`,
 		launch.WorkspaceID, launch.InstallationID, launch.OwnerID, launch.TemplateID, launch.TemplateRevision, launch.ArtifactID,
 		launch.RepositoryURL, launch.RepositoryRef, launch.DevcontainerPath, launch.CPU, launch.MemoryMiB, launch.DiskMiB,
-		launch.NetworkPolicyJSON, string(secretNames), launch.RetentionSeconds, launch.OwnershipMarker, stamp, deadline, launch.Name, kind)
+		launch.NetworkPolicyJSON, string(secretNames), launch.RetentionSeconds, launch.OwnershipMarker, stamp, deadline, launch.Name, kind, launch.InstanceType)
 	if err := capacityWrite(result, err); err != nil {
 		return operation.Operation{}, err
 	}
@@ -105,6 +111,19 @@ func AdmitLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Journal, la
 	if op.WorkspaceID == nil || *op.WorkspaceID != launch.WorkspaceID ||
 		op.Type != "provision" || op.OriginatingAction != "workspace.launch" {
 		return operation.Operation{}, ErrLaunchConflict
+	}
+	if launch.SingleBoot {
+		if kind != "ec2" {
+			return operation.Operation{}, provider.ErrInvalidState
+		}
+		var reference [32]byte
+		if _, err := rand.Read(reference[:]); err != nil {
+			return operation.Operation{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ec2_launch_enrollment(operation_id,launch_reference) VALUES($1,$2)`,
+			op.ID, hex.EncodeToString(reference[:])); err != nil {
+			return operation.Operation{}, err
+		}
 	}
 	return op, nil
 }

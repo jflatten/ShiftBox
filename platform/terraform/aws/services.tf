@@ -1,3 +1,13 @@
+variable "verified_single_boot_ami_id" {
+  type        = string
+  default     = null
+  description = "Candidate AMI approved to use challenge-based enrollment on its first boot."
+  validation {
+    condition     = var.verified_single_boot_ami_id == null || can(regex("^ami-([a-f0-9]{8}|[a-f0-9]{17})$", var.verified_single_boot_ami_id))
+    error_message = "The verified single-boot image must be an AMI ID."
+  }
+}
+
 variable "verified_enrollment_ami_id" {
   type        = string
   default     = null
@@ -91,6 +101,7 @@ locals {
           deployment            = var.name
           environment           = var.environment
           verifiedEnrollmentAmi = var.verified_enrollment_ami_id
+          verifiedSingleBootAmi = var.verified_single_boot_ami_id
         }
         browserAddress    = ":${local.browser_port}"
         guestHost         = "guest.${var.dns_suffix}"

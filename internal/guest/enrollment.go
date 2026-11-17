@@ -106,7 +106,7 @@ func (e *Enrollment) Enroll(ctx context.Context, token string, csr []byte, now t
 		if err != nil {
 			return err
 		}
-		if ref.InstanceID != instance {
+		if ref.InstanceID != instance || (usedProof != "" && usedProof != proof) {
 			return ErrEnrollmentDenied
 		}
 		if state == "consumed" {

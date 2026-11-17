@@ -72,6 +72,7 @@ func invalidateRestoredAuthority(ctx context.Context, tx *sql.Tx, stamp string) 
 		{`UPDATE sessions SET revoked_at=$1,revocation_reason='restore' WHERE revoked_at IS NULL`, []any{stamp}},
 		{`UPDATE origin_grants SET revoked_at=$1 WHERE revoked_at IS NULL`, []any{stamp}},
 		{`UPDATE enrollment_grants SET state='invalidated' WHERE state IN ('issued','consumed')`, nil},
+		{`DELETE FROM ec2_launch_challenges`, nil},
 		{`DELETE FROM github_oauth_states`, nil},
 		{`UPDATE github_authorizations SET state='reconnect_required',nonce=$1,ciphertext=$1,
 			access_expires_at='',refresh_expires_at='',updated_at=$2,version=version+1

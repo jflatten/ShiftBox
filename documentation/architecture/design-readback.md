@@ -16,6 +16,7 @@ ShiftBox is a self-hosted cloud development environment that owns workspace life
 | [Certificates and guest trust](certificates-and-guest-trust.md) | Browser TLS, internal mTLS, offline recovery, revocation and CA limits |
 | [Operations, state and recovery](operations-state-and-recovery.md) | Database setup, encryption, backup/restore, updates, notices and failure behavior |
 | [Validation and engineering defaults](validation-and-engineering-defaults.md) | Explicit defaults, release gates, remaining technical choices and deferred scope |
+| [Database entity relationship diagrams](shiftbox-database-erd.md) | Application database overview, table relationships and detailed schema views |
 | [Decision record](shiftbox-design-decisions.md) | Full interview history, outcomes, research and provenance |
 
 ![ShiftBox system architecture](diagrams/system-architecture.svg)

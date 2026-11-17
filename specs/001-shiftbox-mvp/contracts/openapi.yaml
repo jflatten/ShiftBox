@@ -1490,7 +1490,7 @@ components:
       type: object
       required: [provider, capacity, conditions, version]
       properties:
-        provider: { type: object, additionalProperties: true }
+        provider: { $ref: '#/components/schemas/InfrastructureProvider' }
         capacity: { $ref: '#/components/schemas/Resources' }
         conditions:
           type: array
@@ -1503,6 +1503,33 @@ components:
               active: { type: boolean }
               detail: { type: string }
         version: { type: integer, minimum: 1 }
+
+    InfrastructureProvider:
+      type: object
+      required: [name, version, architecture, networkModes]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        architecture: { type: string }
+        architectures:
+          type: array
+          items: { type: string }
+        networkModes:
+          type: [array, 'null']
+          items: { type: string }
+        instanceTypes:
+          type: array
+          description: EC2 types offered in the configured workspace Availability Zone.
+          items:
+            type: object
+            required: [name, architecture, cpuCount, memoryMiB]
+            properties:
+              name: { type: string }
+              architecture: { type: string, enum: [amd64, arm64] }
+              cpuCount: { type: integer, minimum: 1 }
+              memoryMiB: { type: integer, minimum: 1 }
+        minimumDiskGiB: { type: integer, minimum: 1 }
+        maximumDiskGiB: { type: integer, minimum: 1 }
 
     PlatformArtifactInput:
       type: object
@@ -1524,31 +1551,44 @@ components:
     ResourceProfileInput:
       type: object
       additionalProperties: false
-      required: [name, cpuCount, memoryMiB, diskMiB]
+      required: [name, diskMiB]
+      anyOf:
+        - required: [cpuCount, memoryMiB]
+        - required: [instanceType]
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
-        cpuCount: { type: integer, minimum: 1 }
-        memoryMiB: { type: integer, minimum: 1 }
-        diskMiB: { type: integer, minimum: 1 }
+        cpuCount: { type: integer, minimum: 1, description: CPU count for manually sized providers. }
+        memoryMiB: { type: integer, minimum: 1, description: Memory for manually sized providers. }
+        diskMiB: { type: integer, minimum: 1, description: EC2 disk size must be a whole GiB expressed in MiB. }
+        instanceType: { type: string, description: EC2 type offered in the workspace Availability Zone. }
 
     ResourceProfileUpdate:
       type: object
-      required: [name, cpuCount, memoryMiB, diskMiB, enabled]
+      additionalProperties: false
+      required: [name, diskMiB, enabled]
+      anyOf:
+        - required: [cpuCount, memoryMiB]
+        - required: [instanceType]
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
         cpuCount: { type: integer, minimum: 1 }
         memoryMiB: { type: integer, minimum: 1 }
         diskMiB: { type: integer, minimum: 1 }
+        instanceType: { type: string }
         enabled: { type: boolean }
 
     ResourceProfile:
-      allOf:
-        - $ref: '#/components/schemas/ResourceProfileUpdate'
-        - type: object
-          required: [id, version]
-          properties:
-            id: { type: string }
-            version: { type: integer, minimum: 1 }
+      type: object
+      required: [id, name, cpuCount, memoryMiB, diskMiB, enabled, version]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        cpuCount: { type: integer }
+        memoryMiB: { type: integer }
+        diskMiB: { type: integer }
+        instanceType: { type: string }
+        enabled: { type: boolean }
+        version: { type: integer, minimum: 1 }
 
     NetworkPolicyInput:
       type: object

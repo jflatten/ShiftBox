@@ -38,6 +38,9 @@ func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfi
 	}
 	enrollment := guest.NewEnrollment(state.DB, state.GuestCA)
 	listeners.Secrets = state.Secrets
+	if listeners.EC2Region != "" && listeners.EC2Account != "" {
+		listeners.EC2Bootstrap = guest.NewEC2Bootstrap(enrollment, listeners.EC2Region, listeners.EC2Account, now, machines.Inspect)
+	}
 	endpoints, err := ListenGuests(listeners, enrollment, state.GuestCA, compatibility, now)
 	if err != nil {
 		return nil, err
@@ -60,6 +63,11 @@ func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfi
 		return listeners.Tunnels.ProbeRepair(ctx, id, generation, host)
 	})
 	launch := workspace.NewLaunchExecutor(store, machines, enrollment, mediaRoot, endpoints.EnrollURL, endpoints.PollURL, now, probe)
+	if listeners.EC2Bootstrap != nil {
+		launch.SetEC2BootstrapData(func(reference string) (string, error) {
+			return enrollment.EC2LaunchData(reference, endpoints.EnrollURL, endpoints.PollURL)
+		})
+	}
 	worker := workspace.NewWorker(journal, launch, power)
 	var maintenance []*operation.Worker
 	if listeners.GuestUpdates != nil {

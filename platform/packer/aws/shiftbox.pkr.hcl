@@ -72,6 +72,15 @@ variable "release_id" {
   }
 }
 
+variable "guest_agent_release" {
+  type    = string
+  default = null
+  validation {
+    condition     = var.guest_agent_release == null || can(regex("^[0-9A-Za-z._-]{1,96}$", var.guest_agent_release))
+    error_message = "The guest_agent_release must contain 1 to 96 letters, digits, dots, underscores or hyphens."
+  }
+}
+
 variable "source_revision" {
   type = string
 }
@@ -228,7 +237,7 @@ build {
       platformVersion        = "24.04"
       protocolVersion        = "1"
       minimumRootDiskGiB     = format("%d", local.root_disk_gib)
-      guestAgentRelease      = var.release_id
+      guestAgentRelease      = coalesce(var.guest_agent_release, var.release_id)
       guestAgentSHA256       = var.agent_sha256
       guestUpdateKeySHA256   = var.guest_update_key_sha256
       toolchainRecipeSHA256  = sha256(file("${path.root}/../install-toolchain.sh"))

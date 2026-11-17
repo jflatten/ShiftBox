@@ -1,11 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { readProblem } from './api-problem';
+import type { components } from './api-types';
 
 export type Capacity = { cpuCount: number; memoryMiB: number; diskMiB: number };
 type Condition = { key: string; severity: 'info' | 'warning' | 'critical'; active: boolean; detail?: string };
 
+export type InfrastructureProvider = components['schemas']['InfrastructureProvider'];
+
 export interface InfrastructureStatus {
-  provider: { name: string; version: string; architecture: string; architectures?: string[]; networkModes: string[] | null };
+  provider: InfrastructureProvider;
   capacity: Capacity;
   version: number;
   conditions: Condition[];

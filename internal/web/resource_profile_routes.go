@@ -31,7 +31,7 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, ca
 			return AuthorizationTarget{Action: "infrastructure.view"}, nil
 		},
 		Apply: func(ctx context.Context, tx *sql.Tx, _ *http.Request, _ auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
-			rows, err := tx.QueryContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib,enabled,version
+			rows, err := tx.QueryContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib,enabled,version,instance_type
 				FROM resource_profiles ORDER BY name,id`)
 			if err != nil {
 				return nil, err
@@ -41,8 +41,11 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, ca
 			for rows.Next() {
 				var profile resourceProfileView
 				if err := rows.Scan(&profile.ID, &profile.Name, &profile.CPUCount, &profile.MemoryMiB, &profile.DiskMiB,
-					&profile.Enabled, &profile.Version); err != nil {
+					&profile.Enabled, &profile.Version, &profile.InstanceType); err != nil {
 					return nil, err
+				}
+				if caps.Name == "ec2" {
+					profile.InstanceType = profile.profileAllocation().EC2Type()
 				}
 				profiles = append(profiles, profile)
 			}
@@ -65,13 +68,13 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, ca
 			if err := DecodeJSON(nil, r, &input, 4096); err != nil {
 				return err
 			}
-			if err := input.normalize(); err != nil {
+			if err := input.normalize(caps); err != nil {
 				return err
 			}
 			if input.Enabled == nil {
 				return Problem{Status: 400, Code: "infrastructure.invalid_resource_profile", Title: "Choose whether the profile is enabled"}
 			}
-			if _, err := workspace.ProfileResources(input.allocation(), caps); err != nil {
+			if _, err := workspace.ProfileResources(input.profileAllocation(), caps); err != nil {
 				return resourceProfileUnsupported()
 			}
 			enabled := 0
@@ -79,9 +82,9 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, ca
 				enabled = 1
 			}
 			result, err := tx.ExecContext(ctx, `UPDATE resource_profiles SET name=$2,cpu_count=$3,memory_mib=$4,disk_mib=$5,
-				enabled=$6,version=version+1 WHERE id=$1
+				enabled=$6,instance_type=$7,version=version+1 WHERE id=$1
 				AND NOT EXISTS (SELECT 1 FROM resource_profiles WHERE name=$2 AND id<>$1)`,
-				id, input.Name, input.CPUCount, input.MemoryMiB, input.DiskMiB, enabled)
+				id, input.Name, input.CPUCount, input.MemoryMiB, input.DiskMiB, enabled, input.InstanceType)
 			return checkResourceProfileWrite(result, err, resourceProfileNameConflict())
 		})
 	remove := resourceProfileMutation(db, origin, now,

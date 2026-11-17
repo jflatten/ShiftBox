@@ -106,8 +106,9 @@ func (p *Provider) findInstance(ctx context.Context, ref provider.WorkspaceRef) 
 func (p *Provider) matchesPlacement(instance types.Instance) bool {
 	groups := instance.SecurityGroups
 	options := instance.MetadataOptions
-	return aws.ToString(instance.SubnetId) == p.cfg.SubnetID && len(groups) == 1 &&
-		aws.ToString(groups[0].GroupId) == p.cfg.SecurityGroupID && instance.InstanceType == instanceType &&
+	architecture := p.instanceArchitecture(string(instance.InstanceType))
+	return architecture != "" && architecture == platformArchitecture(string(instance.Architecture)) && aws.ToString(instance.SubnetId) == p.cfg.SubnetID && len(groups) == 1 &&
+		aws.ToString(groups[0].GroupId) == p.cfg.SecurityGroupID &&
 		aws.ToString(instance.PublicIpAddress) == "" && instance.IamInstanceProfile == nil &&
 		options != nil && options.HttpTokens == types.HttpTokensStateRequired &&
 		options.HttpEndpoint == types.InstanceMetadataEndpointStateEnabled && aws.ToInt32(options.HttpPutResponseHopLimit) == 1
@@ -187,13 +188,19 @@ func (p *Provider) inventory(ctx context.Context, ref provider.WorkspaceRef, ins
 	if err != nil {
 		return provider.Inventory{}, err
 	}
-	if err := p.verifyDisk(ctx, ref, diskID); err != nil {
+	disk, err := p.verifyDisk(ctx, ref, diskID)
+	if err != nil {
 		return provider.Inventory{}, err
 	}
 	if err := p.verifyInterface(ctx, ref, nicID); err != nil {
 		return provider.Inventory{}, err
 	}
-	result.Effective = ReferenceResources()
+	resources, supported := p.instanceResources(string(instance.InstanceType))
+	if !supported {
+		return provider.Inventory{}, provider.ErrOwnershipMismatch
+	}
+	resources.DiskBytes = int64(disk) << 30
+	result.Effective = resources
 	result.DiskCapacityKnown = true
 	result.Resources = []provider.OwnedResource{
 		{ID: ref.InstanceID, Type: "vm", OwnershipMarker: ref.OwnershipMarker, Generation: ref.Generation},
@@ -221,20 +228,20 @@ func instanceAttachments(instance types.Instance) (diskID, nicID string, err err
 	return diskID, nicID, nil
 }
 
-func (p *Provider) verifyDisk(ctx context.Context, ref provider.WorkspaceRef, id string) error {
+func (p *Provider) verifyDisk(ctx context.Context, ref provider.WorkspaceRef, id string) (int32, error) {
 	result, err := p.client.DescribeVolumes(ctx, &api.DescribeVolumesInput{VolumeIds: []string{id}})
 	if err != nil {
-		return apiError(err)
+		return 0, apiError(err)
 	}
 	if len(result.Volumes) != 1 {
-		return provider.ErrOutcomeUnknown
+		return 0, provider.ErrOutcomeUnknown
 	}
 	disk := result.Volumes[0]
-	if aws.ToString(disk.VolumeId) != id || aws.ToInt32(disk.Size) != 32 || !aws.ToBool(disk.Encrypted) ||
+	if aws.ToString(disk.VolumeId) != id || !validRootDiskBytes(int64(aws.ToInt32(disk.Size))<<30) || !aws.ToBool(disk.Encrypted) ||
 		!p.owns(ref, disk.Tags) || len(disk.Attachments) != 1 || aws.ToString(disk.Attachments[0].InstanceId) != ref.InstanceID {
-		return provider.ErrOwnershipMismatch
+		return 0, provider.ErrOwnershipMismatch
 	}
-	return nil
+	return aws.ToInt32(disk.Size), nil
 }
 
 func (p *Provider) verifyInterface(ctx context.Context, ref provider.WorkspaceRef, id string) error {

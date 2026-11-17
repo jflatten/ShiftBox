@@ -135,6 +135,10 @@ and use the resulting ECR digest in the Terraform step.
 
 ### Plan and roll out through Terraform
 
+The running database must have this build's schema version before switching the image. For a
+build with new migrations, complete the application schema migration through the approved
+upgrade procedure first.
+
 Continue in the same shell. Review the saved plan before applying it. A controller-only release
 updates the controller ECS service and replaces the controller and setup task definitions. Terraform
 can show the setup operator policy as an update because it references the setup task family.
@@ -176,8 +180,8 @@ terraform -chdir=platform/terraform/aws output -state="$state" -raw management_o
 The demo has one controller task, so expect a brief interruption during replacement. If ECS still
 shows `IN_PROGRESS` after the waiter exits, repeat the service status check until both services
 report `COMPLETED`. Verify the changed feature while signed in at the printed management origin. For resource profiles, open
-**Administration → Infrastructure → Resources** and create a disposable profile with 2 vCPUs,
-4,096 MiB memory, and 32,768 MiB disk, the demo's supported EC2 allocation. Reload to check
+**Administration → Infrastructure → Resources**, choose `t3.medium` for a disposable profile,
+confirm it displays 2 vCPUs and 4,096 MiB, and set the EBS disk to 32 GiB. Reload to check
 it persisted, rename it, disable and re-enable it, then delete it and confirm it stays gone
 after a reload. Leave existing profiles in place. Report the live review URL, ECS task revision,
 and checks performed.

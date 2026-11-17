@@ -306,3 +306,72 @@ func TestResourceProfileCRUD(t *testing.T) {
 		t.Fatalf("deleted profile still listed = %+v", got)
 	}
 }
+
+// TestEC2ResourceProfileShape verifies that the server derives compute from an
+// offered type, rejects unsupported disks, and reads legacy EC2 allocations.
+func TestEC2ResourceProfileShape(t *testing.T) {
+	const origin = "https://management.test"
+	const collection = "/api/v1/admin/resource-profiles"
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "ec2-profiles.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	token := strings.Repeat("A", 43)
+	seedWorkspaceLaunch(t, db, uuid.NewString(), token, now)
+	if _, err := db.ExecContext(ctx, "UPDATE users SET role='administrator' WHERE id='member'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE resource_profiles SET cpu_count=2,memory_mib=4096,disk_mib=32768"); err != nil {
+		t.Fatal(err)
+	}
+	caps := provider.Capabilities{Name: "ec2", Architecture: "amd64", Minimum: provider.Resources{DiskBytes: 32 << 30},
+		Maximum:       provider.Resources{DiskBytes: 2047 << 30},
+		InstanceTypes: []provider.InstanceType{{Name: "m6i.xlarge", Architecture: "amd64", CPUCount: 4, MemoryMiB: 16384}}}
+	clock := func() time.Time { return now }
+	_, create := web.CapacityHandlers(db, origin, clock, func() string { return "ec2-profile" }, caps)
+	mux := http.NewServeMux()
+	mux.Handle("POST "+collection, &create)
+	for _, handler := range web.ResourceProfileHandlers(db, origin, clock, caps) {
+		mux.Handle(handler.Route.Method+" /api/v1"+handler.Route.Path, &handler)
+	}
+	request := func(method, path, body string, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, origin+path, strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		req.Header.Set("Origin", origin)
+		req.Header.Set("If-Match", `"1"`)
+		req.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+		result := httptest.NewRecorder()
+		mux.ServeHTTP(result, req)
+		if result.Code != want {
+			t.Fatalf("%s %s = %d %s, want %d", method, path, result.Code, result.Body, want)
+		}
+		return result
+	}
+	request(http.MethodPost, collection, `{"name":"Large","instanceType":"unavailable.example","diskMiB":65536}`, 409)
+	request(http.MethodPost, collection, `{"name":"Large","instanceType":"m6i.xlarge","diskMiB":32769}`, 409)
+	request(http.MethodPost, collection, `{"name":"Large","instanceType":"m6i.xlarge","diskMiB":31744}`, 409)
+	request(http.MethodPost, collection, `{"name":"Large","instanceType":"m6i.xlarge","diskMiB":65536,"cpuCount":1,"memoryMiB":1}`, 201)
+	request(http.MethodPut, collection+"/ec2-profile", `{"name":"Large","instanceType":"m6i.xlarge","diskMiB":98304,"enabled":false}`, 204)
+
+	var profiles []struct {
+		ID, InstanceType             string
+		CPUCount, MemoryMiB, DiskMiB int
+		Enabled                      bool
+	}
+	view := request(http.MethodGet, collection, "", 200)
+	if err := json.Unmarshal(view.Body.Bytes(), &profiles); err != nil || len(profiles) != 2 {
+		t.Fatalf("profiles = %+v, %v; want two profiles", profiles, err)
+	}
+	current, legacy := profiles[0], profiles[1]
+	if current.InstanceType != "m6i.xlarge" || current.CPUCount != 4 || current.MemoryMiB != 16384 ||
+		current.DiskMiB != 98304 || current.Enabled || legacy.InstanceType != "t3.medium" {
+		t.Fatalf("profiles = %+v; want edited m6i.xlarge and legacy t3.medium", profiles)
+	}
+}

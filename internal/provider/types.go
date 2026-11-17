@@ -31,10 +31,19 @@ type WorkspaceRef struct {
 	InstanceID, OwnershipMarker string
 }
 
-// Resources describes CPU count and memory and disk capacity in bytes.
+// Resources describes an optional machine type, CPU count, and memory and disk capacity in bytes.
 type Resources struct {
+	InstanceType           string
 	CPU                    int
 	MemoryBytes, DiskBytes int64
+}
+
+// InstanceType identifies a provider-offered compute configuration.
+type InstanceType struct {
+	Architecture string `json:"architecture"`
+	Name         string `json:"name"`
+	CPUCount     int    `json:"cpuCount"`
+	MemoryMiB    int64  `json:"memoryMiB"`
 }
 
 // Capabilities describes the adapter's validated actions and host resource bounds.
@@ -47,6 +56,17 @@ type Capabilities struct {
 	NetworkModes, RecoveryMechanisms []string
 	NetworkStoppedOnly               bool
 	Minimum, Maximum                 Resources
+	InstanceTypes                    []InstanceType
+}
+
+// LookupInstanceType retrieves the compute configuration offered to new launches.
+func (c Capabilities) LookupInstanceType(name string) (InstanceType, bool) {
+	for _, instance := range c.InstanceTypes {
+		if instance.Name == name && c.SupportsArchitecture(instance.Architecture) {
+			return instance, true
+		}
+	}
+	return InstanceType{}, false
 }
 
 // SupportsArchitecture reports whether the provider can run an image for the given architecture.
@@ -86,6 +106,7 @@ type CreateRequest struct {
 	OperationID, ArtifactID, Release, NetworkMode string
 	Resources                                     Resources
 	EnrollmentMedia                               string
+	BootstrapData                                 string
 }
 
 // StartRequest identifies an authorized start of the exact retained VM.

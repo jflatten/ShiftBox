@@ -109,6 +109,13 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		return err
 	}
 	policy := web.WorkspaceLaunchPolicy{Capabilities: caps, Protocols: []string{guestProtocol}, VerifyNetwork: machines.ApplyNetwork}
+	var ec2Region, ec2Account string
+	if cloud != nil {
+		policy.EC2VerifiedAMIs = []string{cloud.settings.VerifiedEnrollmentAMI, cloud.settings.VerifiedSingleBootAMI}
+		policy.EC2SingleBootAMI = cloud.settings.VerifiedSingleBootAMI
+		// Preserve the verifier for launches already admitted under this AMI.
+		ec2Region, ec2Account = cloud.settings.Region, cloud.settings.AccountID
+	}
 	if settings.Provider != "ec2" {
 		policy.AvailableDisk = func() (uint64, error) { return app.AvailableWorkspaceSpace(settings.UTMStorage) }
 	}
@@ -192,6 +199,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		ActivityPolicy:    &workspace.ActivityPolicy{IDE: monitorIDE, CPU: monitorCPU, CPUThreshold: 5, Freshness: 90 * time.Second},
 		EnrollmentAddress: settings.EnrollmentAddress, PollAddress: settings.PollAddress,
 		TunnelAddress: settings.TunnelAddress, PublicHost: settings.GuestHost, Tunnels: tunnels, GitHub: github, Checkpoint: checkpoint,
+		EC2Region: ec2Region, EC2Account: ec2Account,
 		GuestUpdates: func(ctx context.Context, id string) (release.GuestUpdate, error) {
 			return release.ReadLocalGuestUpdate(ctx, filepath.Join(filepath.Dir(configPath), "releases"), id, compatibility.Protocol)
 		},

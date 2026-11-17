@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,6 +30,19 @@ const (
 	EC2DiskMiB = 32768
 )
 
+// EC2ReferenceArchitecture identifies the validated reference canary architecture.
+const EC2ReferenceArchitecture = "amd64"
+
+// EC2PlatformArchitectures reports the architectures qualified by this release.
+func EC2PlatformArchitectures() []string {
+	return []string{EC2ReferenceArchitecture}
+}
+
+// SupportsEC2PlatformArchitecture reports whether this release admits AMIs for the architecture.
+func SupportsEC2PlatformArchitecture(architecture string) bool {
+	return slices.Contains(EC2PlatformArchitectures(), architecture)
+}
+
 const canonicalAMIOwner = "099720109477"
 
 var (
@@ -42,6 +56,7 @@ var (
 
 // EC2Image pins one account-owned regional AMI and its build provenance.
 type EC2Image struct {
+	Architecture           string `json:"-"`
 	AMIID                  string `json:"amiId"`
 	Region                 string `json:"region"`
 	AccountID              string `json:"accountId"`
@@ -84,7 +99,7 @@ func ReadEC2Manifest(input io.Reader) (Artifact, error) {
 	data := build.CustomData
 	if _, err := uuid.Parse(build.RunUUID); err != nil || build.RunUUID != manifest.LastRunUUID ||
 		build.BuilderType != "amazon-ebs" || !paired || data["provider"] != "ec2" || data["region"] != region ||
-		data["architecture"] != "amd64" || data["platformVersion"] != "24.04" ||
+		!SupportsEC2PlatformArchitecture(data["architecture"]) || data["platformVersion"] != "24.04" ||
 		data["minimumRootDiskGiB"] != "32" || data["protocolVersion"] != "1" ||
 		!ec2ReleasePattern.MatchString(data["guestAgentRelease"]) || !validDigest(data["guestAgentSHA256"]) {
 		return Artifact{}, fmt.Errorf("%w: unsupported Packer release metadata", ErrInvalidArtifact)
@@ -102,7 +117,7 @@ func ReadEC2Manifest(input io.Reader) (Artifact, error) {
 	return Artifact{
 		EC2: image, Bundle: ami, ManifestSHA256: hex.EncodeToString(sum[:]),
 		Manifest: ArtifactManifest{
-			SchemaVersion: 1, ReleaseID: image.ReleaseID, Architecture: "amd64",
+			SchemaVersion: 1, ReleaseID: image.ReleaseID, Architecture: data["architecture"],
 			PlatformVersion: data["platformVersion"], ProtocolVersion: data["protocolVersion"],
 			Guest:      ArtifactComponent{Version: data["guestAgentRelease"], SHA256: data["guestAgentSHA256"]},
 			Provenance: ArtifactProvenance{Source: image.SourceAMI, Revision: image.SourceRevision},
@@ -123,7 +138,7 @@ func validEC2Artifact(artifact Artifact) bool {
 	return i != nil && i.validProvenance() && ec2AccountPattern.MatchString(i.AccountID) &&
 		ec2SnapshotPattern.MatchString(i.RootSnapshotID) && i.RootDeviceName == "/dev/sda1" &&
 		i.AMIID == artifact.Bundle && validDigest(artifact.ManifestSHA256) &&
-		m.SchemaVersion == 1 && m.ReleaseID == i.ReleaseID && m.Architecture == "amd64" &&
+		m.SchemaVersion == 1 && m.ReleaseID == i.ReleaseID && SupportsEC2PlatformArchitecture(m.Architecture) &&
 		m.PlatformVersion == "24.04" && m.ProtocolVersion == "1" && len(m.Resources) == 0 &&
 		m.Provenance.Source == i.SourceAMI && m.Provenance.Revision == i.SourceRevision &&
 		ec2ReleasePattern.MatchString(m.Guest.Version) && validDigest(m.Guest.SHA256)
@@ -167,5 +182,7 @@ func (s *Store) EC2Image(ctx context.Context, id, region, accountID string) (EC2
 	if entry.State != "available" || image == nil || image.Region != region || image.AccountID != accountID {
 		return EC2Image{}, ErrCatalogConflict
 	}
-	return *image, nil
+	resolved := *image
+	resolved.Architecture = entry.Artifact.Manifest.Architecture
+	return resolved, nil
 }

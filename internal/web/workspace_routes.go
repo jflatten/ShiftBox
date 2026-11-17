@@ -23,6 +23,9 @@ type WorkspaceLaunchPolicy struct {
 	Capabilities     provider.Capabilities
 	Protocols        []string
 	RetentionMaximum *int64
+	// EC2VerifiedAMIs are the deployment-approved images for guest enrollment.
+	EC2VerifiedAMIs  []string
+	EC2SingleBootAMI string
 	// VerifyNetwork observes the provider's supported stopped-VM network mode.
 	VerifyNetwork func(context.Context, provider.NetworkRequest) (provider.Inventory, error)
 	// AvailableDisk measures the provider volume before a new allocation.
@@ -115,24 +118,53 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 		return operation.Operation{}, Problem{Status: 409, Code: "workspace.retention_unavailable", Title: "Choose an allowed retention period"}
 	}
 	var allocation workspace.Allocation
-	var architecture, protocol, guestRelease string
 	caps := policy.Capabilities
 	intent.ProviderKind = launchProviderKind(caps)
-	err := tx.QueryRowContext(ctx, `SELECT p.cpu_count,p.memory_mib,p.disk_mib,a.architecture,a.protocol_version,a.guest_release
-		FROM resource_profiles p CROSS JOIN platform_artifacts a
-		WHERE p.id=$1 AND p.enabled=1 AND a.id=$2 AND a.state='available' AND a.provider_kind=$3`, revision.ProfileID, revision.ArtifactID, intent.ProviderKind).
-		Scan(&allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB, &architecture, &protocol, &guestRelease)
+	err := tx.QueryRowContext(ctx, `SELECT cpu_count,memory_mib,disk_mib,instance_type FROM resource_profiles
+		WHERE id=$1 AND enabled=1`, revision.ProfileID).
+		Scan(&allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB, &allocation.InstanceType)
 	if errors.Is(err, sql.ErrNoRows) {
-		return operation.Operation{}, Problem{Status: 409, Code: "workspace.template_unavailable", Title: "The template's profile or platform release is unavailable"}
+		return operation.Operation{}, templateLaunchUnavailable()
 	}
 	if err != nil {
 		return operation.Operation{}, err
 	}
-	if guestRelease == "" || (guestRelease != currentGuest && guestRelease != previousGuest) {
-		return operation.Operation{}, Problem{Status: 409, Code: "workspace.platform_incompatible", Title: "The template's platform release is incompatible with this controller"}
-	}
-	if !caps.Create || !caps.Start || !caps.SupportsArchitecture(architecture) || !slices.Contains(policy.Protocols, protocol) {
+	if !caps.Create || !caps.Start {
 		return operation.Operation{}, launchCapabilityProblem()
+	}
+	artifactID := revision.ArtifactID
+	if intent.ProviderKind == "ec2" {
+		instance, ok := caps.LookupInstanceType(allocation.EC2Type())
+		if !ok {
+			return operation.Operation{}, launchCapabilityProblem()
+		}
+		singleBoot, err := verifyEC2LaunchImage(ctx, tx, policy, artifactID, instance.Architecture, currentGuest, previousGuest)
+		if errors.Is(err, sql.ErrNoRows) {
+			return operation.Operation{}, Problem{Status: 409, Code: "workspace.platform_incompatible",
+				Title:  "The template needs a compatible AMI",
+				Detail: "Ask a template administrator to select a verified " + instance.Architecture + " AMI in a new template revision, then launch from that revision."}
+		}
+		if err != nil {
+			return operation.Operation{}, err
+		}
+		intent.SingleBoot = singleBoot
+	} else {
+		var architecture, protocol, guestRelease string
+		err := tx.QueryRowContext(ctx, `SELECT architecture,protocol_version,guest_release FROM platform_artifacts
+			WHERE id=$1 AND state='available' AND provider_kind='utm'`, artifactID).
+			Scan(&architecture, &protocol, &guestRelease)
+		if errors.Is(err, sql.ErrNoRows) {
+			return operation.Operation{}, templateLaunchUnavailable()
+		}
+		if err != nil {
+			return operation.Operation{}, err
+		}
+		if guestRelease == "" || (guestRelease != currentGuest && guestRelease != previousGuest) {
+			return operation.Operation{}, Problem{Status: 409, Code: "workspace.platform_incompatible", Title: "The template's platform release is incompatible with this controller"}
+		}
+		if !caps.SupportsArchitecture(architecture) || !slices.Contains(policy.Protocols, protocol) {
+			return operation.Operation{}, launchCapabilityProblem()
+		}
 	}
 	network, err := workspace.LaunchNetworkSnapshot(ctx, tx, revision.NetworkPolicyID, caps)
 	if errors.Is(err, provider.ErrCapabilityUnsupported) {
@@ -159,7 +191,7 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 	}
 	intent.WorkspaceID = uuid.NewString()
 	intent.OwnershipMarker = uuid.NewString()
-	intent.ArtifactID = revision.ArtifactID
+	intent.ArtifactID = artifactID
 	intent.RepositoryURL = revision.RepositoryURL
 	intent.DevcontainerPath = revision.DevcontainerPath
 	intent.Allocation = allocation
@@ -167,6 +199,10 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 	intent.SecretNames = revision.SecretNames
 	op, err := workspace.AdmitLaunch(ctx, tx, journal, intent, now)
 	return op, launchAdmissionProblem(err)
+}
+
+func templateLaunchUnavailable() Problem {
+	return Problem{Status: 409, Code: "workspace.template_unavailable", Title: "The template's profile or platform release is unavailable"}
 }
 
 func launchAdmissionProblem(err error) error {

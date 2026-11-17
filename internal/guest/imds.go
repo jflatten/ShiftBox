@@ -27,11 +27,22 @@ func ServeEC2Agent(ctx context.Context, stateDir, protocol, release, secretSocke
 			return AgentIdentity{}, err
 		}
 		defer clear(seed)
+		launch, singleBoot, err := readEC2LaunchData(seed)
+		if err != nil {
+			return AgentIdentity{}, err
+		}
+		if singleBoot {
+			return enrollEC2Launch(ctx, client, stateDir, launch, protocol, release)
+		}
 		return EnrollAgent(ctx, stateDir, bytes.NewReader(seed), protocol, release, time.Now())
 	})
 }
 
 func readEC2EnrollmentSeed(ctx context.Context, client *http.Client) ([]byte, error) {
+	return readEC2Metadata(ctx, client, "/latest/user-data", 16<<10)
+}
+
+func readEC2Metadata(ctx context.Context, client *http.Client, path string, limit int64) ([]byte, error) {
 	tokenReq, err := http.NewRequestWithContext(ctx, http.MethodPut, metadataEndpoint+"/latest/api/token", nil)
 	if err != nil {
 		return nil, err
@@ -42,12 +53,12 @@ func readEC2EnrollmentSeed(ctx context.Context, client *http.Client) ([]byte, er
 		return nil, err
 	}
 	defer clear(token)
-	seedReq, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataEndpoint+"/latest/user-data", nil)
+	seedReq, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataEndpoint+path, nil)
 	if err != nil {
 		return nil, err
 	}
 	seedReq.Header.Set("X-aws-ec2-metadata-token", string(token))
-	return readMetadata(client, seedReq, 16<<10)
+	return readMetadata(client, seedReq, limit)
 }
 
 func readMetadata(client *http.Client, request *http.Request, limit int64) ([]byte, error) {

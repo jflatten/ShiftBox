@@ -31,6 +31,13 @@
       "skillPath": "skills/mantine-form/SKILL.md",
       "computedHash": "c55ed7204c3fea77ea57165d0ec992bf9c970773008c1db9cb32c18005dd1745"
     },
+    "mermaid-diagramming": {
+      "source": "NickCrew/Claude-Cortex",
+      "commit": "bb47af79ad3befe01ae01940fcf5f16e30a1b6df",
+      "sourceType": "github",
+      "skillPath": "skills/mermaid-diagramming/SKILL.md",
+      "computedHash": "40303aaf70d51b314a7f305f34fc01b556920111d040188ab59ba3393834f117"
+    },
     "wait-what": {
       "source": "mattpocock/skills",
       "sourceType": "github",

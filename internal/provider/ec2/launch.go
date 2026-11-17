@@ -3,6 +3,7 @@ package ec2
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"path"
@@ -16,19 +17,38 @@ import (
 	"github.com/jflatten/ShiftBox/internal/provider"
 )
 
-// Create starts an unseeded instance and reconciles it to stopped for enrollment.
+// Create starts the pinned AMI and reconciles its initial enrollment power state.
 func (p *Provider) Create(ctx context.Context, req provider.CreateRequest) (provider.Inventory, error) {
 	image, err := p.resolve(ctx, req.ArtifactID, req.Release)
 	if err != nil {
 		return provider.Inventory{}, err
 	}
-	return p.CreateCandidate(ctx, req, image)
+	return p.create(ctx, req, image)
 }
 
 // CreateCandidate boots a disposable validation instance from a previously inspected AMI.
 func (p *Provider) CreateCandidate(ctx context.Context, req provider.CreateRequest, image Image) (provider.Inventory, error) {
+	if req.BootstrapData != "" {
+		return provider.Inventory{}, provider.ErrCapabilityUnsupported
+	}
+	return p.create(ctx, req, image)
+}
+
+func (p *Provider) create(ctx context.Context, req provider.CreateRequest, image Image) (provider.Inventory, error) {
+	bootOnce := req.BootstrapData != ""
+	if bootOnce && (!image.SingleBoot || len(req.BootstrapData) > enrollmentSeedLimit) {
+		return provider.Inventory{}, provider.ErrCapabilityUnsupported
+	}
+	compute, supported := p.instanceResources(req.Resources.InstanceType)
+	disk := req.Resources.DiskBytes
+	compute.DiskBytes = disk
+	architecture := p.instanceArchitecture(req.Resources.InstanceType)
+	if !supported || architecture == "" || architecture != image.Architecture ||
+		req.Resources != compute || !validRootDiskBytes(disk) {
+		return provider.Inventory{}, provider.ErrCapabilityUnsupported
+	}
 	if !validRef(req.Ref) || req.OperationID == "" || req.ArtifactID == "" || req.Release == "" ||
-		req.Resources != ReferenceResources() || req.NetworkMode != NetworkMode || req.EnrollmentMedia != "" ||
+		req.NetworkMode != NetworkMode || req.EnrollmentMedia != "" ||
 		!strings.HasPrefix(image.ID, "ami-") || !strings.HasPrefix(image.RootDeviceName, "/dev/") ||
 		path.Clean(image.RootDeviceName) != image.RootDeviceName {
 		return provider.Inventory{}, provider.ErrInvalidState
@@ -57,8 +77,14 @@ func (p *Provider) CreateCandidate(ctx context.Context, req provider.CreateReque
 	}
 	tags := tagValues(instance.Tags)
 	if tags[tagProvision] != req.OperationID || tags[tagArtifact] != req.ArtifactID || tags[tagRelease] != req.Release ||
-		aws.ToString(instance.ImageId) != image.ID || aws.ToString(instance.RootDeviceName) != image.RootDeviceName {
+		string(instance.InstanceType) != req.Resources.InstanceType || aws.ToString(instance.ImageId) != image.ID || aws.ToString(instance.RootDeviceName) != image.RootDeviceName {
 		return provider.Inventory{}, provider.ErrOwnershipMismatch
+	}
+	if bootOnce {
+		if powerOf(instance) != provider.Running || aws.ToString(instance.ClientToken) != launchToken(req) {
+			return provider.Inventory{}, provider.ErrOwnershipMismatch
+		}
+		return p.launchInventory(ctx, req, instance)
 	}
 	if powerOf(instance) == provider.Running {
 		if _, err := p.client.StopInstances(ctx, &api.StopInstancesInput{InstanceIds: []string{req.Ref.InstanceID}}); err != nil {
@@ -69,7 +95,15 @@ func (p *Provider) CreateCandidate(ctx context.Context, req provider.CreateReque
 	if err != nil {
 		return provider.Inventory{}, err
 	}
-	return p.inventory(ctx, req.Ref, instance)
+	return p.launchInventory(ctx, req, instance)
+}
+
+func (p *Provider) launchInventory(ctx context.Context, req provider.CreateRequest, instance types.Instance) (provider.Inventory, error) {
+	got, err := p.inventory(ctx, req.Ref, instance)
+	if err == nil && got.Effective != req.Resources {
+		return provider.Inventory{}, provider.ErrOutcomeUnknown
+	}
+	return got, err
 }
 
 func launchToken(req provider.CreateRequest) string {
@@ -88,14 +122,14 @@ func (p *Provider) launchInput(req provider.CreateRequest, image Image) *api.Run
 		types.Tag{Key: aws.String("environment"), Value: aws.String(p.cfg.Environment)},
 		types.Tag{Key: aws.String("cluster_name"), Value: aws.String(p.cfg.Deployment)},
 	)
-	return &api.RunInstancesInput{
-		ClientToken: aws.String(launchToken(req)), ImageId: aws.String(image.ID), InstanceType: instanceType,
+	input := &api.RunInstancesInput{
+		ClientToken: aws.String(launchToken(req)), ImageId: aws.String(image.ID), InstanceType: types.InstanceType(req.Resources.InstanceType),
 		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
 		MetadataOptions: &types.InstanceMetadataOptionsRequest{HttpTokens: types.HttpTokensStateRequired,
 			HttpEndpoint: types.InstanceMetadataEndpointStateEnabled, HttpPutResponseHopLimit: aws.Int32(1)},
 		BlockDeviceMappings: []types.BlockDeviceMapping{{DeviceName: aws.String(image.RootDeviceName),
 			Ebs: &types.EbsBlockDevice{DeleteOnTermination: aws.Bool(true), Encrypted: aws.Bool(true),
-				VolumeType: types.VolumeTypeGp3, VolumeSize: aws.Int32(32)}}},
+				VolumeType: types.VolumeTypeGp3, VolumeSize: aws.Int32(int32(req.Resources.DiskBytes >> 30))}}},
 		NetworkInterfaces: []types.InstanceNetworkInterfaceSpecification{{AssociatePublicIpAddress: aws.Bool(false),
 			DeleteOnTermination: aws.Bool(true), DeviceIndex: aws.Int32(0), SubnetId: aws.String(p.cfg.SubnetID),
 			Groups: []string{p.cfg.SecurityGroupID}}},
@@ -105,4 +139,8 @@ func (p *Provider) launchInput(req provider.CreateRequest, image Image) *api.Run
 			{ResourceType: types.ResourceTypeNetworkInterface, Tags: tagSet},
 		},
 	}
+	if req.BootstrapData != "" {
+		input.UserData = aws.String(base64.StdEncoding.EncodeToString([]byte(req.BootstrapData)))
+	}
+	return input
 }

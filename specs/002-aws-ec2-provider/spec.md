@@ -23,7 +23,7 @@ An infrastructure operator provisions a private AWS deployment, then completes S
 
 ### User Story 2 - Publish and select an AWS platform image (Priority P1)
 
-A release operator builds and publishes a reusable private Ubuntu 24.04 LTS Minimal amd64 AMI with Packer. An administrator registers the release and configures a template with the one supported AWS workspace size.
+A release operator builds and publishes a reusable private Ubuntu 24.04 LTS Minimal amd64 AMI with Packer. An administrator registers the release and configures a template with an EC2 resource profile selected from compatible instance types in the workspace Availability Zone and a separate EBS size.
 
 **Independent Test.** Register the published AMI on the running controller and verify a disposable boot, authenticated guest contact and cleanup before the platform can be selected.
 

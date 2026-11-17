@@ -44,16 +44,17 @@ func CreateResourceProfileInTx(ctx context.Context, tx *sql.Tx, profile Resource
 	if profile.ID == "" || strings.TrimSpace(profile.Name) == "" {
 		return errors.New("resource profile requires an ID and name")
 	}
-	if _, err := ProfileResources(profile.Allocation, caps); err != nil {
+	resources, err := ProfileResources(profile.Allocation, caps)
+	if err != nil {
 		return err
 	}
 	enabled := 0
 	if profile.Enabled {
 		enabled = 1
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO resource_profiles(id,name,cpu_count,memory_mib,disk_mib,enabled,version)
-		VALUES($1,$2,$3,$4,$5,$6,1) ON CONFLICT DO NOTHING`, profile.ID, profile.Name,
-		profile.CPU, profile.MemoryMiB, profile.DiskMiB, enabled)
+	result, err := tx.ExecContext(ctx, `INSERT INTO resource_profiles(id,name,cpu_count,memory_mib,disk_mib,enabled,version,instance_type)
+		VALUES($1,$2,$3,$4,$5,$6,1,$7) ON CONFLICT DO NOTHING`, profile.ID, profile.Name,
+		profile.CPU, profile.MemoryMiB, profile.DiskMiB, enabled, resources.InstanceType)
 	return capacityWrite(result, err)
 }
 
@@ -61,9 +62,9 @@ func CreateResourceProfileInTx(ctx context.Context, tx *sql.Tx, profile Resource
 func (s *Store) ResourceProfile(ctx context.Context, id string) (ResourceProfile, error) {
 	var profile ResourceProfile
 	var enabled int
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib,enabled,version
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib,enabled,version,instance_type
 		FROM resource_profiles WHERE id=$1`, id).Scan(&profile.ID, &profile.Name, &profile.CPU,
-		&profile.MemoryMiB, &profile.DiskMiB, &enabled, &profile.Version)
+		&profile.MemoryMiB, &profile.DiskMiB, &enabled, &profile.Version, &profile.InstanceType)
 	profile.Enabled = enabled == 1
 	return profile, err
 }

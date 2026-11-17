@@ -19,15 +19,19 @@ import (
 
 type profileInput struct {
 	workspaceResources
-	Name string `json:"name"`
+	Name         string `json:"name"`
+	InstanceType string `json:"instanceType,omitempty"`
 }
 
 type infrastructureProvider struct {
-	Name          string   `json:"name"`
-	Version       string   `json:"version"`
-	Architecture  string   `json:"architecture"`
-	Architectures []string `json:"architectures,omitempty"`
-	NetworkModes  []string `json:"networkModes"`
+	Name           string                  `json:"name"`
+	Version        string                  `json:"version"`
+	Architecture   string                  `json:"architecture"`
+	Architectures  []string                `json:"architectures,omitempty"`
+	NetworkModes   []string                `json:"networkModes"`
+	InstanceTypes  []provider.InstanceType `json:"instanceTypes,omitempty"`
+	MinimumDiskGiB int64                   `json:"minimumDiskGiB,omitempty"`
+	MaximumDiskGiB int64                   `json:"maximumDiskGiB,omitempty"`
 }
 
 type infrastructureCondition struct {
@@ -47,6 +51,12 @@ func InfrastructureStatusHandler(db *sql.DB, origin string, now func() time.Time
 		Architectures: slices.Clone(caps.Architectures),
 		NetworkModes:  slices.Clone(caps.NetworkModes),
 	}
+	if caps.Name == "ec2" {
+		providerView.InstanceTypes = slices.Clone(caps.InstanceTypes)
+		providerView.MinimumDiskGiB = caps.Minimum.DiskBytes >> 30
+		providerView.MaximumDiskGiB = caps.Maximum.DiskBytes >> 30
+	}
+
 	return AuthorizedHandler{
 		DB: db, Origin: origin, Now: now,
 		Route: ManagementRoute{Method: http.MethodGet, Path: "/admin/infrastructure", OperationID: "getInfrastructureStatus", Action: "infrastructure.view"},
@@ -145,14 +155,14 @@ func CapacityHandlers(db *sql.DB, origin string, now func() time.Time, newID fun
 			if err := DecodeJSON(nil, r, &input, 4096); err != nil {
 				return nil, err
 			}
-			if err := input.normalize(); err != nil {
+			if err := input.normalize(caps); err != nil {
 				return nil, err
 			}
 			if newID == nil {
 				return nil, errors.New("resource profile identity generator is missing")
 			}
 			err := workspace.CreateResourceProfileInTx(ctx, tx, workspace.ResourceProfile{
-				ID: newID(), Name: input.Name, Allocation: input.allocation(), Enabled: true,
+				ID: newID(), Name: input.Name, Allocation: input.profileAllocation(), Enabled: true,
 			}, caps)
 			switch {
 			case errors.Is(err, provider.ErrCapabilityUnsupported):
@@ -172,12 +182,30 @@ func CapacityHandlers(db *sql.DB, origin string, now func() time.Time, newID fun
 	return budget, profile
 }
 
-func (input *profileInput) normalize() error {
+func (input *profileInput) normalize(caps provider.Capabilities) error {
 	input.Name = strings.TrimSpace(input.Name)
-	if input.Name == "" || utf8.RuneCountInString(input.Name) > 120 || !input.positive() {
+	if input.Name == "" || utf8.RuneCountInString(input.Name) > 120 || input.DiskMiB < 1 {
 		return Problem{Status: 400, Code: "infrastructure.invalid_resource_profile", Title: "Enter a profile name and positive resources"}
 	}
+	if caps.Name == "ec2" {
+		input.InstanceType = input.profileAllocation().EC2Type()
+		instance, ok := caps.LookupInstanceType(input.InstanceType)
+		if !ok {
+			return Problem{Status: 409, Code: "infrastructure.resource_profile_unsupported", Title: "Choose an offered EC2 instance type"}
+		}
+		// AWS supplies compute facts. A profile may only configure its EBS size.
+		input.CPUCount = int64(instance.CPUCount)
+		input.MemoryMiB = instance.MemoryMiB
+	} else if !input.positive() {
+		return Problem{Status: 400, Code: "infrastructure.invalid_resource_profile", Title: "Enter positive CPU and memory values"}
+	}
 	return nil
+}
+
+func (input profileInput) profileAllocation() workspace.Allocation {
+	allocation := input.allocation()
+	allocation.InstanceType = input.InstanceType
+	return allocation
 }
 
 func resourceProfileUnsupported() Problem {

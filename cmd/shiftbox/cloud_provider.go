@@ -26,10 +26,12 @@ func newCloudEC2(ctx context.Context, settings config.EC2Runtime, store *release
 			if err != nil {
 				return ec2.Image{}, err
 			}
-			if image.ReleaseID != releaseID || image.AMIID != settings.VerifiedEnrollmentAMI {
+			if image.ReleaseID != releaseID || !verifiedCloudAMI(settings, image.AMIID) {
 				return ec2.Image{}, provider.ErrCapabilityUnsupported
 			}
-			return launchImage(image), nil
+			resolved := launchImage(image)
+			resolved.SingleBoot = image.AMIID == settings.VerifiedSingleBootAMI
+			return resolved, nil
 		})
 	if err != nil {
 		return nil, err
@@ -37,23 +39,29 @@ func newCloudEC2(ctx context.Context, settings config.EC2Runtime, store *release
 	return &cloudEC2{Provider: machines, settings: settings}, nil
 }
 
+func verifiedCloudAMI(settings config.EC2Runtime, image string) bool {
+	return image != "" && (image == settings.VerifiedEnrollmentAMI || image == settings.VerifiedSingleBootAMI)
+}
+
 func launchImage(image release.EC2Image) ec2.Image {
-	return ec2.Image{ID: image.AMIID, RootDeviceName: image.RootDeviceName, SnapshotID: image.RootSnapshotID}
+	return ec2.Image{ID: image.AMIID, RootDeviceName: image.RootDeviceName, SnapshotID: image.RootSnapshotID, Architecture: image.Architecture}
 }
 
 func (p *cloudEC2) Capabilities(ctx context.Context) (provider.Capabilities, error) {
 	caps, err := p.Provider.Capabilities(ctx)
-	if p.settings.VerifiedEnrollmentAMI == "" {
+	if p.settings.VerifiedEnrollmentAMI == "" && p.settings.VerifiedSingleBootAMI == "" {
 		caps.Create = false
 	}
 	return caps, err
 }
 
 func (p *cloudEC2) ImportCandidate(ctx context.Context, req provider.CreateRequest, artifact release.Artifact) (provider.Inventory, error) {
-	if artifact.EC2 == nil || artifact.EC2.AMIID != p.settings.VerifiedEnrollmentAMI {
+	if artifact.EC2 == nil || !verifiedCloudAMI(p.settings, artifact.EC2.AMIID) {
 		return provider.Inventory{}, provider.ErrCapabilityUnsupported
 	}
-	return p.CreateCandidate(ctx, req, launchImage(*artifact.EC2))
+	image := launchImage(*artifact.EC2)
+	image.Architecture = artifact.Manifest.Architecture
+	return p.CreateCandidate(ctx, req, image)
 }
 
 func (p *cloudEC2) importPlatform(ctx context.Context, dir, guestHost string, store *release.Store, catalog *release.Catalog,
@@ -63,7 +71,7 @@ func (p *cloudEC2) importPlatform(ctx context.Context, dir, guestHost string, st
 		return err
 	}
 	image, manifest := artifact.EC2, artifact.Manifest
-	if image.Region != p.settings.Region || image.AMIID != p.settings.VerifiedEnrollmentAMI ||
+	if image.Region != p.settings.Region || !verifiedCloudAMI(p.settings, image.AMIID) ||
 		manifest.ProtocolVersion != guestProtocol || (manifest.Guest.Version != current && manifest.Guest.Version != previous) {
 		return release.ErrCatalogConflict
 	}
@@ -74,7 +82,7 @@ func (p *cloudEC2) importPlatform(ctx context.Context, dir, guestHost string, st
 	if err != nil {
 		return err
 	}
-	if observed.Artifact != "workspace-ami" || observed.ReleaseID != image.ReleaseID ||
+	if observed.Architecture != manifest.Architecture || observed.Artifact != "workspace-ami" || observed.ReleaseID != image.ReleaseID ||
 		observed.SourceAMI != image.SourceAMI || observed.SourceRevision != image.SourceRevision {
 		return release.ErrInvalidArtifact
 	}
@@ -102,7 +110,7 @@ func (p *cloudEC2) importPlatform(ctx context.Context, dir, guestHost string, st
 type pendingEC2 struct{}
 
 func (pendingEC2) Capabilities(context.Context) (provider.Capabilities, error) {
-	return provider.Capabilities{Name: "ec2", Architecture: "amd64"}, nil
+	return provider.Capabilities{Name: "ec2", Architecture: release.EC2ReferenceArchitecture}, nil
 }
 
 func (pendingEC2) Inspect(context.Context, provider.WorkspaceRef) (provider.Inventory, error) {

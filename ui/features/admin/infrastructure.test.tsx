@@ -27,12 +27,12 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
-// A fresh EC2 installation can create a profile and see it in the table immediately.
+// A fresh UTM installation can create a profile and see it in the table immediately.
 test('lists a resource profile after creation', async () => {
   const profiles: unknown[] = [];
   const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
     if (input === '/api/v1/session') return json(session);
-    if (input === '/api/v1/admin/infrastructure') return json({ ...status, provider: { ...status.provider, name: 'ec2' } });
+    if (input === '/api/v1/admin/infrastructure') return json(status);
     if (input === '/api/v1/admin/resource-profiles') {
       if (init?.method === 'POST') {
         profiles.push({ ...JSON.parse(String(init.body)), id: 'profile', enabled: true, version: 1 });
@@ -60,6 +60,49 @@ test('lists a resource profile after creation', async () => {
   }));
 });
 
+
+// EC2 uses the authoritative instance shape and submits the separately entered disk in MiB.
+test('creates an EC2 resource profile with an instance type and separate EBS size', async () => {
+  const collection = '/api/v1/admin/resource-profiles';
+  const instanceTypes = [
+    { name: 't3.medium', architecture: 'amd64', cpuCount: 2, memoryMiB: 4096 },
+    { name: 'm6i.xlarge', architecture: 'amd64', cpuCount: 4, memoryMiB: 16384 },
+  ];
+  let profiles: unknown[] = [];
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json({
+      ...status, provider: { ...status.provider, name: 'ec2', instanceTypes, minimumDiskGiB: 32, maximumDiskGiB: 2047 },
+    });
+    if (input === collection && init?.method === 'POST') {
+      profiles = [{ ...JSON.parse(String(init.body)), cpuCount: 4, memoryMiB: 16384, id: 'profile', enabled: true, version: 1 }];
+      return json({});
+    }
+    if (input === collection) return json(profiles);
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><MantineProvider env="test"><Infrastructure /></MantineProvider></Providers>);
+  await screen.findByText('AWS EC2');
+  await user.click(screen.getByRole('button', { name: 'New resource profile' }));
+  const dialog = within(await screen.findByRole('dialog', { name: 'New resource profile' }));
+  await user.type(dialog.getByRole('textbox', { name: 'Profile name' }), 'AWS compute');
+  await user.click(dialog.getByRole('combobox', { name: 'EC2 instance type' }));
+  await user.click(await screen.findByRole('option', { name: 'm6i.xlarge' }));
+  expect(dialog.getByRole('textbox', { name: 'vCPUs' })).toHaveValue('4');
+  expect(dialog.getByRole('textbox', { name: 'Memory (MiB)' })).toHaveValue('16,384');
+  expect(dialog.getByRole('textbox', { name: 'vCPUs' })).toHaveAttribute('readonly');
+  const disk = dialog.getByRole('textbox', { name: 'EBS disk (GiB)' });
+  await user.clear(disk);
+  await user.type(disk, '64');
+  await user.click(dialog.getByRole('button', { name: 'Create resource profile' }));
+  expect(await screen.findByText('Resource profile created.')).toBeVisible();
+  expect(screen.getByRole('row', { name: /AWS compute.*m6i.xlarge/ })).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith(collection, expect.objectContaining({
+    method: 'POST', body: JSON.stringify({ name: 'AWS compute', instanceType: 'm6i.xlarge', diskMiB: 65536 }),
+  }));
+});
 
 // Editing refreshes the displayed name and state. A referenced profile remains
 // available to administer after a rejected delete.

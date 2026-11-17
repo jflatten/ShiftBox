@@ -8,6 +8,7 @@ if [ "$#" -ne 3 ]; then
 fi
 
 release_id=$1
+guest_agent_release=${GUEST_AGENT_RELEASE:-$release_id}
 publisher_key=$2
 deployment_vars=$3
 case "$release_id" in
@@ -48,13 +49,14 @@ mkdir -p .cache/packer
 build_dir=$(mktemp -d "$repo_dir/.cache/packer/aws.XXXXXXXX")
 cp "$publisher_key" "$build_dir/guest-update.pub"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "${GO:-go}" build -trimpath \
-    -ldflags "-X main.agentRelease=$release_id" -o "$build_dir/shiftbox-agent" ./cmd/shiftbox-agent
+    -ldflags "-X main.agentRelease=$guest_agent_release" -o "$build_dir/shiftbox-agent" ./cmd/shiftbox-agent
 agent_sha=$(shasum -a 256 < "$build_dir/shiftbox-agent")
 publisher_key_sha=$(shasum -a 256 < "$build_dir/guest-update.pub")
 
 "${PACKER:-packer}" build \
     -var-file="$deployment_vars" \
     -var "release_id=$release_id" \
+    -var "guest_agent_release=$guest_agent_release" \
     -var "source_revision=$revision" \
     -var "agent_binary=$build_dir/shiftbox-agent" \
     -var "agent_sha256=${agent_sha%% *}" \

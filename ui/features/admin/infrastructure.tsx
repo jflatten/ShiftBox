@@ -74,7 +74,7 @@ export function Infrastructure() {
                   </Stack>
                 </Paper>
               </> : null}
-              <ResourceProfiles key={current.user.id} userId={current.user.id} csrfToken={canManage ? current.csrfToken : undefined} />
+              <ResourceProfiles key={current.user.id} userId={current.user.id} provider={data?.provider} csrfToken={canManage ? current.csrfToken : undefined} />
             </Stack>
           </Tabs.Panel>
           {canManage ? <Tabs.Panel value="certificates" pt="lg">

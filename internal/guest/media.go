@@ -29,16 +29,20 @@ type EnrollmentSeed struct {
 
 func (s EnrollmentSeed) valid() bool {
 	key, err := base64.RawURLEncoding.Strict().DecodeString(s.Grant)
-	if err != nil || len(key) != 32 || !validPollEndpoint(s.PollEndpoint) {
+	return err == nil && len(key) == 32 && validEnrollmentEndpoints(s.Endpoint, s.PollEndpoint, s.CAPEM)
+}
+
+func validEnrollmentEndpoints(enrollment, pollEndpoint, ca string) bool {
+	if !validPollEndpoint(pollEndpoint) {
 		return false
 	}
-	endpoint, err := url.Parse(s.Endpoint)
+	endpoint, err := url.Parse(enrollment)
 	if err != nil || endpoint.Scheme != "https" || endpoint.Hostname() == "" ||
 		endpoint.Path != "/internal/v1/enroll" || endpoint.User != nil || endpoint.RawQuery != "" ||
 		endpoint.ForceQuery || endpoint.Fragment != "" {
 		return false
 	}
-	raw := bytes.TrimSpace([]byte(s.CAPEM))
+	raw := bytes.TrimSpace([]byte(ca))
 	block, rest := pem.Decode(raw)
 	if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) > 0 ||
 		len(bytes.TrimSpace(rest)) > 0 || !bytes.HasPrefix(raw, []byte("-----BEGIN CERTIFICATE-----")) {

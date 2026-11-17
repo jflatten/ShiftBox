@@ -17,12 +17,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/release"
 )
 
 // NetworkMode is the provider-managed private subnet with shared outbound access.
 const NetworkMode = "shared"
 
 const instanceType = types.InstanceTypeT3Medium
+
+// Keep the boot volume below the size that requires validating GPT and GRUB2.
+const maximumRootDiskGiB = 2047
+const minimumRootDiskGiB = 32
 
 var (
 	taskPathPattern = regexp.MustCompile(`^/v2/credentials/[A-Za-z0-9-]+$`)
@@ -39,14 +44,17 @@ type Config struct {
 
 // Image identifies the immutable AMI and its verified root disk mapping.
 type Image struct {
-	ID, RootDeviceName, SnapshotID                 string
+	ID, RootDeviceName, SnapshotID, Architecture   string
 	Artifact, ReleaseID, SourceAMI, SourceRevision string
+	SingleBoot                                     bool
 }
 
 // ImageResolver resolves the validated AMI bound to a catalog artifact and release.
 type ImageResolver func(ctx context.Context, artifactID, releaseID string) (Image, error)
 
 type client interface {
+	api.DescribeInstanceTypesAPIClient
+	api.DescribeInstanceTypeOfferingsAPIClient
 	RunInstances(context.Context, *api.RunInstancesInput, ...func(*api.Options)) (*api.RunInstancesOutput, error)
 	DescribeInstances(context.Context, *api.DescribeInstancesInput, ...func(*api.Options)) (*api.DescribeInstancesOutput, error)
 	DescribeVolumes(context.Context, *api.DescribeVolumesInput, ...func(*api.Options)) (*api.DescribeVolumesOutput, error)
@@ -63,11 +71,14 @@ type client interface {
 
 // Provider owns EC2 side effects for one validated deployment.
 type Provider struct {
-	cfg     Config
-	client  client
-	resolve ImageResolver
-	poll    time.Duration
-	now     func() time.Time
+	cfg           Config
+	client        client
+	resolve       ImageResolver
+	poll          time.Duration
+	now           func() time.Time
+	zone          string
+	instanceTypes map[string]provider.InstanceType
+	offeredTypes  []provider.InstanceType
 }
 
 // New uses explicitly scoped ECS task credentials and verifies the AWS account and private network.
@@ -106,6 +117,9 @@ func New(ctx context.Context, cfg Config, resolve ImageResolver) (*Provider, err
 	if err := p.verifyNetwork(ctx); err != nil {
 		return nil, err
 	}
+	if err := p.loadInstanceTypes(ctx); err != nil {
+		return nil, err
+	}
 	return p, nil
 }
 
@@ -119,7 +133,7 @@ func (p *Provider) verifyNetwork(ctx context.Context) error {
 	}
 	s := subnet.Subnets[0]
 	if aws.ToString(s.SubnetId) != p.cfg.SubnetID || aws.ToString(s.OwnerId) != p.cfg.AccountID ||
-		s.State != types.SubnetStateAvailable || aws.ToBool(s.MapPublicIpOnLaunch) {
+		s.State != types.SubnetStateAvailable || aws.ToBool(s.MapPublicIpOnLaunch) || aws.ToString(s.AvailabilityZone) == "" {
 		return provider.ErrOwnershipMismatch
 	}
 	groups, err := p.client.DescribeSecurityGroups(ctx, &api.DescribeSecurityGroupsInput{GroupIds: []string{p.cfg.SecurityGroupID}})
@@ -134,21 +148,29 @@ func (p *Provider) verifyNetwork(ctx context.Context) error {
 		aws.ToString(g.VpcId) == "" || aws.ToString(g.VpcId) != aws.ToString(s.VpcId) || len(g.IpPermissions) != 0 {
 		return provider.ErrOwnershipMismatch
 	}
+	p.zone = aws.ToString(s.AvailabilityZone)
 	return nil
 }
 
-// ReferenceResources returns the single EC2 shape supported by this provider.
+// ReferenceResources returns the pinned shape used for platform canaries and legacy workspaces.
 func ReferenceResources() provider.Resources {
-	return provider.Resources{CPU: 2, MemoryBytes: 4 << 30, DiskBytes: 32 << 30}
+	return provider.Resources{InstanceType: string(instanceType), CPU: 2, MemoryBytes: 4 << 30, DiskBytes: minimumRootDiskGiB << 30}
+}
+
+func validRootDiskBytes(disk int64) bool {
+	return disk >= minimumRootDiskGiB<<30 && disk <= maximumRootDiskGiB<<30 && disk%(1<<30) == 0
 }
 
 // Capabilities describes the supported EC2 operations. Catalog admission gates actual launches.
 func (p *Provider) Capabilities(context.Context) (provider.Capabilities, error) {
-	resources := ReferenceResources()
-	return provider.Capabilities{Name: "ec2", Version: "1", Architecture: "amd64", ExecutionMode: "aws",
-		Evidence: "Verified AWS account and private workspace network", Minimum: resources, Maximum: resources,
-		Create: true, Start: true, Stop: true, Delete: true, NetworkModes: []string{NetworkMode},
-		NetworkStoppedOnly: true, RecoveryMechanisms: []string{"ec2-user-data"}}, nil
+	caps := provider.Capabilities{Name: "ec2", Version: "1", Architecture: release.EC2ReferenceArchitecture, Architectures: release.EC2PlatformArchitectures(), ExecutionMode: "aws",
+		Evidence: "Verified AWS account and private workspace network",
+		Minimum:  provider.Resources{DiskBytes: minimumRootDiskGiB << 30},
+		Maximum:  provider.Resources{DiskBytes: maximumRootDiskGiB << 30},
+		Create:   true, Start: true, Stop: true, Delete: true, NetworkModes: []string{NetworkMode},
+		NetworkStoppedOnly: true, RecoveryMechanisms: []string{"ec2-user-data"}}
+	caps.InstanceTypes = offeredInstanceTypes(p.offeredTypes, caps)
+	return caps, nil
 }
 
 // InspectImage verifies exact launchable image metadata against AWS.
@@ -162,7 +184,7 @@ func (p *Provider) InspectImage(ctx context.Context, imageID string) (Image, err
 	}
 	image := result.Images[0]
 	if aws.ToString(image.ImageId) != imageID || aws.ToString(image.OwnerId) != p.cfg.AccountID || aws.ToBool(image.Public) ||
-		image.Architecture != types.ArchitectureValuesX8664 || image.RootDeviceType != types.DeviceTypeEbs ||
+		!release.SupportsEC2PlatformArchitecture(platformArchitecture(string(image.Architecture))) || image.RootDeviceType != types.DeviceTypeEbs ||
 		image.VirtualizationType != types.VirtualizationTypeHvm || image.State != types.ImageStateAvailable {
 		return Image{}, provider.ErrOwnershipMismatch
 	}
@@ -173,8 +195,8 @@ func (p *Provider) InspectImage(ctx context.Context, imageID string) (Image, err
 			rootDisk = device.Ebs
 			continue
 		}
-		// Canonical AMIs retain virtual instance-store mappings. The EBS-only
-		// workspace instance type does not instantiate those devices.
+		// Canonical AMIs retain virtual instance-store mappings. Only the
+		// EBS root disk participates in durable workspace allocation.
 		if device.Ebs != nil || aws.ToString(device.DeviceName) == root ||
 			!strings.HasPrefix(aws.ToString(device.VirtualName), "ephemeral") {
 			return Image{}, provider.ErrOwnershipMismatch
@@ -185,7 +207,7 @@ func (p *Provider) InspectImage(ctx context.Context, imageID string) (Image, err
 		return Image{}, provider.ErrInvalidState
 	}
 	tags := tagValues(image.Tags)
-	return Image{ID: imageID, RootDeviceName: root, SnapshotID: aws.ToString(rootDisk.SnapshotId),
+	return Image{ID: imageID, Architecture: platformArchitecture(string(image.Architecture)), RootDeviceName: root, SnapshotID: aws.ToString(rootDisk.SnapshotId),
 		Artifact: tags[tagArtifact], ReleaseID: tags[tagRelease], SourceAMI: tags["ShiftBoxSourceAMI"],
 		SourceRevision: tags["ShiftBoxSourceCommit"]}, nil
 }

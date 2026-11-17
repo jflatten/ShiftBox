@@ -40,5 +40,5 @@ func verifyIDE(ctx context.Context, db *sql.DB, op operation.Operation, probe ID
 	if err := probe(ctx, *op.WorkspaceID, op.Generation); err != nil {
 		return "", errors.Join(errIDEProbePending, err)
 	}
-	return "The authenticated guest tunnel returned the browser IDE workbench.", nil
+	return "The authenticated guest tunnel returned the browser IDE workbench and accepted its WebSocket connection.", nil
 }

@@ -25,16 +25,18 @@ import (
 
 // GuestListenerConfig assigns distinct binds and the guest-reachable TLS host.
 type GuestListenerConfig struct {
-	ActivityPolicy    *workspace.ActivityPolicy
-	EnrollmentAddress string
-	PollAddress       string
-	PublicHost        string
-	GitHub            *identity.GitHub
-	Secrets           *secret.Service
-	TunnelAddress     string
-	Tunnels           *proxy.Tunnels
-	Checkpoint        *backup.WriteFence
-	GuestUpdates      func(context.Context, string) (release.GuestUpdate, error)
+	ActivityPolicy        *workspace.ActivityPolicy
+	EnrollmentAddress     string
+	PollAddress           string
+	PublicHost            string
+	GitHub                *identity.GitHub
+	Secrets               *secret.Service
+	TunnelAddress         string
+	Tunnels               *proxy.Tunnels
+	Checkpoint            *backup.WriteFence
+	GuestUpdates          func(context.Context, string) (release.GuestUpdate, error)
+	EC2Bootstrap          *guest.EC2Bootstrap
+	EC2Region, EC2Account string
 }
 
 // GuestListeners owns the initial enrollment and authenticated poll listeners.
@@ -70,8 +72,13 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 	if _, err := certificates.current(nil); err != nil {
 		return nil, err
 	}
+	initial := http.NewServeMux()
+	initial.Handle("/internal/v1/enroll", web.GuestEnrollmentHandler(compatibility, enrollment.Enroll, now))
+	if config.EC2Bootstrap != nil {
+		initial.Handle("/internal/v1/enroll/ec2/", web.GuestEC2BootstrapHandler(compatibility, config.EC2Bootstrap))
+	}
 	enroll, err := listenGuest(config.EnrollmentAddress, guest.EnrollmentTLS(tls.Certificate{}),
-		checkpointRequest(config.Checkpoint, web.GuestEnrollmentHandler(compatibility, enrollment.Enroll, now)), certificates)
+		checkpointRequest(config.Checkpoint, initial), certificates)
 	if err != nil {
 		return nil, err
 	}

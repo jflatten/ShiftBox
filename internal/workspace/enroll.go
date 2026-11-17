@@ -38,6 +38,11 @@ func NewLaunchExecutor(store *Store, machines provider.Provider, enrollment Enro
 		mediaRoot: mediaRoot, endpoint: endpoint, pollEndpoint: pollEndpoint, now: now, probeIDE: probe}
 }
 
+// SetEC2BootstrapData prepares versioned, public user data for admitted EC2 launches.
+func (e *LaunchExecutor) SetEC2BootstrapData(build func(string) (string, error)) {
+	e.provision.bootstrapData = build
+}
+
 // Observe reconciles launch steps from provider inventory and authenticated guest evidence.
 func (e *LaunchExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
 	if step.Key == "verify_ide" {
@@ -54,6 +59,9 @@ func (e *LaunchExecutor) Observe(ctx context.Context, op operation.Operation, st
 	req, got, err := e.inspectEnrollment(ctx, op, step)
 	if err != nil {
 		return "", false, err
+	}
+	if req.BootstrapData != "" && got.Power != provider.Running {
+		return "", false, provider.ErrOutcomeUnknown
 	}
 	switch got.Power {
 	case provider.Stopped:
@@ -80,6 +88,9 @@ func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step
 	req, got, err := e.inspectEnrollment(ctx, op, step)
 	if err != nil {
 		return "", err
+	}
+	if req.BootstrapData != "" && got.Power != provider.Running {
+		return "", provider.ErrOutcomeUnknown
 	}
 	switch got.Power {
 	case provider.Running:
