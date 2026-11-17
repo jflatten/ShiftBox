@@ -59,6 +59,7 @@ func ManagementRoutes() []ManagementRoute {
 		{Method: "GET", Path: "/admin/audit", OperationID: "listAuditEvents", Action: "audit.list"},
 		{Method: "GET", Path: "/admin/infrastructure", OperationID: "getInfrastructureStatus", Action: "infrastructure.view"},
 		{Method: "PUT", Path: "/admin/certificate", OperationID: "replaceBrowserCertificate", Action: "infrastructure.manage"},
+		{Method: "GET", Path: "/admin/certificate", OperationID: "getBrowserCertificate", Action: "infrastructure.view"},
 		{Method: "POST", Path: "/admin/platform-artifacts", OperationID: "importPlatformArtifact", Action: "infrastructure.manage"},
 		{Method: "GET", Path: "/admin/resource-profiles", OperationID: "listResourceProfiles", Action: "infrastructure.view"},
 		{Method: "POST", Path: "/admin/resource-profiles", OperationID: "createResourceProfile", Action: "infrastructure.manage"},

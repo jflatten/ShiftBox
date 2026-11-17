@@ -588,7 +588,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["getBrowserCertificate"];
         put: operations["replaceBrowserCertificate"];
         post?: never;
         delete?: never;
@@ -992,7 +992,7 @@ export interface components {
             repositoryUrl: string;
             repositoryRef?: string | null;
             /** @default .devcontainer/devcontainer.json */
-            devcontainerPath?: string;
+            devcontainerPath: string;
             /** Format: uuid */
             resourceProfileId: string;
             /**
@@ -1044,6 +1044,31 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        BrowserCertificateDetails: {
+            subject: string;
+            issuer: string;
+            dnsNames: string[];
+            ipAddresses: string[];
+            emailAddresses: string[];
+            uris: string[];
+            /** Format: date-time */
+            notBefore: string;
+            /** Format: date-time */
+            notAfter: string;
+            /** @description Hexadecimal serial number */
+            serialNumber: string;
+            /** @description SHA-256 of the DER leaf certificate */
+            fingerprintSha256: string;
+            signatureAlgorithm: string;
+            publicKeyAlgorithm: string;
+            version: number;
+            chainLength: number;
+            /**
+             * @description Time validity of the leaf; expiring means 30 days or less remain
+             * @enum {string}
+             */
+            status: "valid" | "expiring" | "expired" | "not_yet_valid";
+        };
         InfrastructureStatus: {
             provider: components["schemas"]["InfrastructureProvider"];
             capacity: components["schemas"]["CapacityBudget"];
@@ -1079,7 +1104,7 @@ export interface components {
             /** @description The Packer AMI manifest for a cloud EC2 controller. */
             manifest?: Record<string, never>;
             /** @default false */
-            makeDefault?: boolean;
+            makeDefault: boolean;
         } & (unknown | unknown);
         ResourceProfileInput: {
             name: string;
@@ -1194,7 +1219,7 @@ export interface components {
             detail?: string;
             requestId: string;
             /** @default false */
-            retryable?: boolean;
+            retryable: boolean;
             fields?: {
                 [key: string]: string;
             };
@@ -2422,6 +2447,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InfrastructureStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getBrowserCertificate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Public metadata of the leaf certificate currently served by browser HTTPS; excludes private key material */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserCertificateDetails"];
                 };
             };
             default: components["responses"]["Error"];

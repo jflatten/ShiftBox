@@ -23,6 +23,14 @@ const status = {
   ],
 };
 
+const installedCertificate = {
+  subject: 'CN=management.test', issuer: 'CN=Example CA',
+  dnsNames: ['management.test', '*.ide.test', '*.preview.test'], ipAddresses: [], emailAddresses: [], uris: [],
+  notBefore: '2026-11-01T12:00:00Z', notAfter: '2026-12-01T12:00:00Z', serialNumber: '1234',
+  fingerprintSha256: 'ab'.repeat(32), signatureAlgorithm: 'ECDSA-SHA256', publicKeyAlgorithm: 'ECDSA',
+  version: 3, chainLength: 2, status: 'expiring',
+};
+
 function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
@@ -364,6 +372,7 @@ test('keeps certificate and maintenance forms distinct after status loads', asyn
     if (input === '/api/v1/session') return json({ ...session, permissions: [...session.permissions, 'maintenance.manage'] });
     if (input === '/api/v1/admin/infrastructure') return json(status);
     if (input === '/api/v1/admin/resource-profiles') return json([]);
+    if (input === '/api/v1/admin/certificate') return json(installedCertificate);
     if (input === '/api/v1/admin/maintenance') return json([]);
     if (input === '/api/v1/workspaces') return json({ items: [] });
     throw new Error('unexpected request');
@@ -448,6 +457,9 @@ test('retries a certificate upload and shows the committed replacement', async (
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/admin/infrastructure') return json(requests.length > 1 ? { ...status, conditions: [] } : status);
     if (input === '/api/v1/admin/resource-profiles') return json([]);
+    if (input === '/api/v1/admin/certificate' && init?.method !== 'PUT') return json(requests.length > 1
+      ? { ...installedCertificate, serialNumber: '5678', notAfter: '2027-11-01T12:00:00Z', status: 'valid' }
+      : installedCertificate);
     if (input === '/api/v1/admin/certificate' && init?.method === 'PUT') {
       requests.push(init);
       if (requests.length === 1) throw new TypeError('response lost');
@@ -462,6 +474,7 @@ test('retries a certificate upload and shows the committed replacement', async (
   const { container } = render(<Providers><Infrastructure /></Providers>);
   const warning = await screen.findByText('Browser certificate expires soon');
   await user.click(screen.getByRole('tab', { name: 'Certificates' }));
+  expect(await screen.findByText('1234')).toBeVisible();
   const submit = screen.getByRole('button', { name: 'Replace certificate' });
   await user.click(submit);
   expect(screen.getByLabelText(/^Certificate chain/)).toHaveFocus();
@@ -482,6 +495,9 @@ test('retries a certificate upload and shows the committed replacement', async (
   expect(await screen.findByRole('button', { name: 'Replace browser certificate: Completed' })).toBeVisible();
   await waitFor(() => expect(warning).not.toBeInTheDocument());
   expect(screen.queryByText('private.pem')).toBeNull();
+  expect(await screen.findByText('5678')).toBeVisible();
+  expect(screen.getByText('2027-11-01 12:00:00 UTC')).toBeVisible();
+  expect(screen.queryByText('1234')).not.toBeInTheDocument();
   expect(requests).toHaveLength(2);
   expect(requests[0]).toEqual(requests[1]);
   expect(requests[0]).toMatchObject({
@@ -519,6 +535,7 @@ test('preserves a capacity draft across tabs and discards it explicitly', async 
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/admin/infrastructure') return json(status);
     if (input === '/api/v1/admin/resource-profiles') return json([]);
+    if (input === '/api/v1/admin/certificate') return json(installedCertificate);
     throw new Error('unexpected request');
   });
   globalThis.fetch = fetch;
@@ -540,7 +557,7 @@ test('preserves a capacity draft across tabs and discards it explicitly', async 
   expect(save).toBeDisabled();
   expect(screen.queryByText('You have unsaved capacity changes.')).toBeNull();
   expect(fetch.mock.calls.map(([input]) => input).sort()).toEqual([
-    '/api/v1/admin/infrastructure', '/api/v1/admin/resource-profiles', '/api/v1/session',
+    '/api/v1/admin/certificate', '/api/v1/admin/infrastructure', '/api/v1/admin/resource-profiles', '/api/v1/session',
   ]);
   expect(fetch.mock.calls.every(([, init]) => !init?.method)).toBe(true);
 });

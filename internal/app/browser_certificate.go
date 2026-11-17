@@ -2,9 +2,12 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -20,6 +23,76 @@ const replaceCertificateStep = "replace_browser_certificate"
 type servedBrowserCertificate struct {
 	generation int64
 	pair       tls.Certificate
+}
+
+// browserCertificateReadHandler describes the leaf currently selected by the
+// browser listener. It reads only public fields, even when validity has elapsed.
+func (s *ControllerState) browserCertificateReadHandler(now func() time.Time) web.AuthorizedHandler {
+	return web.AuthorizedHandler{
+		DB: s.DB, Origin: s.Installation.Settings.ManagementOrigin, Now: now,
+		Route: web.ManagementRoute{Method: http.MethodGet, Path: "/admin/certificate", OperationID: "getBrowserCertificate", Action: "infrastructure.view"},
+		Resolve: func(context.Context, *sql.Tx, *http.Request, auth.Principal) (web.AuthorizationTarget, error) {
+			return web.AuthorizationTarget{Action: "infrastructure.view"}, nil
+		},
+		Apply: func(context.Context, *sql.Tx, *http.Request, auth.Principal, web.AuthorizationTarget, auth.Decision) (http.Handler, error) {
+			pair := &s.BrowserTLS
+			if current := s.browserReplacement.Load(); current != nil {
+				pair = &current.pair
+			}
+			leaf := pair.Leaf
+			if leaf == nil || len(pair.Certificate) == 0 {
+				return nil, web.Problem{Status: 503, Code: "infrastructure.certificate_unavailable", Title: "The installed browser certificate is unavailable"}
+			}
+			status := "valid"
+			currentTime := now()
+			switch {
+			case currentTime.Before(leaf.NotBefore):
+				status = "not_yet_valid"
+			case !currentTime.Before(leaf.NotAfter):
+				status = "expired"
+			case leaf.NotAfter.Sub(currentTime) <= 30*24*time.Hour:
+				status = "expiring"
+			}
+			ips := make([]string, 0, len(leaf.IPAddresses))
+			for _, ip := range leaf.IPAddresses {
+				ips = append(ips, ip.String())
+			}
+			uris := make([]string, 0, len(leaf.URIs))
+			for _, uri := range leaf.URIs {
+				uris = append(uris, uri.String())
+			}
+			details := struct {
+				Subject            string    `json:"subject"`
+				Issuer             string    `json:"issuer"`
+				DNSNames           []string  `json:"dnsNames"`
+				IPAddresses        []string  `json:"ipAddresses"`
+				EmailAddresses     []string  `json:"emailAddresses"`
+				URIs               []string  `json:"uris"`
+				NotBefore          time.Time `json:"notBefore"`
+				NotAfter           time.Time `json:"notAfter"`
+				SerialNumber       string    `json:"serialNumber"`
+				FingerprintSHA256  string    `json:"fingerprintSha256"`
+				SignatureAlgorithm string    `json:"signatureAlgorithm"`
+				PublicKeyAlgorithm string    `json:"publicKeyAlgorithm"`
+				Version            int       `json:"version"`
+				ChainLength        int       `json:"chainLength"`
+				Status             string    `json:"status"`
+			}{
+				Subject: leaf.Subject.String(), Issuer: leaf.Issuer.String(),
+				DNSNames: append([]string{}, leaf.DNSNames...), IPAddresses: ips,
+				EmailAddresses: append([]string{}, leaf.EmailAddresses...), URIs: uris,
+				NotBefore: leaf.NotBefore.UTC(), NotAfter: leaf.NotAfter.UTC(),
+				SerialNumber: leaf.SerialNumber.Text(16), FingerprintSHA256: fmt.Sprintf("%x", sha256.Sum256(leaf.Raw)),
+				SignatureAlgorithm: leaf.SignatureAlgorithm.String(), PublicKeyAlgorithm: leaf.PublicKeyAlgorithm.String(),
+				Version: leaf.Version, ChainLength: len(pair.Certificate), Status: status,
+			}
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-store")
+				_ = json.NewEncoder(w).Encode(details)
+			}), nil
+		},
+	}
 }
 
 func (s *ControllerState) browserCertificateAt(now time.Time) (*tls.Certificate, error) {

@@ -6,14 +6,19 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -27,6 +32,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/proxy"
+	"github.com/jflatten/ShiftBox/internal/web"
 )
 
 // TestReplaceBrowserCertificate checks administrator authority, rollback on
@@ -122,6 +128,51 @@ func TestReplaceBrowserCertificate(t *testing.T) {
 		return conn.(*tls.Conn), nil
 	}
 	handler := controller.browserCertificateHandler(operation.NewJournal(db, clock, uuid.NewString), clock)
+	// Metadata follows the certificate selected by the listener, including after
+	// a committed replacement; neither members nor anonymous callers may read it.
+	readCertificate := func(sessionToken string, wantStatus int, want *x509.Certificate) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, origin+"/api/v1/admin/certificate", nil)
+		if sessionToken != "" {
+			r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: sessionToken})
+		}
+		w := httptest.NewRecorder()
+		reader := controller.browserCertificateReadHandler(clock)
+		reader.ServeHTTP(w, r)
+		if w.Code != wantStatus {
+			t.Fatalf("read certificate = HTTP %d, want %d: %s", w.Code, wantStatus, w.Body.String())
+		}
+		if want == nil {
+			return
+		}
+		var got struct {
+			Subject, Issuer, SerialNumber, FingerprintSHA256, SignatureAlgorithm, PublicKeyAlgorithm, Status string
+			DNSNames                                                                                         []string
+			NotBefore, NotAfter                                                                              time.Time
+			Version, ChainLength                                                                             int
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Subject != want.Subject.String() || got.Issuer != want.Issuer.String() ||
+			got.SerialNumber != want.SerialNumber.Text(16) || got.FingerprintSHA256 != fmt.Sprintf("%x", sha256.Sum256(want.Raw)) ||
+			strings.Join(got.DNSNames, ",") != strings.Join(want.DNSNames, ",") ||
+			!got.NotBefore.Equal(want.NotBefore) || !got.NotAfter.Equal(want.NotAfter) ||
+			got.SignatureAlgorithm != want.SignatureAlgorithm.String() || got.PublicKeyAlgorithm != want.PublicKeyAlgorithm.String() ||
+			got.Version != want.Version || got.ChainLength != 1 {
+			t.Errorf("read certificate = %+v, want public metadata for %s", got, want.SerialNumber)
+		}
+		wantState := "valid"
+		if want.NotAfter.Sub(now) <= 30*24*time.Hour {
+			wantState = "expiring"
+		}
+		if got.Status != wantState || strings.Contains(w.Body.String(), "PRIVATE") || strings.Contains(w.Body.String(), "privateKey") {
+			t.Errorf("read certificate status = %q, want %q without private material", got.Status, wantState)
+		}
+	}
+	readCertificate("", 401, nil)
+	readCertificate(memberToken, 403, nil)
+	readCertificate(token, 200, initial.Leaf)
 	served := func(want tls.Certificate) {
 		t.Helper()
 		conn, err := dial()
@@ -193,6 +244,7 @@ func TestReplaceBrowserCertificate(t *testing.T) {
 		t.Fatalf("browser certificate replacement changed the separate guest CA or reused its key: %v", err)
 	}
 	served(pair)
+	readCertificate(token, 200, pair.Leaf)
 	if retry := send(token, requestKey, replacement, 202); retry != accepted {
 		t.Fatal("certificate retry returned different operation evidence")
 	}
@@ -215,6 +267,51 @@ func TestReplaceBrowserCertificate(t *testing.T) {
 		if err != nil || response.StatusCode < http.StatusBadRequest || bytes.Contains(body, []byte("secure fixture response")) {
 			t.Errorf("plaintext after expiry = HTTP %d (%v), want rejection before reaching management", response.StatusCode, err)
 		}
+	}
+}
+
+// TestBrowserCertificateDetails keeps expired and not-yet-valid certificates
+// inspectable and reports every SAN type without requiring private key access.
+func TestBrowserCertificateDetails(t *testing.T) {
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	uri, err := url.Parse("https://management.test/certificate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name       string
+		start, end time.Time
+		status     string
+	}{
+		{name: "valid", start: now, end: now.Add(31 * 24 * time.Hour), status: "valid"},
+		{name: "thirty day warning", start: now, end: now.Add(30 * 24 * time.Hour), status: "expiring"},
+		{name: "expired", start: now.Add(-time.Hour), end: now, status: "expired"},
+		{name: "not yet valid", start: now.Add(time.Hour), end: now.Add(31 * 24 * time.Hour), status: "not_yet_valid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			leaf := &x509.Certificate{NotBefore: tc.start, NotAfter: tc.end,
+				SerialNumber: big.NewInt(42), IPAddresses: []net.IP{net.ParseIP("192.0.2.1")},
+				EmailAddresses: []string{"admin@example.test"}, URIs: []*url.URL{uri}}
+			state := &ControllerState{BrowserTLS: tls.Certificate{Certificate: [][]byte{{1}}, Leaf: leaf}}
+			handler, err := state.browserCertificateReadHandler(func() time.Time { return now }).Apply(
+				t.Context(), nil, nil, auth.Principal{}, web.AuthorizationTarget{}, auth.Decision{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+			var got struct {
+				Status                            string
+				IPAddresses, EmailAddresses, URIs []string
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != tc.status || strings.Join(got.IPAddresses, ",") != "192.0.2.1" ||
+				strings.Join(got.EmailAddresses, ",") != "admin@example.test" || strings.Join(got.URIs, ",") != uri.String() {
+				t.Errorf("certificate details = %+v, want status %s with all SAN types", got, tc.status)
+			}
+		})
 	}
 }
 

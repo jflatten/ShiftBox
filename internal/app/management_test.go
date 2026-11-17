@@ -43,7 +43,7 @@ func TestManagementServices(t *testing.T) {
 		"createWorkspaceEntryGrant", "listWorkspaceConnectionGrants", "revokeWorkspaceConnectionGrant",
 		"getOperation", "streamOperationEvents", "listTemplates", "listTemplateCatalog", "createTemplate",
 		"createTemplateRevision", "updateTemplate", "grantTemplateLaunch", "revokeTemplateLaunch",
-		"updateCapacityBudget", "createResourceProfile", "getInfrastructureStatus", "replaceBrowserCertificate",
+		"updateCapacityBudget", "createResourceProfile", "getInfrastructureStatus", "getBrowserCertificate", "replaceBrowserCertificate",
 		"listSecretMetadata", "setSecret", "deleteSecretOverride", "listUsers", "changeOwnPassword", "createLocalUser", "resetLocalUserPassword",
 		"getGitAuthorization", "beginGitAuthorization", "revokeGitAuthorization", "listMaintenanceCampaigns", "createMaintenanceCampaign"} {
 		handler, ok := services.Handlers[id]

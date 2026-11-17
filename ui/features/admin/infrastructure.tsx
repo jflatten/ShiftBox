@@ -80,7 +80,7 @@ export function Infrastructure() {
           </Tabs.Panel>
           {canManage ? <Tabs.Panel value="certificates" pt="lg">
             <Paper withBorder radius="md" p="lg">
-              <BrowserCertificate key={`certificate:${current.user.id}`} csrfToken={current.csrfToken} refresh={status.refetch} />
+              <BrowserCertificate key={`certificate:${current.user.id}`} userId={current.user.id} active={activeSection === 'certificates'} csrfToken={current.csrfToken} refresh={status.refetch} />
             </Paper>
           </Tabs.Panel> : null}
           {canMaintain ? <Tabs.Panel value="maintenance" pt="lg">
