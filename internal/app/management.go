@@ -54,6 +54,7 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 		defaultCachePath, cacheStatus = state.imageCache.defaultPath, state.imageCache.status
 	}
 	getImageCache, updateImageCache := web.ImageCacheHandlers(db, origin, now, journal, defaultCachePath, cacheStatus)
+	getSessionTimeout, updateSessionTimeout := web.SessionTimeoutHandlers(db, origin, now)
 	handlers := web.GitAuthorizationHandlers(db, origin, now, github)
 	for id, handler := range web.SecretHandlers(db, origin, state.Secrets, now) {
 		handlers[id] = handler
@@ -69,7 +70,7 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 		web.TemplateCatalogHandler(db, origin, now, launchPolicy),
 		web.RetireAMIHandler(db, origin, now),
 		web.InfrastructureStatusHandler(db, origin, now, launchPolicy.Capabilities),
-		getImageCache, updateImageCache,
+		getImageCache, updateImageCache, getSessionTimeout, updateSessionTimeout,
 		web.KeepAlivePolicyHandler(db, origin, now),
 		web.NetworkPolicyHandler(db, origin, now, uuid.NewString, launchPolicy.Capabilities),
 		state.browserCertificateHandler(journal, now),

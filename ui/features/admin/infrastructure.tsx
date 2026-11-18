@@ -10,10 +10,8 @@ import { providerLabel } from '../../lib/provider-label';
 import { capacitySummary, useInfrastructure, validCapacityLimit, type Capacity, type InfrastructureStatus } from '../../lib/use-infrastructure';
 import { SignInChoices } from '../session/sign-in';
 import { useSession } from '../../lib/use-session';
-import { BrowserCertificate } from './browser-certificate';
 import { Maintenance } from './maintenance';
 import { ResourceProfiles } from './resource-profiles';
-import { Secrets } from '../secrets/secrets';
 import { KeepAliveSettings } from './keep-alive';
 import { RegistryCache } from './registry-cache';
 import { AMIFamilies } from './ami-families';
@@ -33,7 +31,6 @@ export function Infrastructure() {
   const { data, alerts } = status;
   const canManage = allowed && current.permissions.includes('infrastructure.manage');
   const canMaintain = allowed && current.permissions.includes('maintenance.manage');
-  const canManageSecrets = allowed && !!current.organizationSecretScopeId && current.permissions.includes('secret.manage_organization');
   const [section, setSection] = useState<string | null>('resources');
   useEffect(() => {
     const fromURL = () => setSection(new URLSearchParams(window.location.search).get('section') ?? 'resources');
@@ -48,13 +45,13 @@ export function Infrastructure() {
     else url.searchParams.delete('section');
     window.history.replaceState(window.history.state, '', url);
   };
-  const sections = ['resources', 'registry-cache', ...(canManage ? ['certificates'] : []), ...(canMaintain ? ['maintenance'] : []), ...(canManageSecrets ? ['secrets'] : [])];
+  const sections = ['resources', 'registry-cache', ...(canMaintain ? ['maintenance'] : [])];
   const activeSection = section && sections.includes(section) ? section : 'resources';
   return (
     <ShiftBoxShell session={current} alerts={alerts} error={session.error ?? (allowed ? status.error : undefined) ?? undefined}>
       <Stack gap={4}>
         <Title order={1}>Infrastructure</Title>
-        <Text c="dimmed" size="sm">Manage workspace resources, browser security, and guest updates.</Text>
+        <Text c="dimmed" size="sm">Manage workspace resources, the registry cache, and guest updates.</Text>
       </Stack>
       {session.isPending ? <Text role="status">Checking your session…</Text> : null}
       {session.data === null ? <SignInChoices /> : null}
@@ -70,9 +67,7 @@ export function Infrastructure() {
           <Tabs.List aria-label="Infrastructure settings">
             <Tabs.Tab value="resources">Platform</Tabs.Tab>
             <Tabs.Tab value="registry-cache">Cache</Tabs.Tab>
-            {canManage ? <Tabs.Tab value="certificates">Certificates</Tabs.Tab> : null}
             {canMaintain ? <Tabs.Tab value="maintenance">Maintenance</Tabs.Tab> : null}
-            {canManageSecrets ? <Tabs.Tab value="secrets">Secrets</Tabs.Tab> : null}
           </Tabs.List>
           <Tabs.Panel value="resources" pt="lg">
             <Stack gap="lg">
@@ -103,21 +98,9 @@ export function Infrastructure() {
             <RegistryCache key={current.user.id} userId={current.user.id} active={activeSection === 'registry-cache'}
               csrfToken={canManage ? current.csrfToken : undefined} />
           </Tabs.Panel>
-          {canManage ? <Tabs.Panel value="certificates" pt="lg">
-            <Paper withBorder radius="md" p="lg">
-              <BrowserCertificate key={`certificate:${current.user.id}`} userId={current.user.id} active={activeSection === 'certificates'} csrfToken={current.csrfToken} refresh={status.refetch} />
-            </Paper>
-          </Tabs.Panel> : null}
           {canMaintain ? <Tabs.Panel value="maintenance" pt="lg">
             <Paper withBorder radius="md" p="lg">
               <Maintenance key={`maintenance:${current.user.id}`} userId={current.user.id} csrfToken={current.csrfToken} capacity={data?.capacity} />
-            </Paper>
-          </Tabs.Panel> : null}
-          {canManageSecrets && current.organizationSecretScopeId ? <Tabs.Panel value="secrets" pt="lg">
-            <Paper withBorder radius="md" p="lg">
-              <Secrets key={current.user.id + current.organizationSecretScopeId} scope="organization" scopeID={current.organizationSecretScopeId}
-                userID={current.user.id} csrfToken={current.csrfToken} />
-              <Text size="sm" c="dimmed" mt="md">Organization values are used when no personal or project override applies. Saved secret values cannot be viewed.</Text>
             </Paper>
           </Tabs.Panel> : null}
         </Tabs>

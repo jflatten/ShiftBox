@@ -70,10 +70,16 @@ func TestExternalMembershipAdmission(t *testing.T) {
 	if _, err := db.ExecContext(ctx, "UPDATE users SET membership_state='active' WHERE id=$1", userID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.ExecContext(ctx, "UPDATE installations SET session_timeout_value=2, session_timeout_unit='hours' WHERE id=$1", installation); err != nil {
+		t.Fatal(err)
+	}
 	subject.Email = "changed@example.test"
 	session, token, err := issue()
 	if err != nil || token == "" || session.UserID != userID || session.ExternalAuthorizedAt == nil || !session.ExternalAuthorizedAt.Equal(now) {
 		t.Fatalf("active external session did not preserve the bound user and fresh authorization: %v", err)
+	}
+	if !session.ExpiresAt.Equal(now.Add(2 * time.Hour)) {
+		t.Errorf("organization session expires %v, want %v", session.ExpiresAt, now.Add(2*time.Hour))
 	}
 	f := externalLogin{db: db, login: &SetupLogin{Config: oauth2.Config{ClientID: "fixture", Endpoint: oauth2.Endpoint{AuthURL: "https://management.test/dex/auth"}}},
 		now: func() time.Time { return now }, connector: func(context.Context) (identity.ConnectorIdentity, error) {

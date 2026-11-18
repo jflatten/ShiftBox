@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Button, Chip, Divider, FileInput, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core';
+import { Button, Card, Chip, FileInput, Group, Paper, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { useQuery } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
@@ -75,8 +75,8 @@ export function BrowserCertificate({ userId, active, csrfToken, refresh }: {
         <APIProblemView error={installed.error} />
         <Button variant="default" style={{ alignSelf: 'flex-start' }} onClick={() => void installed.refetch()}>Retry certificate details</Button>
       </Stack> : installed.data ? <InstalledCertificate certificate={installed.data} /> : null}
-      <Divider />
-      <form noValidate onSubmit={form.onSubmit(replace, errors => form.getInputNode(Object.keys(errors)[0])?.focus())}>
+      <Paper component="form" withBorder radius="md" p="lg" noValidate
+        onSubmit={form.onSubmit(replace, errors => form.getInputNode(Object.keys(errors)[0])?.focus())}>
         <Stack maw={480} gap="sm">
           <Title order={3} size="h4">Replace certificate</Title>
           <Text size="sm">Use a trusted certificate covering the management address and both IDE and preview wildcards.</Text>
@@ -88,7 +88,7 @@ export function BrowserCertificate({ userId, active, csrfToken, refresh }: {
           {error !== undefined ? <APIProblemView error={error} /> : null}
           {operation ? <WorkflowStepper operation={operation} /> : null}
         </Stack>
-      </form>
+      </Paper>
     </Stack>
   );
 }
@@ -119,35 +119,37 @@ function InstalledCertificate({ certificate }: { certificate: CertificateDetails
     ...certificate.emailAddresses.map(value => ({ type: 'Email', value })),
     ...certificate.uris.map(value => ({ type: 'URI', value })),
   ];
-  return <Stack component="section" aria-label="Installed certificate" gap="md">
-    <Group justify="space-between">
-      <Title order={3} size="h4">Installed certificate</Title>
-      <Chip checked readOnly hidden icon={false} color={status.color} variant="light"
-        styles={{ label: { cursor: 'default' } }} wrapperProps={{ role: 'status' }}>{status.label}</Chip>
-    </Group>
-    {certificate.status === 'expiring' ? <Text size="sm">This certificate expires within 30 days. Install a replacement before it expires.</Text> : null}
-    <SimpleGrid component="dl" cols={{ base: 1, sm: 2 }} m={0} spacing="md">
-      {details.map(([label, value]) => <Stack key={label} gap={4} style={{ minWidth: 0 }}>
-        <Text component="dt" size="xs" c="dimmed">{label}</Text>
-        <Text component="dd" size="sm" m={0} style={{ overflowWrap: 'anywhere' }}>{value}</Text>
-      </Stack>)}
-    </SimpleGrid>
-    <Stack component="dl" m={0} gap="md">
-      <Stack gap={4}>
-        <Text component="dt" size="xs" c="dimmed">Subject alternative names (SANs)</Text>
-        <Stack component="dd" m={0} gap={4}>
-          {sans.length ? sans.map(({ type, value }) => <Group key={`${type}:${value}`} gap="xs" wrap="nowrap" align="flex-start">
-            <Text size="xs" c="dimmed" w={40} style={{ flexShrink: 0 }}>{type}</Text>
-            <Text size="sm" style={{ overflowWrap: 'anywhere', minWidth: 0 }}>{value}</Text>
-          </Group>) : <Text size="sm">Not specified</Text>}
+  return <Card component="section" aria-label="Installed certificate" withBorder radius="md" padding="lg">
+    <Stack gap="md">
+      <Group justify="space-between">
+        <Title order={3} size="h4">Installed certificate</Title>
+        <Chip checked readOnly hidden icon={false} color={status.color} variant="light"
+          styles={{ label: { cursor: 'default' } }} wrapperProps={{ role: 'status' }}>{status.label}</Chip>
+      </Group>
+      {certificate.status === 'expiring' ? <Text size="sm">This certificate expires within 30 days. Install a replacement before it expires.</Text> : null}
+      <SimpleGrid component="dl" cols={{ base: 1, sm: 2 }} m={0} spacing="md">
+        {details.map(([label, value]) => <Stack key={label} gap={4} style={{ minWidth: 0 }}>
+          <Text component="dt" size="xs" c="dimmed">{label}</Text>
+          <Text component="dd" size="sm" m={0} style={{ overflowWrap: 'anywhere' }}>{value}</Text>
+        </Stack>)}
+      </SimpleGrid>
+      <Stack component="dl" m={0} gap="md">
+        <Stack gap={4}>
+          <Text component="dt" size="xs" c="dimmed">Subject alternative names (SANs)</Text>
+          <Stack component="dd" m={0} gap={4}>
+            {sans.length ? sans.map(({ type, value }) => <Group key={`${type}:${value}`} gap="xs" wrap="nowrap" align="flex-start">
+              <Text size="xs" c="dimmed" w={40} style={{ flexShrink: 0 }}>{type}</Text>
+              <Text size="sm" style={{ overflowWrap: 'anywhere', minWidth: 0 }}>{value}</Text>
+            </Group>) : <Text size="sm">Not specified</Text>}
+          </Stack>
+        </Stack>
+        <Stack gap={4}>
+          <Text component="dt" size="xs" c="dimmed">SHA-256 fingerprint</Text>
+          <Text component="dd" size="sm" ff="monospace" m={0} style={{ overflowWrap: 'anywhere' }}>{certificate.fingerprintSha256}</Text>
         </Stack>
       </Stack>
-      <Stack gap={4}>
-        <Text component="dt" size="xs" c="dimmed">SHA-256 fingerprint</Text>
-        <Text component="dd" size="sm" ff="monospace" m={0} style={{ overflowWrap: 'anywhere' }}>{certificate.fingerprintSha256}</Text>
-      </Stack>
     </Stack>
-  </Stack>;
+  </Card>;
 }
 
 function utcDate(value: string) {

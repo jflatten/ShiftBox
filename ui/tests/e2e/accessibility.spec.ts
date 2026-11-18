@@ -415,19 +415,27 @@ test('maintenance and certificate progress', async ({ page }) => {
   const maintenanceLabels: [string, string, string] = ['Schedule update', 'Wait for safe boundary', 'Verify update'];
   const certificateLabels: [string, string, string] = ['Validate certificate', 'Install certificate', 'Verify certificate'];
   await fixture(page, (route, path) => {
-    if (path.endsWith('/session')) return route.fulfill({ json: admin(['infrastructure.view', 'infrastructure.manage', 'maintenance.manage']) });
+    if (path === '/api/v1/session') return route.fulfill({ json: admin(['infrastructure.view', 'infrastructure.manage', 'maintenance.manage']) });
+    if (path.endsWith('/settings/session')) return route.fulfill({ json: { value: 30, unit: 'minutes', version: 1 } });
     if (path.endsWith('/workspaces')) return route.fulfill({ json: { items: [] } });
     if (path.endsWith('/infrastructure')) return route.fulfill({ json: {
       provider: { name: 'UTM', version: 'fixture', architecture: 'amd64' }, capacity: resources, version: 1, conditions: [],
     } });
     if (path.endsWith('/maintenance')) return route.fulfill({ json: [{ id: 'campaign', operationId: operationID,
       releaseId: 'fixture-release', deadline: '2099-01-01T00:00:00Z', state: 'active' }] });
-    if (path.endsWith('/certificate')) return route.fulfill({ json: operation(certificateLabels) });
+    if (path.endsWith('/certificate')) return route.fulfill({ json: route.request().method() === 'PUT' ? operation(certificateLabels) : {
+      subject: 'CN=management.test', issuer: 'CN=Fixture CA', dnsNames: ['management.test'], ipAddresses: [], emailAddresses: [], uris: [],
+      notBefore: '2026-11-01T12:00:00Z', notAfter: '2027-11-01T12:00:00Z', serialNumber: '1234', fingerprintSha256: 'ab'.repeat(32),
+      signatureAlgorithm: 'ECDSA-SHA256', publicKeyAlgorithm: 'ECDSA', version: 3, chainLength: 2, status: 'valid',
+    } });
   }, operation(maintenanceLabels));
-  await page.goto('/infrastructure/');
-  await tabTo(page, page.getByRole('tab', { name: 'Platform' }));
+  await page.goto('/settings/');
+  await tabTo(page, page.getByRole('tab', { name: 'Sessions' }));
   await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('tab', { name: 'Certificates' })).toHaveAttribute('aria-selected', 'true');
+  const installed = page.getByRole('region', { name: 'Installed certificate' });
+  await expect(installed).toHaveClass(/mantine-Card-root/);
+  await expect(installed.getByText('CN=Fixture CA')).toBeVisible();
   const replace = page.getByRole('button', { name: 'Replace certificate' });
   await activate(page, replace);
   const chain = page.getByRole('button', { name: 'Certificate chain' });
@@ -438,7 +446,9 @@ test('maintenance and certificate progress', async ({ page }) => {
   }
   await activate(page, replace);
   await checkWorkflow(page, certificateLabels);
-  await tabTo(page, page.getByRole('tab', { name: 'Certificates' }));
+  await page.goto('/infrastructure/');
+  await tabTo(page, page.getByRole('tab', { name: 'Platform' }));
+  await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('tab', { name: 'Maintenance' })).toHaveAttribute('aria-selected', 'true');
   await activate(page, page.getByRole('button', { name: 'View progress' }));
@@ -447,7 +457,7 @@ test('maintenance and certificate progress', async ({ page }) => {
 });
 
 // Keyboard tab navigation must preserve draft settings and global warnings,
-// including at a narrow viewport where the settings tabs wrap to a second line.
+// including when the narrow viewport collapses the main navigation.
 test('Infrastructure categories preserve drafts and warnings on a narrow screen', async ({ page }) => {
   await fixture(page, (route, path) => {
     if (path.endsWith('/session')) return route.fulfill({ json: {
@@ -470,14 +480,13 @@ test('Infrastructure categories preserve drafts and warnings on a narrow screen'
   await page.keyboard.press('ControlOrMeta+A');
   await page.keyboard.insertText('6');
   await expect(save).toBeEnabled();
-  for (const [current, next] of [['Platform', 'Certificates'], ['Certificates', 'Maintenance'], ['Maintenance', 'Secrets'], ['Secrets', 'Platform']]) {
+  for (const [current, next] of [['Platform', 'Cache'], ['Cache', 'Maintenance'], ['Maintenance', 'Platform']]) {
     await tabTo(page, page.getByRole('tab', { name: current }));
     await page.keyboard.press('ArrowRight');
     await expect(page.getByRole('tab', { name: next })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('region', { name: 'Persistent conditions' }).getByText('Replace the certificate soon.')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     if (next === 'Maintenance') await enter(page, page.getByRole('textbox', { name: 'Target release ID' }), 'draft-release');
-    if (next === 'Secrets') await expect(page.getByRole('heading', { name: 'Organization secrets' })).toBeVisible();
   }
   await expect(cpu).toHaveValue('6');
   await activate(page, page.getByRole('button', { name: 'Discard changes' }));
@@ -487,6 +496,46 @@ test('Infrastructure categories preserve drafts and warnings on a narrow screen'
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('textbox', { name: 'Target release ID' })).toHaveValue('draft-release');
+});
+
+// Saving a timeout through the two controls preserves both values on reload.
+test('Administration Settings saves and reloads a session timeout', async ({ page }) => {
+  let timeout = { value: 30, unit: 'minutes', version: 1 };
+  await fixture(page, (route, path) => {
+    if (path === '/api/v1/session') return route.fulfill({ json: {
+      ...admin(['infrastructure.view', 'infrastructure.manage', 'secret.manage_organization']), organizationSecretScopeId: 'organization-fixture',
+    } });
+    if (path.endsWith('/infrastructure')) return route.fulfill({ json: { conditions: [] } });
+    if (path.endsWith('/secrets')) return route.fulfill({ json: [] });
+    if (path.endsWith('/settings/session') && route.request().method() === 'PUT') {
+      expect(route.request().headers()['if-match']).toBe('"1"');
+      expect(route.request().postDataJSON()).toEqual({ value: 2, unit: 'days' });
+      timeout = { value: 2, unit: 'days', version: 2 };
+      return route.fulfill({ status: 204 });
+    }
+    if (path.endsWith('/settings/session')) return route.fulfill({ json: timeout });
+  });
+  await page.goto('/settings/');
+  await activate(page, page.getByRole('button', { name: 'Toggle navigation' }));
+  await expect(page.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page');
+  await activate(page, page.getByRole('button', { name: 'Toggle navigation' }));
+  const value = page.getByRole('textbox', { name: 'Session timeout' });
+  const unit = page.getByRole('combobox', { name: 'Time unit' });
+  await expect(value).toHaveValue('30');
+  await expect(unit).toHaveValue('minutes');
+  await value.fill('2');
+  await unit.selectOption({ label: 'Days' });
+  await activate(page, page.getByRole('button', { name: 'Save session timeout' }));
+  await expect(page.getByText('Session timeout saved.')).toBeVisible();
+  await page.reload();
+  await expect(value).toHaveValue('2');
+  await expect(unit).toHaveValue('days');
+  await activate(page, page.getByRole('tab', { name: 'Sessions' }));
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('heading', { name: 'Organization secrets' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('tab', { name: 'Secrets' })).toHaveAttribute('aria-selected', 'true');
 });
 
 // Clearing individual budgets must show Unlimited after saving and reloading,

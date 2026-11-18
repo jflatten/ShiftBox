@@ -44,8 +44,13 @@ func checkRecoveryLogin(t *testing.T, cfg database.Config) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		timeoutDDL, err := migrations.Files.ReadFile("postgres/00039_session_timeout.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
 		up, _, _ := strings.Cut(string(ddl), "-- +goose Down")
-		if _, err := db.ExecContext(ctx, strings.ReplaceAll(up, "CREATE TABLE ", "CREATE TEMPORARY TABLE ")); err != nil {
+		timeoutUp, _, _ := strings.Cut(string(timeoutDDL), "-- +goose Down")
+		if _, err := db.ExecContext(ctx, strings.ReplaceAll(up, "CREATE TABLE ", "CREATE TEMPORARY TABLE ")+timeoutUp); err != nil {
 			t.Fatal(err)
 		}
 	} else if err := database.Migrate(ctx, db, cfg.Profile); err != nil {
@@ -91,7 +96,14 @@ func checkRecoveryLogin(t *testing.T, cfg database.Config) {
 		t.Fatal(err)
 	}
 	session, _, err = issue(administrator)
-	if err != nil || session.Mode != "normal" {
-		t.Fatalf("sign-in after activation = %q, %v; want normal", session.Mode, err)
+	if err != nil || session.Mode != "normal" || !session.ExpiresAt.Equal(now.Add(30*time.Minute)) {
+		t.Fatalf("sign-in after activation = %q, expires %v, %v; want normal with 30 minutes", session.Mode, session.ExpiresAt, err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE installations SET session_timeout_value=2, session_timeout_unit='days' WHERE id=$1", installation); err != nil {
+		t.Fatal(err)
+	}
+	session, _, err = issue(administrator)
+	if err != nil || !session.ExpiresAt.Equal(now.Add(48*time.Hour)) {
+		t.Fatalf("sign-in after timeout change expires %v, %v; want two days", session.ExpiresAt, err)
 	}
 }

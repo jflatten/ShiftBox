@@ -50,10 +50,12 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
   const backup = normal && (permitted('backup.create') || permitted('restore.validate'));
   const adminNotice = normal && session?.role === 'administrator' && permitted('notice.list');
   const adminInfrastructure = !signedOut && !renewalRequired && session?.role === 'administrator' && permitted('infrastructure.view');
+  const adminSettings = normal && session?.role === 'administrator' &&
+    (permitted('infrastructure.manage') || permitted('secret.manage_organization'));
   const adminUsers = normal && session?.role === 'administrator' && permitted('user.list');
   const adminAudit = normal && session?.role === 'administrator' && permitted('audit.list');
   const adminRecovery = session?.role === 'administrator' && (backup || recovery);
-  const administration = adminNotice || adminInfrastructure || adminUsers || adminAudit || adminRecovery;
+  const administration = adminNotice || adminInfrastructure || adminSettings || adminUsers || adminAudit || adminRecovery;
   const logo = <Image src={`/brand/shiftbox-logo-${scheme}.svg`} alt="ShiftBox" w={{ base: 140, sm: 160 }} h={40} fit="contain" />;
   return (
     <AppShell header={{ height: 72 }} navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="lg">
@@ -108,6 +110,8 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
             aria-current={at('/notices/') ? 'page' : undefined} /> : null}
           {adminInfrastructure ? <NavLink href="/infrastructure/" label="Infrastructure" active={!!at('/infrastructure/')}
             aria-current={at('/infrastructure/') ? 'page' : undefined} /> : null}
+          {adminSettings ? <NavLink href="/settings/" label="Settings" active={!!at('/settings/')}
+            aria-current={at('/settings/') ? 'page' : undefined} /> : null}
           {adminUsers ? <NavLink href="/users/" label="Users" active={!!at('/users/')}
             aria-current={at('/users/') ? 'page' : undefined} /> : null}
           {adminAudit ? <NavLink href="/audit/" label="Audit" active={!!at('/audit/')}

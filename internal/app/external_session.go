@@ -63,7 +63,7 @@ func issueExternalSession(
 		if interval <= 0 || interval > int64((1<<63-1)/time.Second) || !now.Before(verified.AuthorizedAt.Add(time.Duration(interval)*time.Second)) {
 			return identity.ErrInvalidIdentity
 		}
-		session, token, err = saveExternalSession(ctx, tx, store, user.ID, newID(), verified.AuthorizedAt, now)
+		session, token, err = saveExternalSession(ctx, tx, store, installation, user.ID, newID(), verified.AuthorizedAt, now)
 		return err
 	})
 	if err != nil {
@@ -121,7 +121,7 @@ func reauthorizeExternalSession(
 			now.UTC().Format(time.RFC3339Nano), sessionID); err != nil {
 			return err
 		}
-		session, token, err = saveExternalSession(ctx, tx, store, user.ID, newID(), verified.AuthorizedAt, now)
+		session, token, err = saveExternalSession(ctx, tx, store, principal.InstallationID, user.ID, newID(), verified.AuthorizedAt, now)
 		if err != nil {
 			return err
 		}
@@ -159,8 +159,12 @@ func checkVerifiedConnector(ctx context.Context, tx *sql.Tx, verified identity.V
 	return nil
 }
 
-func saveExternalSession(ctx context.Context, tx *sql.Tx, store *auth.Store, userID, sessionID string, authorizedAt, now time.Time) (auth.Session, string, error) {
-	session, token, err := auth.NewSession(sessionID, userID, "normal", now, 30*time.Minute)
+func saveExternalSession(ctx context.Context, tx *sql.Tx, store *auth.Store, installation, userID, sessionID string, authorizedAt, now time.Time) (auth.Session, string, error) {
+	lifetime, err := managementSessionLifetime(ctx, tx, installation)
+	if err != nil {
+		return auth.Session{}, "", err
+	}
+	session, token, err := auth.NewSession(sessionID, userID, "normal", now, lifetime)
 	if err != nil {
 		return auth.Session{}, "", err
 	}

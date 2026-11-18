@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Providers } from '../../app/providers';
 import Account from '../../app/account/page';
-import { Infrastructure } from '../admin/infrastructure';
+import { AdministrationSettings } from '../admin/settings';
 import { Templates } from '../templates/templates';
 
 import { Secrets } from './secrets';
@@ -85,7 +85,7 @@ test('lists only the signed-in user’s personal secret metadata on Account', as
   expect(screen.queryByRole('heading', { name: 'Organization secrets' })).not.toBeInTheDocument();
 });
 
-// Infrastructure takes the organization scope from the authorized session.
+// Administration Settings takes the organization scope from the authorized session.
 test('opens organization secrets with the server-provided scope', async () => {
   const fetch = jest.fn(async (path: string) => ({
     ok: true, status: 200, json: async () => {
@@ -98,7 +98,7 @@ test('opens organization secrets with the server-provided scope', async () => {
   }));
   globalThis.fetch = fetch as unknown as typeof globalThis.fetch;
   const user = userEvent.setup();
-  render(<Providers><Infrastructure /></Providers>);
+  render(<Providers><AdministrationSettings /></Providers>);
   await user.click(await screen.findByRole('tab', { name: 'Secrets' }));
   expect(await screen.findByRole('heading', { name: 'Organization secrets' })).toBeVisible();
   expect(fetch).toHaveBeenCalledWith('/api/v1/secrets?scope=organization&scopeId=installation', expect.anything());

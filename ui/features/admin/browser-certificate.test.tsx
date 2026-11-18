@@ -21,6 +21,7 @@ test('shows installed certificate details above the upload form', async () => {
   globalThis.fetch = jest.fn(async () => ({ ok: true, json: async () => certificate }) as Response);
   render(<Providers><BrowserCertificate userId="admin" active csrfToken="fixture" refresh={async () => {}} /></Providers>);
   const details = await screen.findByRole('region', { name: 'Installed certificate' });
+  expect(details).toHaveClass('mantine-Card-root');
   for (const value of [certificate.subject, certificate.issuer, ...certificate.dnsNames, ...certificate.ipAddresses,
     ...certificate.emailAddresses, ...certificate.uris, certificate.serialNumber, certificate.fingerprintSha256,
     certificate.signatureAlgorithm, certificate.publicKeyAlgorithm]) {

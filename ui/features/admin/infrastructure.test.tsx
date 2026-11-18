@@ -23,14 +23,6 @@ const status = {
   ],
 };
 
-const installedCertificate = {
-  subject: 'CN=management.test', issuer: 'CN=Example CA',
-  dnsNames: ['management.test', '*.ide.test', '*.preview.test'], ipAddresses: [], emailAddresses: [], uris: [],
-  notBefore: '2026-11-01T12:00:00Z', notAfter: '2026-12-01T12:00:00Z', serialNumber: '1234',
-  fingerprintSha256: 'ab'.repeat(32), signatureAlgorithm: 'ECDSA-SHA256', publicKeyAlgorithm: 'ECDSA',
-  version: 3, chainLength: 2, status: 'expiring',
-};
-
 function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
@@ -446,14 +438,13 @@ test('edits a profile and explains why deletion is blocked', async () => {
   expect(screen.getByRole('rowheader', { name: 'Medium' })).toBeVisible();
 });
 
-// Loading infrastructure results must preserve one form per permitted action.
-test('keeps certificate and maintenance forms distinct after status loads', async () => {
+// Maintenance stays available after the certificate and secrets tabs move.
+test('leaves maintenance in infrastructure after settings move', async () => {
   const duplicateKeys = jest.spyOn(console, 'error').mockImplementation(() => {});
   globalThis.fetch = jest.fn(async input => {
     if (input === '/api/v1/session') return json({ ...session, permissions: [...session.permissions, 'maintenance.manage'] });
     if (input === '/api/v1/admin/infrastructure') return json(status);
     if (input === '/api/v1/admin/resource-profiles') return json([]);
-    if (input === '/api/v1/admin/certificate') return json(installedCertificate);
     if (input === '/api/v1/admin/maintenance') return json([]);
     if (input === '/api/v1/workspaces') return json({ items: [] });
     throw new Error('unexpected request');
@@ -464,8 +455,8 @@ test('keeps certificate and maintenance forms distinct after status loads', asyn
     expect(await screen.findByRole('heading', { name: 'Provider' })).toBeVisible();
     expect(screen.getByRole('tab', { name: 'Platform' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByRole('button', { name: 'Replace certificate' })).toBeNull();
-    await user.click(screen.getByRole('tab', { name: 'Certificates' }));
-    expect(screen.getAllByRole('button', { name: 'Replace certificate' })).toHaveLength(1);
+    expect(screen.queryByRole('tab', { name: 'Certificates' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Secrets' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Schedule maintenance' })).toBeNull();
     await user.click(screen.getByRole('tab', { name: 'Maintenance' }));
     expect(screen.getAllByRole('button', { name: 'Schedule maintenance' })).toHaveLength(1);
@@ -530,63 +521,6 @@ test('gates infrastructure data on the current administrator session', async () 
   expect(fetch.mock.calls.map(([input]) => input)).toEqual(['/api/v1/session']);
 });
 
-// A lost upload response keeps the selected files and request key for retry.
-// Committed progress clears the private key selection and refreshes warnings.
-test('retries a certificate upload and shows the committed replacement', async () => {
-  const requests: RequestInit[] = [];
-  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
-    if (input === '/api/v1/session') return json(session);
-    if (input === '/api/v1/admin/infrastructure') return json(requests.length > 1 ? { ...status, conditions: [] } : status);
-    if (input === '/api/v1/admin/resource-profiles') return json([]);
-    if (input === '/api/v1/admin/certificate' && init?.method !== 'PUT') return json(requests.length > 1
-      ? { ...installedCertificate, serialNumber: '5678', notAfter: '2027-11-01T12:00:00Z', status: 'valid' }
-      : installedCertificate);
-    if (input === '/api/v1/admin/certificate' && init?.method === 'PUT') {
-      requests.push(init);
-      if (requests.length === 1) throw new TypeError('response lost');
-      return json({ id: 'operation', status: 'succeeded', steps: [
-        { key: 'replace_browser_certificate', index: 0, label: 'Replace browser certificate', status: 'succeeded' },
-      ] });
-    }
-    throw new Error('unexpected request');
-  });
-  globalThis.fetch = fetch;
-  const user = userEvent.setup();
-  const { container } = render(<Providers><Infrastructure /></Providers>);
-  const warning = await screen.findByText('Browser certificate expires soon');
-  await user.click(screen.getByRole('tab', { name: 'Certificates' }));
-  expect(await screen.findByText('1234')).toBeVisible();
-  const submit = screen.getByRole('button', { name: 'Replace certificate' });
-  await user.click(submit);
-  expect(screen.getByLabelText(/^Certificate chain/)).toHaveFocus();
-  expect(requests).toHaveLength(0);
-  const file = (contents: string, name: string) => Object.assign(new File([contents], name), {
-    text: async () => contents,
-  });
-  const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
-  await user.upload(inputs[0], file('chain fixture', 'chain.pem'));
-  await user.upload(inputs[1], file('key fixture', 'private.pem'));
-  await user.click(screen.getByRole('tab', { name: 'Platform' }));
-  await user.click(screen.getByRole('tab', { name: 'Certificates' }));
-  expect(screen.getByText('private.pem')).toBeVisible();
-  await user.click(submit);
-  expect(await screen.findByText('Unable to complete the request')).toBeVisible();
-  expect(warning).toBeVisible();
-  await user.click(submit);
-  expect(await screen.findByRole('button', { name: 'Replace browser certificate: Completed' })).toBeVisible();
-  await waitFor(() => expect(warning).not.toBeInTheDocument());
-  expect(screen.queryByText('private.pem')).toBeNull();
-  expect(await screen.findByText('5678')).toBeVisible();
-  expect(screen.getByText('2027-11-01 12:00:00 UTC')).toBeVisible();
-  expect(screen.queryByText('1234')).not.toBeInTheDocument();
-  expect(requests).toHaveLength(2);
-  expect(requests[0]).toEqual(requests[1]);
-  expect(requests[0]).toMatchObject({
-    headers: expect.objectContaining({ 'X-CSRF-Token': 'fixture', 'Idempotency-Key': expect.any(String) }),
-    body: JSON.stringify({ certificateChainPem: 'chain fixture', privateKeyPem: 'key fixture' }),
-  });
-});
-
 // Administrators with infrastructure read access can see warnings without upload controls.
 test('requires infrastructure management permission to replace a certificate', async () => {
   globalThis.fetch = jest.fn(async input => {
@@ -616,7 +550,7 @@ test('preserves a capacity draft across tabs and discards it explicitly', async 
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/admin/infrastructure') return json(status);
     if (input === '/api/v1/admin/resource-profiles') return json([]);
-    if (input === '/api/v1/admin/certificate') return json(installedCertificate);
+    if (input === '/api/v1/admin/image-cache') return new Response(null, { status: 503 });
     throw new Error('unexpected request');
   });
   globalThis.fetch = fetch;
@@ -628,7 +562,7 @@ test('preserves a capacity draft across tabs and discards it explicitly', async 
   await user.clear(cpu);
   await user.type(cpu, '5');
   expect(screen.getByText('You have unsaved capacity changes.')).toBeVisible();
-  await user.click(screen.getByRole('tab', { name: 'Certificates' }));
+  await user.click(screen.getByRole('tab', { name: 'Cache' }));
   expect(screen.getByText('Browser certificate expires soon')).toBeVisible();
   await user.click(screen.getByRole('tab', { name: 'Platform' }));
   expect(cpu).toHaveValue('5');
@@ -638,7 +572,7 @@ test('preserves a capacity draft across tabs and discards it explicitly', async 
   expect(save).toBeDisabled();
   expect(screen.queryByText('You have unsaved capacity changes.')).toBeNull();
   expect(fetch.mock.calls.map(([input]) => input).sort()).toEqual([
-    '/api/v1/admin/certificate', '/api/v1/admin/infrastructure', '/api/v1/admin/resource-profiles', '/api/v1/session',
+    '/api/v1/admin/image-cache', '/api/v1/admin/infrastructure', '/api/v1/admin/resource-profiles', '/api/v1/session',
   ]);
   expect(fetch.mock.calls.every(([, init]) => !init?.method)).toBe(true);
 });

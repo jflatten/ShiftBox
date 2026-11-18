@@ -27,12 +27,14 @@ type SetupLogin struct {
 const setupLoginCookie = "__Secure-shiftbox-setup-login"
 
 type loginFlow struct {
-	login      *SetupLogin
-	cookie     string
-	cookiePath string
-	redirect   string
-	deny       http.HandlerFunc
-	issue      func(context.Context, identity.VerifiedIdentity) (auth.Session, string, error)
+	login           *SetupLogin
+	cookiePrefix    string
+	cookiePath      string
+	attemptLifetime time.Duration
+	redirect        string
+	retryURL        string
+	deny            http.HandlerFunc
+	issue           func(context.Context, identity.VerifiedIdentity) (auth.Session, string, error)
 }
 
 func loginBinding(label, verifier string) string {
@@ -42,9 +44,11 @@ func loginBinding(label, verifier string) string {
 
 func (f loginFlow) start(w http.ResponseWriter, r *http.Request) {
 	verifier := oauth2.GenerateVerifier()
-	http.SetCookie(w, &http.Cookie{Name: f.cookie, Value: verifier, Path: f.cookiePath,
-		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 300})
-	location := f.login.Config.AuthCodeURL(loginBinding("state", verifier),
+	state := loginBinding("state", verifier)
+	// Each form owns its verifier, even when session expiry opens login in several tabs.
+	http.SetCookie(w, &http.Cookie{Name: f.cookiePrefix + state, Value: verifier, Path: f.cookiePath,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: int(f.attemptLifetime.Seconds())})
+	location := f.login.Config.AuthCodeURL(state,
 		oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", loginBinding("nonce", verifier)),
 		oauth2.SetAuthURLParam("connector_id", "local"))
 	w.Header().Set("Cache-Control", "no-store")
@@ -52,18 +56,31 @@ func (f loginFlow) start(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f loginFlow) finish(w http.ResponseWriter, r *http.Request) {
-	cookies := r.CookiesNamed(f.cookie)
-	http.SetCookie(w, &http.Cookie{Name: f.cookie, Path: f.cookiePath, HttpOnly: true,
-		Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	query := r.URL.Query()
 	code, state := query["code"], query["state"]
-	if len(cookies) != 1 || len(cookies[0].Value) != 43 || len(code) != 1 || code[0] == "" ||
-		len(state) != 1 || subtle.ConstantTimeCompare([]byte(state[0]), []byte(loginBinding("state", cookies[0].Value))) != 1 {
+	if len(code) != 1 || code[0] == "" || len(state) != 1 || len(state[0]) != base64.RawURLEncoding.EncodedLen(sha256.Size) {
 		f.deny(w, r)
 		return
 	}
+	if _, err := base64.RawURLEncoding.Strict().DecodeString(state[0]); err != nil {
+		f.deny(w, r)
+		return
+	}
+	cookieName := f.cookiePrefix + state[0]
+	cookies := r.CookiesNamed(cookieName)
+	if len(cookies) == 0 && f.retryURL != "" {
+		http.Redirect(w, r, f.retryURL, http.StatusSeeOther)
+		return
+	}
+	if len(cookies) != 1 || len(cookies[0].Value) != 43 ||
+		subtle.ConstantTimeCompare([]byte(state[0]), []byte(loginBinding("state", cookies[0].Value))) != 1 {
+		f.deny(w, r)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Path: f.cookiePath, HttpOnly: true,
+		Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	verified, err := f.login.Provider.ExchangeLocal(ctx, f.login.Config, code[0], cookies[0].Value,

@@ -138,6 +138,10 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		}
 		api := http.NewServeMux()
 		api.Handle("GET /api/v1/session", services.Session)
+		readTimeout := services.Handlers["getSessionTimeout"]
+		api.Handle("GET /api/v1/admin/settings/session", &readTimeout)
+		updateTimeout := services.Handlers["updateSessionTimeout"]
+		api.Handle("PUT /api/v1/admin/settings/session", &updateTimeout)
 		list := services.Handlers["listWorkspaces"]
 		api.Handle("GET /api/v1/workspaces", &list)
 		change := services.Handlers["changeOwnPassword"]
@@ -281,7 +285,91 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		}
 		return client
 	}
-	signIn(email, password, 200, "normal")
+	expired := signIn(email, password, 200, "normal")
+	// Saving the timeout takes effect on the next Dex sign-in. Read it back
+	// through the administrator API before expiring the original cookie.
+	response, err = expired.Get(server.Origin + "/api/v1/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var originalSession struct {
+		CSRFToken string    `json:"csrfToken"`
+		ExpiresAt time.Time `json:"expiresAt"`
+	}
+	err = json.NewDecoder(response.Body).Decode(&originalSession)
+	response.Body.Close()
+	if err != nil || originalSession.CSRFToken == "" {
+		t.Fatalf("reading original session failed: %v", err)
+	}
+	const timeoutPath = "/api/v1/admin/settings/session"
+	update, err := http.NewRequestWithContext(ctx, http.MethodPut, server.Origin+timeoutPath, strings.NewReader(`{"value":2,"unit":"hours"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	update.Header.Set("Origin", server.Origin)
+	update.Header.Set("X-CSRF-Token", originalSession.CSRFToken)
+	update.Header.Set("If-Match", `"1"`)
+	response, err = expired.Do(update)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("session timeout update returned %d, want 204", response.StatusCode)
+	}
+	response, err = expired.Get(server.Origin + timeoutPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var savedTimeout auth.SessionTimeout
+	err = json.NewDecoder(response.Body).Decode(&savedTimeout)
+	response.Body.Close()
+	if err != nil || savedTimeout != (auth.SessionTimeout{Value: 2, Unit: "hours", Version: 2}) {
+		t.Fatalf("reloaded session timeout returned %+v, %v; want two hours at version 2", savedTimeout, err)
+	}
+	// Expiry opens a sign-in page in each tab. They share a cookie jar, but
+	// signing in from one tab must work even after the other opened its form.
+	exec("UPDATE sessions SET expires_at=$1 WHERE user_id=$2", time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano), uuidOwner)
+	response, err = expired.Get(server.Origin + "/api/v1/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expired session returned %d, want 401", response.StatusCode)
+	}
+	firstTab, err := expired.Get(server.Origin + "/auth/login#session-expired")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstTab.Body.Close()
+	otherTab, err := expired.Get(server.Origin + "/auth/login#session-expired")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer otherTab.Body.Close()
+	for _, form := range []*http.Response{firstTab, otherTab} {
+		res, err := submitDexForm(expired, form, url.Values{"login": {email}, "password": {password}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK || res.Request.URL.Path != "/workspaces/" {
+			t.Fatalf("sign-in after session expiry returned %d at %s, want 200 at /workspaces/", res.StatusCode, res.Request.URL.Path)
+		}
+	}
+	response, err = expired.Get(server.Origin + "/api/v1/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var renewedSession struct {
+		ExpiresAt time.Time `json:"expiresAt"`
+	}
+	err = json.NewDecoder(response.Body).Decode(&renewedSession)
+	response.Body.Close()
+	if remaining := time.Until(renewedSession.ExpiresAt); err != nil || remaining < 119*time.Minute || remaining > 120*time.Minute {
+		t.Fatalf("renewed session has %s remaining, %v; want a two-hour session", remaining, err)
+	}
 	exec("UPDATE users SET must_change_password=1 WHERE id=$1", uuidOwner)
 	restricted := signIn(email, password, 200, "password_change")
 	const replacement = "disposable-replacement-fixture"
@@ -353,8 +441,8 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 	exec("UPDATE installations SET state='configuring'")
 	signIn(email, replacement, 401, "")
 	var total int
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions").Scan(&total); err != nil || total != 5 {
-		t.Fatalf("session count = %d, %v, want five successful sign-ins", total, err)
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions").Scan(&total); err != nil || total != 7 {
+		t.Fatalf("session count = %d, %v, want seven successful sign-ins", total, err)
 	}
 	if postgres != nil {
 		if _, err := os.Lstat(filepath.Join(dir, "dex.db")); !os.IsNotExist(err) {

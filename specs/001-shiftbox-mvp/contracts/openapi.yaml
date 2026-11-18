@@ -1036,6 +1036,34 @@ paths:
         '204': { description: Capacity budget updated without evicting existing workspaces }
         default: { $ref: '#/components/responses/Error' }
 
+  /admin/settings/session:
+    get:
+      tags: [Administration]
+      operationId: getSessionTimeout
+      description: Read the session timeout for the active installation.
+      responses:
+        '200':
+          description: Current session timeout and revision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionTimeoutSettings' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Administration]
+      operationId: updateSessionTimeout
+      description: Set the lifetime for newly issued management sessions, up to 400 days in the selected unit.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionTimeout' }
+      responses:
+        '204': { description: Session timeout saved }
+        default: { $ref: '#/components/responses/Error' }
+
   /admin/image-cache:
     get:
       tags: [Infrastructure]
@@ -1353,6 +1381,20 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
   schemas:
+    SessionTimeout:
+      type: object
+      additionalProperties: false
+      required: [value, unit]
+      properties:
+        value: { type: integer, minimum: 1, maximum: 576000, description: A duration of up to 400 days in the selected unit. }
+        unit: { type: string, enum: [minutes, hours, days] }
+    SessionTimeoutSettings:
+      type: object
+      required: [value, unit, version]
+      properties:
+        value: { type: integer, minimum: 1, maximum: 576000 }
+        unit: { type: string, enum: [minutes, hours, days] }
+        version: { type: integer, minimum: 1 }
     TemplateCatalogChoice:
       type: object
       required: [id, name]

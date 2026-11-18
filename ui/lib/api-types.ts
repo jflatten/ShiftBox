@@ -679,6 +679,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/settings/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read the session timeout for the active installation. */
+        get: operations["getSessionTimeout"];
+        /** @description Set the lifetime for newly issued management sessions, up to 400 days in the selected unit. */
+        put: operations["updateSessionTimeout"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/image-cache": {
         parameters: {
             query?: never;
@@ -830,6 +848,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SessionTimeout: {
+            /** @description A duration of up to 400 days in the selected unit. */
+            value: number;
+            /** @enum {string} */
+            unit: "minutes" | "hours" | "days";
+        };
+        SessionTimeoutSettings: {
+            value: number;
+            /** @enum {string} */
+            unit: "minutes" | "hours" | "days";
+            version: number;
+        };
         TemplateCatalogChoice: {
             /** Format: uuid */
             id: string;
@@ -2848,6 +2878,53 @@ export interface operations {
         };
         responses: {
             /** @description Capacity budget updated without evicting existing workspaces */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSessionTimeout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current session timeout and revision */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionTimeoutSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateSessionTimeout: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionTimeout"];
+            };
+        };
+        responses: {
+            /** @description Session timeout saved */
             204: {
                 headers: {
                     [name: string]: unknown;

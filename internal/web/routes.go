@@ -58,6 +58,8 @@ func ManagementRoutes() []ManagementRoute {
 		{Method: "PATCH", Path: "/notices/{noticeId}/receipt", OperationID: "updateNoticeReceipt", Resolver: "notice_receipt"},
 		{Method: "GET", Path: "/admin/audit", OperationID: "listAuditEvents", Action: "audit.list"},
 		{Method: "GET", Path: "/admin/infrastructure", OperationID: "getInfrastructureStatus", Action: "infrastructure.view"},
+		{Method: "GET", Path: "/admin/settings/session", OperationID: "getSessionTimeout", Action: "infrastructure.manage"},
+		{Method: "PUT", Path: "/admin/settings/session", OperationID: "updateSessionTimeout", Action: "infrastructure.manage"},
 		{Method: "GET", Path: "/admin/image-cache", OperationID: "getImageCache", Action: "infrastructure.view"},
 		{Method: "PUT", Path: "/admin/image-cache", OperationID: "updateImageCache", Action: "infrastructure.manage"},
 		{Method: "PUT", Path: "/admin/certificate", OperationID: "replaceBrowserCertificate", Action: "infrastructure.manage"},

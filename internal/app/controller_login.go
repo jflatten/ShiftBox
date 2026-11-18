@@ -54,7 +54,10 @@ func activeLoginHandler(db *sql.DB, installation string, login *SetupLogin, exte
 		return nil, errors.New("active sign-in requires a management HTTPS callback")
 	}
 	flow := loginFlow{
-		login: login, cookie: "__Host-shiftbox_login", cookiePath: "/", redirect: "/",
+		login: login, cookiePrefix: "__Host-shiftbox_login-", cookiePath: "/", redirect: "/",
+		// Keep the browser binding for the managed Dex authorization request's default lifetime.
+		attemptLifetime: 24 * time.Hour,
+		retryURL:        "/auth/login#sign-in-retry",
 		deny: func(w http.ResponseWriter, r *http.Request) {
 			web.WriteProblem(w, web.RequestID(r.Context()), web.Problem{
 				Status: http.StatusUnauthorized, Code: "auth.sign_in_failed", Title: "Sign-in could not be completed",
@@ -108,11 +111,30 @@ func issueControllerSession(ctx context.Context, db *sql.DB, installation, subje
 		case passwordChange:
 			mode = "password_change"
 		}
-		session, token, err = auth.NewSession(newID(), subject, mode, now, 30*time.Minute)
+		lifetime := 30 * time.Minute
+		if state == "active" {
+			lifetime, err = managementSessionLifetime(ctx, tx, installation)
+			if err != nil {
+				return err
+			}
+		}
+		session, token, err = auth.NewSession(newID(), subject, mode, now, lifetime)
 		if err != nil {
 			return err
 		}
 		return auth.NewStore(db).SaveSession(ctx, tx, session)
 	})
 	return session, token, err
+}
+
+func managementSessionLifetime(ctx context.Context, tx *sql.Tx, installation string) (time.Duration, error) {
+	timeout, err := auth.ReadSessionTimeout(ctx, tx, installation)
+	if err != nil {
+		return 0, err
+	}
+	lifetime, valid := timeout.Duration()
+	if !valid {
+		return 0, errors.New("invalid management session timeout")
+	}
+	return lifetime, nil
 }
