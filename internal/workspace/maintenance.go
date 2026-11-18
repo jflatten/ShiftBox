@@ -48,7 +48,8 @@ type WorkspaceMaintenance struct {
 }
 
 // ReadWorkspaceMaintenance returns a target only while its campaign and
-// workspace generation still apply.
+// workspace generation still apply. A verified replacement resolves an older
+// failure for the banner, matching the release gate without erasing history.
 func ReadWorkspaceMaintenance(ctx context.Context, tx *sql.Tx, workspaceID string, generation int64) (*WorkspaceMaintenance, error) {
 	var target WorkspaceMaintenance
 	var deadline string
@@ -58,6 +59,15 @@ func ReadWorkspaceMaintenance(ctx context.Context, tx *sql.Tx, workspaceID strin
 		WHERE t.workspace_id=$1 AND t.generation=$2 AND w.generation=t.generation
 		AND w.desired_state<>'deleted' AND w.observed_state<>'deleted'
 		AND c.state IN ('scheduled','active','blocked') AND t.state<>'completed'
+		AND NOT (t.state='failed' AND EXISTS (
+			SELECT 1 FROM maintenance_targets replacement
+			JOIN maintenance_campaigns newer ON newer.operation_id=replacement.campaign_id
+			JOIN operations verified ON verified.id=replacement.operation_id
+			WHERE replacement.workspace_id=w.id AND replacement.generation=w.generation
+			AND verified.workspace_id=w.id AND verified.generation=w.generation
+			AND replacement.state='completed' AND newer.installation_id=w.installation_id
+			AND newer.created_at>c.created_at AND verified.status='succeeded'
+			AND verified.type='update' AND verified.originating_action='maintenance.update_guest'))
 		ORDER BY c.created_at DESC,c.operation_id DESC LIMIT 1`, workspaceID, generation).
 		Scan(&target.ReleaseID, &deadline, &target.State, &target.OperationID)
 	if errors.Is(err, sql.ErrNoRows) {

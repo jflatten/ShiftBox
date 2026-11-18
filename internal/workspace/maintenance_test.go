@@ -72,7 +72,8 @@ func TestMaintenanceBlocksControllerAdvance(t *testing.T) {
 }
 
 // TestMaintenanceReplacementKeepsGateUntilVerified exercises explicit
-// replacement of a failed campaign without erasing its failure evidence.
+// replacement of a failed campaign. Only verified success clears the workspace
+// warning and release gate; the original failure remains in maintenance history.
 func TestMaintenanceReplacementKeepsGateUntilVerified(t *testing.T) {
 	db, journal, now := maintenanceFixture(t, "retained")
 	ctx := t.Context()
@@ -93,20 +94,40 @@ func TestMaintenanceReplacementKeepsGateUntilVerified(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("explicit replacement campaign = %v, want scheduled", err)
 	}
-	check := func(want int) {
+	check := func(want int, wantWarningState string) {
 		t.Helper()
 		got, err := release.NewStore(db).GuestUpgradeBlockers(ctx, testInstallation, "test", "1")
 		if err != nil || len(got) != want {
 			t.Errorf("release gate = %+v (%v), want %d blockers", got, err, want)
 		}
+		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+			warning, err := ReadWorkspaceMaintenance(ctx, tx, "retained", 1)
+			if err != nil {
+				return err
+			}
+			if wantWarningState == "" {
+				if warning != nil {
+					t.Errorf("ReadWorkspaceMaintenance(retained, 1) = %+v, want no warning after verified replacement", warning)
+				}
+			} else if warning == nil || warning.State != wantWarningState {
+				t.Errorf("ReadWorkspaceMaintenance(retained, 1) = %+v, want %q warning", warning, wantWarningState)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	check(1)
+	check(1, "pending")
 	maintenanceExec(t, db, "UPDATE maintenance_campaigns SET state='active' WHERE operation_id=$1", replacement.ID)
-	check(1)
+	check(1, "pending")
 	maintenanceExec(t, db, `INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,created_at,version,originating_action)
-		VALUES('verified-replacement','retained','update',1,'controller','verified-replacement','succeeded',$1,1,'maintenance.update_guest')`, testStamp)
+		VALUES('verified-replacement','retained','update',1,'controller','verified-replacement','running',$1,1,'maintenance.update_guest')`, testStamp)
 	maintenanceExec(t, db, "UPDATE maintenance_targets SET state='completed',operation_id='verified-replacement' WHERE campaign_id=$1", replacement.ID)
-	check(0)
+	check(1, "failed")
+	maintenanceExec(t, db, "UPDATE operations SET status='succeeded' WHERE id='verified-replacement'")
+	check(0, "")
+	maintenanceExec(t, db, "UPDATE maintenance_campaigns SET state='completed' WHERE operation_id=$1", replacement.ID)
+	check(0, "")
 	var failed string
 	if err := db.QueryRow("SELECT state FROM maintenance_targets WHERE campaign_id=$1", first.ID).Scan(&failed); err != nil || failed != "failed" {
 		t.Errorf("original target = %q (%v), want preserved failed state", failed, err)
