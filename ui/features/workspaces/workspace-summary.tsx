@@ -1,4 +1,4 @@
-import { Chip, Group, Loader, rem } from '@mantine/core';
+import { Chip, rem } from '@mantine/core';
 import { workspaceState } from './workspace';
 
 // Carbon status colors distinguish progress, healthy, inactive, and warning states.
@@ -17,20 +17,16 @@ const statusColors = new Map([
 ]);
 
 /** Display an observed workspace or probe status as a read-only chip. */
-export function WorkspaceStatus({ value, label, transitioning = false }: { value: string; label?: string; transitioning?: boolean }) {
+export function WorkspaceStatus({ value, label }: { value: string; label?: string }) {
   const color = statusColors.get(value) ?? unknown;
   const textColor = color === healthy || color === unreachable ? '#161616' : '#ffffff';
-  const chip = (
+  return (
     <Chip checked readOnly hidden icon={false} color={color} variant="filled" size="xs"
       vars={() => ({ root: { '--chip-size': rem(chipHeight) } })}
       styles={{ label: { color: textColor, pointerEvents: 'none' } }}>
       {label ?? workspaceState(value)}
     </Chip>
   );
-  return transitioning ? <Group gap="xs" wrap="nowrap">
-    {chip}
-    <Loader type="oval" size={chipHeight} role="status" aria-label="State transition in progress" />
-  </Group> : chip;
 }
 
 export function WorkspaceTime({ value, fallback }: { value: string | null; fallback: string }) {

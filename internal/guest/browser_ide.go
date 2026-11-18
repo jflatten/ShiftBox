@@ -49,7 +49,7 @@ kill "$pid" 2>/dev/null || true
 exit 1
 `
 
-func (d devContainer) startIDE(ctx context.Context, id string) error {
+func (d devContainer) startIDE(ctx context.Context, id string, customizations []vsCodeCustomization) error {
 	started := time.Now()
 	mounted, err := d.codeServerMounted(ctx, id)
 	d.measurePhase("ide_mount", started, err)
@@ -64,6 +64,7 @@ func (d devContainer) startIDE(ctx context.Context, id string) error {
 			return err
 		}
 	}
+	d.applyVSCodeCustomizations(ctx, id, customizations)
 	startCtx, cancel := context.WithTimeout(ctx, codeServerStartTimeout)
 	defer cancel()
 	started = time.Now()

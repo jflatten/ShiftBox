@@ -1,0 +1,53 @@
+.root {
+  --state-transition-color: #0043ce;
+  --state-transition-gap: var(--mantine-spacing-xs);
+
+  display: grid;
+  grid-template-areas:
+    "observed-label . . . desired-label ."
+    "observed . connector . desired .";
+  /* The connector and the final spacer share the space between the two state columns equally. */
+  grid-template-columns: max-content var(--state-transition-gap) minmax(1rem, 1fr)
+    var(--state-transition-gap) max-content minmax(1rem, 1fr);
+  align-items: center;
+  justify-items: center;
+  row-gap: 0.25rem;
+  max-width: 23rem;
+  direction: ltr;
+}
+
+.root[data-compact] {
+  grid-template-areas: "observed . connector . desired";
+  grid-template-columns: max-content var(--state-transition-gap) 5rem var(--state-transition-gap) max-content;
+  width: max-content;
+}
+
+:global([data-mantine-color-scheme="dark"]) .root {
+  --state-transition-color: #78a9ff;
+}
+
+.observedLabel { grid-area: observed-label; }
+.observed { grid-area: observed; }
+.desiredLabel { grid-area: desired-label; }
+.desired { grid-area: desired; }
+
+.connector {
+  grid-area: connector;
+  justify-self: stretch;
+}
+
+.segment {
+  animation: travel 1.4s linear infinite;
+}
+
+@keyframes travel {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segment {
+    animation: none;
+    transform: translateX(100%);
+  }
+}

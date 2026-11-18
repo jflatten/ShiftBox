@@ -134,7 +134,7 @@ func testRepairDockerFailure(t *testing.T, docker, cli, image, stage, configurat
 		if err != nil {
 			t.Fatalf("development container did not reach IDE startup: %v", err)
 		}
-		err = d.startIDE(ctx, connection.ID)
+		err = d.startIDE(ctx, connection.ID, nil)
 	}
 	if err == nil || (stage == "ide" && !errors.Is(err, errBrowserIDE)) {
 		t.Fatalf("%s fixture setup = %v, want the expected failure", stage, err)

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Providers } from '../../app/providers';
 import { Workspaces } from './workspaces';
@@ -30,6 +30,7 @@ function mockMenuLayout() {
 }
 
 afterEach(() => {
+  jest.useRealTimers();
   jest.restoreAllMocks();
   globalThis.fetch = originalFetch;
   if (originalEventSource) Object.defineProperty(globalThis, 'EventSource', originalEventSource);
@@ -39,6 +40,65 @@ afterEach(() => {
 function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
+
+// A workspace detail already open in one browser follows a shutdown requested elsewhere.
+test('shows and clears live indeterminate progress as the observed state changes', async () => {
+  jest.useFakeTimers();
+  class OperationStream extends EventTarget { close() {} }
+  Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: OperationStream });
+  let state = { ...workspace, observedState: 'running', currentOperationId: null as string | null };
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === `/api/v1/workspaces/${workspace.id}`) return json(state);
+    if (input === '/api/v1/operations/stop') return json({ id: 'stop', status: 'running', version: 1, steps: [] });
+    throw new Error(`unexpected request: ${input}`);
+  });
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  const controls = within(await screen.findByRole('region', { name: 'Workspace controls' }));
+  expect(controls.getByText('Observed state')).toBeVisible();
+  expect(controls.getByText('Desired state')).toBeVisible();
+  expect(controls.getAllByText('Running')).toHaveLength(2);
+  expect(controls.queryByRole('progressbar')).not.toBeInTheDocument();
+
+  state = { ...state, desiredState: 'stopped', currentOperationId: 'stop' };
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  const progress = await controls.findByRole('progressbar', { name: 'State transition in progress' });
+  expect(progress).not.toHaveAttribute('aria-valuenow');
+  expect(controls.getByText('Running')).toBeVisible();
+  expect(controls.getByText('Stopped')).toBeVisible();
+
+  state = { ...state, observedState: 'stopped', currentOperationId: null };
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  await waitFor(() => expect(controls.queryByRole('progressbar')).not.toBeInTheDocument());
+  expect(controls.getAllByText('Stopped')).toHaveLength(2);
+});
+
+// Deletion keeps polling until the provider confirms it, even if the operation fails in between.
+test('polls through a deletion failure and stops reporting progress once it is confirmed', async () => {
+  jest.useFakeTimers();
+  let state = { ...workspace, observedState: 'deleting', desiredState: 'deleted', currentOperationId: null };
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === `/api/v1/workspaces/${workspace.id}`) return json(state);
+    throw new Error(`unexpected request: ${input}`);
+  });
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  const controls = within(await screen.findByRole('region', { name: 'Workspace controls' }));
+  expect(controls.getByRole('progressbar')).toBeVisible();
+
+  state = { ...state, observedState: 'failed' };
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  expect(await controls.findByText('Failed')).toBeVisible();
+  expect(controls.getByText('Deleted')).toBeVisible();
+  expect(controls.queryByRole('progressbar')).not.toBeInTheDocument();
+
+  state = { ...state, observedState: 'deleted' };
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  await waitFor(() => expect(controls.getAllByText('Deleted')).toHaveLength(2));
+  const requests = jest.mocked(globalThis.fetch).mock.calls.filter(([input]) => input === `/api/v1/workspaces/${workspace.id}`).length;
+  await act(async () => { await jest.advanceTimersByTimeAsync(6000); });
+  expect(jest.mocked(globalThis.fetch).mock.calls.filter(([input]) => input === `/api/v1/workspaces/${workspace.id}`)).toHaveLength(requests);
+});
 
 // Owners choose the inactivity shutdown period beside Start/Stop, with the
 // server's current inactivity and retained-data guidance visible in that panel.
@@ -57,8 +117,8 @@ test('places keep-alive selection in the workspace controls', async () => {
   expect(within(controls).getByText(/Stop and start preserve project files/)).toBeVisible();
 });
 
-// Inventory rows show the observed state with Carbon colors and no input control.
-test('shows workspace states as static Carbon-colored Mantine chips', async () => {
+// Each row keeps its Carbon status chip and shows the active target in the same cell.
+test('shows Carbon-colored chips in a single workspace state column', async () => {
   const states = [
     ['Running', 'running', '#24a148'], ['Starting', 'starting', '#0043ce'],
     ['Unreachable', 'unreachable', '#ff832b'], ['Failed', 'failed', '#da1e28'],
@@ -73,22 +133,50 @@ test('shows workspace states as static Carbon-colored Mantine chips', async () =
   const table = await screen.findByRole('table', { name: 'Workspaces' });
   for (const [label, , color] of states) {
     const row = within(table).getByRole('row', { name: new RegExp(`${label} workspace`) });
-    const chip = within(row).getByText(label, { exact: true }).closest<HTMLElement>('.mantine-Chip-root');
-    expect(chip?.style.getPropertyValue('--chip-bg')).toBe(color);
-    expect(within(row).queryByText('Desired:')).not.toBeInTheDocument();
-    expect(within(row).getByText(label, { exact: true })).toBeVisible();
     const cells = within(row).getAllByRole('cell');
+    expect(cells).toHaveLength(5);
+    const state = within(cells[1]);
+    const chip = state.getByText(label, { exact: true }).closest<HTMLElement>('.mantine-Chip-root');
+    expect(chip?.style.getPropertyValue('--chip-bg')).toBe(color);
     if (label === 'Starting') {
-      expect(within(cells[1]).getByRole('status', { name: 'State transition in progress' })).toBeVisible();
-      expect(within(cells[2]).getByText('Running')).toBeVisible();
-      expect(within(cells.at(-1)!).queryByText('Operation in progress')).not.toBeInTheDocument();
+      expect(state.getByRole('progressbar', { name: 'State transition in progress' })).not.toHaveAttribute('aria-valuenow');
+      expect(state.getByText('Running')).toBeVisible();
+      expect(state.getByText('Desired state')).toBeInTheDocument();
     } else {
-      expect(within(cells[1]).queryByRole('status')).not.toBeInTheDocument();
-      expect(within(cells[2]).getByText('—')).toBeVisible();
+      expect(state.queryByRole('progressbar')).not.toBeInTheDocument();
+      expect(state.queryByText('Desired state')).not.toBeInTheDocument();
     }
     expect(within(row).queryByRole('checkbox')).toBeNull();
   }
-  expect(within(table).getByRole('columnheader', { name: 'Target State' })).toBeVisible();
+  expect(within(table).getByRole('columnheader', { name: 'State' })).toBeVisible();
+  expect(within(table).queryByRole('columnheader', { name: 'Target State' })).not.toBeInTheDocument();
+});
+
+// A Start requested elsewhere appears in a previously idle inventory, using only the list request.
+test('polls idle inventory rows for externally started state changes', async () => {
+  jest.useFakeTimers();
+  let row = { ...workspace, desiredState: 'stopped', currentOperationId: null as string | null };
+  const fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces?excludeDeleted=true') return json({ items: [row], nextCursor: null });
+    throw new Error(`unexpected request: ${input}`);
+  });
+  globalThis.fetch = fetch;
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+  const cell = within(await screen.findByRole('cell', { name: /Observed state.*Stopped/ }));
+  expect(cell.queryByRole('progressbar')).not.toBeInTheDocument();
+
+  row = { ...row, desiredState: 'running', currentOperationId: 'start' };
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  expect(await cell.findByRole('progressbar')).toBeVisible();
+  expect(cell.getByText('Running')).toBeVisible();
+
+  row = { ...row, observedState: 'running', currentOperationId: null };
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  await waitFor(() => expect(cell.queryByRole('progressbar')).not.toBeInTheDocument());
+  expect(cell.queryByText('Stopped')).not.toBeInTheDocument();
+  expect(cell.getByText('Running')).toBeVisible();
+  expect(fetch).not.toHaveBeenCalledWith(`/api/v1/workspaces/${workspace.id}`, expect.anything());
 });
 
 // Workspace detail updates the read-only probe chip as the service fails and its report expires.

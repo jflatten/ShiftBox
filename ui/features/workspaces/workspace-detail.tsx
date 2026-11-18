@@ -2,11 +2,12 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Alert, Anchor, Button, Checkbox, Group, Modal, Paper, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
+import { StateTransition } from '../../components/state-transition';
 import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
 import { providerLabel } from '../../lib/provider-label';
 import { useOperation } from '../../lib/use-operation';
-import { workspaceName, workspaceState, type Workspace } from './workspace';
+import { workspaceIsTransitioning, workspaceName, workspaceState, type Workspace } from './workspace';
 import { WorkspaceStatus, WorkspaceTime } from './workspace-summary';
 import { RetentionWarning } from './retention';
 import { WorkspaceConnectionGrants } from './connection-grants';
@@ -57,7 +58,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
           <Title order={1} style={{ overflowWrap: 'anywhere' }}>{data ? workspaceName(data) : 'Workspace'}</Title>
           <Text size="sm" c="dimmed">Manage your environment, connections, and retained data.</Text>
         </Stack>
-        <Button variant="default" loading={workspace.isFetching} onClick={() => void workspace.refetch()}>Refresh</Button>
+        <Button variant="default" onClick={() => void workspace.refetch()}>Refresh</Button>
       </Group>
       {workspace.isError ? <Stack align="flex-start">
         <APIProblemView error={workspace.error} />
@@ -68,10 +69,9 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
         <Stack gap="lg">
           <Paper component="section" aria-label="Workspace controls" withBorder radius="md" p="md">
             <Stack gap="md">
-              <Group gap="xl">
-                <Stack gap={4} align="flex-start"><Text size="sm" c="dimmed">Observed state</Text><WorkspaceStatus value={data.observedState} /></Stack>
-                <Stack gap={4} align="flex-start"><Text size="sm" c="dimmed">Desired state</Text><WorkspaceStatus value={data.desiredState} /></Stack>
-              </Group>
+              <StateTransition observed={<WorkspaceStatus value={data.observedState} />}
+                desired={<WorkspaceStatus value={data.desiredState} />}
+                transitioning={workspaceIsTransitioning(data)} />
               <Group align="flex-start">
                 {data.canOpenIde ? <WorkspaceEntryButton id={id} csrfToken={csrfToken} /> : null}
                 {data.canOpenRepair ? <WorkspaceEntryButton id={id} csrfToken={csrfToken} service="repair" describedBy={repairDescriptionId} /> : null}

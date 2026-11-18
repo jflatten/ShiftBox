@@ -12,7 +12,7 @@ import { LaunchFlow } from './launch-flow';
 import { WorkspaceDetail } from './workspace-detail';
 import { WorkspaceInventoryRow } from './workspace-inventory-row';
 
-import { workspaceIsTransitioning, workspaceState, type Workspace } from './workspace';
+import { workspaceState, type Workspace } from './workspace';
 
 export function Workspaces({ workspaceId, ownerId, launch = false }: {
   workspaceId: string | null;
@@ -45,7 +45,7 @@ function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfTo
   const cursor = cursors.at(-1);
   const page = useQuery<{ items: Workspace[]; nextCursor: string | null }>({
     queryKey: ['workspaces', 'list', ownerId ?? '', state, showDeleted, cursor ?? ''],
-    refetchInterval: query => query.state.data?.items.some(workspaceIsTransitioning) ? 3000 : false,
+    refetchInterval: 3000,
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams();
       if (ownerId) params.set('owner', ownerId);
@@ -87,7 +87,7 @@ function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfTo
                 setState(''); setShowDeleted(false); setCursors([]);
               }}>Clear filters</Button> : null}
             </Group>
-            <Button variant="default" loading={page.isFetching} onClick={() => void page.refetch()}>Refresh</Button>
+            <Button variant="default" onClick={() => void page.refetch()}>Refresh</Button>
           </Group>
           {page.isError ? <Stack align="flex-start">
             <APIProblemView error={page.error} />
@@ -104,7 +104,7 @@ function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfTo
             <Table.ScrollContainer minWidth={680}>
               <Table aria-label="Workspaces" highlightOnHover verticalSpacing="md">
                 <Table.Thead><Table.Tr>
-                  <Table.Th>Workspace</Table.Th><Table.Th>State</Table.Th><Table.Th>Target State</Table.Th><Table.Th>Resources</Table.Th>
+                  <Table.Th>Workspace</Table.Th><Table.Th>State</Table.Th><Table.Th>Resources</Table.Th>
                   <Table.Th>Last activity</Table.Th><Table.Th>Actions</Table.Th>
                 </Table.Tr></Table.Thead>
                 <Table.Tbody>
@@ -118,9 +118,9 @@ function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfTo
           <Group justify="space-between">
             <Text size="sm" c="dimmed" role="status">{data ? `${data.items.length} ${data.items.length === 1 ? 'workspace' : 'workspaces'} on this page` : 'Workspace list unavailable'}</Text>
             <Group gap="xs">
-              <Button variant="default" disabled={!cursor || page.isFetching} onClick={() => setCursors(current => current.slice(0, -1))}>Previous page</Button>
+              <Button variant="default" disabled={!cursor || page.isPending} onClick={() => setCursors(current => current.slice(0, -1))}>Previous page</Button>
               <Text size="sm">Page {cursors.length + 1}</Text>
-              <Button variant="default" disabled={!data?.nextCursor || page.isFetching} onClick={() => {
+              <Button variant="default" disabled={!data?.nextCursor} onClick={() => {
                 const next = data?.nextCursor;
                 if (next) setCursors(current => [...current, next]);
               }}>Next page</Button>

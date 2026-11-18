@@ -56,6 +56,10 @@ type devContainerResult struct {
 	Merged  *struct {
 		WaitFor    string `json:"waitFor"`
 		RemoteUser string `json:"remoteUser"`
+		// The CLI returns one entry per contributing image, Feature, or project.
+		Customizations struct {
+			VSCode []vsCodeCustomization `json:"vscode"`
+		} `json:"customizations"`
 	} `json:"mergedConfiguration"`
 }
 
@@ -125,7 +129,7 @@ func (d devContainer) configure(ctx context.Context, previous rebuildSource) (co
 		}
 	}
 	if d.ide {
-		if err := d.startIDE(ctx, connection.ID); err != nil {
+		if err := d.startIDE(ctx, connection.ID, result.Merged.Customizations.VSCode); err != nil {
 			return containerConnection{}, err
 		}
 	}

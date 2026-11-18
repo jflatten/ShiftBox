@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
-import { Alert, Anchor, Button, Menu, Modal, Stack, Table, Text, VisuallyHidden } from '@mantine/core';
+import { Alert, Anchor, Button, Menu, Modal, Stack, Table, Text } from '@mantine/core';
 import { useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
+import { StateTransition } from '../../components/state-transition';
 import { DeleteWorkspaceDialog, WorkspaceProgress } from './workspace-detail';
 import { availableWorkspaceCommands, openWorkspaceEntry, useWorkspaceCommand, useWorkspaceDetail, type WorkspaceService } from './workspace-commands';
 import { workspaceIsTransitioning, workspaceName, type Workspace } from './workspace';
@@ -29,7 +30,6 @@ export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace
   const currentID = workspace && (opened || dialog === 'delete') ? workspace.currentOperationId : row.currentOperationId;
   const progressID = currentID ?? operationID;
   const busy = !!currentID || operationBusy || !!command.submitting;
-  const transitioning = workspaceIsTransitioning(row);
   const name = workspaceName(row);
 
   function close() {
@@ -55,10 +55,10 @@ export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace
       <Table.Td style={{ maxWidth: 250, overflowWrap: 'anywhere' }}>
         <Anchor fw={600} href={href}>{name}</Anchor>
       </Table.Td>
-      <Table.Td><WorkspaceStatus value={row.observedState} transitioning={transitioning || busy} /></Table.Td>
-      <Table.Td>{transitioning ? <WorkspaceStatus value={row.desiredState} /> : (
-        <><Text span c="dimmed" aria-hidden="true">—</Text><VisuallyHidden>No active target</VisuallyHidden></>
-      )}</Table.Td>
+      <Table.Td>
+        <StateTransition compact observed={<WorkspaceStatus value={row.observedState} />}
+          desired={<WorkspaceStatus value={row.desiredState} />} transitioning={workspaceIsTransitioning(row)} />
+      </Table.Td>
       <Table.Td><Stack gap={2}>
         <Text size="sm">{row.resources.cpuCount} vCPU · {row.resources.memoryMiB.toLocaleString()} MiB memory</Text>
         <Text size="xs" c="dimmed">{row.resources.diskMiB.toLocaleString()} MiB disk</Text>

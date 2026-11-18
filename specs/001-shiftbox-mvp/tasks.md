@@ -3312,3 +3312,12 @@ This checkpoint does not itself change the goal status.
 ## Administration settings
 
 - [X] T143 Add Administration → Settings with an adjustable session timeout using a whole number and Minutes, Hours, or Days. Move Certificates and Secrets from Infrastructure and present the installed certificate as one card. Verified administrator permissions, save/reload, and the next sign-in against a disposable native Dex installation. Applied schema 39 after a verified backup and checked the live settings and certificate card while signed in on `shiftbox-demo-controller:31`.
+
+## Browser editor customizations
+
+- [X] T144 Apply merged Dev Container VS Code settings and extensions as the remote user when preparing code-server. Verified fallback on extension-install failure, both requested extensions in `groundtruth`'s installed list, and `zsh` in the effective remote settings and a new terminal. Validated AWS demo AMI `ami-071f6f9b9915667c8` and updated the retained workspace through signed guest maintenance.
+
+## Workspace state transition
+
+- [X] T145 Add a reusable observed-to-desired state control with an indeterminate connector and live controller polling on workspace detail. Verified external state changes, deletion failure and completion, motion direction, and reduced motion. Deployed `shiftbox-demo-controller:32` and verified three-second workspace polling in a signed-in browser session.
+- [X] T146 Halve the state transition connector and use the control in a single live State column on the workspace inventory. Verified connector width on desktop and mobile, inventory polling from idle through completion, and keyboard navigation in Chrome. Deployed `shiftbox-demo-controller:33` and verified the single State column and three-second inventory polling while signed in.

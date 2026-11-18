@@ -84,9 +84,8 @@ async function checkWorkflow(page: Page, labels: [string, string, string], scope
 
 test.use({ viewport: { width: 390, height: 844 }, trace: 'off' });
 
-// An in-flight workspace shows its server target and a chip-height loader.
-// When the inventory refresh sees completion, both indicators clear.
-test('workspace transition shows target and chip-height loader', async ({ page }) => {
+// Both chips and indeterminate progress share one cell and settle automatically after a poll.
+test('workspace inventory animates the transition inside the state cell', async ({ page }) => {
   let transitioning = true;
   await fixture(page, (route, path) => {
     if (path.endsWith('/session')) return route.fulfill({ json: admin([]) });
@@ -98,18 +97,21 @@ test('workspace transition shows target and chip-height loader', async ({ page }
   await page.goto('/workspaces/');
   const row = page.getByRole('row', { name: /Transition fixture/ });
   const state = row.getByRole('cell').nth(1);
-  const loader = state.getByRole('status', { name: 'State transition in progress' });
-  await expect(loader).toBeVisible();
-  await expect(row.getByRole('cell').nth(2)).toHaveText('Running');
-  await expect(row.getByRole('cell').last()).toHaveText('Actions');
-  const chipBounds = await state.getByText('Starting').locator('..').boundingBox();
-  const loaderBounds = await loader.boundingBox();
-  expect(chipBounds?.height).toBe(loaderBounds?.height);
-  expect(loaderBounds!.x).toBeGreaterThan(chipBounds!.x + chipBounds!.width);
-  transitioning = false;
-  await expect(loader).toHaveCount(0, { timeout: 8000 });
+  const connector = state.getByRole('progressbar', { name: 'State transition in progress' });
+  await expect(connector).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Target State' })).toHaveCount(0);
   await expect(state.getByText('Running')).toBeVisible();
-  await expect(row.getByRole('cell').nth(2).getByText('—')).toBeVisible();
+  await expect(row.getByRole('cell').last()).toHaveText('Actions');
+  const observedBounds = (await state.getByText('Starting').locator('..').boundingBox())!;
+  const desiredBounds = (await state.getByText('Running').locator('..').boundingBox())!;
+  const connectorBounds = (await connector.boundingBox())!;
+  expect(connectorBounds.x).toBeGreaterThan(observedBounds.x + observedBounds.width);
+  expect(connectorBounds.x + connectorBounds.width).toBeLessThan(desiredBounds.x);
+  expect(connectorBounds.y + connectorBounds.height / 2).toBeCloseTo(observedBounds.y + observedBounds.height / 2, 0);
+  transitioning = false;
+  await expect(connector).toHaveCount(0, { timeout: 8000 });
+  await expect(state.getByText('Running')).toBeVisible();
+  await expect(state.getByText('Starting')).toHaveCount(0);
 });
 
 // Filtering cannot strand the user on a stale cursor, deleted

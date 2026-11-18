@@ -13,6 +13,105 @@ import (
 	"time"
 )
 
+// TestBrowserIDEAppliesDevContainerCustomizations checks that project settings
+// and extensions reach code-server with the CLI's merged image and Feature data.
+func TestBrowserIDEAppliesDevContainerCustomizations(t *testing.T) {
+	const response = `{
+		"outcome":"success",
+		"containerId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"mergedConfiguration":{"customizations":{"vscode":[
+			{"extensions":["disabled.extension","yzhang.markdown-all-in-one"],"settings":{"editor.tabSize":2,"terminal.integrated.defaultProfile.linux":"bash"}},
+			{"extensions":["openai.chatgpt","-disabled.extension","YZHANG.markdown-all-in-one@3.6.2"],"settings":{"terminal.integrated.defaultProfile.linux":"zsh","[markdown]":{"editor.wordWrap":"on"}}}
+		]}}
+	}`
+	var steps []string
+	runtime := devContainer{workspace: filepath.Join(t.TempDir(), "project"), ide: true,
+		run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
+			switch args[0] {
+			case "up":
+				return []byte(response), nil
+			case "container":
+				return []byte(`[{"Type":"bind","Source":"` + codeServerPackage + `","Destination":"` + codeServerDir + `","RW":false}]`), nil
+			case "exec":
+				lastArg := args[len(args)-1]
+				switch {
+				case lastArg == startCodeServer:
+					steps = append(steps, "start")
+				case strings.HasPrefix(lastArg, "{"):
+					steps = append(steps, "settings")
+					var settings map[string]json.RawMessage
+					if err := json.Unmarshal([]byte(lastArg), &settings); err != nil {
+						t.Fatalf("ensure(customizations) settings: %v", err)
+					}
+					for key, want := range map[string]string{
+						"editor.tabSize": "2", "terminal.integrated.defaultProfile.linux": `"zsh"`,
+						"[markdown]": `{"editor.wordWrap":"on"}`,
+					} {
+						if got := string(settings[key]); got != want {
+							t.Errorf("ensure(customizations) setting %q = %s, want %s", key, got, want)
+						}
+					}
+				default:
+					steps = append(steps, "extensions")
+					var extensions []string
+					for _, arg := range args {
+						if extension, ok := strings.CutPrefix(arg, "--install-extension="); ok {
+							extensions = append(extensions, extension)
+						}
+					}
+					want := []string{"openai.chatgpt", "yzhang.markdown-all-in-one@3.6.2"}
+					if slices.Sort(extensions); !slices.Equal(extensions, want) {
+						t.Errorf("ensure(customizations) extension requests = %v, want %v", extensions, want)
+					}
+				}
+				return nil, nil
+			default:
+				t.Fatalf("ensure(customizations) unexpected command: %s %q", executable, args[0])
+				return nil, nil
+			}
+		},
+	}
+	if _, err := runtime.ensure(t.Context()); err != nil {
+		t.Fatalf("ensure(customizations) = %v, want success", err)
+	}
+	if want := []string{"settings", "extensions", "start"}; !slices.Equal(steps, want) {
+		t.Errorf("ensure(customizations) steps = %v, want %v", steps, want)
+	}
+}
+
+// TestBrowserIDEStartsWhenExtensionInstallFails keeps the editor accessible
+// when an extension is unavailable or the registry cannot be reached.
+func TestBrowserIDEStartsWhenExtensionInstallFails(t *testing.T) {
+	const response = `{
+		"outcome":"success",
+		"containerId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"mergedConfiguration":{"customizations":{"vscode":[{"extensions":["missing.extension"]}]}}
+	}`
+	var attemptedInstall, started bool
+	runtime := devContainer{workspace: filepath.Join(t.TempDir(), "project"), ide: true,
+		run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
+			switch args[0] {
+			case "up":
+				return []byte(response), nil
+			case "container":
+				return []byte(`[{"Type":"bind","Source":"` + codeServerPackage + `","Destination":"` + codeServerDir + `","RW":false}]`), nil
+			case "exec":
+				if slices.Contains(args, "--install-extension=missing.extension") {
+					attemptedInstall = true
+					return nil, errors.New("registry did not find the extension")
+				}
+				started = args[len(args)-1] == startCodeServer
+			default:
+				t.Fatalf("ensure(missing extension) unexpected command: %s %q", executable, args[0])
+			}
+			return nil, nil
+		},
+	}
+	if _, err := runtime.ensure(t.Context()); err != nil || !attemptedInstall || !started {
+		t.Errorf("ensure(missing extension) = %v, attempted install = %t, started = %t, want success after attempted install", err, attemptedInstall, started)
+	}
+}
+
 // TestBrowserIDERestart reuses a completed install in the same container and
 // installs again when a rebuild creates a replacement container.
 func TestBrowserIDERestart(t *testing.T) {
@@ -33,7 +132,7 @@ func TestBrowserIDERestart(t *testing.T) {
 		return nil, nil
 	}}
 	for _, container := range []string{id, id, replacement} {
-		if err := runtime.startIDE(t.Context(), container); err != nil {
+		if err := runtime.startIDE(t.Context(), container, nil); err != nil {
 			t.Fatalf("startIDE(%s) = %v, want success", container, err)
 		}
 	}
@@ -76,11 +175,11 @@ func TestBrowserIDERetriesInterruptedCopy(t *testing.T) {
 		}
 		return nil, nil
 	}}
-	if err := runtime.startIDE(t.Context(), id); !errors.Is(err, errBrowserIDE) || starts != 0 {
+	if err := runtime.startIDE(t.Context(), id, nil); !errors.Is(err, errBrowserIDE) || starts != 0 {
 		t.Fatalf("startIDE(interrupted copy) = %v, starts %d, want IDE failure and zero starts", err, starts)
 	}
 	for range 2 {
-		if err := runtime.startIDE(t.Context(), id); err != nil {
+		if err := runtime.startIDE(t.Context(), id, nil); err != nil {
 			t.Fatalf("startIDE(retry after interrupted copy) = %v, want success", err)
 		}
 	}
@@ -109,20 +208,20 @@ func TestBrowserIDEPackageChange(t *testing.T) {
 			return nil, nil
 		},
 	}
-	if err := runtime.startIDE(t.Context(), id); err != nil {
+	if err := runtime.startIDE(t.Context(), id, nil); err != nil {
 		t.Fatalf("startIDE(initial package) = %v, want success", err)
 	}
 	path := filepath.Join(source, "package.json")
 	if err := os.WriteFile(path, []byte(`{"version":"2.0.0"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.startIDE(t.Context(), id); !errors.Is(err, errBrowserIDE) || copies != 2 {
+	if err := runtime.startIDE(t.Context(), id, nil); !errors.Is(err, errBrowserIDE) || copies != 2 {
 		t.Fatalf("startIDE(updated package) = %v with %d copies, want failed second copy", err, copies)
 	}
 	if err := os.WriteFile(path, []byte(`{"version":"1.0.0"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.startIDE(t.Context(), id); err != nil || copies != 3 {
+	if err := runtime.startIDE(t.Context(), id, nil); err != nil || copies != 3 {
 		t.Errorf("startIDE(rolled back package) = %v with %d copies, want successful third copy", err, copies)
 	}
 }
@@ -164,7 +263,7 @@ func TestBrowserIDEMountedBundle(t *testing.T) {
 					}
 				},
 			}
-			err = runtime.startIDE(t.Context(), strings.Repeat("a", 64))
+			err = runtime.startIDE(t.Context(), strings.Repeat("a", 64), nil)
 			if started != tc.starts || (err == nil) != tc.starts {
 				t.Errorf("startIDE(%s) started=%t, err=%v, want started=%t and success=%t", tc.name, started, err, tc.starts, tc.starts)
 			}

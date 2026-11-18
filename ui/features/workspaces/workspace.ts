@@ -46,7 +46,8 @@ export function workspaceState(value: string) {
 }
 
 export function workspaceIsTransitioning(workspace: Workspace) {
-  return !!workspace.currentOperationId || ['provisioning', 'starting', 'stopping', 'deleting'].includes(workspace.observedState);
+  return workspace.observedState !== workspace.desiredState &&
+    (!!workspace.currentOperationId || ['provisioning', 'starting', 'stopping', 'deleting'].includes(workspace.observedState));
 }
 
 export function workspaceName(workspace: Workspace) {

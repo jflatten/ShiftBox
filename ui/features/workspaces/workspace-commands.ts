@@ -10,7 +10,10 @@ export function useWorkspaceDetail(id: string, enabled = true) {
   return useQuery<Workspace>({
     queryKey: ['workspaces', 'detail', id],
     enabled,
-    refetchInterval: query => query.state.data?.desiredState === 'deleted' ? false : 30_000,
+    refetchInterval: query => {
+      const workspace = query.state.data;
+      return workspace?.desiredState === 'deleted' && workspace.observedState === 'deleted' ? false : 3000;
+    },
     queryFn: async ({ signal }) => {
       const response = await fetch('/api/v1/workspaces/' + encodeURIComponent(id), { signal, cache: 'no-store' });
       if (!response.ok) throw await readProblem(response);
