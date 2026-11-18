@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Alert, Stack, Stepper, Text } from '@mantine/core';
+import type { components } from '../lib/api-types';
 
 /** The durable operation fields needed to display progress; no client-owned progress state. */
 export interface WorkflowOperation {
@@ -15,11 +16,18 @@ export interface WorkflowOperation {
     status: 'pending' | 'active' | 'succeeded' | 'failed' | 'skipped';
     detail?: string | null;
     problem?: { title: string; detail?: string } | null;
+    timeout?: components['schemas']['OperationStep']['timeout'];
   }[];
 }
 
 const stepLabels = { pending: 'Pending', active: 'In progress', succeeded: 'Completed', failed: 'Failed', skipped: 'Skipped' };
 const operationLabels = { pending: 'Pending', running: 'In progress', waiting: 'Waiting', succeeded: 'Completed', failed: 'Failed', cancelled: 'Cancelled' };
+
+function stepDescription(step: WorkflowOperation['steps'][number]) {
+  const status = stepLabels[step.status];
+  if (!step.timeout) return status;
+  return step.status === 'active' ? 'Timed out' : `${status} · Timed out`;
+}
 
 /** WorkflowStepper displays server progress and lets users inspect reached steps. */
 export function WorkflowStepper({ operation, failureTitle }: { operation: WorkflowOperation; failureTitle?: string }) {
@@ -56,19 +64,23 @@ export function WorkflowStepper({ operation, failureTitle }: { operation: Workfl
           <Stepper.Step
             key={step.key}
             label={step.label}
-            description={stepLabels[step.status]}
-            aria-label={`${step.label}: ${stepLabels[step.status]}`}
+            description={stepDescription(step)}
+            aria-label={`${step.label}: ${stepDescription(step)}`}
             aria-current={index === active ? 'step' : undefined}
             disabled={step.status === 'pending'}
             allowStepSelect={step.status !== 'pending'}
-            loading={step.status === 'active' && status === 'running'}
+            loading={step.status === 'active' && status === 'running' && !step.timeout}
             color={step.status === 'failed' ? 'red' : undefined}
             completedIcon={step.status === 'skipped' ? '–' : step.status === 'failed' ? '!' : undefined}
           />
         ))}
       </Stepper>
-      {currentDetail && steps[active] !== failedStep ? <Text size="sm">{currentDetail}</Text> : null}
-      {selected?.detail && selected !== failedStep && selected.key !== steps[active]?.key ? <Text size="sm">{selected.detail}</Text> : null}
+      {currentDetail && steps[active] !== failedStep && currentDetail !== steps[active]?.timeout?.reason ? <Text size="sm">{currentDetail}</Text> : null}
+      {selected?.detail && selected !== failedStep && selected.key !== steps[active]?.key && selected.detail !== selected.timeout?.reason
+        ? <Text size="sm">{selected.detail}</Text> : null}
+      {steps.map(step => step.timeout ? (
+        <Alert key={step.key} color="yellow" title={`${step.label}: Timed out`}>{step.timeout.reason}</Alert>
+      ) : null)}
       {steps.filter(step => step.problem && step !== failedStep).map(step => (
         <Alert key={step.key} color="red" title={`${step.label}: ${step.problem!.title}`}>
           {step.problem!.detail}

@@ -82,6 +82,10 @@ async function checkWorkflow(page: Page, labels: [string, string, string], scope
   await expect(pending).not.toBeFocused();
 }
 
+function workspaceLifecycle(current: string, next: string | null = null, workflowOperationId: string | null = null) {
+  return { current, next, mode: next === 'failed' ? 'failed' : next ? 'transitioning' : 'settled', workflowOperationId };
+}
+
 test.use({ viewport: { width: 390, height: 844 }, trace: 'off' });
 
 // Both chips and indeterminate progress share one cell and settle automatically after a poll.
@@ -92,6 +96,7 @@ test('workspace inventory animates the transition inside the state cell', async 
     if (path === '/api/v1/workspaces') return route.fulfill({ json: { items: [{
       id: workspaceID, name: 'Transition fixture', resources, desiredState: 'running',
       observedState: transitioning ? 'starting' : 'running', currentOperationId: transitioning ? operationID : null,
+      lifecycle: transitioning ? workspaceLifecycle('stopped', 'vm-running', operationID) : workspaceLifecycle('ready'),
     }], nextCursor: null } });
   });
   await page.goto('/workspaces/');
@@ -100,35 +105,94 @@ test('workspace inventory animates the transition inside the state cell', async 
   const connector = state.getByRole('progressbar', { name: 'State transition in progress' });
   await expect(connector).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Target State' })).toHaveCount(0);
-  await expect(state.getByText('Running')).toBeVisible();
+  await expect(state.getByText('VM-running')).toBeVisible();
   await expect(row.getByRole('cell').last()).toHaveText('Actions');
-  const observedBounds = (await state.getByText('Starting').locator('..').boundingBox())!;
-  const desiredBounds = (await state.getByText('Running').locator('..').boundingBox())!;
+  const observedBounds = (await state.getByText('Stopped').locator('..').boundingBox())!;
+  const desiredBounds = (await state.getByText('VM-running').locator('..').boundingBox())!;
   const connectorBounds = (await connector.boundingBox())!;
   expect(connectorBounds.x).toBeGreaterThan(observedBounds.x + observedBounds.width);
   expect(connectorBounds.x + connectorBounds.width).toBeLessThan(desiredBounds.x);
   expect(connectorBounds.y + connectorBounds.height / 2).toBeCloseTo(observedBounds.y + observedBounds.height / 2, 0);
   transitioning = false;
   await expect(connector).toHaveCount(0, { timeout: 8000 });
-  await expect(state.getByText('Running')).toBeVisible();
-  await expect(state.getByText('Starting')).toHaveCount(0);
+  await expect(state.getByText('Ready')).toBeVisible();
+  await expect(state.getByText('Stopped')).toHaveCount(0);
+});
+
+// Both layouts halve the connector and spacer width while keeping a named progress bar.
+test('workspace lifecycle connector is half width in inventory and detail', async ({ page }) => {
+  const current = { id: workspaceID, name: 'Compact transition', resources, desiredState: 'running', observedState: 'stopped',
+    lifecycle: workspaceLifecycle('stopped', 'vm-running'), currentOperationId: null };
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) return route.fulfill({ json: { ...admin([]), user: { id: 'member', role: 'member' } } });
+    if (path.endsWith(`/workspaces/${workspaceID}`)) return route.fulfill({ json: current });
+    if (path === '/api/v1/workspaces') return route.fulfill({ json: { items: [current], nextCursor: null } });
+  });
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const compact of [true, false]) {
+      await page.goto(compact ? '/workspaces/' : `/workspaces/?id=${workspaceID}`);
+      const connector = page.getByRole('progressbar', { name: 'State transition in progress' });
+      await expect(connector).toBeVisible();
+      await expect(connector).not.toHaveAttribute('aria-valuenow');
+      const spacing = await connector.evaluate((element, inInventory) => {
+        const grid = element.parentElement!;
+        const [left, gapBefore, slot, gapAfter, right] = getComputedStyle(grid).gridTemplateColumns.split(' ').map(parseFloat);
+        const previousSlot = inInventory ? 80 : Math.max(16, (grid.getBoundingClientRect().width - left - right - 20) / 2);
+        return { actual: gapBefore + slot + gapAfter, half: (previousSlot + 20) / 2 };
+      }, compact);
+      expect(spacing.actual).toBeCloseTo(spacing.half, 0);
+    }
+  }
+});
+
+// Controller recovery preserves the same connector during the outage and restores keyboard focus.
+test('workspace inventory freezes its connector during a controller outage', async ({ page }) => {
+  let connectivity = 'transitioning';
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) return route.fulfill({ json: { ...admin([]), user: { id: 'member', role: 'member' } } });
+    if (path === '/api/v1/workspaces') {
+      if (connectivity === 'offline') return route.abort('internetdisconnected');
+      return route.fulfill({ json: { items: [{ id: workspaceID, name: 'Outage fixture', resources,
+        desiredState: 'running', observedState: connectivity === 'ready' ? 'running' : 'stopped',
+        lifecycle: connectivity === 'ready' ? workspaceLifecycle('ready') : workspaceLifecycle('stopped', 'vm-running'),
+      }], nextCursor: null } });
+    }
+  });
+  await page.goto('/workspaces/');
+  const connector = page.getByRole('progressbar', { name: 'State transition in progress' });
+  await expect(connector).toBeVisible();
+  const refresh = page.getByRole('button', { name: 'Refresh' });
+  await refresh.focus();
+  connectivity = 'offline';
+  await page.keyboard.press('Enter');
+  const outage = page.getByRole('dialog', { name: 'Controller unavailable' });
+  await expect(outage).toHaveCount(1);
+  await expect(connector.locator('[data-paused]')).toHaveCSS('animation-play-state', 'paused');
+  await expect(page.getByText('Trying to reconnect to ShiftBox…')).toBeFocused();
+
+  connectivity = 'ready';
+  await expect(outage).toHaveCount(0, { timeout: 8000 });
+  await expect(page.getByRole('row', { name: /Outage fixture/ }).getByText('Ready')).toBeVisible();
+  await expect(connector).toHaveCount(0);
+  await expect(refresh).toBeFocused();
 });
 
 // Filtering cannot strand the user on a stale cursor, deleted
 // workspaces stay hidden by default, and status chips fit a narrow screen.
 test('workspace inventory filters and detail layout', async ({ page }) => {
   const current = { id: workspaceID, name: 'Keyboard workspace', resources, desiredState: 'stopped', observedState: 'stopped',
-    currentOperationId: null, templateRevision: 1, platformRelease: 'Demo release', version: 1, canEditPreviewPorts: true };
-  const deleted = { ...current, id: 'deleted-workspace', name: 'Deleted example', observedState: 'deleted', desiredState: 'deleted' };
+    currentOperationId: null, lifecycle: workspaceLifecycle('stopped'), templateRevision: 1, platformRelease: 'Demo release', version: 1, canEditPreviewPorts: true };
+  const deleted = { ...current, id: 'deleted-workspace', name: 'Deleted example', observedState: 'deleted', desiredState: 'deleted', lifecycle: workspaceLifecycle('deleted') };
   await fixture(page, (route, path) => {
     if (path.endsWith('/session')) return route.fulfill({ json: { ...admin([]), user: { id: 'member', role: 'member' } } });
     if (path.endsWith(`/workspaces/${workspaceID}`)) return route.fulfill({ json: current });
     if (path === '/api/v1/workspaces') {
       const query = new URL(route.request().url()).searchParams;
-      const items = query.get('state') === 'deleted' ? [deleted] :
+      const items = query.get('lifecycleState') === 'deleted' ? [deleted] :
         query.get('cursor') ? [{ ...current, id: 'second-workspace', name: 'Second workspace' }] :
         query.get('excludeDeleted') === 'true' ? [current] : [current, deleted];
-      return route.fulfill({ json: { items, nextCursor: query.has('cursor') || query.has('state') ? null : 'next-page' } });
+      return route.fulfill({ json: { items, nextCursor: query.has('cursor') || query.has('lifecycleState') ? null : 'next-page' } });
     }
   });
   await page.goto('/workspaces/');
@@ -167,7 +231,7 @@ test('workspace inventory filters and detail layout', async ({ page }) => {
   await activate(page, history, 'Space');
   await expect(page.getByRole('link', { name: 'Deleted example', exact: true })).toBeVisible();
   await expect(page.getByText('Page 1', { exact: true })).toBeVisible();
-  const state = page.getByLabel('Observed state', { exact: true });
+  const state = page.getByLabel('Current state', { exact: true });
   await tabTo(page, state);
   await state.selectOption('deleted');
   await expect(state).toHaveValue('deleted');
@@ -341,7 +405,7 @@ test('workspace detail launch failure warning', async ({ page }) => {
     if (path.endsWith('/session')) return route.fulfill({ json: admin([]) });
     if (path.endsWith(`/workspaces/${workspaceID}`)) return route.fulfill({ json: {
       id: workspaceID, name: 'Failed workspace', observedState: 'running', desiredState: 'running', resources,
-      currentOperationId: null, lastFailedOperationId: operationID,
+      currentOperationId: null, lifecycle: workspaceLifecycle('vm-running', 'failed', operationID),
     } });
   }, failed);
   await page.goto(`/workspaces/?id=${workspaceID}`);
@@ -366,6 +430,7 @@ for (const [action, button, label] of [
       if (path.endsWith('/session')) return route.fulfill({ json: { ...admin([]), user: { id: 'member', role: 'member' } } });
       if (path.endsWith(`/workspaces/${workspaceID}`)) return route.fulfill({ json: {
         id: workspaceID, name: 'Keyboard workspace', resources, desiredState: state, observedState: state, version: 1,
+        lifecycle: workspaceLifecycle(state === 'stopped' ? 'stopped' : 'ready', null, started ? operationID : null),
         currentOperationId: started ? operationID : null, canStartRepair: action === 'repair', canRetryAfterRepair: action === 'retry',
         maintenance: action === 'update' ? { releaseId: 'update-release', deadline: '2026-11-15T14:30:00Z',
           state: started ? 'waiting_safe' : 'pending', operationId: started ? operationID : null } : undefined,
@@ -389,7 +454,7 @@ test('workspace deletion focus and progress', async ({ page }) => {
   await fixture(page, (route, path) => {
     if (path.endsWith('/session')) return route.fulfill({ json: { ...admin([]), user: { id: 'member', role: 'member' } } });
     if (path.endsWith(`/workspaces/${workspaceID}`)) return route.fulfill({ json: {
-      id: workspaceID, name: 'Keyboard workspace', resources, desiredState: 'stopped', observedState: 'stopped', version: 1,
+      id: workspaceID, name: 'Keyboard workspace', resources, desiredState: 'stopped', observedState: 'stopped', lifecycle: workspaceLifecycle('stopped'), version: 1,
     } });
     if (path.endsWith('/actions/delete')) return route.fulfill({ status: 202, json: { id: operationID } });
   }, operation(labels));

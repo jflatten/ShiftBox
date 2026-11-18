@@ -65,3 +65,23 @@ test('removes cached authority on an explicit revocation event', async () => {
   unmount();
   client.clear();
 });
+
+// Transport loss preserves the last rendered record, but a genuine masked
+// denial removes the cached record once the controller responds.
+test('preserves progress during outage and clears it on a genuine denied read', async () => {
+  const { result, unmount, client } = setup();
+  await waitFor(() => expect(result.current.data?.version).toBe(1));
+  fetchMock.mockRejectedValue(new TypeError('No network'));
+  act(() => Stream.latest.emit('error', ''));
+  await waitFor(() => expect(result.current.isError).toBe(true));
+  expect(result.current.data?.version).toBe(1);
+  expect(result.current.accessDenied).toBe(false);
+
+  fetchMock.mockResolvedValue({ ok: false, status: 404, headers: new Headers({ 'Content-Type': 'application/problem+json' }),
+    json: async () => ({ type: 'about:blank', title: 'Operation not found', status: 404, code: 'operation.not_found', requestId: 'fixture' }) });
+  await act(async () => { await result.current.refetch(); });
+  await waitFor(() => expect(result.current.accessDenied).toBe(true));
+  expect(result.current.data).toBeUndefined();
+  unmount();
+  client.clear();
+});

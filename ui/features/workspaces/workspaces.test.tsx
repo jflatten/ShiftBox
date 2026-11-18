@@ -1,11 +1,19 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { components } from '../../lib/api-types';
 import { Providers } from '../../app/providers';
 import { Workspaces } from './workspaces';
+
+type Lifecycle = components['schemas']['WorkspaceLifecycle'];
+
+function lifecycle(current: Lifecycle['current'], next: Lifecycle['next'] = null, workflowOperationId: string | null = null): Lifecycle {
+  return { current, next, mode: next === 'failed' ? 'failed' : next ? 'transitioning' : 'settled', workflowOperationId };
+}
 
 const workspace = {
   id: 'workspace-one', name: 'Example workspace', ownerId: 'member', templateId: 'template-one', templateRevision: 2,
   desiredState: 'running', observedState: 'stopped', currentOperationId: 'operation-one', version: 4,
+  lifecycle: lifecycle('stopped'),
   platformRelease: 'ubuntu-amd64-r5', lastActivityAt: '2026-11-14T10:00:00Z', retentionDeadline: '2026-11-15T10:00:00Z',
   resources: { cpuCount: 2, memoryMiB: 4096, diskMiB: 32768 },
 };
@@ -41,42 +49,47 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
-// A workspace detail already open in one browser follows a shutdown requested elsewhere.
-test('shows and clears live indeterminate progress as the observed state changes', async () => {
+function problem(status: number, code: string, title: string) {
+  return { ok: false, status, headers: new Headers({ 'Content-Type': 'application/problem+json' }),
+    json: async () => ({ type: 'about:blank', status, code, title, requestId: 'fixture' }) } as Response;
+}
+
+// An open detail view advances from the last confirmed milestone even when several steps pass between polls.
+test('shows one steady chip and jumps to the newest confirmed milestone on poll', async () => {
   jest.useFakeTimers();
   class OperationStream extends EventTarget { close() {} }
   Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: OperationStream });
-  let state = { ...workspace, observedState: 'running', currentOperationId: null as string | null };
+  let state = { ...workspace, desiredState: 'stopped', currentOperationId: null as string | null };
   globalThis.fetch = jest.fn(async input => {
     if (input === '/api/v1/session') return json(session);
     if (input === `/api/v1/workspaces/${workspace.id}`) return json(state);
-    if (input === '/api/v1/operations/stop') return json({ id: 'stop', status: 'running', version: 1, steps: [] });
+    if (input === '/api/v1/operations/start') return json({ id: 'start', status: 'running', version: 1, steps: [] });
     throw new Error(`unexpected request: ${input}`);
   });
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
   const controls = within(await screen.findByRole('region', { name: 'Workspace controls' }));
-  expect(controls.getByText('Observed state')).toBeVisible();
-  expect(controls.getByText('Desired state')).toBeVisible();
-  expect(controls.getAllByText('Running')).toHaveLength(2);
+  expect(controls.getByText('Current state')).toBeVisible();
+  expect(controls.getAllByText('Stopped')).toHaveLength(1);
+  expect(controls.queryByText('Next state')).not.toBeInTheDocument();
   expect(controls.queryByRole('progressbar')).not.toBeInTheDocument();
 
-  state = { ...state, desiredState: 'stopped', currentOperationId: 'stop' };
+  state = { ...state, desiredState: 'running', currentOperationId: 'start', lifecycle: lifecycle('stopped', 'vm-running', 'start') };
   await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
   const progress = await controls.findByRole('progressbar', { name: 'State transition in progress' });
   expect(progress).not.toHaveAttribute('aria-valuenow');
-  expect(controls.getByText('Running')).toBeVisible();
+  expect(controls.getByText('VM-running')).toBeVisible();
   expect(controls.getByText('Stopped')).toBeVisible();
 
-  state = { ...state, observedState: 'stopped', currentOperationId: null };
+  state = { ...state, observedState: 'running', currentOperationId: null, lifecycle: lifecycle('ready', null, 'start') };
   await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
   await waitFor(() => expect(controls.queryByRole('progressbar')).not.toBeInTheDocument());
-  expect(controls.getAllByText('Stopped')).toHaveLength(2);
+  expect(controls.getAllByText('Ready')).toHaveLength(1);
 });
 
 // Deletion keeps polling until the provider confirms it, even if the operation fails in between.
 test('polls through a deletion failure and stops reporting progress once it is confirmed', async () => {
   jest.useFakeTimers();
-  let state = { ...workspace, observedState: 'deleting', desiredState: 'deleted', currentOperationId: null };
+  let state = { ...workspace, observedState: 'deleting', desiredState: 'deleted', currentOperationId: null, lifecycle: lifecycle('stopped', 'deleted') };
   globalThis.fetch = jest.fn(async input => {
     if (input === '/api/v1/session') return json(session);
     if (input === `/api/v1/workspaces/${workspace.id}`) return json(state);
@@ -86,15 +99,15 @@ test('polls through a deletion failure and stops reporting progress once it is c
   const controls = within(await screen.findByRole('region', { name: 'Workspace controls' }));
   expect(controls.getByRole('progressbar')).toBeVisible();
 
-  state = { ...state, observedState: 'failed' };
+  state = { ...state, observedState: 'failed', lifecycle: lifecycle('stopped', 'failed') };
   await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
   expect(await controls.findByText('Failed')).toBeVisible();
-  expect(controls.getByText('Deleted')).toBeVisible();
+  expect(controls.getByText('Stopped')).toBeVisible();
   expect(controls.queryByRole('progressbar')).not.toBeInTheDocument();
 
-  state = { ...state, observedState: 'deleted' };
+  state = { ...state, observedState: 'deleted', lifecycle: lifecycle('deleted') };
   await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
-  await waitFor(() => expect(controls.getAllByText('Deleted')).toHaveLength(2));
+  await waitFor(() => expect(controls.getAllByText('Deleted')).toHaveLength(1));
   const requests = jest.mocked(globalThis.fetch).mock.calls.filter(([input]) => input === `/api/v1/workspaces/${workspace.id}`).length;
   await act(async () => { await jest.advanceTimersByTimeAsync(6000); });
   expect(jest.mocked(globalThis.fetch).mock.calls.filter(([input]) => input === `/api/v1/workspaces/${workspace.id}`)).toHaveLength(requests);
@@ -120,13 +133,14 @@ test('places keep-alive selection in the workspace controls', async () => {
 // Each row keeps its Carbon status chip and shows the active target in the same cell.
 test('shows Carbon-colored chips in a single workspace state column', async () => {
   const states = [
-    ['Running', 'running', '#24a148'], ['Starting', 'starting', '#0043ce'],
-    ['Unreachable', 'unreachable', '#ff832b'], ['Failed', 'failed', '#da1e28'],
-    ['Stopped', 'stopped', '#6f6f6f'], ['Unknown', 'unknown', '#8a3ffc'],
-  ];
+    ['Ready', lifecycle('ready'), '#24a148'],
+    ['VM-running', lifecycle('vm-running', 'container-ready'), '#0043ce'],
+    ['Unreachable', lifecycle('unreachable'), '#ff832b'],
+    ['Stopped', lifecycle('stopped'), '#6f6f6f'],
+    ['Unknown', lifecycle('unknown'), '#8a3ffc'],
+  ] as const;
   globalThis.fetch = jest.fn(async input => input === '/api/v1/session' ? json(session) : json({
-    items: states.map(([label, observedState]) => ({ ...workspace, id: observedState, name: `${label} workspace`,
-      observedState, desiredState: 'running', currentOperationId: observedState === 'starting' ? 'operation-one' : null })),
+    items: states.map(([label, state]) => ({ ...workspace, id: state.current, name: `${label} workspace`, lifecycle: state })),
     nextCursor: null,
   }));
   render(<Providers><Workspaces workspaceId={null} /></Providers>);
@@ -138,13 +152,13 @@ test('shows Carbon-colored chips in a single workspace state column', async () =
     const state = within(cells[1]);
     const chip = state.getByText(label, { exact: true }).closest<HTMLElement>('.mantine-Chip-root');
     expect(chip?.style.getPropertyValue('--chip-bg')).toBe(color);
-    if (label === 'Starting') {
+    if (label === 'VM-running') {
       expect(state.getByRole('progressbar', { name: 'State transition in progress' })).not.toHaveAttribute('aria-valuenow');
-      expect(state.getByText('Running')).toBeVisible();
-      expect(state.getByText('Desired state')).toBeInTheDocument();
+      expect(state.getByText('Container-ready')).toBeVisible();
+      expect(state.getByText('Next state')).toBeInTheDocument();
     } else {
       expect(state.queryByRole('progressbar')).not.toBeInTheDocument();
-      expect(state.queryByText('Desired state')).not.toBeInTheDocument();
+      expect(state.queryByText('Next state')).not.toBeInTheDocument();
     }
     expect(within(row).queryByRole('checkbox')).toBeNull();
   }
@@ -163,19 +177,19 @@ test('polls idle inventory rows for externally started state changes', async () 
   });
   globalThis.fetch = fetch;
   render(<Providers><Workspaces workspaceId={null} /></Providers>);
-  const cell = within(await screen.findByRole('cell', { name: /Observed state.*Stopped/ }));
+  const cell = within(await screen.findByRole('cell', { name: /Current state.*Stopped/ }));
   expect(cell.queryByRole('progressbar')).not.toBeInTheDocument();
 
-  row = { ...row, desiredState: 'running', currentOperationId: 'start' };
+  row = { ...row, desiredState: 'running', currentOperationId: 'start', lifecycle: lifecycle('stopped', 'vm-running', 'start') };
   await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
   expect(await cell.findByRole('progressbar')).toBeVisible();
-  expect(cell.getByText('Running')).toBeVisible();
+  expect(cell.getByText('VM-running')).toBeVisible();
 
-  row = { ...row, observedState: 'running', currentOperationId: null };
+  row = { ...row, observedState: 'running', currentOperationId: null, lifecycle: lifecycle('ready', null, 'start') };
   await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
   await waitFor(() => expect(cell.queryByRole('progressbar')).not.toBeInTheDocument());
   expect(cell.queryByText('Stopped')).not.toBeInTheDocument();
-  expect(cell.getByText('Running')).toBeVisible();
+  expect(cell.getByText('Ready')).toBeVisible();
   expect(fetch).not.toHaveBeenCalledWith(`/api/v1/workspaces/${workspace.id}`, expect.anything());
 });
 
@@ -183,7 +197,7 @@ test('polls idle inventory rows for externally started state changes', async () 
 test('shows the latest code-server probe on workspace detail', async () => {
   let probes = [{ id: 'code-server', status: 'healthy' }];
   globalThis.fetch = jest.fn(async input => input === '/api/v1/session' ? json(session) :
-    json({ ...workspace, observedState: 'running', currentOperationId: null, probes }));
+    json({ ...workspace, observedState: 'running', currentOperationId: null, lifecycle: lifecycle('ready'), probes }));
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
 
@@ -193,6 +207,8 @@ test('shows the latest code-server probe on workspace detail', async () => {
   probes = [{ id: 'code-server', status: 'error' }];
   await user.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(await within(section).findByText('Code-server · Error')).toBeVisible();
+  expect(within(screen.getByRole('region', { name: 'Workspace controls' })).getByText('Ready')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Open IDE' })).not.toBeInTheDocument();
   probes = [];
   await user.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(await within(section).findByText('No recent probe results.')).toBeVisible();
@@ -279,37 +295,37 @@ test('filters workspace state and excludes deleted workspaces by default', async
   expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces?owner=member&excludeDeleted=true', expect.anything());
   await user.click(screen.getByRole('button', { name: 'Next page' }));
   await screen.findByText('Page 2');
-  await user.selectOptions(screen.getByLabelText('Observed state'), 'stopped');
-  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces?owner=member&state=stopped&excludeDeleted=true', expect.anything()));
+  await user.selectOptions(screen.getByLabelText('Current state'), 'stopped');
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces?owner=member&lifecycleState=stopped&excludeDeleted=true', expect.anything()));
   expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
   await user.click(screen.getByRole('checkbox', { name: 'Show deleted workspaces' }));
-  await user.selectOptions(screen.getByLabelText('Observed state'), 'deleted');
-  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces?owner=member&state=deleted', expect.anything()));
+  await user.selectOptions(screen.getByLabelText('Current state'), 'deleted');
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces?owner=member&lifecycleState=deleted', expect.anything()));
   await user.click(screen.getByRole('checkbox', { name: 'Show deleted workspaces' }));
-  expect(screen.getByLabelText('Observed state')).toHaveValue('');
+  expect(screen.getByLabelText('Current state')).toHaveValue('');
   expect(screen.queryByRole('option', { name: 'Deleted' })).not.toBeInTheDocument();
 });
 
-// A failed refresh must not present stale workspace state as current or leave
-// the operator stranded without a retry control.
-test('retries failed workspace lists and distinguishes filtered empty results', async () => {
+// A valid domain error still uses the existing retry and empty-result handling.
+test('retries workspace list domain errors and distinguishes filtered empty results', async () => {
   let failed = true;
   globalThis.fetch = jest.fn(async input => {
     if (input === '/api/v1/session') return json(session);
-    if (failed) throw new Error('Disconnected');
+    if (failed) return problem(503, 'workspace.storage_unavailable', 'Workspace storage is unavailable');
     return json({ items: [], nextCursor: null });
   });
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={null} /></Providers>);
   const retry = await screen.findByRole('button', { name: 'Retry' });
+  expect(screen.queryByRole('dialog', { name: 'Controller unavailable' })).not.toBeInTheDocument();
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
   failed = false;
   await user.click(retry);
   expect(await screen.findByText('No workspaces yet.')).toBeVisible();
-  await user.selectOptions(screen.getByLabelText('Observed state'), 'failed');
+  await user.selectOptions(screen.getByLabelText('Current state'), 'unreachable');
   expect(await screen.findByText('No workspaces match this filter.')).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Clear filters' }));
-  expect(screen.getByLabelText('Observed state')).toHaveValue('');
+  expect(screen.getByLabelText('Current state')).toHaveValue('');
 });
 
 // Details identify the workspace by name and separate routine actions from
@@ -433,7 +449,7 @@ test('shows the saved workspace state and workflow', async () => {
   globalThis.fetch = jest.fn(async (input) => {
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/workspaces/workspace-one') return json({
-      ...workspace, currentOperationId: null, lastFailedOperationId: 'operation-one',
+      ...workspace, currentOperationId: null, lifecycle: lifecycle('vm-running', 'failed', 'operation-one'),
     });
     if (input === '/api/v1/operations/operation-one') return json({
       id: 'operation-one', version: 3, type: 'provision', status: 'failed', currentStep: 'configure',
@@ -447,8 +463,8 @@ test('shows the saved workspace state and workflow', async () => {
     throw new Error('unexpected request');
   });
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
-  expect(await screen.findByText('Running', { exact: true })).toBeVisible();
-  expect(screen.getByText('Stopped', { exact: true })).toBeVisible();
+  expect(await screen.findByText('VM-running', { exact: true })).toBeVisible();
+  expect(within(screen.getByRole('region', { name: 'Workspace controls' })).getByText('Failed')).toBeVisible();
   expect(screen.getByText('ubuntu-amd64-r5')).toBeVisible();
   expect(screen.getByText('Revision 2')).toBeVisible();
   expect(screen.getByText('Last activity').nextElementSibling?.firstElementChild).toHaveAttribute('datetime', workspace.lastActivityAt);
@@ -524,7 +540,7 @@ test('submits stop with CSRF and the workspace version', async () => {
   expect(fetch).toHaveBeenCalledWith('/api/v1/workspaces/workspace-one/actions/stop', expect.objectContaining({
     method: 'POST', headers: expect.objectContaining({ 'If-Match': '"4"', 'X-CSRF-Token': 'fixture', 'Idempotency-Key': expect.any(String) }),
   }));
-  expect(screen.getAllByText('Running', { exact: true })).toHaveLength(2);
+  expect(within(screen.getByRole('region', { name: 'Workspace controls' })).getAllByText('Stopped')).toHaveLength(1);
 });
 
 // Permanent deletion requires the exact workspace name and explicit consent,
@@ -538,6 +554,7 @@ test('confirms workspace deletion and follows its durable operation', async () =
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/workspaces/workspace-one') return json({
       ...workspace, name: 'My Workspace', desiredState: deleting ? 'deleted' : 'stopped', currentOperationId: deleting ? 'delete-op' : null,
+      lifecycle: deleting ? lifecycle('stopped', 'deleted', 'delete-op') : lifecycle('stopped'),
     });
     if (input === endpoint && init?.method === 'POST') {
       deleting = true;
@@ -573,7 +590,9 @@ test('confirms workspace deletion and follows its durable operation', async () =
     headers: expect.objectContaining({ 'If-Match': '"4"', 'X-CSRF-Token': 'fixture' }),
   }));
   expect(await screen.findByText('Waiting — Delete workspace and retained files')).toBeVisible();
-  expect(screen.getByText('Stopped', { exact: true })).toBeVisible();
+  const controls = within(screen.getByRole('region', { name: 'Workspace controls' }));
+  expect(await controls.findByText('Deleted')).toBeVisible();
+  expect(controls.getByText('Stopped')).toBeVisible();
 });
 
 // A scheduled target warns its owner on the workspace page while the
@@ -842,7 +861,7 @@ test('keeps cached image freshness separate from running state', async () => {
   const newer = 'sha256:newer-upstream';
   let recovered = false;
   globalThis.fetch = jest.fn(async input => input === '/api/v1/session' ? json(session) : json({
-    ...workspace, observedState: 'running', currentOperationId: null,
+    ...workspace, observedState: 'running', currentOperationId: null, lifecycle: lifecycle('ready'),
     imageCache: {
       warningActive: !recovered, updateAvailable: recovered,
       references: [{
@@ -855,11 +874,123 @@ test('keeps cached image freshness separate from running state', async () => {
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
   expect(await screen.findByText('The upstream registry could not be contacted. Using cached version.')).toBeVisible();
-  expect(within(screen.getByRole('region', { name: 'Workspace controls' })).getAllByText('Running')).toHaveLength(2);
+  expect(within(screen.getByRole('region', { name: 'Workspace controls' })).getAllByText('Ready')).toHaveLength(1);
   recovered = true;
   await user.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(await screen.findByText('A newer upstream image is available.')).toBeVisible();
   expect(screen.queryByText('The upstream registry could not be contacted. Using cached version.')).not.toBeInTheDocument();
   expect(screen.getByText(cached)).toBeVisible();
   expect(screen.getByText(newer)).toBeVisible();
+});
+
+// Reloading an overdue workspace shows its last confirmed chip and original
+// timeout. A later verified snapshot settles while preserving Stepper history.
+test('reopens a timed-out workspace and preserves history after late success', async () => {
+  class OperationStream extends EventTarget { close() {} }
+  Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: OperationStream });
+  const operationId = 'late-stop';
+  const timeout = { occurredAt: '2026-11-18T18:00:00Z', reason: 'The provider has yet to verify stop.' };
+  let completed = false;
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === `/api/v1/workspaces/${workspace.id}`) return json({
+      ...workspace, desiredState: 'stopped', observedState: completed ? 'stopped' : 'running',
+      currentOperationId: completed ? null : operationId,
+      lifecycle: completed ? lifecycle('stopped', null, operationId) : lifecycle('ready', 'failed', operationId),
+    });
+    if (input === `/api/v1/operations/${operationId}`) return json({
+      id: operationId, status: completed ? 'succeeded' : 'waiting', version: completed ? 2 : 1,
+      steps: [{ key: 'stop', index: 0, label: 'Verify provider stop', status: completed ? 'succeeded' : 'active', timeout }],
+    });
+    throw new Error(`unexpected request: ${input}`);
+  });
+
+  const first = render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  const controls = within(await screen.findByRole('region', { name: 'Workspace controls' }));
+  expect(controls.getByText('Ready')).toBeVisible();
+  expect(controls.getByText('Failed')).toBeVisible();
+  expect(controls.queryByRole('progressbar')).not.toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Verify provider stop: Timed out' })).toBeVisible();
+  first.unmount();
+
+  completed = true;
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  const recovered = within(await screen.findByRole('region', { name: 'Workspace controls' }));
+  expect(recovered.getByText('Stopped')).toBeVisible();
+  expect(recovered.queryByText('Failed')).not.toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Verify provider stop: Completed · Timed out' })).toBeVisible();
+  expect(screen.getByText(timeout.reason)).toBeVisible();
+});
+
+// A network interruption and a controller failure share one notice. The
+// rendered connector and chips stay in place until a newer snapshot arrives.
+test('freezes visible lifecycle progress through controller unavailability', async () => {
+  jest.useFakeTimers();
+  let outcome = 'transition';
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input !== '/api/v1/workspaces?excludeDeleted=true') throw new Error(`unexpected ${input}`);
+    if (outcome === 'network') throw new TypeError('Network connection lost');
+    if (outcome === 'controller') return problem(500, 'internal.error', 'Unable to complete the request');
+    return json({ items: [{ ...workspace, lifecycle: outcome === 'ready'
+      ? lifecycle('ready') : lifecycle('stopped', 'vm-running') }], nextCursor: null });
+  });
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+
+  const connector = await screen.findByRole('progressbar', { name: 'State transition in progress' });
+  const refresh = screen.getByRole('button', { name: 'Refresh' });
+  refresh.focus();
+  outcome = 'network';
+  fireEvent.click(refresh);
+  const dialog = await screen.findByRole('dialog', { name: 'Controller unavailable' });
+  expect(dialog).toBeVisible();
+  expect(connector).toBeVisible();
+  expect(connector.querySelector('[data-paused]')).not.toBeNull();
+  const state = within(connector.parentElement!);
+  expect(state.getByText('Stopped')).toBeVisible();
+  expect(state.getByText('VM-running')).toBeVisible();
+
+  outcome = 'controller';
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  expect(screen.getAllByRole('dialog', { name: 'Controller unavailable' })).toEqual([dialog]);
+  expect(connector).toBeVisible();
+
+  outcome = 'ready';
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(within(screen.getByRole('row', { name: /Example workspace/ })).getByText('Ready')).toBeVisible();
+  expect(connector).not.toBeInTheDocument();
+  await waitFor(() => expect(refresh).toHaveFocus());
+});
+
+// The first failed session read has to recover even before the workspace view
+// mounts. A genuine denial then dismisses the notice and exposes no old data.
+test('recovers from an initial session outage and handles a real workspace denial', async () => {
+  jest.useFakeTimers();
+  let connected = false;
+  let denied = false;
+  globalThis.fetch = jest.fn(async input => {
+    if (!connected) throw new TypeError('Network connection lost');
+    if (input === '/api/v1/session') return json(session);
+    if (denied) return problem(403, 'auth.forbidden', 'Workspace access denied');
+    return json({ items: [workspace], nextCursor: null });
+  });
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+  expect(await screen.findByRole('dialog', { name: 'Controller unavailable' })).toBeVisible();
+  expect(screen.queryByText(workspace.name)).not.toBeInTheDocument();
+
+  connected = true;
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  expect(await screen.findByRole('link', { name: workspace.name })).toBeVisible();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+  connected = false;
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  expect(await screen.findByRole('dialog', { name: 'Controller unavailable' })).toBeVisible();
+  connected = true;
+  denied = true;
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  expect(await screen.findByText('Workspace access denied')).toBeVisible();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByText(workspace.name)).not.toBeInTheDocument();
 });

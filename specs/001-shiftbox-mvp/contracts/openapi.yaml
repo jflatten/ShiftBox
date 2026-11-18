@@ -205,6 +205,10 @@ paths:
       parameters:
         - { name: owner, in: query, schema: { type: string, format: uuid } }
         - { name: state, in: query, schema: { type: string } }
+        - name: lifecycleState
+          in: query
+          description: Match the current lifecycle chip before pagination.
+          schema: { $ref: '#/components/schemas/WorkspaceLifecycleMilestone' }
         - name: excludeDeleted
           in: query
           description: Exclude workspaces with confirmed observed state deleted before pagination. In-progress deletion remains visible.
@@ -1477,7 +1481,7 @@ components:
 
     Workspace:
       type: object
-      required: [id, ownerId, templateId, templateRevision, desiredState, observedState, generation, resources, version]
+      required: [id, ownerId, templateId, templateRevision, desiredState, observedState, generation, resources, lifecycle, version]
       properties:
         id: { type: string, format: uuid }
         name: { type: string, description: Workspace display name. Older workspaces display their ID. }
@@ -1491,6 +1495,7 @@ components:
         generation: { type: integer, minimum: 1 }
         resources: { $ref: '#/components/schemas/Resources' }
         currentOperationId: { type: [string, 'null'], format: uuid }
+        lifecycle: { $ref: '#/components/schemas/WorkspaceLifecycle' }
         previewPorts:
           type: array
           items: { type: integer, minimum: 1, maximum: 65535 }
@@ -1525,6 +1530,23 @@ components:
             operationId: { type: [string, 'null'], format: uuid }
         failure: { oneOf: [{ $ref: '#/components/schemas/Problem' }, { type: 'null' }] }
         version: { type: integer, minimum: 1 }
+
+    WorkspaceLifecycleMilestone:
+      type: string
+      enum: [unknown, provisioned, stopped, vm-running, container-ready, ready, repair-ready, updated, unreachable, deleted]
+
+    WorkspaceLifecycle:
+      type: object
+      required: [current, next, mode, workflowOperationId]
+      properties:
+        current: { $ref: '#/components/schemas/WorkspaceLifecycleMilestone' }
+        next:
+          oneOf:
+            - { $ref: '#/components/schemas/WorkspaceLifecycleMilestone' }
+            - { type: string, const: failed }
+            - { type: 'null' }
+        mode: { type: string, enum: [settled, transitioning, failed] }
+        workflowOperationId: { type: [string, 'null'], format: uuid }
 
     Resources:
       type: object
@@ -1720,6 +1742,13 @@ components:
         status: { type: string, enum: [pending, active, succeeded, failed, skipped] }
         detail: { type: [string, 'null'] }
         problem: { oneOf: [{ $ref: '#/components/schemas/Problem' }, { type: 'null' }] }
+        timeout:
+          type: object
+          description: Retained lifecycle transition timeout, including after late completion.
+          required: [occurredAt, reason]
+          properties:
+            occurredAt: { type: string, format: date-time }
+            reason: { type: string, minLength: 1, maxLength: 4096 }
 
     OperationEvent:
       type: object

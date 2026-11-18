@@ -3,16 +3,18 @@
 import { useState } from 'react';
 import { Anchor, Button, Checkbox, Group, NativeSelect, Paper, Stack, Table, Text, Title } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
+import { useControllerUnavailable } from '../../app/providers';
 import { ShiftBoxShell } from '../../components/app-shell';
 import { APIProblemView } from '../../components/api-problem';
-import { readProblem } from '../../lib/api-problem';
+import { ControllerUnavailableError, readControllerJSON } from '../../lib/api-problem';
+import { controllerPollInterval, controllerReadOptions } from '../../lib/query-client';
 import { SignInChoices } from '../session/sign-in';
 import { useSession } from '../../lib/use-session';
 import { LaunchFlow } from './launch-flow';
 import { WorkspaceDetail } from './workspace-detail';
 import { WorkspaceInventoryRow } from './workspace-inventory-row';
 
-import { workspaceState, type Workspace } from './workspace';
+import { workspaceMilestones, workspaceState, type Workspace } from './workspace';
 
 export function Workspaces({ workspaceId, ownerId, launch = false }: {
   workspaceId: string | null;
@@ -20,49 +22,56 @@ export function Workspaces({ workspaceId, ownerId, launch = false }: {
   launch?: boolean;
 }) {
   const session = useSession();
-  const current = session.session?.mode === 'normal' && session.session.installationState === 'active' ? session.session : undefined;
+  const unavailable = useControllerUnavailable();
+  const visibleSession = session.session ?? session.cachedSession;
+  const current = visibleSession?.mode === 'normal' && visibleSession.installationState === 'active' ? visibleSession : undefined;
+  const sessionUnavailable = session.error instanceof ControllerUnavailableError;
   return (
-    <ShiftBoxShell session={session.session} alerts={[]} error={session.error ?? undefined}>
+    <ShiftBoxShell session={unavailable ? visibleSession : session.session} alerts={[]} error={sessionUnavailable ? undefined : session.error ?? undefined}>
       {!current ? (
         <>
           <Title order={1}>Workspaces</Title>
           {session.isPending ? <Text role="status">Checking your session…</Text> : null}
           {session.data === null ? <SignInChoices /> : null}
         </>
-      ) : launch ? <LaunchFlow key={current.user.id} csrfToken={current.csrfToken} userID={current.user.id}
-        admin={current.role === 'administrator'} />
-        : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken}
+      ) : (
+        <div style={{ display: 'contents' }} inert={sessionUnavailable && !unavailable}>
+          {launch ? <LaunchFlow key={current.user.id} csrfToken={current.csrfToken} userID={current.user.id}
             admin={current.role === 'administrator'} />
-          : <WorkspaceList key={ownerId} ownerId={ownerId} csrfToken={current.csrfToken} />}
+            : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken}
+                admin={current.role === 'administrator'} />
+              : <WorkspaceList key={ownerId} ownerId={ownerId} csrfToken={current.csrfToken} />}
+        </div>
+      )}
     </ShiftBoxShell>
   );
 }
 
 function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfToken: string }) {
+  const unavailable = useControllerUnavailable();
   const [state, setState] = useState('');
   const [showDeleted, setShowDeleted] = useState(false);
   const [cursors, setCursors] = useState<string[]>([]);
   const cursor = cursors.at(-1);
   const page = useQuery<{ items: Workspace[]; nextCursor: string | null }>({
     queryKey: ['workspaces', 'list', ownerId ?? '', state, showDeleted, cursor ?? ''],
-    refetchInterval: 3000,
-    queryFn: async ({ signal }) => {
+    ...controllerReadOptions,
+    refetchInterval: controllerPollInterval,
+    queryFn: ({ signal }) => {
       const params = new URLSearchParams();
       if (ownerId) params.set('owner', ownerId);
-      if (state) params.set('state', state);
+      if (state) params.set('lifecycleState', state);
       if (!showDeleted) params.set('excludeDeleted', 'true');
       if (cursor) params.set('cursor', cursor);
       const suffix = params.size > 0 ? '?' + params : '';
-      const response = await fetch('/api/v1/workspaces' + suffix, { signal, cache: 'no-store' });
-      if (!response.ok) throw await readProblem(response);
-      return response.json();
+      return readControllerJSON('/api/v1/workspaces' + suffix, { signal, cache: 'no-store' });
     },
   });
-  const data = !page.isError ? page.data : undefined;
-  const states = ['unknown', 'provisioning', 'stopped', 'starting', 'running', 'unreachable', 'stopping', 'deleting', 'failed',
-    ...(showDeleted ? ['deleted'] : [])];
+  const readUnavailable = page.error instanceof ControllerUnavailableError;
+  const data = !page.isError || readUnavailable ? page.data : undefined;
+  const states = showDeleted ? [...workspaceMilestones, 'deleted'] : workspaceMilestones;
   return (
-    <Stack gap="lg">
+    <Stack gap="lg" inert={readUnavailable && !unavailable}>
       <Group justify="space-between" align="flex-start">
         <Stack gap={4}>
           <Title order={1}>Workspaces</Title>
@@ -75,7 +84,7 @@ function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfTo
         <Stack gap="md">
           <Group justify="space-between" align="flex-end">
             <Group align="flex-end">
-              <NativeSelect label="Observed state" value={state} data={[
+              <NativeSelect label="Current state" value={state} data={[
                 { value: '', label: 'All states' }, ...states.map(value => ({ value, label: workspaceState(value) })),
               ]} onChange={event => { setState(event.currentTarget.value); setCursors([]); }} />
               <Checkbox label="Show deleted workspaces" checked={showDeleted} mb={8} onChange={event => {
@@ -89,7 +98,7 @@ function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfTo
             </Group>
             <Button variant="default" onClick={() => void page.refetch()}>Refresh</Button>
           </Group>
-          {page.isError ? <Stack align="flex-start">
+          {page.isError && !readUnavailable ? <Stack align="flex-start">
             <APIProblemView error={page.error} />
             <Button variant="default" onClick={() => void page.refetch()}>Retry</Button>
           </Stack> : null}

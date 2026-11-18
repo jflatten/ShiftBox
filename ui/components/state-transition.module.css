@@ -1,14 +1,14 @@
 .root {
   --state-transition-color: #0043ce;
-  --state-transition-gap: var(--mantine-spacing-xs);
+  --state-transition-gap: calc(var(--mantine-spacing-xs) / 2);
 
   display: grid;
   grid-template-areas:
-    "observed-label . . . desired-label ."
-    "observed . connector . desired .";
-  /* The connector and the final spacer share the space between the two state columns equally. */
-  grid-template-columns: max-content var(--state-transition-gap) minmax(1rem, 1fr)
-    var(--state-transition-gap) max-content minmax(1rem, 1fr);
+    "current-label . . . next-label . ."
+    "current . connector . next . .";
+  /* Give the connector half of its previous share of the available space. */
+  grid-template-columns: max-content var(--state-transition-gap) minmax(0.5rem, 1fr)
+    var(--state-transition-gap) max-content minmax(0, 3fr) var(--mantine-spacing-xs);
   align-items: center;
   justify-items: center;
   row-gap: 0.25rem;
@@ -17,8 +17,8 @@
 }
 
 .root[data-compact] {
-  grid-template-areas: "observed . connector . desired";
-  grid-template-columns: max-content var(--state-transition-gap) 5rem var(--state-transition-gap) max-content;
+  grid-template-areas: "current . connector . next";
+  grid-template-columns: max-content var(--state-transition-gap) 2.5rem var(--state-transition-gap) max-content;
   width: max-content;
 }
 
@@ -26,10 +26,10 @@
   --state-transition-color: #78a9ff;
 }
 
-.observedLabel { grid-area: observed-label; }
-.observed { grid-area: observed; }
-.desiredLabel { grid-area: desired-label; }
-.desired { grid-area: desired; }
+.currentLabel { grid-area: current-label; }
+.current { grid-area: current; }
+.nextLabel { grid-area: next-label; }
+.next { grid-area: next; }
 
 .connector {
   grid-area: connector;
@@ -39,6 +39,8 @@
 .segment {
   animation: travel 1.4s linear infinite;
 }
+
+.segment[data-paused] { animation-play-state: paused; }
 
 @keyframes travel {
   from { transform: translateX(-100%); }

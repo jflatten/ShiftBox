@@ -1,6 +1,12 @@
 import type { components } from '../../lib/api-types';
 import type { KeepAlivePolicy } from '../../lib/keep-alive';
 
+export type WorkspaceLifecycle = components['schemas']['WorkspaceLifecycle'];
+export type WorkspaceMilestone = WorkspaceLifecycle['current'];
+export const workspaceMilestones: readonly WorkspaceMilestone[] = [
+  'unknown', 'provisioned', 'stopped', 'vm-running', 'container-ready', 'ready', 'repair-ready', 'updated', 'unreachable',
+];
+
 export interface Workspace {
   id: string;
   name?: string;
@@ -12,7 +18,7 @@ export interface Workspace {
   desiredState: string;
   observedState: string;
   currentOperationId: string | null;
-  lastFailedOperationId?: string | null;
+  lifecycle: WorkspaceLifecycle;
   canOpenIde?: boolean;
   imageCache?: components['schemas']['WorkspaceImageCache'];
   probes?: components['schemas']['ProbeResult'][];
@@ -42,12 +48,7 @@ export interface Workspace {
 }
 
 export function workspaceState(value: string) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-export function workspaceIsTransitioning(workspace: Workspace) {
-  return workspace.observedState !== workspace.desiredState &&
-    (!!workspace.currentOperationId || ['provisioning', 'starting', 'stopping', 'deleting'].includes(workspace.observedState));
+  return value === 'vm-running' ? 'VM-running' : value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 export function workspaceName(workspace: Workspace) {

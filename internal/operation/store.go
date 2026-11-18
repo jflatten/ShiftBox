@@ -48,7 +48,8 @@ func readOperation(ctx context.Context, tx *sql.Tx, id string) (Operation, error
 			return Operation{}, err
 		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT step_key,label,status,step_index,COALESCE(detail,'') FROM operation_steps WHERE operation_id=$1 ORDER BY step_index`, id)
+	rows, err := tx.QueryContext(ctx, `SELECT step_key,label,status,step_index,COALESCE(detail,''),started_at,transition_deadline,
+		transition_timeout_at,COALESCE(transition_timeout_reason,'') FROM operation_steps WHERE operation_id=$1 ORDER BY step_index`, id)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -56,8 +57,29 @@ func readOperation(ctx context.Context, tx *sql.Tx, id string) (Operation, error
 	op.Steps = []Step{}
 	for rows.Next() {
 		var step Step
-		if err := rows.Scan(&step.Key, &step.Label, &step.Status, &step.Index, &step.Detail); err != nil {
+		var started, deadline, timedOut sql.NullString
+		var reason string
+		if err := rows.Scan(&step.Key, &step.Label, &step.Status, &step.Index, &step.Detail, &started, &deadline, &timedOut, &reason); err != nil {
 			return Operation{}, err
+		}
+		for _, field := range []struct {
+			source sql.NullString
+			target **time.Time
+		}{{started, &step.startedAt}, {deadline, &step.transitionDeadline}} {
+			if field.source.Valid {
+				value, err := time.Parse(time.RFC3339Nano, field.source.String)
+				if err != nil {
+					return Operation{}, err
+				}
+				*field.target = &value
+			}
+		}
+		if timedOut.Valid {
+			occurredAt, err := time.Parse(time.RFC3339Nano, timedOut.String)
+			if err != nil {
+				return Operation{}, err
+			}
+			step.Timeout = &StepTimeout{OccurredAt: occurredAt, Reason: reason}
 		}
 		op.Steps = append(op.Steps, step)
 	}
@@ -89,10 +111,17 @@ func saveOperation(ctx context.Context, tx *sql.Tx, op *Operation, evidence stri
 		return err
 	}
 	for _, step := range op.Steps {
+		var timedOut, timeoutReason any
+		if step.Timeout != nil {
+			timedOut, timeoutReason = timestamp(step.Timeout.OccurredAt), step.Timeout.Reason
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE operation_steps SET status=$1,detail=$2,
 			started_at=CASE WHEN $1 IN ('active','succeeded','failed') THEN COALESCE(started_at,$5) ELSE started_at END,
-			finished_at=CASE WHEN $1 IN ('succeeded','failed','skipped') THEN COALESCE(finished_at,$5) ELSE finished_at END
-			WHERE operation_id=$3 AND step_index=$4`, step.Status, step.Detail, op.ID, step.Index, timestamp(now)); err != nil {
+			finished_at=CASE WHEN $1 IN ('succeeded','failed','skipped') THEN COALESCE(finished_at,$5) ELSE finished_at END,
+			transition_deadline=COALESCE(transition_deadline,$6),transition_timeout_at=COALESCE(transition_timeout_at,$7),
+			transition_timeout_reason=COALESCE(transition_timeout_reason,$8)
+			WHERE operation_id=$3 AND step_index=$4`, step.Status, step.Detail, op.ID, step.Index, timestamp(now),
+			optionalTime(step.transitionDeadline), timedOut, timeoutReason); err != nil {
 			return err
 		}
 	}

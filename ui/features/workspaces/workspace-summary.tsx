@@ -1,5 +1,7 @@
 import { Chip, rem } from '@mantine/core';
-import { workspaceState } from './workspace';
+import { useControllerUnavailable } from '../../app/providers';
+import { StateTransition } from '../../components/state-transition';
+import { workspaceState, type WorkspaceLifecycle } from './workspace';
 
 // Carbon status colors distinguish progress, healthy, inactive, and warning states.
 const progress = '#0043ce';
@@ -10,13 +12,22 @@ const error = '#da1e28';
 const unreachable = '#ff832b';
 const chipHeight = 23;
 const statusColors = new Map([
-  ['running', healthy], ['healthy', healthy],
-  ['provisioning', progress], ['starting', progress], ['stopping', progress], ['deleting', progress],
+  ['ready', healthy], ['repair-ready', healthy], ['updated', healthy], ['healthy', healthy],
+  ['provisioned', progress], ['vm-running', progress], ['container-ready', progress],
   ['stopped', inactive], ['deleted', inactive],
   ['unreachable', unreachable], ['failed', error], ['error', error],
 ]);
 
-/** Display an observed workspace or probe status as a read-only chip. */
+export function WorkspaceLifecycleStatus({ lifecycle, compact }: { lifecycle: WorkspaceLifecycle; compact?: boolean }) {
+  const paused = useControllerUnavailable();
+  return (
+    <StateTransition compact={compact} current={<WorkspaceStatus value={lifecycle.current} />}
+      next={lifecycle.next === null ? null : <WorkspaceStatus value={lifecycle.next} />}
+      transitioning={lifecycle.mode === 'transitioning'} paused={paused} />
+  );
+}
+
+/** Display a workspace milestone or probe status as a read-only chip. */
 export function WorkspaceStatus({ value, label }: { value: string; label?: string }) {
   const color = statusColors.get(value) ?? unknown;
   const textColor = color === healthy || color === unreachable ? '#161616' : '#ffffff';

@@ -2,11 +2,10 @@ import { useRef, useState } from 'react';
 import { Alert, Anchor, Button, Menu, Modal, Stack, Table, Text } from '@mantine/core';
 import { useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
-import { StateTransition } from '../../components/state-transition';
 import { DeleteWorkspaceDialog, WorkspaceProgress } from './workspace-detail';
 import { availableWorkspaceCommands, openWorkspaceEntry, useWorkspaceCommand, useWorkspaceDetail, type WorkspaceService } from './workspace-commands';
-import { workspaceIsTransitioning, workspaceName, type Workspace } from './workspace';
-import { WorkspaceStatus, WorkspaceTime } from './workspace-summary';
+import { workspaceName, type Workspace } from './workspace';
+import { WorkspaceLifecycleStatus, WorkspaceTime } from './workspace-summary';
 
 export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace; href: string; csrfToken: string }) {
   const client = useQueryClient();
@@ -56,8 +55,7 @@ export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace
         <Anchor fw={600} href={href}>{name}</Anchor>
       </Table.Td>
       <Table.Td>
-        <StateTransition compact observed={<WorkspaceStatus value={row.observedState} />}
-          desired={<WorkspaceStatus value={row.desiredState} />} transitioning={workspaceIsTransitioning(row)} />
+        <WorkspaceLifecycleStatus compact lifecycle={row.lifecycle} />
       </Table.Td>
       <Table.Td><Stack gap={2}>
         <Text size="sm">{row.resources.cpuCount} vCPU · {row.resources.memoryMiB.toLocaleString()} MiB memory</Text>

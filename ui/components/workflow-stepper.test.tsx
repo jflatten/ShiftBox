@@ -122,3 +122,22 @@ test('recovers an SSE gap through the query hook into the visible Stepper', asyn
   }
   expect(close).toHaveBeenCalledTimes(1);
 });
+
+// A late verified success keeps the cutoff evidence on the original step after reload.
+test('shows the timed-out step and reason through late completion', () => {
+  const timeout = { occurredAt: '2026-11-18T18:00:00Z', reason: 'The provider did not confirm the stop before the deadline.' };
+  const waiting = { ...operation, status: 'waiting' as const, steps: operation.steps.map(step =>
+    step.key === 'boot' ? { ...step, timeout } : step,
+  ) };
+  const { rerender } = render(view(waiting));
+  expect(screen.getByRole('button', { name: 'Start machine: Timed out' })).toBeVisible();
+  expect(screen.getByText(timeout.reason)).toBeVisible();
+
+  rerender(view({
+    ...waiting, status: 'succeeded', currentStep: null,
+    steps: waiting.steps.map(step => ({ ...step, status: 'succeeded' })),
+  }));
+  expect(screen.getByRole('status')).toHaveTextContent('Completed');
+  expect(screen.getByRole('button', { name: 'Start machine: Completed · Timed out' })).toBeVisible();
+  expect(screen.getByText(timeout.reason)).toBeVisible();
+});

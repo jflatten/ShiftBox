@@ -21,7 +21,7 @@ func (s *Store) MaintenanceUpdateWorker(journal *operation.Journal, installation
 
 func maintenanceTargetWorker(journal *operation.Journal, executor maintenanceUpdateExecutor) *operation.Worker {
 	return &operation.Worker{Journal: journal, Name: "maintenance-update", LeaseDuration: time.Minute,
-		Actions: []string{maintenanceTargetAction}, Executor: executor}
+		Actions: []string{maintenanceTargetAction}, Executor: executor, TransitionLimit: lifecycleTransitionLimit}
 }
 
 // MaintenanceWorkers binds the campaign and target workers to the same

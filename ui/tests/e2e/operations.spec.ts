@@ -10,10 +10,14 @@ const memberSession = {
   csrfToken: 'operations-fixture', permissions: [],
 };
 
+function workspaceLifecycle(current: string, next: string | null = null, workflowOperationId: string | null = null) {
+  return { current, next, mode: next === 'failed' ? 'failed' : next ? 'transitioning' : 'settled', workflowOperationId };
+}
+
 const retainedWorkspace = {
   id: workspaceId, name: 'Operations fixture', ownerId: 'member', resources,
   templateId: 'fixture-template', templateRevision: 1, platformRelease: 'fixture-release',
-  desiredState: 'stopped', observedState: 'stopped', currentOperationId: null,
+  desiredState: 'stopped', observedState: 'stopped', currentOperationId: null, lifecycle: workspaceLifecycle('stopped'),
   lastActivityAt: null, retentionDeadline: null, version: 1,
 };
 
@@ -95,6 +99,7 @@ test.describe('operations with a fixture controller', () => {
       if (pathname.endsWith(`/workspaces/${workspaceId}`)) return route.fulfill({ json: {
         id: workspaceId, name: workspaceName, resources, desiredState: deleting ? 'deleted' : 'stopped', observedState: 'stopped',
         currentOperationId: deleting ? operationId : null, version: deleting ? 2 : 1,
+        lifecycle: deleting ? workspaceLifecycle('stopped', 'deleted', operationId) : workspaceLifecycle('stopped'),
       } });
       if (pathname.endsWith('/actions/delete')) {
         expect(route.request().method()).toBe('POST');
@@ -176,7 +181,7 @@ test.describe('operations with a fixture controller', () => {
       if (pathname.endsWith(`/workspaces/${workspaceId}`)) return route.fulfill({ json: {
         ...retainedWorkspace,
         currentOperationId: startRequested && !refused ? operationId : null,
-        lastFailedOperationId: refused ? operationId : null,
+        lifecycle: startRequested ? workspaceLifecycle('stopped', refused ? 'failed' : 'vm-running', operationId) : workspaceLifecycle('stopped'),
         desiredState: startRequested ? 'running' : 'stopped',
         canOpenIde: false,
       } });
@@ -200,7 +205,7 @@ test.describe('operations with a fixture controller', () => {
     refused = true;
     await expect(page.getByText(refusal)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Start workspace: Failed' })).toBeVisible();
-    await expect(page.getByText('Observed state', { exact: true }).locator('..')).toContainText('Stopped');
+    await expect(page.getByText('Current state', { exact: true }).locator('..')).toContainText('Stopped');
     await expect(page.getByText(/4096 MiB disk/)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Open IDE' })).toHaveCount(0);
   });
@@ -241,7 +246,7 @@ test.describe('operations with a fixture controller', () => {
       const { pathname } = new URL(request.url());
       if (pathname.endsWith('/session')) return route.fulfill({ json: memberSession });
       if (pathname.endsWith(`/workspaces/${workspaceId}`)) return route.fulfill({ json: {
-        ...retainedWorkspace, desiredState: 'running', observedState: 'running',
+        ...retainedWorkspace, desiredState: 'running', observedState: 'running', lifecycle: workspaceLifecycle('ready'),
         canOpenPreviews: true, previewPorts: [4173],
       } });
       if (pathname.endsWith('/entry-grants')) {

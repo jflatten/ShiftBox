@@ -73,7 +73,9 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	exec(`INSERT INTO guest_registrations(workspace_id,generation,state,certificate_not_after,last_authenticated_at)
 		VALUES($1,1,'active',$2,$3)`, id, time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), testStamp)
 	store := NewStore(db)
-	journal := operation.NewJournal(db, time.Now, uuid.NewString)
+	var clockAdvance time.Duration
+	journalClock := func() time.Time { return time.Now().Add(clockAdvance) }
+	journal := operation.NewJournal(db, journalClock, uuid.NewString)
 	restart := func() {
 		t.Helper()
 		if err := db.Close(); err != nil {
@@ -81,7 +83,7 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 		}
 		db = openControllerDB()
 		store = NewStore(db)
-		journal = operation.NewJournal(db, time.Now, uuid.NewString)
+		journal = operation.NewJournal(db, journalClock, uuid.NewString)
 	}
 	if err := store.SetCapacityBudget(ctx, testInstallation, Allocation{CPU: 2, MemoryMiB: 1024, DiskMiB: 40}, 0, "reservation-owner", time.Now()); err != nil {
 		t.Fatal(err)
@@ -125,6 +127,11 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 		restart()
 		worker := NewWorker(journal, NewLaunchExecutor(store, machines, nil, "", "", "", time.Now, probe),
 			NewPowerExecutor(store, machines, time.Now, probe))
+		if op.Type == "stop" && op.OriginatingAction == "workspace.stop" {
+			worker.TransitionLimit = func(operation.Operation, int) operation.TransitionLimit {
+				return operation.TransitionLimit{FirstStep: 0, Duration: time.Minute}
+			}
+		}
 		if err := worker.RunOnce(ctx, op.ID); !errors.Is(err, want) {
 			t.Fatalf("run %s = %v, want %v", op.Type, err, want)
 		}
@@ -148,13 +155,25 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	exec("INSERT INTO guest_dispatches(operation_id,dispatch_version,status) VALUES($1,1,'succeeded')", stop.ID)
 	run(stop, nil)
 	checkState(stop, "running", "waiting")
+	// An expired stop with a lost provider reply still keeps the reservation
+	// until a replacement controller obtains provider confirmation.
+	clockAdvance = 2 * time.Minute
 	machines.LoseReply("stop")
 	run(stop, provider.ErrOutcomeUnknown)
 	checkState(stop, "running", "waiting")
 	checkReservation(t, db, id, "reserved", "reserved")
+	overdue, err := journal.Get(ctx, stop.ID)
+	if err != nil || overdue.Steps[1].Timeout == nil {
+		t.Fatalf("overdue stop = %+v, %v, want timeout on the blocked provider step", overdue, err)
+	}
 	run(stop, nil)
 	checkState(stop, "stopped", "succeeded")
 	checkReservation(t, db, id, "released", "reserved")
+	finished, err := journal.Get(ctx, stop.ID)
+	if err != nil || finished.Steps[1].Timeout == nil || *finished.Steps[1].Timeout != *overdue.Steps[1].Timeout {
+		t.Fatalf("verified stop = %+v, %v, want retained timeout after late success", finished, err)
+	}
+	clockAdvance = 0
 
 	start := admit("start")
 	machines.LoseReply("start")

@@ -49,6 +49,15 @@ func checkAdministratorIntent(t *testing.T, profile string) {
 	if _, err := db.ExecContext(ctx, strings.ReplaceAll(string(ddl), "CREATE TABLE ", "CREATE TEMPORARY TABLE ")); err != nil {
 		t.Fatal(err)
 	}
+	// The isolated bootstrap fixture still uses the current journal schema.
+	ddl, err = migrations.Files.ReadFile(profile + "/00040_workspace_transition_deadlines.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, _, _ := strings.Cut(string(ddl), "-- +goose Down")
+	if _, err := db.ExecContext(ctx, up); err != nil {
+		t.Fatal(err)
+	}
 	const installation = "00000000-0000-4000-8000-000000000001"
 	if _, err := db.Exec(`INSERT INTO installations(id,state,organization_name,data_profile,management_origin,ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version) VALUES($1,'bootstrap','ShiftBox','sqlite','https://127.0.0.1:8443','{workspace}.ide.test','{service}--{workspace}.preview.test','release','release','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z',1)`, installation); err != nil {
 		t.Fatal(err)

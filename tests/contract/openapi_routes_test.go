@@ -101,3 +101,21 @@ func TestRouteActionsMatchReviewedMatrix(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkspaceLifecycleReadContract keeps the lifecycle filter additive and
+// declares the common lifecycle snapshot in the existing workspace schema.
+func TestWorkspaceLifecycleReadContract(t *testing.T) {
+	data, err := os.ReadFile("../../specs/001-shiftbox-mvp/contracts/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, declaration := range []string{
+		"name: state, in: query", "name: lifecycleState",
+		"lifecycle: { $ref: '#/components/schemas/WorkspaceLifecycle' }",
+		"required: [current, next, mode, workflowOperationId]",
+	} {
+		if !strings.Contains(string(data), declaration) {
+			t.Errorf("workspace read contract missing %q", declaration)
+		}
+	}
+}

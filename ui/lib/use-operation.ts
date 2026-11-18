@@ -4,13 +4,10 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { WorkflowOperation } from '../components/workflow-stepper';
 import { subscribeOperation } from './operation-events';
-import { readProblem } from './api-problem';
+import { APIProblemError, ControllerUnavailableError, readControllerJSON } from './api-problem';
+import { controllerPollInterval, controllerReadOptions } from './query-client';
 
 type Operation = WorkflowOperation & { type: string; version: number };
-
-class OperationReadError extends Error {
-  constructor(readonly status: number) { super('Unable to refresh workflow progress.'); }
-}
 
 /** useOperation keeps workflow snapshots in memory and revalidates after SSE changes. */
 export function useOperation(operationId: string) {
@@ -18,17 +15,16 @@ export function useOperation(operationId: string) {
   const [revokedId, setRevokedId] = useState<string | null>(null);
   const query = useQuery<Operation>({
     queryKey: ['operations', operationId],
+    ...controllerReadOptions,
     enabled: revokedId !== operationId,
     gcTime: 0,
     retry: false,
-    queryFn: async ({ signal }) => {
-      const response = await fetch(`/api/v1/operations/${encodeURIComponent(operationId)}`, { signal, credentials: 'same-origin', cache: 'no-store' });
-      if (response.status === 401) await readProblem(response);
-      if (!response.ok) throw new OperationReadError(response.status);
-      return response.json();
-    },
+    refetchInterval: query => query.state.error instanceof ControllerUnavailableError ? controllerPollInterval : false,
+    queryFn: ({ signal }) => readControllerJSON(`/api/v1/operations/${encodeURIComponent(operationId)}`,
+      { signal, credentials: 'same-origin', cache: 'no-store' }),
   });
-  const accessDenied = revokedId === operationId || (query.error instanceof OperationReadError && (query.error.status === 401 || query.error.status === 403));
+  const accessDenied = revokedId === operationId ||
+    (query.error instanceof APIProblemError && [401, 403, 404].includes(query.error.problem.status));
   const status = query.data?.status;
   const listening = !accessDenied && status !== undefined && !['succeeded', 'failed', 'cancelled'].includes(status);
 
@@ -47,6 +43,7 @@ export function useOperation(operationId: string) {
     });
   }, [client, operationId, listening]);
 
-  // Never display cached progress as current authority after a failed refresh.
-  return { ...query, data: accessDenied || query.isError ? undefined : query.data, accessDenied };
+  const unavailable = query.error instanceof ControllerUnavailableError;
+  // Only a transport outage can leave previously authorized progress visible.
+  return { ...query, data: accessDenied || (query.isError && !unavailable) ? undefined : query.data, accessDenied };
 }

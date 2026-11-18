@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { readProblem } from '../../lib/api-problem';
+import { ControllerUnavailableError, readControllerJSON, readProblem } from '../../lib/api-problem';
+import { controllerPollInterval, controllerReadOptions } from '../../lib/query-client';
 import type { Workspace } from './workspace';
 
 export type WorkspaceAction = 'start' | 'stop' | 'rebuild' | 'repair' | 'retry' | 'delete' | 'update';
@@ -9,16 +10,14 @@ export type WorkspaceService = 'ide' | 'repair' | `preview-${number}`;
 export function useWorkspaceDetail(id: string, enabled = true) {
   return useQuery<Workspace>({
     queryKey: ['workspaces', 'detail', id],
+    ...controllerReadOptions,
     enabled,
     refetchInterval: query => {
       const workspace = query.state.data;
-      return workspace?.desiredState === 'deleted' && workspace.observedState === 'deleted' ? false : 3000;
+      if (query.state.error instanceof ControllerUnavailableError) return controllerPollInterval;
+      return workspace?.desiredState === 'deleted' && workspace.observedState === 'deleted' ? false : controllerPollInterval;
     },
-    queryFn: async ({ signal }) => {
-      const response = await fetch('/api/v1/workspaces/' + encodeURIComponent(id), { signal, cache: 'no-store' });
-      if (!response.ok) throw await readProblem(response);
-      return response.json();
-    },
+    queryFn: ({ signal }) => readControllerJSON<Workspace>('/api/v1/workspaces/' + encodeURIComponent(id), { signal, cache: 'no-store' }),
   });
 }
 

@@ -19,6 +19,7 @@ test('saves a manually configured preview port', async () => {
     if (input === `/api/v1/workspaces/${id}`) {
       if (init?.method === 'PATCH') previewPorts = JSON.parse(String(init.body)).previewPorts;
       return { ok: true, json: async () => ({ id, ownerId: 'member', desiredState: 'running', observedState: 'running',
+        lifecycle: { current: 'ready', next: null, mode: 'settled', workflowOperationId: null },
         currentOperationId: null, version: 4, previewPorts, canEditPreviewPorts: true, canOpenPreviews: true,
         resources: { cpuCount: 2, memoryMiB: 4096, diskMiB: 32768 } }) } as Response;
     }
@@ -50,6 +51,7 @@ test('restores keyboard focus after cancelling workspace deletion', async () => 
     if (input === `/api/v1/workspaces/${id}`) return { ok: true, json: async () => ({
       id, name: 'Keyboard workspace', ownerId: 'member', templateId: 'template-one', templateRevision: 1,
       desiredState: 'stopped', observedState: 'stopped', currentOperationId: null, version: 4,
+      lifecycle: { current: 'stopped', next: null, mode: 'settled', workflowOperationId: null },
       platformRelease: 'release', resources: { cpuCount: 2, memoryMiB: 4096, diskMiB: 32768 },
     }) } as Response;
     throw new Error('unexpected request');

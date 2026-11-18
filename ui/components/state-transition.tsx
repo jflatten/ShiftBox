@@ -3,30 +3,31 @@ import type { ReactNode } from 'react';
 import classes from './state-transition.module.css';
 
 type StateTransitionProps = {
-  observed: ReactNode;
-  desired: ReactNode;
+  current: ReactNode;
+  next: ReactNode | null;
   transitioning: boolean;
   compact?: boolean;
+  paused?: boolean;
 };
 
-/** Shows the observed and desired state supplied by the caller's live query. */
-export function StateTransition({ observed, desired, transitioning, compact = false }: StateTransitionProps) {
-  const showDesired = !compact || transitioning;
+/** Renders a settled milestone or the current milestone and its transition. */
+export function StateTransition({ current, next, transitioning, compact = false, paused = false }: StateTransitionProps) {
+  const showNext = next !== null;
 
   return (
-    <Box className={showDesired ? classes.root : undefined} mod={{ compact }} role="status" aria-atomic="true">
-      <StateLabel compact={compact} className={classes.observedLabel}>Observed state</StateLabel>
-      <Box className={classes.observed}>{observed}</Box>
+    <Box className={showNext ? classes.root : undefined} mod={{ compact }} role="status" aria-atomic="true">
+      <StateLabel compact={compact} className={classes.currentLabel}>Current state</StateLabel>
+      <Box className={classes.current}>{current}</Box>
       {transitioning ? (
         <Progress.Root className={classes.connector} size="xs" radius={0}
           role="progressbar" aria-label="State transition in progress">
-          <Progress.Section value={100 / 3} withAria={false} color="var(--state-transition-color)" className={classes.segment} />
+          <Progress.Section value={100 / 3} withAria={false} color="var(--state-transition-color)" className={classes.segment} mod={{ paused }} />
         </Progress.Root>
       ) : null}
-      {showDesired ? (
+      {showNext ? (
         <>
-          <StateLabel compact={compact} className={classes.desiredLabel}>Desired state</StateLabel>
-          <Box className={classes.desired}>{desired}</Box>
+          <StateLabel compact={compact} className={classes.nextLabel}>{transitioning ? 'Next state' : 'Transition result'}</StateLabel>
+          <Box className={classes.next}>{next}</Box>
         </>
       ) : null}
     </Box>

@@ -102,7 +102,7 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 			return nil, Problem{Status: 409, Code: "workspace.keep_alive_unavailable", Title: "Choose one of the administrator's keep-alive values"}
 		}
 	}
-	view, err := scanWorkspace(tx.QueryRowContext(ctx, "SELECT "+workspaceProjection+workspaceFrom+" WHERE w.id=$1", id))
+	view, err := scanWorkspace(tx.QueryRowContext(ctx, workspaceDetailQuery, id))
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +177,7 @@ func applyWorkspacePolicy(ctx context.Context, tx *sql.Tx, r *http.Request, id s
 	if count != 1 {
 		return nil, workspacePolicyStale()
 	}
-	view, err = scanWorkspace(tx.QueryRowContext(ctx, "SELECT "+workspaceProjection+workspaceFrom+" WHERE w.id=$1", id))
+	view, err = scanWorkspace(tx.QueryRowContext(ctx, workspaceDetailQuery, id))
 	if err != nil {
 		return nil, err
 	}

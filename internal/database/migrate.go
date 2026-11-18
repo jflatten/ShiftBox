@@ -135,6 +135,7 @@ func CheckSchema(ctx context.Context, db *sql.DB, profile string) error {
 		"SELECT operation_id,installation_id,release_id FROM migration_preflights WHERE 1=0",
 		"SELECT id,operation_id,product_release,state,manifest_digest,archive_digest,size_bytes,completed_at FROM backup_records WHERE 1=0",
 		"SELECT id,restore_operation_id,state,reviewed_users_json,reconciled_workspaces_json,approved_by,activated_at,version FROM recovery_reviews WHERE 1=0",
+		"SELECT transition_deadline,transition_timeout_at,transition_timeout_reason FROM operation_steps WHERE 1=0",
 		"SELECT installation_id,user_id,operation_id,password_hash,password_ciphertext_id,credential_ready,delivered_at,created_at FROM bootstrap_administrator WHERE 1=0",
 	} {
 		probe, err := db.QueryContext(ctx, query)

@@ -10,11 +10,21 @@ var ErrConflict = errors.New("operation state or worker claim changed")
 
 // Step is persisted workflow evidence rendered by the management Stepper.
 type Step struct {
-	Key    string `json:"key"`
-	Label  string `json:"label"`
-	Status string `json:"status"`
-	Index  int    `json:"index"`
-	Detail string `json:"detail,omitempty"`
+	Key     string       `json:"key"`
+	Label   string       `json:"label"`
+	Status  string       `json:"status"`
+	Index   int          `json:"index"`
+	Detail  string       `json:"detail,omitempty"`
+	Timeout *StepTimeout `json:"timeout,omitempty"`
+
+	startedAt          *time.Time
+	transitionDeadline *time.Time
+}
+
+// StepTimeout records an expired transition without changing the step's status.
+type StepTimeout struct {
+	OccurredAt time.Time `json:"occurredAt"`
+	Reason     string    `json:"reason"`
 }
 
 // Operation is authoritative workflow state; worker credentials stay server-side.

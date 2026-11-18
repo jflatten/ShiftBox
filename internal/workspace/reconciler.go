@@ -18,8 +18,9 @@ func NewWorker(journal *operation.Journal, launch *LaunchExecutor, power *PowerE
 	}
 	return &operation.Worker{
 		Journal: journal, Name: "workspace-controller", LeaseDuration: 4 * time.Minute,
-		Executor: workspaceExecutor{launch: launch, power: power},
-		Actions:  []string{"workspace.launch", "workspace.start", "workspace.stop", "workspace.rebuild", "workspace.repair", "workspace.delete", "user.disable", retentionDeleteAction, inactivityStopAction},
+		Executor:        workspaceExecutor{launch: launch, power: power},
+		Actions:         []string{"workspace.launch", "workspace.start", "workspace.stop", "workspace.rebuild", "workspace.repair", "workspace.delete", "user.disable", retentionDeleteAction, inactivityStopAction},
+		TransitionLimit: lifecycleTransitionLimit,
 	}
 }
 

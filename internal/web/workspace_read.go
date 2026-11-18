@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/auth"
@@ -28,12 +30,20 @@ type workspaceView struct {
 	Generation         int64              `json:"generation"`
 	Resources          workspaceResources `json:"resources"`
 	CurrentOperationID *string            `json:"currentOperationId"`
+	Lifecycle          workspaceLifecycle `json:"lifecycle"`
 	PreviewPorts       []int              `json:"previewPorts"`
 	LastActivityAt     *string            `json:"lastActivityAt"`
 	RetentionDeadline  *string            `json:"retentionDeadline"`
 	Version            int64              `json:"version"`
 	keepAliveOverride  *int64
 	createdAt          string
+}
+
+type workspaceLifecycle struct {
+	Current             string  `json:"current"`
+	Next                *string `json:"next"`
+	Mode                string  `json:"mode"`
+	WorkflowOperationID *string `json:"workflowOperationId"`
 }
 
 type workspaceResources struct {
@@ -44,12 +54,84 @@ type workspaceResources struct {
 
 const workspaceProjection = `w.id,w.owner_user_id,w.template_id,w.template_revision,a.release_id,a.provider_kind,
 	w.desired_state,w.observed_state,w.generation,w.cpu_count,w.memory_mib,w.disk_mib,
-	(SELECT o.id FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
-	   AND o.status IN ('pending','running','waiting') ORDER BY o.created_at DESC,o.id DESC LIMIT 1),
-	w.last_activity_at,w.retention_deadline,w.version,w.preview_ports_json,COALESCE(NULLIF(w.name,''),w.id),
-	w.keep_alive_minutes,w.created_at`
+	w.active_operation_id,w.last_activity_at,w.retention_deadline,w.version,w.preview_ports_json,
+	COALESCE(NULLIF(w.name,''),w.id),w.keep_alive_minutes,w.created_at,
+	w.lifecycle_current,w.lifecycle_next,w.lifecycle_mode,w.workflow_operation_id`
 
-const workspaceFrom = ` FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id`
+const workspaceFrom = ` FROM workspace_lifecycle w JOIN platform_artifacts a ON a.id=w.platform_artifact_id`
+
+// List and detail read the same evidence in one SQL statement. Scheduled
+// maintenance waits outside the journal until admitted for this workspace.
+var workspaceLifecycleQuery = `
+,lifecycle_steps(step_key,milestone,confirms) AS (VALUES ` + lifecycleStepValues() + `
+), workflow AS (
+	SELECT w.*,
+		(SELECT o.id FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
+		 AND o.status IN ('pending','running','waiting') ORDER BY o.created_at DESC,o.id DESC LIMIT 1) AS active_operation_id,
+		(SELECT o.id FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
+		 AND (o.type IN ('provision','start','rebuild','repair','stop','delete')
+			OR (o.type='update' AND o.originating_action='maintenance.update_guest'))
+		 ORDER BY o.created_at DESC,o.id DESC LIMIT 1) AS workflow_operation_id,
+		CASE w.observed_state WHEN 'running' THEN 'vm-running' WHEN 'stopped' THEN 'stopped'
+			WHEN 'deleted' THEN 'deleted' WHEN 'unreachable' THEN 'unreachable' ELSE 'unknown' END AS observed_milestone
+	FROM workspace_candidates w
+), evidence AS (
+	SELECT w.*,o.type AS workflow_kind,o.status AS workflow_status,
+		(SELECT m.milestone FROM operation_steps s JOIN lifecycle_steps m ON m.step_key=s.step_key
+		 WHERE s.operation_id=o.id AND s.status='succeeded' AND m.confirms
+		 ORDER BY s.step_index DESC LIMIT 1) AS verified,
+		(SELECT m.milestone FROM operations prior
+		 JOIN operation_steps s ON s.operation_id=prior.id JOIN lifecycle_steps m ON m.step_key=s.step_key
+		 WHERE prior.workspace_id=w.id AND prior.generation=w.generation
+		   AND prior.type IN ('provision','start','rebuild','repair','stop','delete')
+		   AND (prior.created_at<o.created_at OR (prior.created_at=o.created_at AND prior.id<o.id))
+		   AND s.status='succeeded' AND m.confirms
+		 ORDER BY prior.created_at DESC,prior.id DESC,s.step_index DESC LIMIT 1) AS prior_verified,
+		(SELECT m.milestone FROM operation_steps s JOIN lifecycle_steps m ON m.step_key=s.step_key
+		 WHERE s.operation_id=o.id AND s.status IN ('pending','active') AND o.status IN ('pending','running','waiting')
+		   AND NOT (o.type='delete' AND w.observed_state='stopped' AND m.milestone='stopped')
+		 ORDER BY s.step_index LIMIT 1) AS target,
+		EXISTS (SELECT 1 FROM operation_steps s JOIN lifecycle_steps m ON m.step_key=s.step_key
+		 WHERE s.operation_id=o.id AND o.status<>'cancelled' AND (s.status='failed' OR (
+		   s.transition_timeout_at IS NOT NULL AND o.status IN ('pending','running','waiting') AND NOT EXISTS (
+			 SELECT 1 FROM operation_steps confirmed JOIN lifecycle_steps verified ON verified.step_key=confirmed.step_key
+			 WHERE confirmed.operation_id=o.id AND confirmed.status='succeeded' AND confirmed.step_index>=s.step_index
+			   AND verified.confirms AND verified.milestone=m.milestone)))) AS transition_failed,
+		EXISTS (SELECT 1 FROM operation_steps s WHERE s.operation_id=o.id AND s.step_key='maintenance_boot') AS maintenance_boot
+	FROM workflow w LEFT JOIN operations o ON o.id=w.workflow_operation_id
+), workspace_lifecycle AS (
+	SELECT w.*,
+		CASE
+		 WHEN observed_state='deleted' THEN 'deleted'
+		 WHEN workflow_status IS NULL OR workflow_status='cancelled' THEN observed_milestone
+		 WHEN workflow_status='succeeded' AND observed_state<>'running' THEN observed_milestone
+		 WHEN workflow_kind='update' AND verified='updated' AND target IS NULL AND NOT transition_failed
+			THEN COALESCE(prior_verified,observed_milestone)
+		 ELSE COALESCE(verified,CASE
+			WHEN workflow_kind='provision' THEN 'unknown'
+			WHEN workflow_kind='start' OR maintenance_boot THEN 'stopped'
+			WHEN observed_milestone IN ('stopped','unreachable') THEN observed_milestone
+			WHEN observed_milestone='vm-running' AND prior_verified IN ('stopped','deleted','provisioned') THEN observed_milestone
+			ELSE COALESCE(prior_verified,observed_milestone) END)
+		END AS lifecycle_current,
+		CASE WHEN observed_state='deleted' THEN NULL WHEN transition_failed THEN 'failed' ELSE target END AS lifecycle_next,
+		CASE WHEN observed_state='deleted' THEN 'settled' WHEN transition_failed THEN 'failed'
+			WHEN target IS NOT NULL THEN 'transitioning' ELSE 'settled' END AS lifecycle_mode
+	FROM evidence w
+)
+SELECT ` + workspaceProjection + workspaceFrom
+
+var workspaceDetailQuery = `WITH workspace_candidates AS (SELECT * FROM workspaces WHERE id=$1)` + workspaceLifecycleQuery
+
+func lifecycleStepValues() string {
+	steps := workspace.LifecycleSteps()
+	values := make([]string, 0, len(steps))
+	// The mapping contains only compile-time workspace constants.
+	for _, step := range steps {
+		values = append(values, fmt.Sprintf("('%s','%s',%t)", step.Key, step.Milestone, step.Confirms))
+	}
+	return strings.Join(values, ",")
+}
 
 // WorkspaceRetentionStatus reports whether the automatic cleanup scheduler can
 // commit new deletions. The workspace's original deadline remains independent.
@@ -76,7 +158,7 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 		Route:   ManagementRoute{Method: http.MethodGet, Path: "/workspaces/{workspaceId}", OperationID: "getWorkspace", Action: "workspace.view"},
 		Resolve: resolveWorkspaceView,
 		Apply: func(ctx context.Context, tx *sql.Tx, _ *http.Request, principal auth.Principal, target AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
-			view, err := scanWorkspace(tx.QueryRowContext(ctx, `SELECT `+workspaceProjection+workspaceFrom+` WHERE w.id=$1`, target.Resource.ID))
+			view, err := scanWorkspace(tx.QueryRowContext(ctx, workspaceDetailQuery, target.Resource.ID))
 			if err != nil {
 				return nil, err
 			}
@@ -230,20 +312,23 @@ func resolveWorkspaceView(ctx context.Context, tx *sql.Tx, r *http.Request, prin
 func listWorkspaces(ctx context.Context, tx *sql.Tx, r *http.Request, principal auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
 	query := r.URL.Query()
 	owner, state, cursor := query.Get("owner"), query.Get("state"), query.Get("cursor")
-	excludeDeleted := query.Get("excludeDeleted")
+	excludeDeleted, lifecycleState := query.Get("excludeDeleted"), query.Get("lifecycleState")
 	states := []string{"unknown", "provisioning", "stopped", "starting", "running", "unreachable", "stopping", "deleting", "deleted", "failed"}
+	milestones := []string{"unknown", "provisioned", "stopped", "vm-running", "container-ready", "ready", "repair-ready", "updated", "unreachable", "deleted"}
 	if (owner != "" && !ValidUUID(owner)) || (cursor != "" && !ValidUUID(cursor)) ||
 		(state != "" && !slices.Contains(states, state)) ||
+		(lifecycleState != "" && !slices.Contains(milestones, lifecycleState)) ||
 		(excludeDeleted != "" && excludeDeleted != "true" && excludeDeleted != "false") {
 		return nil, Problem{Status: 400, Code: "request.invalid_filter", Title: "Check the workspace filters"}
 	}
 	const limit = 50
 	admin := principal.User.Role == "administrator"
-	rows, err := tx.QueryContext(ctx, `SELECT `+workspaceProjection+workspaceFrom+`
+	rows, err := tx.QueryContext(ctx, `WITH workspace_candidates AS (SELECT w.* FROM workspaces w
 		WHERE ($1 OR w.owner_user_id=$2) AND ($3='' OR w.owner_user_id=$3)
 		  AND ($4='' OR w.observed_state=$4) AND w.id>$5
-		  AND (NOT $7 OR w.observed_state<>'deleted') ORDER BY w.id LIMIT $6`,
-		admin, principal.User.ID, owner, state, cursor, limit+1, excludeDeleted == "true")
+		  AND (NOT $6 OR w.observed_state<>'deleted'))`+workspaceLifecycleQuery+`
+		WHERE ($7='' OR w.lifecycle_current=$7) ORDER BY w.id LIMIT $8`,
+		admin, principal.User.ID, owner, state, cursor, excludeDeleted == "true", lifecycleState, limit+1)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +364,8 @@ func scanWorkspace(row interface{ Scan(...any) error }) (workspaceView, error) {
 		&view.DesiredState, &view.ObservedState, &view.Generation,
 		&view.Resources.CPUCount, &view.Resources.MemoryMiB, &view.Resources.DiskMiB,
 		&view.CurrentOperationID, &view.LastActivityAt, &view.RetentionDeadline, &view.Version, &previewJSON, &view.Name,
-		&view.keepAliveOverride, &view.createdAt)
+		&view.keepAliveOverride, &view.createdAt, &view.Lifecycle.Current, &view.Lifecycle.Next, &view.Lifecycle.Mode,
+		&view.Lifecycle.WorkflowOperationID)
 	if err != nil {
 		return view, err
 	}

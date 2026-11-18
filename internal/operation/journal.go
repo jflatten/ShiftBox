@@ -213,13 +213,21 @@ func (j *Journal) Renew(ctx context.Context, claim Claim, duration time.Duration
 
 // StartStep durably records the active step before any external effect.
 func (j *Journal) StartStep(ctx context.Context, claim Claim, index int) error {
+	return j.startStep(ctx, claim, index, TransitionLimit{})
+}
+
+func (j *Journal) startStep(ctx context.Context, claim Claim, index int, limit TransitionLimit) error {
 	return database.Transaction(ctx, j.db, func(tx *sql.Tx) error {
-		return j.StartStepInTx(ctx, tx, claim, index)
+		return j.startStepInTx(ctx, tx, claim, index, limit)
 	})
 }
 
 // StartStepInTx records an active step alongside its domain state.
 func (j *Journal) StartStepInTx(ctx context.Context, tx *sql.Tx, claim Claim, index int) error {
+	return j.startStepInTx(ctx, tx, claim, index, TransitionLimit{})
+}
+
+func (j *Journal) startStepInTx(ctx context.Context, tx *sql.Tx, claim Claim, index int, limit TransitionLimit) error {
 	return j.changeInTx(ctx, tx, claim, "", func(op *Operation) error {
 		if index < 0 || index >= len(op.Steps) {
 			return ErrConflict
@@ -231,6 +239,20 @@ func (j *Journal) StartStepInTx(ctx context.Context, tx *sql.Tx, claim Claim, in
 		}
 		if op.Steps[index].Status != "pending" && op.Steps[index].Status != "active" {
 			return ErrConflict
+		}
+		if limit.Duration > 0 {
+			if limit.FirstStep < 0 || limit.FirstStep > index {
+				return ErrConflict
+			}
+			first := &op.Steps[limit.FirstStep]
+			if first.transitionDeadline == nil {
+				entered := j.now()
+				if first.startedAt != nil {
+					entered = *first.startedAt
+				}
+				deadline := entered.Add(limit.Duration).UTC()
+				first.transitionDeadline = &deadline
+			}
 		}
 		op.Steps[index].Status = "active"
 		key := op.Steps[index].Key

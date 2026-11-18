@@ -971,6 +971,7 @@ export interface components {
             resources: components["schemas"]["Resources"];
             /** Format: uuid */
             currentOperationId?: string | null;
+            lifecycle: components["schemas"]["WorkspaceLifecycle"];
             previewPorts?: number[];
             /** @description Recent probe results for the current guest generation, included on workspace detail only. */
             probes?: components["schemas"]["ProbeResult"][];
@@ -1001,6 +1002,16 @@ export interface components {
             };
             failure?: components["schemas"]["Problem"] | null;
             version: number;
+        };
+        /** @enum {string} */
+        WorkspaceLifecycleMilestone: "unknown" | "provisioned" | "stopped" | "vm-running" | "container-ready" | "ready" | "repair-ready" | "updated" | "unreachable" | "deleted";
+        WorkspaceLifecycle: {
+            current: components["schemas"]["WorkspaceLifecycleMilestone"];
+            next: components["schemas"]["WorkspaceLifecycleMilestone"] | "failed" | null;
+            /** @enum {string} */
+            mode: "settled" | "transitioning" | "failed";
+            /** Format: uuid */
+            workflowOperationId: string | null;
         };
         Resources: {
             cpuCount: number;
@@ -1155,6 +1166,12 @@ export interface components {
             status: "pending" | "active" | "succeeded" | "failed" | "skipped";
             detail?: string | null;
             problem?: components["schemas"]["Problem"] | null;
+            /** @description Retained lifecycle transition timeout, including after late completion. */
+            timeout?: {
+                /** Format: date-time */
+                occurredAt: string;
+                reason: string;
+            };
         };
         OperationEvent: {
             eventId: string;
@@ -1723,6 +1740,8 @@ export interface operations {
             query?: {
                 owner?: string;
                 state?: string;
+                /** @description Match the current lifecycle chip before pagination. */
+                lifecycleState?: components["schemas"]["WorkspaceLifecycleMilestone"];
                 /** @description Exclude workspaces with confirmed observed state deleted before pagination. In-progress deletion remains visible. */
                 excludeDeleted?: boolean;
                 cursor?: components["parameters"]["Cursor"];

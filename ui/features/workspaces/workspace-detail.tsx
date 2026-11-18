@@ -1,14 +1,14 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Alert, Anchor, Button, Checkbox, Group, Modal, Paper, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useQueryClient } from '@tanstack/react-query';
+import { useControllerUnavailable } from '../../app/providers';
 import { APIProblemView } from '../../components/api-problem';
-import { StateTransition } from '../../components/state-transition';
 import { WorkflowStepper } from '../../components/workflow-stepper';
-import { readProblem } from '../../lib/api-problem';
+import { ControllerUnavailableError, readProblem } from '../../lib/api-problem';
 import { providerLabel } from '../../lib/provider-label';
 import { useOperation } from '../../lib/use-operation';
-import { workspaceIsTransitioning, workspaceName, workspaceState, type Workspace } from './workspace';
-import { WorkspaceStatus, WorkspaceTime } from './workspace-summary';
+import { workspaceName, workspaceState, type Workspace } from './workspace';
+import { WorkspaceLifecycleStatus, WorkspaceStatus, WorkspaceTime } from './workspace-summary';
 import { RetentionWarning } from './retention';
 import { WorkspaceConnectionGrants } from './connection-grants';
 import { WorkspaceKeepAlive } from './keep-alive';
@@ -18,15 +18,20 @@ import { availableWorkspaceCommands, openWorkspaceEntry, useWorkspaceCommand, us
 const probeNames = { 'code-server': 'Code-server' } satisfies Record<NonNullable<Workspace['probes']>[number]['id'], string>;
 
 export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToken: string; admin: boolean }) {
+  const unavailable = useControllerUnavailable();
   const workspace = useWorkspaceDetail(id);
-  const data = !workspace.isError ? workspace.data : undefined;
+  const readUnavailable = workspace.error instanceof ControllerUnavailableError;
+  const data = !workspace.isError || readUnavailable ? workspace.data : undefined;
   const repairDescriptionId = useId();
   const [operationId, setOperationId] = useState<string>();
   const [operationBusy, setOperationBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const progressHeading = useRef<HTMLHeadingElement>(null);
   const progressFocus = useRef<{ id: string; trigger: Element | null }>(undefined);
-  const displayedOperation = data?.currentOperationId ?? (operationBusy ? operationId : data?.lastFailedOperationId ?? operationId);
+  const recordedWorkflow = data?.lifecycle.workflowOperationId;
+  const displayedOperation = data?.currentOperationId
+    ? recordedWorkflow ?? data.currentOperationId
+    : operationBusy ? operationId : recordedWorkflow ?? operationId;
   const { lifecycle: action, rebuild, update, delete: canDelete } = availableWorkspaceCommands(data);
   const { run: requestAction, submitting, error, setError } = useWorkspaceCommand(data, csrfToken, workspace.refetch,
     (action, id, trigger) => {
@@ -51,7 +56,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
   }, [displayedOperation]);
 
   return (
-    <>
+    <div style={{ display: 'contents' }} inert={readUnavailable && !unavailable}>
       <Anchor href="/workspaces/">All workspaces</Anchor>
       <Group justify="space-between" align="flex-start">
         <Stack gap={4} style={{ minWidth: 0 }}>
@@ -60,7 +65,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
         </Stack>
         <Button variant="default" onClick={() => void workspace.refetch()}>Refresh</Button>
       </Group>
-      {workspace.isError ? <Stack align="flex-start">
+      {workspace.isError && !readUnavailable ? <Stack align="flex-start">
         <APIProblemView error={workspace.error} />
         <Button variant="default" onClick={() => void workspace.refetch()}>Retry</Button>
       </Stack> : null}
@@ -69,9 +74,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
         <Stack gap="lg">
           <Paper component="section" aria-label="Workspace controls" withBorder radius="md" p="md">
             <Stack gap="md">
-              <StateTransition observed={<WorkspaceStatus value={data.observedState} />}
-                desired={<WorkspaceStatus value={data.desiredState} />}
-                transitioning={workspaceIsTransitioning(data)} />
+              <WorkspaceLifecycleStatus lifecycle={data.lifecycle} />
               <Group align="flex-start">
                 {data.canOpenIde ? <WorkspaceEntryButton id={id} csrfToken={csrfToken} /> : null}
                 {data.canOpenRepair ? <WorkspaceEntryButton id={id} csrfToken={csrfToken} service="repair" describedBy={repairDescriptionId} /> : null}
@@ -193,7 +196,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
             cancel={() => setConfirmDelete(false)} confirm={() => void requestAction('delete')} />
         </Stack>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -316,17 +319,18 @@ export function WorkspaceProgress({ workspaceId, operationId, onFinished, showFa
   const operation = useOperation(operationId);
   const client = useQueryClient();
   const state = operation.data?.status;
-  const ideVerified = operation.data?.steps.some(step => step.key === 'verify_ide' && step.status === 'succeeded');
+  const lastVerifiedStep = operation.data?.steps.findLast(step => step.status === 'succeeded')?.key;
+  const lastTimedOutStep = operation.data?.steps.findLast(step => step.timeout)?.key;
   useEffect(() => {
     const finished = state === 'succeeded' || state === 'failed' || state === 'cancelled';
     if (finished) {
       onFinished(false);
       void client.invalidateQueries({ queryKey: ['workspaces', 'list'] });
     }
-    if (finished || ideVerified) void client.invalidateQueries({ queryKey: ['workspaces', 'detail', workspaceId] });
-  }, [client, ideVerified, onFinished, state, workspaceId]);
+    if (finished || lastVerifiedStep || lastTimedOutStep) void client.invalidateQueries({ queryKey: ['workspaces', 'detail', workspaceId], exact: true });
+  }, [client, lastTimedOutStep, lastVerifiedStep, onFinished, state, workspaceId]);
   if (operation.accessDenied) return <Text role="alert">You no longer have access to this operation.</Text>;
-  if (operation.isError) return <APIProblemView error={operation.error} />;
+  if (operation.isError && !(operation.error instanceof ControllerUnavailableError)) return <APIProblemView error={operation.error} />;
   if (!operation.data) return <Text role="status">Loading operation…</Text>;
   const failureTitle = showFailureWarning
     ? operation.data.type === 'provision' ? 'Workspace launch failed' : 'Workspace operation failed'
