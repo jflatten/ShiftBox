@@ -38,6 +38,11 @@ func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfi
 	}
 	enrollment := guest.NewEnrollment(state.DB, state.GuestCA)
 	listeners.Secrets = state.Secrets
+	if state.imageCache != nil {
+		listeners.ImageCache = state.imageCache
+		listeners.OfferImageCache = state.imageCache.offer
+		listeners.ImageCacheContext = imageCacheContext(state.DB, listeners.Checkpoint)
+	}
 	if listeners.EC2Region != "" && listeners.EC2Account != "" {
 		listeners.EC2Bootstrap = guest.NewEC2Bootstrap(enrollment, listeners.EC2Region, listeners.EC2Account, now, machines.Inspect)
 	}

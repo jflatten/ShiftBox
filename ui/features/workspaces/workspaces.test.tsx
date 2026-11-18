@@ -747,3 +747,31 @@ test('guides the user when the browser blocks the IDE tab', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('Allow pop-ups for ShiftBox');
   expect(fetch.mock.calls.map(([url]) => url)).not.toContain('/api/v1/workspaces/workspace-one/entry-grants');
 });
+
+// A recovered tag clears the warning without changing the workspace's recorded startup image.
+test('keeps cached image freshness separate from running state', async () => {
+  const cached = 'sha256:cached-original';
+  const newer = 'sha256:newer-upstream';
+  let recovered = false;
+  globalThis.fetch = jest.fn(async input => input === '/api/v1/session' ? json(session) : json({
+    ...workspace, observedState: 'running', currentOperationId: null,
+    imageCache: {
+      warningActive: !recovered, updateAvailable: recovered,
+      references: [{
+        origin: 'mcr.microsoft.com', repository: 'example/dev', tag: 'stable',
+        resolvedDigest: cached, verifiedDigest: recovered ? newer : cached,
+        warningActive: !recovered,
+      }],
+    },
+  }));
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  expect(await screen.findByText('The upstream registry could not be contacted. Using cached version.')).toBeVisible();
+  expect(within(screen.getByRole('region', { name: 'Workspace controls' })).getAllByText('Running')).toHaveLength(2);
+  recovered = true;
+  await user.click(screen.getByRole('button', { name: 'Refresh' }));
+  expect(await screen.findByText('A newer upstream image is available.')).toBeVisible();
+  expect(screen.queryByText('The upstream registry could not be contacted. Using cached version.')).not.toBeInTheDocument();
+  expect(screen.getByText(cached)).toBeVisible();
+  expect(screen.getByText(newer)).toBeVisible();
+});

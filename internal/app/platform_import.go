@@ -27,12 +27,18 @@ type PlatformImport struct {
 	installation string
 	now          func() time.Time
 	providerKind string
-	run          func(ctx context.Context, operationID, actor, input string, makeDefault bool) error
+	run          func(ctx context.Context, operationID, actor, input string, options PlatformImportOptions) error
+}
+
+// PlatformImportOptions records the administrator's publication choices.
+type PlatformImportOptions struct {
+	AMIFamily   string
+	MakeDefault bool
 }
 
 // NewPlatformImport builds the active import handler and its worker.
 func NewPlatformImport(db *sql.DB, journal *operation.Journal, origin, installation string, now func() time.Time,
-	run func(context.Context, string, string, string, bool) error, providerKind string) *PlatformImport {
+	run func(context.Context, string, string, string, PlatformImportOptions) error, providerKind string) *PlatformImport {
 	return &PlatformImport{db: db, journal: journal, origin: origin, installation: installation, now: now, run: run, providerKind: providerKind}
 }
 
@@ -53,6 +59,7 @@ func (p *PlatformImport) admit(ctx context.Context, tx *sql.Tx, r *http.Request,
 		Folder      string          `json:"folder"`
 		Manifest    json.RawMessage `json:"manifest"`
 		MakeDefault bool            `json:"makeDefault"`
+		AMIFamily   string          `json:"amiFamily"`
 	}
 	key, err := web.IdempotencyKey(r)
 	if err != nil {
@@ -67,7 +74,10 @@ func (p *PlatformImport) admit(ctx context.Context, tx *sql.Tx, r *http.Request,
 		if _, err := release.ReadEC2Manifest(strings.NewReader(source)); input.Folder != "" || err != nil {
 			return nil, web.Problem{Status: 400, Code: "infrastructure.invalid_import_manifest", Title: "Provide the Packer AMI manifest"}
 		}
-	} else if len(input.Manifest) != 0 || !filepath.IsAbs(source) || len(source) > 4096 || strings.ContainsRune(source, 0) {
+		if input.AMIFamily != "" && (!release.ValidEC2FamilyName(input.AMIFamily) || input.MakeDefault) {
+			return nil, web.Problem{Status: 400, Code: "infrastructure.invalid_ami_family", Title: "Choose a valid AMI family without changing the default image"}
+		}
+	} else if len(input.Manifest) != 0 || input.AMIFamily != "" || !filepath.IsAbs(source) || len(source) > 4096 || strings.ContainsRune(source, 0) {
 		return nil, web.Problem{Status: 400, Code: "infrastructure.invalid_import_folder", Title: "Enter an absolute folder on the controller"}
 	}
 	// Serialize actor-scoped keys with other installation admissions.
@@ -89,14 +99,14 @@ func (p *PlatformImport) admit(ctx context.Context, tx *sql.Tx, r *http.Request,
 	if op.OriginatingAction != platformImportAction || op.Type != "setup" || op.WorkspaceID != nil {
 		return nil, conflict
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO platform_imports(operation_id,installation_id,folder,make_default)
-		VALUES($1,$2,$3,$4) ON CONFLICT(operation_id) DO NOTHING`, op.ID, p.installation, source, defaultValue(input.MakeDefault)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO platform_imports(operation_id,installation_id,folder,make_default,ec2_family)
+		VALUES($1,$2,$3,$4,$5) ON CONFLICT(operation_id) DO NOTHING`, op.ID, p.installation, source, defaultValue(input.MakeDefault), input.AMIFamily); err != nil {
 		return nil, err
 	}
 	var matching bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM platform_imports
-		WHERE operation_id=$1 AND installation_id=$2 AND folder=$3 AND make_default=$4)`,
-		op.ID, p.installation, source, defaultValue(input.MakeDefault)).Scan(&matching); err != nil {
+		WHERE operation_id=$1 AND installation_id=$2 AND folder=$3 AND make_default=$4 AND ec2_family=$5)`,
+		op.ID, p.installation, source, defaultValue(input.MakeDefault), input.AMIFamily).Scan(&matching); err != nil {
 		return nil, err
 	}
 	if !matching {
@@ -143,17 +153,19 @@ func (e platformImportExecutor) Apply(ctx context.Context, op operation.Operatio
 	}
 	var folder string
 	var makeDefault int
-	err := e.db.QueryRowContext(ctx, `SELECT p.folder,p.make_default FROM platform_imports p
+	var options PlatformImportOptions
+	err := e.db.QueryRowContext(ctx, `SELECT p.folder,p.make_default,p.ec2_family FROM platform_imports p
 		JOIN installations i ON i.id=p.installation_id JOIN users u ON u.id=$3
 		WHERE p.operation_id=$1 AND i.id=$2 AND i.state='active'
-		  AND u.role='administrator' AND u.membership_state='active'`, op.ID, e.installation, op.Actor).Scan(&folder, &makeDefault)
+		  AND u.role='administrator' AND u.membership_state='active'`, op.ID, e.installation, op.Actor).Scan(&folder, &makeDefault, &options.AMIFamily)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", &operation.StepFailure{Detail: "Platform import authorization is no longer active."}
 	}
 	if err != nil {
 		return "", err
 	}
-	if err := e.run(ctx, op.ID, op.Actor, folder, makeDefault != 0); err != nil {
+	options.MakeDefault = makeDefault != 0
+	if err := e.run(ctx, op.ID, op.Actor, folder, options); err != nil {
 		if e.providerKind == "ec2" {
 			if errors.Is(err, release.ErrInvalidArtifact) || errors.Is(err, release.ErrCatalogConflict) ||
 				errors.Is(err, provider.ErrCapabilityUnsupported) || errors.Is(err, errCanaryRetryRequiresNewOperation) {

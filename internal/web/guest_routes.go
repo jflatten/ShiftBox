@@ -203,6 +203,9 @@ func GuestPollHandler(compatibility GuestCompatibility,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set(guest.ProbeReportsHeader, "1")
+		if contact.ImageCacheOffer != "" {
+			w.Header().Set(guest.ImageCacheOfferHeader, contact.ImageCacheOffer)
+		}
 		if tunnelAddress != "" && contact.DesiredState == "running" {
 			w.Header().Set(guest.TunnelAddressHeader, tunnelAddress)
 			w.Header().Set(guest.PreviewPortsHeader, contact.PreviewPorts)

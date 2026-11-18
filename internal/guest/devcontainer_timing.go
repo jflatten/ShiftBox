@@ -21,9 +21,10 @@ func (d devContainer) measurePhase(phase string, started time.Time, err error) {
 // devContainerCLITimings reads the pinned CLI's JSON command stop events.
 // Command arguments and project output never become timing fields.
 type devContainerCLITimings struct {
-	record  func(string, time.Duration)
-	line    []byte
-	discard bool
+	dockerPath string
+	record     func(string, time.Duration)
+	line       []byte
+	discard    bool
 }
 
 func (t *devContainerCLITimings) Write(data []byte) (int, error) {
@@ -69,7 +70,7 @@ func (t *devContainerCLITimings) recordLine(line []byte) {
 		t.record("docker_container_ready", elapsed)
 		return
 	}
-	command, ok := strings.CutPrefix(event.Text, "Run: /usr/bin/docker ")
+	command, ok := strings.CutPrefix(event.Text, "Run: "+t.dockerPath+" ")
 	if !ok {
 		return
 	}

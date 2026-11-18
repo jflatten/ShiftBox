@@ -139,11 +139,24 @@ func TestCaptureCheckpointDoesNotAcquireWithoutFence(t *testing.T) {
 }
 
 // TestStageSQLiteCheckpoint checks that both stores and the fixed protected
-// inputs are staged independently of later management writes.
+// inputs are staged independently of later management writes. Cache settings
+// follow the application database while retained image payloads stay on disk.
 func TestStageSQLiteCheckpoint(t *testing.T) {
 	ctx := t.Context()
 	installation, stage := t.TempDir(), checkpointStage(t)
 	appDB := checkpointDatabase(t, filepath.Join(installation, "active.db"), "application")
+	if _, err := appDB.ExecContext(ctx, `CREATE TABLE installations(image_cache_settings_json TEXT);
+		INSERT INTO installations VALUES('{"enabled":true}')`); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(installation, "cache", "registry")
+	if err := os.MkdirAll(cache, 0700); err != nil {
+		t.Fatal(err)
+	}
+	layer := filepath.Join(cache, "blob-sha256:fixture")
+	if err := os.WriteFile(layer, []byte("retained image bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	dexPath := filepath.Join(installation, "dex #profile.db")
 	checkpointDexDatabase(t, dexPath)
 	input := checkpointInputs(t, installation)
@@ -153,6 +166,19 @@ func TestStageSQLiteCheckpoint(t *testing.T) {
 	}
 	if len(sources) != 5 {
 		t.Fatalf("got %d checkpoint entries, want 5", len(sources))
+	}
+	snapshot, err := sql.Open("sqlite", sources["application.db"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings string
+	err = snapshot.QueryRowContext(ctx, "SELECT image_cache_settings_json FROM installations").Scan(&settings)
+	snapshot.Close()
+	if err != nil || settings != `{"enabled":true}` {
+		t.Errorf("checkpoint settings = %q, %v", settings, err)
+	}
+	if value, err := os.ReadFile(layer); err != nil || string(value) != "retained image bytes" {
+		t.Errorf("retained layer after backup = %q, %v", value, err)
 	}
 	for name, want := range map[string]string{"application.db": "application", "dex.db": "identity"} {
 		snapshot, err := sql.Open("sqlite", sources[name])

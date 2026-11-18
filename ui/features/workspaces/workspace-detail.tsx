@@ -11,6 +11,7 @@ import { WorkspaceStatus, WorkspaceTime } from './workspace-summary';
 import { RetentionWarning } from './retention';
 import { WorkspaceConnectionGrants } from './connection-grants';
 import { WorkspaceKeepAlive } from './keep-alive';
+import { WorkspaceImageCache } from './workspace-image-cache';
 import { availableWorkspaceCommands, openWorkspaceEntry, useWorkspaceCommand, useWorkspaceDetail, type WorkspaceService } from './workspace-commands';
 
 const probeNames = { 'code-server': 'Code-server' } satisfies Record<NonNullable<Workspace['probes']>[number]['id'], string>;
@@ -111,6 +112,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
             </Stack>
           </Paper>
           <RetentionWarning workspace={data} />
+          <WorkspaceImageCache cache={data.imageCache} />
           {maintenance ? <Alert title="Scheduled maintenance" color={maintenance.state === 'failed' ? 'red' : 'yellow'}>
             <Stack align="flex-start" gap="xs">
               <Text size="sm">Guest release {maintenance.releaseId} · Deadline <WorkspaceTime value={maintenance.deadline} fallback="Unavailable" /></Text>

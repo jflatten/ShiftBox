@@ -46,6 +46,10 @@ Set `controller_enabled = true`, review a new plan and apply it. Connect using y
 
 After proving stopped-instance enrollment confidentiality and recovery for a specific AMI, set `verified_enrollment_ami_id` to that AMI and apply the Terraform plan. An authenticated administrator can then submit the Packer manifest as `{"manifest": <Packer manifest object>, "makeDefault": true}` to `POST /api/v1/admin/platform-artifacts`. Use the normal session, CSRF and idempotency headers. The catalog enables the image only after the disposable guest authenticates and its owned resources are removed.
 
+For new single-boot images, open **Administration → Infrastructure → Platform → AMI families**. Publish the Packer manifest under a family name and wait for validation to complete. Choose **latest** for that family when creating or editing a resource profile. The next workspace launch resolves the newest validated compatible member using its AWS creation time. Subsequent patches use the same family name. Existing workspaces keep their captured image and existing pinned profiles keep their selection.
+
+Use **Retire** to remove an unused family image from future launches before deregistering it in AWS. ShiftBox retains the catalog identity and refuses retirement while a workspace still uses the image.
+
 ## Optional GitHub App
 
 Register a GitHub App with the callback URL `<management_origin>/api/v1/git/authorization/callback` and install it on the account that owns the repositories. Store a JSON object with `clientId`, `clientSecret`, and numeric `installationId` in Secrets Manager before setting `github_app_credentials_arn`. The ECS controller execution role reads the named secret at task startup. Users connect their GitHub accounts from ShiftBox while connected to the private network.
@@ -75,3 +79,49 @@ terraform validate
 terraform test
 sh host/mount-data.test.sh
 ```
+
+## Optional dedicated registry cache disk
+
+Use a separate approval for this storage change on a running deployment. Set
+`registry_cache_volume_size_gib = 20` for the demo and leave
+`registry_cache_mount_ready = false` for the initial review. The storage-only
+plan should add an encrypted gp3 volume and its `/dev/sdg` attachment. Reject any
+unexpected host, existing data disk, or service change. Existing Terraform
+deployments can omit both settings.
+
+After approval and attachment, obtain the exact ID from
+`terraform output -raw registry_cache_volume_id`. Verify that ID is the newly
+attached cache volume, distinct from the root and installation/PostgreSQL disks.
+
+For a sealed, EBS-backed ECS host, create and verify a management backup before
+maintenance. Quiesce the controller with `controller_enabled = false`, then
+quiesce PostgreSQL with `registry_cache_postgres_enabled = false`. Review a plan
+with `initialize_data_volume = false` and `registry_cache_bootstrap = true`.
+The plan must update the existing instance's user data in place. Terraform
+stops and starts the instance. Expect both services to be offline during this
+maintenance. Abort a plan that would replace the instance or change any disk
+attachment. After startup, require a fresh `SHIFTBOX_REGISTRY_CACHE_READY` line in
+the EC2 console with the expected volume, filesystem and capacity. Verify the
+original instance and disk IDs and restore PostgreSQL before the controller.
+
+An authorized host maintenance channel can also run
+`host/mount-registry-cache.sh` with the verified ID,
+`/var/lib/shiftbox-registry-cache`, and `true` only for the initial blank volume
+format. This script selects the Nitro device by exact serial, refuses foreign
+mounts/filesystems, and prepares an owned cache directory and a volume marker.
+Install the script to `/usr/local/libexec/shiftbox-mount-registry-cache` and the
+provided systemd template to `/etc/systemd/system/`. Enable
+`shiftbox-registry-cache@<volume-id>.service` for future boots. Its boot mount
+never formats a volume. Verify `findmnt`, the marker and filesystem capacity
+before generating the controller mount plan.
+
+Set `registry_cache_mount_ready = true` in the second plan only after verifying
+the mount. The bind is exclusive to the controller and its task revision
+changes, with the usual brief demo controller interruption. It supplies the
+expected volume ID so the cache can refuse retention if the mount is missing.
+Use `/var/lib/shiftbox-registry-cache/cache` as the cache path in Administration
+→ Infrastructure → Cache. Compare the reviewed plan before applying
+and verify PostgreSQL remains healthy. Keep the volume attached and mounted
+across controller rollouts. To retire it, disable cache retention, remove the
+task bind, then unmount before any separately reviewed detach. The volume is
+protected against accidental Terraform destruction.

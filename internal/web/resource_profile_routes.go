@@ -33,7 +33,7 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, po
 		},
 		Apply: func(ctx context.Context, tx *sql.Tx, _ *http.Request, _ auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
 			rows, err := tx.QueryContext(ctx, `SELECT p.id,p.name,p.cpu_count,p.memory_mib,p.disk_mib,p.enabled,p.version,p.instance_type,
-				COALESCE(p.platform_artifact_id,''),COALESCE(a.release_id,'')
+				COALESCE(p.platform_artifact_id,''),COALESCE(a.release_id,''),p.ec2_ami_family
 				FROM resource_profiles p LEFT JOIN platform_artifacts a ON a.id=p.platform_artifact_id ORDER BY p.name,p.id`)
 			if err != nil {
 				return nil, err
@@ -43,11 +43,14 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, po
 			for rows.Next() {
 				var profile resourceProfileView
 				if err := rows.Scan(&profile.ID, &profile.Name, &profile.CPUCount, &profile.MemoryMiB, &profile.DiskMiB,
-					&profile.Enabled, &profile.Version, &profile.InstanceType, &profile.PlatformArtifactID, &profile.PlatformImageName); err != nil {
+					&profile.Enabled, &profile.Version, &profile.InstanceType, &profile.PlatformArtifactID, &profile.PlatformImageName, &profile.AMIFamily); err != nil {
 					return nil, err
 				}
 				if caps.Name == "ec2" {
 					profile.InstanceType = profile.profileAllocation().EC2Type()
+					if profile.AMIFamily != "" {
+						profile.PlatformArtifactID, profile.PlatformImageName = "", ""
+					}
 				}
 				profiles = append(profiles, profile)
 			}
@@ -73,7 +76,8 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, po
 			if err := input.normalize(caps); err != nil {
 				return err
 			}
-			if err := input.validateAMI(ctx, tx, policy); err != nil {
+			imageID, err := input.resolveAMI(ctx, tx, policy)
+			if err != nil {
 				return err
 			}
 			if input.Enabled == nil {
@@ -87,9 +91,9 @@ func ResourceProfileHandlers(db *sql.DB, origin string, now func() time.Time, po
 				enabled = 1
 			}
 			result, err := tx.ExecContext(ctx, `UPDATE resource_profiles SET name=$2,cpu_count=$3,memory_mib=$4,disk_mib=$5,
-				enabled=$6,instance_type=$7,platform_artifact_id=NULLIF($8,''),version=version+1 WHERE id=$1
+				enabled=$6,instance_type=$7,platform_artifact_id=NULLIF($8,''),ec2_ami_family=$9,version=version+1 WHERE id=$1
 				AND NOT EXISTS (SELECT 1 FROM resource_profiles WHERE name=$2 AND id<>$1)`,
-				id, input.Name, input.CPUCount, input.MemoryMiB, input.DiskMiB, enabled, input.InstanceType, input.PlatformArtifactID)
+				id, input.Name, input.CPUCount, input.MemoryMiB, input.DiskMiB, enabled, input.InstanceType, imageID, input.AMIFamily)
 			return checkResourceProfileWrite(result, err, resourceProfileNameConflict())
 		})
 	remove := resourceProfileMutation(db, origin, now,

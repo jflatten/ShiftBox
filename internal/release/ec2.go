@@ -52,7 +52,13 @@ var (
 	ec2AccountPattern  = regexp.MustCompile(`^[0-9]{12}$`)
 	ec2RevisionPattern = regexp.MustCompile(`^[0-9a-f]{40}(-dirty)?$`)
 	ec2ReleasePattern  = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,96}$`)
+	ec2FamilyPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 )
+
+// ValidEC2FamilyName reports whether a name can identify an AMI family.
+func ValidEC2FamilyName(name string) bool {
+	return ec2FamilyPattern.MatchString(name)
+}
 
 // EC2Image pins one account-owned regional AMI and its build provenance.
 type EC2Image struct {
@@ -70,6 +76,8 @@ type EC2Image struct {
 	GuestUpdateKeySHA256   string `json:"guestUpdateKeySHA256"`
 	ToolchainRecipeSHA256  string `json:"toolchainRecipeSHA256"`
 	CodeServerRecipeSHA256 string `json:"codeServerRecipeSHA256"`
+	Family                 string `json:"family,omitempty"`
+	CreatedAtUnixMillis    int64  `json:"createdAtUnixMillis,omitempty"`
 }
 
 type packerAMIManifest struct {
@@ -136,6 +144,7 @@ func (i EC2Image) validProvenance() bool {
 func validEC2Artifact(artifact Artifact) bool {
 	i, m := artifact.EC2, artifact.Manifest
 	return i != nil && i.validProvenance() && ec2AccountPattern.MatchString(i.AccountID) &&
+		(i.Family == "" && i.CreatedAtUnixMillis == 0 || ValidEC2FamilyName(i.Family) && i.CreatedAtUnixMillis > 0) &&
 		ec2SnapshotPattern.MatchString(i.RootSnapshotID) && i.RootDeviceName == "/dev/sda1" &&
 		i.AMIID == artifact.Bundle && validDigest(artifact.ManifestSHA256) &&
 		m.SchemaVersion == 1 && m.ReleaseID == i.ReleaseID && SupportsEC2PlatformArchitecture(m.Architecture) &&
@@ -162,7 +171,7 @@ func (s *Store) ImportEC2(ctx context.Context, artifact Artifact, actor string, 
 	if err != nil {
 		return CatalogEntry{}, err
 	}
-	if entry.State == "rejected" || entry.ImportedBy != actor || entry.Artifact.EC2 == nil ||
+	if entry.State == "rejected" || entry.EC2Retired || entry.ImportedBy != actor || entry.Artifact.EC2 == nil ||
 		entry.Artifact.ManifestSHA256 != artifact.ManifestSHA256 || *entry.Artifact.EC2 != *image {
 		return CatalogEntry{}, ErrCatalogConflict
 	}
@@ -179,7 +188,7 @@ func (s *Store) EC2Image(ctx context.Context, id, region, accountID string) (EC2
 		return EC2Image{}, err
 	}
 	image := entry.Artifact.EC2
-	if entry.State != "available" || image == nil || image.Region != region || image.AccountID != accountID {
+	if entry.State != "available" || entry.EC2Retired || image == nil || image.Region != region || image.AccountID != accountID {
 		return EC2Image{}, ErrCatalogConflict
 	}
 	resolved := *image

@@ -37,6 +37,15 @@ resource "aws_vpc_security_group_egress_rule" "ecs_host" {
   ip_protocol       = "-1"
 }
 
+locals {
+  ecs_host_first_boot = templatefile("${path.module}/host/user-data.sh.tftpl", {
+    cluster_name  = aws_ecs_cluster.shiftbox.name
+    volume_serial = replace(aws_ebs_volume.data.id, "-", "")
+    initialize    = var.initialize_data_volume
+    mount_script  = file("${path.module}/host/mount-data.sh")
+  })
+}
+
 resource "aws_instance" "ecs_host" {
   count                       = var.ecs_host_ami_id == null ? 0 : 1
   ami                         = var.ecs_host_ami_id
@@ -58,12 +67,18 @@ resource "aws_instance" "ecs_host" {
     tags        = { Name = "${var.name}-ecs-host-root", project = "shiftbox", environment = var.environment, cluster_name = var.name }
   }
 
-  user_data = templatefile("${path.module}/host/user-data.sh.tftpl", {
-    cluster_name  = aws_ecs_cluster.shiftbox.name
-    volume_serial = replace(aws_ebs_volume.data.id, "-", "")
-    initialize    = var.initialize_data_volume
-    mount_script  = file("${path.module}/host/mount-data.sh")
-  })
+  user_data_replace_on_change = false
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  user_data = var.registry_cache_bootstrap ? templatefile("${path.module}/host/registry-cache-user-data.mime.tftpl", {
+    first_boot   = local.ecs_host_first_boot
+    volume_id    = one(aws_ebs_volume.registry_cache[*].id)
+    data_serial  = replace(aws_ebs_volume.data.id, "-", "")
+    mount_script = file("${path.module}/host/mount-registry-cache.sh")
+  }) : local.ecs_host_first_boot
 
   tags = { Name = "${var.name}-ecs-host" }
 

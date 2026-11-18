@@ -15,7 +15,7 @@ func TestDevContainerCLITimings(t *testing.T) {
 		elapsed time.Duration
 	}
 	var got []sample
-	writer := devContainerCLITimings{record: func(name string, elapsed time.Duration) {
+	writer := devContainerCLITimings{dockerPath: "/usr/bin/docker", record: func(name string, elapsed time.Duration) {
 		got = append(got, sample{name, elapsed})
 	}}
 	for _, chunk := range []string{
@@ -36,5 +36,24 @@ func TestDevContainerCLITimings(t *testing.T) {
 	want := []sample{{"docker_image_pull", 18 * time.Millisecond}, {"docker_image_build", 5 * time.Millisecond}, {"docker_container_run", 3 * time.Millisecond}, {"docker_container_ready", 8 * time.Millisecond}}
 	if !slices.Equal(got, want) {
 		t.Errorf("parsed Docker timings = %v, want %v", got, want)
+	}
+}
+
+// TestDevContainerCLITimingsWithLauncher keeps Docker timings when up uses
+// the private bundle-mount launcher and excludes a different command path.
+func TestDevContainerCLITimingsWithLauncher(t *testing.T) {
+	var got []string
+	writer := devContainerCLITimings{
+		dockerPath: "/var/lib/shiftbox/.devcontainer-docker-1",
+		record:     func(phase string, _ time.Duration) { got = append(got, phase) },
+	}
+	for _, event := range []string{
+		`{"type":"stop","timestamp":25,"startTimestamp":20,"text":"Run: /usr/bin/docker buildx build ."}`,
+		`{"type":"stop","timestamp":25,"startTimestamp":20,"text":"Run: /var/lib/shiftbox/.devcontainer-docker-1 buildx build ."}`,
+	} {
+		writer.recordLine([]byte(event))
+	}
+	if !slices.Equal(got, []string{"docker_image_build"}) {
+		t.Errorf("Docker timing with launcher = %v, want one docker_image_build event", got)
 	}
 }

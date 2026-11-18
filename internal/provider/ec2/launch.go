@@ -28,7 +28,7 @@ func (p *Provider) Create(ctx context.Context, req provider.CreateRequest) (prov
 
 // CreateCandidate boots a disposable validation instance from a previously inspected AMI.
 func (p *Provider) CreateCandidate(ctx context.Context, req provider.CreateRequest, image Image) (provider.Inventory, error) {
-	if req.BootstrapData != "" {
+	if (req.BootstrapData != "") != image.SingleBoot {
 		return provider.Inventory{}, provider.ErrCapabilityUnsupported
 	}
 	return p.create(ctx, req, image)
@@ -129,7 +129,7 @@ func (p *Provider) launchInput(req provider.CreateRequest, image Image) *api.Run
 			HttpEndpoint: types.InstanceMetadataEndpointStateEnabled, HttpPutResponseHopLimit: aws.Int32(1)},
 		BlockDeviceMappings: []types.BlockDeviceMapping{{DeviceName: aws.String(image.RootDeviceName),
 			Ebs: &types.EbsBlockDevice{DeleteOnTermination: aws.Bool(true), Encrypted: aws.Bool(true),
-				VolumeType: types.VolumeTypeGp3, VolumeSize: aws.Int32(int32(req.Resources.DiskBytes >> 30))}}},
+				VolumeInitializationRate: aws.Int32(300), VolumeType: types.VolumeTypeGp3, VolumeSize: aws.Int32(int32(req.Resources.DiskBytes >> 30))}}},
 		NetworkInterfaces: []types.InstanceNetworkInterfaceSpecification{{AssociatePublicIpAddress: aws.Bool(false),
 			DeleteOnTermination: aws.Bool(true), DeviceIndex: aws.Int32(0), SubnetId: aws.String(p.cfg.SubnetID),
 			Groups: []string{p.cfg.SecurityGroupID}}},

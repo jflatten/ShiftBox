@@ -14,6 +14,7 @@ export interface Workspace {
   currentOperationId: string | null;
   lastFailedOperationId?: string | null;
   canOpenIde?: boolean;
+  imageCache?: components['schemas']['WorkspaceImageCache'];
   probes?: components['schemas']['ProbeResult'][];
   previewPorts?: number[];
   canOpenPreviews?: boolean;

@@ -25,6 +25,8 @@ type templateCatalogChoice struct {
 	AMIID              string `json:"amiId,omitempty"`
 	MinimumDiskGiB     int64  `json:"minimumDiskGiB,omitempty"`
 	PlatformArtifactID string `json:"platformArtifactId,omitempty"`
+	AMIFamily          string `json:"amiFamily,omitempty"`
+	ImageCreatedAt     int64  `json:"imageCreatedAtUnixMillis,omitempty"`
 }
 
 // TemplateCatalogHandler lists the profile and image choices for template authors.
@@ -68,27 +70,51 @@ func TemplateCatalogHandler(db *sql.DB, origin string, now func() time.Time, pol
 }
 
 func templateCatalogProfiles(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunchPolicy) ([]templateCatalogChoice, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib,instance_type,COALESCE(platform_artifact_id,'') FROM resource_profiles
+	rows, err := tx.QueryContext(ctx, `SELECT id,name,cpu_count,memory_mib,disk_mib,instance_type,COALESCE(platform_artifact_id,''),ec2_ami_family FROM resource_profiles
 		WHERE enabled=1 ORDER BY name,id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	choices := []templateCatalogChoice{}
+	type familyResources struct {
+		architecture string
+		diskMiB      int64
+	}
+	families := make(map[string]familyResources)
 	for rows.Next() {
 		var item templateCatalogChoice
 		var allocation workspace.Allocation
-		if err := rows.Scan(&item.ID, &item.Name, &allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB, &allocation.InstanceType, &item.PlatformArtifactID); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB, &allocation.InstanceType, &item.PlatformArtifactID, &item.AMIFamily); err != nil {
 			return nil, err
 		}
 		if _, err := workspace.ProfileResources(allocation, policy.Capabilities); err == nil {
 			if policy.Capabilities.Name == "ec2" {
 				item.ProviderKind = "ec2"
+				if item.AMIFamily != "" {
+					instance, _ := policy.Capabilities.LookupInstanceType(allocation.EC2Type())
+					families[item.ID] = familyResources{instance.Architecture, allocation.DiskMiB}
+				}
 			}
 			choices = append(choices, item)
 		}
 	}
-	return choices, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range choices {
+		choice := &choices[i]
+		if allocation, ok := families[choice.ID]; ok {
+			choice.PlatformArtifactID, err = selectCurrentEC2FamilyImage(ctx, tx, policy, choice.AMIFamily, allocation.architecture, allocation.diskMiB)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+		}
+	}
+	return choices, nil
 }
 
 func launchProviderKind(caps provider.Capabilities) string {
@@ -99,8 +125,9 @@ func launchProviderKind(caps provider.Capabilities) string {
 }
 
 func templateCatalogImages(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunchPolicy) ([]templateCatalogChoice, string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.release_id,a.protocol_version,a.architecture,a.is_default,a.provider_kind,a.ec2_image_json FROM platform_artifacts a
-		CROSS JOIN installations i WHERE i.singleton=1 AND a.state='available' AND a.provider_kind=$1
+	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.release_id,a.protocol_version,a.architecture,a.is_default,a.provider_kind,a.ec2_image_json,
+		a.ec2_family,a.ec2_created_at FROM platform_artifacts a
+		CROSS JOIN installations i WHERE i.singleton=1 AND a.state='available' AND a.provider_kind=$1 AND a.ec2_retired=0
 		AND a.guest_release IN (i.active_release,i.min_guest_release) ORDER BY a.release_id,a.id`, launchProviderKind(policy.Capabilities))
 	if err != nil {
 		return nil, "", err
@@ -112,10 +139,10 @@ func templateCatalogImages(ctx context.Context, tx *sql.Tx, policy WorkspaceLaun
 		var item templateCatalogChoice
 		var protocol, architecture, image string
 		var isDefault int
-		if err := rows.Scan(&item.ID, &item.Name, &protocol, &architecture, &isDefault, &item.ProviderKind, &image); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &protocol, &architecture, &isDefault, &item.ProviderKind, &image, &item.AMIFamily, &item.ImageCreatedAt); err != nil {
 			return nil, "", err
 		}
-		if item.ProviderKind == "ec2" && !ec2ImageVerified(policy.EC2VerifiedAMIs, image) {
+		if item.ProviderKind == "ec2" && item.AMIFamily == "" && !ec2ImageVerified(policy.EC2VerifiedAMIs, image) {
 			continue
 		}
 		if policy.Capabilities.SupportsArchitecture(architecture) && slices.Contains(policy.Protocols, protocol) {

@@ -20,6 +20,7 @@ var ErrGuestUnauthorized = errors.New("guest identity is not authorized")
 
 // Contact describes the workspace authority established by an authenticated poll.
 type Contact struct {
+	ImageCacheOffer        string
 	WorkspaceID            string
 	OwnerID                string
 	Repository             string

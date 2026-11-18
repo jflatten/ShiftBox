@@ -119,6 +119,11 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if settings.Provider != "ec2" {
 		policy.AvailableDisk = func() (uint64, error) { return app.AvailableWorkspaceSpace(settings.UTMStorage) }
 	}
+	_, pollPort, _ := net.SplitHostPort(settings.PollAddress)
+	if err := state.ConfigureImageCache(ctx, cfg.InstallationDir, os.Getenv("SHIFTBOX_IMAGE_CACHE_VOLUME_ID"),
+		"https://"+net.JoinHostPort(settings.GuestHost, pollPort), time.Now); err != nil {
+		return err
+	}
 	services, err := app.NewManagementServices(state, journal, tunnels.Registry, policy, github, passwords, time.Now)
 	if err != nil {
 		return err
@@ -134,7 +139,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	catalog := release.NewCatalog(artifactStore, filepath.Join(cfg.InstallationDir, "platform-artifacts"))
 	platform := setupPlatform{installation: cfg.InstallationDir, runtime: settings}
 	imports := app.NewPlatformImport(state.DB, journal, origin, active.InstallationID, time.Now,
-		func(ctx context.Context, id, actor, folder string, makeDefault bool) error {
+		func(ctx context.Context, id, actor, folder string, options app.PlatformImportOptions) error {
 			// Stable operation identity lets a retry reconcile its validation VM.
 			validationID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(active.InstallationID+":platform-import:"+id)).String()
 			marker := uuid.NewSHA1(uuid.NameSpaceOID, []byte(validationID+":owner")).String()
@@ -144,10 +149,10 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 					return provider.ErrCapabilityUnsupported
 				}
 				return cloud.importPlatform(ctx, cfg.InstallationDir, settings.GuestHost, artifactStore, catalog, ref,
-					actor, folder, active.ActiveRelease, active.MinimumGuestRelease, makeDefault)
+					actor, folder, active.ActiveRelease, active.MinimumGuestRelease, options)
 			}
 			return platform.importPlatform(ctx, artifactStore, catalog, machines, caps, ref,
-				actor, folder, active.ActiveRelease, active.MinimumGuestRelease, makeDefault)
+				actor, folder, active.ActiveRelease, active.MinimumGuestRelease, options.MakeDefault)
 		}, settings.Provider)
 	importRoute := imports.Handler()
 	services.Handlers[importRoute.Route.OperationID] = importRoute
@@ -226,6 +231,10 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 		return imports.Run(ctx, checkpoint.Enter)
 	}, func(ctx context.Context) error {
 		return preflightWorker.Run(ctx, time.Second)
+	}, func(ctx context.Context) error {
+		return state.RunImageCacheOperations(ctx, journal, checkpoint)
+	}, func(ctx context.Context) error {
+		return state.RunImageCacheVerification(ctx, checkpoint)
 	}, func(ctx context.Context) error {
 		return web.RunBackupJobs(ctx, backupJobs, backups, captureBackup)
 	}, localBackup.Serve, func(ctx context.Context) error {

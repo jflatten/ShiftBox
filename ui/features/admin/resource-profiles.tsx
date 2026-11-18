@@ -22,6 +22,18 @@ type TemplateCatalog = operations['listTemplateCatalog']['responses'][200]['cont
 type Dialog = { action: 'create' } | { action: 'edit' | 'delete'; profile: Profile };
 type FormValues = { name: string; enabled: boolean; platformArtifactId: string | null; instanceType: string | null } & Record<'cpuCount' | 'memoryMiB' | 'diskSize', string | number>;
 
+export function useProfileImageCatalog(userId: string, enabled: boolean) {
+  return useQuery<TemplateCatalog>({
+    queryKey: ['template-catalog', userId],
+    enabled,
+    queryFn: async ({ signal }) => {
+      const response = await fetch('/api/v1/templates/catalog', { signal, cache: 'no-store' });
+      if (!response.ok) throw await readProblem(response);
+      return response.json();
+    },
+  });
+}
+
 export function ResourceProfiles({ userId, csrfToken, provider }: {
   userId: string;
   csrfToken?: string;
@@ -100,7 +112,7 @@ export function ResourceProfiles({ userId, csrfToken, provider }: {
           <Table.Tbody>
             {profiles.data?.map(profile => <Table.Tr key={profile.id} h={48}>
               <Table.Th scope="row" style={{ overflowWrap: 'anywhere', maxWidth: 280 }}>{profile.name}</Table.Th>
-              {ec2 ? <><Table.Td>{profile.platformImageName || 'Select an AMI'}</Table.Td><Table.Td>{profile.instanceType ?? '—'}</Table.Td></> : null}
+              {ec2 ? <><Table.Td>{profile.amiFamily || profile.platformImageName || 'Select an AMI'}</Table.Td><Table.Td>{profile.instanceType ?? '—'}</Table.Td></> : null}
               {fields.map(field => <Table.Td key={field.key} style={numberStyle}>
                 {format.format(ec2 && field.key === 'diskMiB' ? profile.diskMiB / mibPerGiB : profile[field.key])}
               </Table.Td>)}
@@ -162,16 +174,17 @@ function ProfileDialog({ dialog, userId, csrfToken, provider, close, saved, relo
   const deleting = dialog.action === 'delete';
   const ec2 = provider?.name === 'ec2';
   const instanceTypes = provider?.instanceTypes ?? [];
-  const catalog = useQuery<TemplateCatalog>({
-    queryKey: ['template-catalog', userId],
-    enabled: ec2 && !deleting,
-    queryFn: async ({ signal }) => {
-      const response = await fetch('/api/v1/templates/catalog', { signal, cache: 'no-store' });
-      if (!response.ok) throw await readProblem(response);
-      return response.json();
-    },
-  });
+  const catalog = useProfileImageCatalog(userId, ec2 && !deleting);
   const images = catalog.isError ? [] : (catalog.data?.platformImages ?? []).filter(image => image.providerKind === 'ec2');
+  const options = new Map<string, { label: string; images: typeof images; family?: string }>();
+  for (const image of images) {
+    const value = image.amiFamily ? `family:${image.amiFamily}` : image.id;
+    const option = options.get(value);
+    if (option) option.images.push(image);
+    else options.set(value, { label: image.amiFamily ? `${image.amiFamily} (latest)` : image.name, images: [image], family: image.amiFamily });
+  }
+  const offeredFor = (value: string | null, architecture: string | undefined) =>
+    options.get(value ?? '')?.images.filter(image => !architecture || image.architecture === architecture) ?? [];
   const minimumDisk = provider?.minimumDiskGiB ?? 0;
   const maximumDisk = provider?.maximumDiskGiB ?? 0;
   const form = useForm<FormValues>({
@@ -183,31 +196,34 @@ function ProfileDialog({ dialog, userId, csrfToken, provider, close, saved, relo
       diskSize: ec2 ? (profile ? profile.diskMiB / mibPerGiB : minimumDisk) : profile?.diskMiB ?? '',
       enabled: profile?.enabled ?? true,
       instanceType: profile?.instanceType ?? null,
-      platformArtifactId: profile?.platformArtifactId ?? null,
+      platformArtifactId: profile?.amiFamily ? `family:${profile.amiFamily}` : profile?.platformArtifactId ?? null,
     },
     validate: {
       name: value => value.trim() ? null : 'Enter a profile name.',
       cpuCount: value => ec2 ? null : validLimit(value),
       memoryMiB: value => ec2 ? null : validLimit(value),
-      platformArtifactId: value => !ec2 || images.some(image => image.id === value)
-        ? null : 'Select an approved AMI image.',
+      platformArtifactId: value => !ec2 || options.has(value ?? '') ? null : 'Select an AMI family or an approved image.',
       instanceType: (value, values) => !ec2 || instanceTypes.some(instance => instance.name === value &&
-        instance.architecture === images.find(image => image.id === values.platformArtifactId)?.architecture)
+        offeredFor(values.platformArtifactId, instance.architecture).length > 0)
         ? null : 'Select an offered EC2 instance type.',
       diskSize: (value, values) => {
         if (!ec2) return validLimit(value);
-        const minimum = Math.max(minimumDisk, images.find(image => image.id === values.platformArtifactId)?.minimumDiskGiB ?? 0);
+        const architecture = instanceTypes.find(instance => instance.name === values.instanceType)?.architecture;
+        const offered = offeredFor(values.platformArtifactId, architecture);
+        const minimum = offered.length ? Math.max(minimumDisk, Math.min(...offered.map(image => image.minimumDiskGiB ?? 0))) : minimumDisk;
         return typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum && value <= maximumDisk
           ? null : `Enter a whole number from ${format.format(minimum)} to ${format.format(maximumDisk)} GiB.`;
       },
     },
   });
   const imageSelection = form.useWatchValue('platformArtifactId');
-  const selectedImage = images.find(image => image.id === imageSelection);
-  const imageMinimumDisk = Math.max(minimumDisk, selectedImage?.minimumDiskGiB ?? 0);
-  const compatibleTypes = instanceTypes.filter(instance => selectedImage && instance.architecture === selectedImage.architecture);
+  const imageChoice = options.get(imageSelection ?? '');
+  const compatibleTypes = instanceTypes.filter(instance => offeredFor(imageSelection, instance.architecture).length > 0);
   const selection = form.useWatchValue('instanceType');
   const selected = compatibleTypes.find(instance => instance.name === selection);
+  const selectedImages = offeredFor(imageSelection, selected?.architecture);
+  const imageMinimumDisk = selectedImages.length
+    ? Math.max(minimumDisk, Math.min(...selectedImages.map(image => image.minimumDiskGiB ?? 0))) : minimumDisk;
   const mutation = useMutation({
     networkMode: 'always',
     mutationFn: async (values?: FormValues) => {
@@ -215,9 +231,11 @@ function ProfileDialog({ dialog, userId, csrfToken, provider, close, saved, relo
       if (!navigator.onLine) throw new Error('Network connection unavailable');
       if (profile) headers['If-Match'] = `"${profile.version}"`;
       if (values) headers['Content-Type'] = 'application/json';
+      const family = options.get(values?.platformArtifactId ?? '')?.family;
       const body = values ? {
         name: values.name.trim(),
-        ...(ec2 ? { platformArtifactId: values.platformArtifactId, instanceType: values.instanceType, diskMiB: Number(values.diskSize) * mibPerGiB }
+        ...(ec2 ? { ...(family ? { amiFamily: family } : { platformArtifactId: values.platformArtifactId }),
+          instanceType: values.instanceType, diskMiB: Number(values.diskSize) * mibPerGiB }
           : { cpuCount: values.cpuCount, memoryMiB: values.memoryMiB, diskMiB: values.diskSize }),
         ...(profile ? { enabled: values.enabled } : {}),
       } : undefined;
@@ -277,24 +295,24 @@ function ProfileDialog({ dialog, userId, csrfToken, provider, close, saved, relo
             No approved AMI images are available. Import and validate a platform image first.
           </Text> : null}
           <Select label="AMI image" required searchable allowDeselect={false}
-            placeholder="Select an approved AMI image" nothingFoundMessage="No matching AMI images"
-            description={selectedImage ? `${selectedImage.architecture === 'arm64' ? 'ARM64' : 'x86-64 (amd64)'}${selectedImage.amiId ? ` · ${selectedImage.amiId}` : ''}` : 'The resource profile supplies this image to projects.'}
-            data={images.map(image => ({ value: image.id, label: image.name }))}
+            placeholder="Select a family or an approved AMI" nothingFoundMessage="No matching AMI images"
+            description={imageChoice?.family ? 'New workspaces use the latest compatible validated image in this family.'
+              : 'The resource profile supplies this image to projects.'}
+            data={Array.from(options, ([value, option]) => ({ value, label: option.label }))}
             disabled={busy || !catalog.isSuccess || !images.length}
             key={form.key('platformArtifactId')} {...form.getInputProps('platformArtifactId')}
             onChange={value => {
               form.setFieldValue('platformArtifactId', value);
-              const architecture = images.find(image => image.id === value)?.architecture;
-              if (!instanceTypes.some(instance => instance.name === form.getValues().instanceType && instance.architecture === architecture)) {
+              if (!instanceTypes.some(instance => instance.name === form.getValues().instanceType && offeredFor(value, instance.architecture).length > 0)) {
                 form.setFieldValue('instanceType', null);
               }
             }} />
           <Select label="EC2 instance type" required searchable limit={40} allowDeselect={false}
-            placeholder={selectedImage ? 'Search instance types' : 'Select an AMI image first'}
+            placeholder={imageChoice ? 'Search instance types' : 'Select an AMI image first'}
             data={compatibleTypes.map(instance => instance.name)}
             nothingFoundMessage="No matching EC2 instance types"
-            disabled={busy || !selectedImage} key={form.key('instanceType')} {...form.getInputProps('instanceType')} />
-          {selectedImage && !compatibleTypes.length ? <Text size="sm" role="status">No compatible EC2 instance types are available for this AMI in the workspace Availability Zone.</Text> : null}
+            disabled={busy || !imageChoice} key={form.key('instanceType')} {...form.getInputProps('instanceType')} />
+          {imageChoice && !compatibleTypes.length ? <Text size="sm" role="status">No compatible EC2 instance types are available for this AMI in the workspace Availability Zone.</Text> : null}
           <Group grow>
             <TextInput label="vCPUs" readOnly value={selected ? format.format(selected.cpuCount) : ''} />
             <TextInput label="Memory (MiB)" readOnly value={selected ? format.format(selected.memoryMiB) : ''} />

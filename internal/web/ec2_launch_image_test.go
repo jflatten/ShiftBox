@@ -39,8 +39,8 @@ func TestEC2LaunchImageMatchesArchitecture(t *testing.T) {
 	CREATE TABLE installations(id TEXT, singleton INTEGER, active_release TEXT, min_guest_release TEXT);
 	INSERT INTO installations VALUES ('install',1,'current','previous');
 	CREATE TABLE operations(id TEXT, requested_by TEXT, request_key TEXT);
-	CREATE TABLE resource_profiles(id TEXT, enabled INTEGER, cpu_count INTEGER, memory_mib INTEGER, disk_mib INTEGER, instance_type TEXT,platform_artifact_id TEXT);
-	INSERT INTO resource_profiles VALUES ('profile',1,2,8192,32768,'m7g.large','template-amd64');`)
+	CREATE TABLE resource_profiles(id TEXT, enabled INTEGER, cpu_count INTEGER, memory_mib INTEGER, disk_mib INTEGER, instance_type TEXT,platform_artifact_id TEXT,ec2_ami_family TEXT);
+	INSERT INTO resource_profiles VALUES ('profile',1,2,8192,32768,'m7g.large','template-amd64','');`)
 	if err != nil {
 		t.Fatal(err)
 	}

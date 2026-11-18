@@ -7,9 +7,11 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -29,6 +31,8 @@ type devContainer struct {
 	config           string
 	repository       *repositoryPreparation
 	credentials      bool
+	imageCache       bool
+	applyImageCache  func(string) error
 	ide              bool
 	codeServerSource string
 	retainHome       bool
@@ -60,9 +64,17 @@ func (d devContainer) ensure(ctx context.Context) (containerConnection, error) {
 }
 
 func (d devContainer) configure(ctx context.Context, previous rebuildSource) (containerConnection, error) {
+	if d.imageCache {
+		started := time.Now()
+		err := d.prepareImage(ctx)
+		d.measurePhase("image_prepare", started, err)
+		if err != nil {
+			return containerConnection{}, err
+		}
+	}
 	// Let the reference CLI read JSONC, resolve Features and image metadata,
 	// and execute lifecycle commands. The guest VM is the isolation boundary.
-	options := []string{"--skip-non-blocking-commands", "--skip-post-attach", "--include-merged-configuration"}
+	options := []string{"--skip-non-blocking-commands", "--skip-post-attach", "--include-merged-configuration", "--update-remote-user-uid-default", "off"}
 	if d.repository != nil || previous.id != "" {
 		options = append(options, "--skip-post-create")
 	}
@@ -157,7 +169,16 @@ func (d devContainer) command(ctx context.Context, stage string, options ...stri
 	}
 	// Use the same label for creation and continuation so the CLI does not
 	// append a second copy of project hooks to the saved container metadata.
-	args := []string{stage, "--workspace-folder", d.workspace, "--docker-path", "/usr/bin/docker",
+	dockerPath := "/usr/bin/docker"
+	if stage == "up" && d.ide {
+		var err error
+		dockerPath, err = d.codeServerDocker()
+		if err != nil {
+			return nil, errBrowserIDE
+		}
+		defer os.Remove(dockerPath)
+	}
+	args := []string{stage, "--workspace-folder", d.workspace, "--docker-path", dockerPath,
 		"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", developmentLabel}
 	if stage == "up" && d.ide {
 		args = append(args, "--mount", "type=bind,source="+ideDirectory+",target="+ideDirectory)
@@ -200,9 +221,16 @@ func (d devContainer) runner() func(context.Context, string, ...string) ([]byte,
 	}
 	return func(ctx context.Context, executable string, args ...string) ([]byte, error) {
 		if d.timing != nil && executable == devContainerCLI && len(args) > 0 && args[0] == "up" {
-			timings := &devContainerCLITimings{record: func(name string, elapsed time.Duration) {
-				d.timing(name, elapsed, "observed")
-			}}
+			dockerPath := "/usr/bin/docker"
+			if index := slices.Index(args, "--docker-path"); index >= 0 && index+1 < len(args) {
+				dockerPath = args[index+1]
+			}
+			timings := &devContainerCLITimings{
+				dockerPath: dockerPath,
+				record: func(name string, elapsed time.Duration) {
+					d.timing(name, elapsed, "observed")
+				},
+			}
 			return runDevContainerCommand(ctx, executable, timings, args...)
 		}
 		return runDevContainerCLI(ctx, executable, args...)

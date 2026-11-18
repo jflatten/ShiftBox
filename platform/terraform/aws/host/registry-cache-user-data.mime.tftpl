@@ -1,0 +1,75 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="shiftbox-host-bootstrap"
+
+--shiftbox-host-bootstrap
+Content-Type: text/cloud-boothook; charset="us-ascii"
+
+#cloud-boothook
+#!/bin/sh
+set -eu
+runtime=/run/shiftbox-registry-cache-bootstrap
+install -d -m 0700 "$runtime"
+install -d -m 0755 /run/systemd/system/ecs.service.d
+install -d -m 0755 /run/systemd/system/shiftbox-data.service.d
+
+cat > /run/systemd/system/shiftbox-data.service.d/shiftbox-existing-data.conf <<'EXISTING_DATA'
+[Service]
+ExecStart=
+ExecStart=/usr/local/libexec/shiftbox-mount-data ${data_serial} /var/lib/shiftbox-data false
+EXISTING_DATA
+
+cat > "$runtime/mount-registry-cache" <<'MOUNT_SCRIPT'
+${mount_script}
+MOUNT_SCRIPT
+chmod 0755 "$runtime/mount-registry-cache"
+
+cat > "$runtime/prepare" <<'PREPARE'
+#!/bin/sh
+set -eu
+volume='${volume_id}'
+destination=/var/lib/shiftbox-registry-cache
+stamps=/var/lib/shiftbox-cache-initialized
+initialize=false
+if [ ! -e "$stamps/$volume" ]; then
+    initialize=true
+fi
+/run/shiftbox-registry-cache-bootstrap/mount-registry-cache "$volume" "$destination" "$initialize" 20
+[ "$(findmnt -nro FSTYPE --mountpoint "$destination")" = xfs ]
+[ "$(cat "$destination/.shiftbox-registry-cache")" = "$volume" ]
+[ "$(stat -c '%u:%g:%a' "$destination/cache")" = '10001:10001:700' ]
+install -d -m 0700 "$stamps"
+install -m 0400 /dev/null "$stamps/$volume"
+capacity=$(df -B1 --output=size "$destination" | tail -n 1 | tr -d ' ')
+printf 'SHIFTBOX_REGISTRY_CACHE_READY volume=%s boot=%s filesystem=xfs bytes=%s\n' \
+    "$volume" "$(cat /proc/sys/kernel/random/boot_id)" "$capacity"
+PREPARE
+chmod 0755 "$runtime/prepare"
+
+cat > /run/systemd/system/shiftbox-cache-bootstrap.service <<'CACHE_UNIT'
+[Unit]
+Description=Prepare the dedicated ShiftBox registry cache disk
+Before=ecs.service
+
+[Service]
+Type=oneshot
+ExecStart=/run/shiftbox-registry-cache-bootstrap/prepare
+RemainAfterExit=yes
+TimeoutStartSec=180
+StandardOutput=journal+console
+StandardError=inherit
+CACHE_UNIT
+
+cat > /run/systemd/system/ecs.service.d/shiftbox-cache-bootstrap.conf <<'DEPENDENCY'
+[Unit]
+Wants=shiftbox-cache-bootstrap.service
+After=shiftbox-cache-bootstrap.service
+DEPENDENCY
+
+systemctl daemon-reload
+systemctl start --no-block shiftbox-cache-bootstrap.service
+
+--shiftbox-host-bootstrap
+Content-Type: text/x-shellscript; charset="us-ascii"
+
+${first_boot}
+--shiftbox-host-bootstrap--

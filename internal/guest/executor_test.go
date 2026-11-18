@@ -458,6 +458,7 @@ func TestDevContainerLifecycle(t *testing.T) {
 	workspace := filepath.Join(t.TempDir(), "project")
 	source := testCodeServerPackage(t)
 	var calls [][]string
+	var dockerPath string
 	runtime := devContainer{
 		workspace:        workspace,
 		config:           ".devcontainer/go/devcontainer.json",
@@ -467,9 +468,14 @@ func TestDevContainerLifecycle(t *testing.T) {
 		run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
 			calls = append(calls, append([]string{executable}, args...))
 			if executable == "/usr/bin/docker" {
-				return nil, nil
+				return json.Marshal([]dockerMount{{Type: "bind", Source: source, Destination: codeServerDir}})
 			}
 			if args[0] == "up" {
+				dockerPath = args[slices.Index(args, "--docker-path")+1]
+				content, err := os.ReadFile(dockerPath)
+				if err != nil || !strings.Contains(string(content), "type=bind,source="+source+",target="+codeServerDir+",readonly") {
+					t.Fatalf("development Docker launcher does not request the read-only bundle: %v", err)
+				}
 				return []byte(`{"outcome":"success","containerId":"` + id + `","mergedConfiguration":{"waitFor":"postStartCommand"}}`), nil
 			}
 			if args[0] == "exec" {
@@ -488,14 +494,14 @@ func TestDevContainerLifecycle(t *testing.T) {
 		t.Fatalf("finishSetup(%+v) = %v, want nil", evidence, err)
 	}
 	wantCalls := [][]string{
-		{"/usr/local/bin/devcontainer", "up", "--workspace-folder", workspace, "--docker-path", "/usr/bin/docker",
+		{"/usr/local/bin/devcontainer", "up", "--workspace-folder", workspace, "--docker-path", dockerPath,
 			"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", "shiftbox.container=development",
 			"--mount", "type=bind,source=/run/shiftbox-ide,target=/run/shiftbox-ide",
 			"--mount", "type=bind,source=/run/shiftbox-credentials,target=/run/shiftbox-credentials",
 			"--mount", "type=bind,source=/run/shiftbox-credentials/shiftbox-launcher,target=/usr/local/bin/shiftbox",
 			"--config", workspace + "/.devcontainer/go/devcontainer.json", "--skip-non-blocking-commands",
-			"--skip-post-attach", "--include-merged-configuration"},
-		{"/usr/bin/docker", "cp", source + "/.", id + ":/opt/shiftbox-code-server"},
+			"--skip-post-attach", "--include-merged-configuration", "--update-remote-user-uid-default", "off"},
+		{"/usr/bin/docker", "container", "inspect", "--format", "{{json .Mounts}}", "--", id},
 		{"/usr/local/bin/devcontainer", "exec", "--workspace-folder", workspace, "--docker-path", "/usr/bin/docker",
 			"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", "shiftbox.container=development",
 			"--config", workspace + "/.devcontainer/go/devcontainer.json", "--container-id", id,
@@ -507,6 +513,9 @@ func TestDevContainerLifecycle(t *testing.T) {
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Errorf("ensure() followed by finishSetup() invoked %q, want %q", calls, wantCalls)
 	}
+	if _, err := os.Stat(dockerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Docker launcher remained after up: stat error = %v, want os.ErrNotExist", err)
+	}
 }
 
 // TestDevContainerIDEStartFailure keeps failed launches out of the proxy gate
@@ -515,7 +524,7 @@ func TestDevContainerIDEStartFailure(t *testing.T) {
 	id := strings.Repeat("a", 64)
 	runtime := devContainer{workspace: filepath.Join(t.TempDir(), "project"), ide: true, codeServerSource: testCodeServerPackage(t), run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
 		if executable == "/usr/bin/docker" {
-			return nil, nil
+			return []byte("[]"), nil
 		}
 		if args[0] == "exec" {
 			return nil, errors.New("fixture command contains project data")

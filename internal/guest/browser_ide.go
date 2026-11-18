@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/proxy"
@@ -27,6 +28,10 @@ const startCodeServer = `set -eu
 socket=` + proxy.IDESocket + `
 server=` + codeServerDir + `
 socket_ready() {
+    [ -S "$socket" ] || return 1
+    if command -v curl >/dev/null 2>&1; then
+        curl -q -fsS --max-time 1 --noproxy '*' --unix-socket "$socket" http://localhost/healthz >/dev/null 2>&1 && return 0
+    fi
     "$server/lib/node" -e 'const c = require("node:net").connect(process.argv[1]); c.setTimeout(1000, () => process.exit(1)); c.on("connect", () => c.destroy()); c.on("error", () => process.exit(1));' "$socket"
 }
 if socket_ready; then
@@ -35,10 +40,10 @@ fi
 nohup "$server/bin/code-server" --config /dev/null --auth none --socket "$socket" --socket-mode 0600 \
     --disable-proxy --disable-update-check --disable-telemetry --ignore-last-opened -- "$(pwd)" </dev/null >/dev/null 2>&1 &
 pid=$!
-for attempt in $(seq 1 30); do
+for attempt in $(seq 1 150); do
     if socket_ready; then exit 0; fi
     kill -0 "$pid" || exit 1
-    sleep 1
+    sleep 0.2
 done
 kill "$pid" 2>/dev/null || true
 exit 1
@@ -46,10 +51,18 @@ exit 1
 
 func (d devContainer) startIDE(ctx context.Context, id string) error {
 	started := time.Now()
-	err := d.installCodeServer(ctx, id)
-	d.measurePhase("ide_install", started, err)
+	mounted, err := d.codeServerMounted(ctx, id)
+	d.measurePhase("ide_mount", started, err)
 	if err != nil {
-		return err
+		return errors.Join(errBrowserIDE, ctx.Err())
+	}
+	if !mounted {
+		started = time.Now()
+		err := d.installCodeServer(ctx, id)
+		d.measurePhase("ide_install", started, err)
+		if err != nil {
+			return err
+		}
 	}
 	startCtx, cancel := context.WithTimeout(ctx, codeServerStartTimeout)
 	defer cancel()
@@ -62,13 +75,69 @@ func (d devContainer) startIDE(ctx context.Context, id string) error {
 	return nil
 }
 
-// installCodeServer copies the pinned distribution into the container's own
-// layers. The guest keeps one receipt for the current development container.
-func (d devContainer) installCodeServer(ctx context.Context, id string) error {
-	source := d.codeServerSource
-	if source == "" {
-		source = codeServerPackage
+func (d devContainer) codeServerBundle() string {
+	if d.codeServerSource != "" {
+		return d.codeServerSource
 	}
+	return codeServerPackage
+}
+
+// codeServerDocker creates a short-lived launcher in the guest's private state
+// directory. The pinned Dev Container CLI's --mount option drops read-only
+// flags, so pass the bundle mount directly to Docker for the development run.
+func (d devContainer) codeServerDocker() (string, error) {
+	file, err := os.CreateTemp(filepath.Dir(d.workspace), ".devcontainer-docker-")
+	if err != nil {
+		return "", err
+	}
+	mount := "type=bind,source=" + d.codeServerBundle() + ",target=" + codeServerDir + ",readonly"
+	mount = "'" + strings.ReplaceAll(mount, "'", "'\\''") + "'"
+	_, writeErr := file.WriteString(`#!/bin/sh
+if [ "${1-}" = run ]; then
+    previous=
+    for argument do
+        case "$previous:$argument" in
+            -l:` + developmentLabel + `|--label:` + developmentLabel + `)
+                shift
+                set -- run --mount ` + mount + ` "$@"
+                break
+                ;;
+        esac
+        previous=$argument
+    done
+fi
+exec /usr/bin/docker "$@"
+`)
+	if err := errors.Join(writeErr, file.Chmod(0700), file.Close()); err != nil {
+		os.Remove(file.Name())
+		return "", err
+	}
+	return file.Name(), nil
+}
+
+// codeServerMounted distinguishes a legacy container from a new container with
+// the expected source and read-only mount verified by Docker.
+func (d devContainer) codeServerMounted(ctx context.Context, id string) (bool, error) {
+	mounts, err := containerMounts(ctx, id, d.runner())
+	if err != nil {
+		return false, err
+	}
+	for _, mount := range mounts {
+		if mount.Destination != codeServerDir {
+			continue
+		}
+		if mount.Type == "bind" && mount.Source == d.codeServerBundle() && !mount.RW {
+			return true, nil
+		}
+		return false, errBrowserIDE
+	}
+	return false, nil
+}
+
+// installCodeServer supports existing containers created before the bundle
+// mount was introduced. Their next rebuild uses the read-only bind mount.
+func (d devContainer) installCodeServer(ctx context.Context, id string) error {
+	source := d.codeServerBundle()
 	metadata, err := os.ReadFile(filepath.Join(source, "package.json"))
 	if err != nil || len(metadata) == 0 {
 		return errBrowserIDE

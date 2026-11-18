@@ -1,0 +1,1207 @@
+{
+  "fixture": {
+    "repository": "https://github.com/jflatten/shiftbox-mvp-fixture",
+    "commit": "dcbb326d75969861ca689b15d3f67ae37818b588",
+    "configuration": ".devcontainer/devcontainer.json",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+    "amd64Manifest": "sha256:3612b800eaae8513e7dca54f21d2e4eda48eda57426f3746a78677f342ac7ee9"
+  },
+  "guest": {
+    "instanceType": "m6i.xlarge",
+    "rootDiskGiB": 32,
+    "binarySHA256": "1a5e8f8aa56d8a80868a3d486d978a3f53ecafe215877be049f646eb73dcbb52"
+  },
+  "sequence": [
+    "unmeasured cache seed",
+    "warm",
+    "cold"
+  ],
+  "initialCache": {
+    "activation": {
+      "phase": "ready"
+    },
+    "effective": {
+      "version": 17,
+      "enabled": true,
+      "storagePath": "/var/lib/shiftbox-registry-cache/cache",
+      "maxBytes": "15032385536",
+      "volumeHighPercent": 80,
+      "volumeLowPercent": 70
+    },
+    "usage": {
+      "retainedBytes": "0",
+      "retiredBytes": "0",
+      "activeTransfers": 0
+    },
+    "effectiveness": {
+      "windowStartedAt": "2026-11-18T13:26:34.285389585Z",
+      "windowEndedAt": "2026-11-18T14:04:03.707256254Z",
+      "cachedBytes": "0",
+      "upstreamBytes": "0",
+      "metadataBytes": "0",
+      "streamedBytes": "0"
+    }
+  },
+  "amiBuild": {
+    "architecture": "amd64",
+    "codeServerRecipeSHA256": "0a9d01d8fb68754d0e3e1126b0576fef0e1290d6ebfba919e27abe8616c1ba2d",
+    "guestAgentRelease": "development",
+    "guestAgentSHA256": "1a5e8f8aa56d8a80868a3d486d978a3f53ecafe215877be049f646eb73dcbb52",
+    "guestUpdateKeySHA256": "d3516bb841d84ae6d1189aefc3e6efad035c5616cf4d1f686c3ac60f4cd7e963",
+    "minimumRootDiskGiB": "32",
+    "platformVersion": "24.04",
+    "protocolVersion": "1",
+    "provider": "ec2",
+    "region": "us-east-2",
+    "releaseId": "shiftbox-platform-2026111805-5f28a90e-b87c-4dbc-92b4-702406286248",
+    "sourceAmiId": "ami-059b52d411601986c",
+    "sourceAmiOwnerId": "099720109477",
+    "sourceRevision": "798d5299d5798da664b68269e9963087a27a5137-dirty",
+    "toolchainRecipeSHA256": "3b0db4762eb6552fbd75d626bceef5c8fe926f97f44506600733261534f03381"
+  },
+  "ami": {
+    "Name": "shiftbox-platform-2026111805-5f28a90e-b87c-4dbc-92b4-702406286248",
+    "ImageId": "ami-02d5a6f7ec323dc39",
+    "State": "available",
+    "Public": false,
+    "Root": "snap-04fcefda1cfb0efec",
+    "Encrypted": true,
+    "CreatedAt": "2026-11-18T14:02:03.000Z"
+  },
+  "baseline": "guest-timing-m6i.json",
+  "instanceTypeSpecifications": [
+    {
+      "name": "m6i.xlarge",
+      "burstable": false,
+      "vcpus": 4,
+      "memoryMiB": 16384,
+      "net": "Up to 12.5 Gigabit",
+      "ebs": {
+        "BaselineBandwidthInMbps": 1250,
+        "BaselineThroughputInMBps": 156.25,
+        "BaselineIops": 6000,
+        "MaximumBandwidthInMbps": 10000,
+        "MaximumThroughputInMBps": 1250.0,
+        "MaximumIops": 40000
+      }
+    },
+    {
+      "name": "t3.medium",
+      "burstable": true,
+      "vcpus": 2,
+      "memoryMiB": 4096,
+      "net": "Up to 5 Gigabit",
+      "ebs": {
+        "BaselineBandwidthInMbps": 347,
+        "BaselineThroughputInMBps": 43.375,
+        "BaselineIops": 2000,
+        "MaximumBandwidthInMbps": 2085,
+        "MaximumThroughputInMBps": 260.625,
+        "MaximumIops": 11800
+      }
+    }
+  ],
+  "seed": {
+    "purpose": "Populate the warm cache before the measured pair",
+    "guestTiming": {
+      "complete": true,
+      "exporter_ready": true,
+      "events": [
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "repository_preparation",
+          "duration_ms": 1799,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011407966688
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "image_config_read",
+          "duration_ms": 6467,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011414439447
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "image_prefetch_pull",
+          "duration_ms": 8926,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011423365630
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "image_prepare",
+          "duration_ms": 15393,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011423365630
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "docker_image_build",
+          "duration_ms": 16773,
+          "outcome": "observed",
+          "journal_time_us": 1795011441003918
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "docker_container_ready",
+          "duration_ms": 326,
+          "outcome": "observed",
+          "journal_time_us": 1795011441332869
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "devcontainer_up",
+          "duration_ms": 18144,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011441509827
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "docker_image_build",
+          "duration_ms": 342,
+          "outcome": "observed",
+          "journal_time_us": 1795011442673001
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "docker_container_ready",
+          "duration_ms": 171,
+          "outcome": "observed",
+          "journal_time_us": 1795011442846578
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "devcontainer_up",
+          "duration_ms": 1162,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011443032647
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "retained_home",
+          "duration_ms": 1599,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011443109476
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "project_permissions",
+          "duration_ms": 59,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011443168534
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "required_hooks",
+          "duration_ms": 5435,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011448604215
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "ide_mount",
+          "duration_ms": 17,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011448621287
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "ide_start",
+          "duration_ms": 1811,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011450432789
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "browser_ide_start",
+          "duration_ms": 1828,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011450432789
+        },
+        {
+          "operation_id": "0085ec28-6498-4338-a1ea-94014eca2830",
+          "phase": "remaining_hooks",
+          "duration_ms": 302,
+          "outcome": "succeeded",
+          "journal_time_us": 1795011450786872
+        }
+      ]
+    }
+  },
+  "runs": {
+    "warm": {
+      "identity": {
+        "instance": "i-0245beac03ec8edd5",
+        "image": "ami-02d5a6f7ec323dc39",
+        "state": "running",
+        "workspace": "9fc692b6-70ab-4435-bcab-c6f9226fbb79",
+        "operation": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+        "root": "vol-08bff7741ee223d99",
+        "launchedAt": "2026-11-18T14:18:29+00:00",
+        "type": "m6i.xlarge",
+        "zone": "us-east-2a",
+        "public": false,
+        "role": false
+      },
+      "controller": {
+        "id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+        "workspaceId": "9fc692b6-70ab-4435-bcab-c6f9226fbb79",
+        "status": "succeeded",
+        "createdAt": "2026-11-18T14:18:28.050920812Z",
+        "startedAt": "2026-11-18T14:18:28.264166741Z",
+        "finishedAt": "2026-11-18T14:20:23.78419892Z",
+        "steps": {
+          "provision": {
+            "activeAt": "2026-11-18T14:18:28.270271475Z",
+            "succeededAt": "2026-11-18T14:18:33.720788287Z",
+            "durationMs": 5450.517
+          },
+          "enroll": {
+            "activeAt": "2026-11-18T14:18:33.738885284Z",
+            "succeededAt": "2026-11-18T14:19:08.46686645Z",
+            "durationMs": 34727.981
+          },
+          "configure": {
+            "activeAt": "2026-11-18T14:19:09.274679656Z",
+            "succeededAt": "2026-11-18T14:20:19.285972102Z",
+            "durationMs": 70011.293
+          },
+          "verify_ide": {
+            "activeAt": "2026-11-18T14:20:20.275070586Z",
+            "succeededAt": "2026-11-18T14:20:23.757527421Z",
+            "durationMs": 3482.457
+          },
+          "finish_setup": {
+            "activeAt": "2026-11-18T14:20:23.777346356Z",
+            "succeededAt": "2026-11-18T14:20:23.784197193Z",
+            "durationMs": 6.851
+          }
+        },
+        "eventCount": 336,
+        "durationMs": 115733.278
+      },
+      "guestTiming": {
+        "complete": true,
+        "exporter_ready": true,
+        "events": [
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "repository_preparation",
+            "duration_ms": 2952,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011552280353
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "image_config_read",
+            "duration_ms": 11887,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011564172722
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "image_prefetch_pull",
+            "duration_ms": 6191,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011570364353
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "image_prepare",
+            "duration_ms": 18078,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011570364353
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "docker_image_build",
+            "duration_ms": 16889,
+            "outcome": "observed",
+            "journal_time_us": 1795011596499601
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "docker_container_ready",
+            "duration_ms": 1542,
+            "outcome": "observed",
+            "journal_time_us": 1795011598043364
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "devcontainer_up",
+            "duration_ms": 27862,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011598227030
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "docker_image_build",
+            "duration_ms": 351,
+            "outcome": "observed",
+            "journal_time_us": 1795011599407873
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "docker_container_ready",
+            "duration_ms": 170,
+            "outcome": "observed",
+            "journal_time_us": 1795011599580450
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "devcontainer_up",
+            "duration_ms": 1185,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011599766218
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "retained_home",
+            "duration_ms": 1618,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011599845132
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "project_permissions",
+            "duration_ms": 60,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011599905581
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "required_hooks",
+            "duration_ms": 5437,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011605343600
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "ide_mount",
+            "duration_ms": 17,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011605361535
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "ide_start",
+            "duration_ms": 13250,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011618612530
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "browser_ide_start",
+            "duration_ms": 13268,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011618612946
+          },
+          {
+            "operation_id": "300e91ac-4683-420b-a29b-d64353a4e2e4",
+            "phase": "remaining_hooks",
+            "duration_ms": 317,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011619129514
+          }
+        ]
+      },
+      "performance": {
+        "source": "Six UTC minute samples starting at the EC2 launch minute. EBS latencies weighted by completed operations.",
+        "volume": {
+          "sizeGiB": 32,
+          "type": "gp3",
+          "iops": 3000,
+          "throughput": 125,
+          "snapshot": "snap-04fcefda1cfb0efec",
+          "fastRestored": null,
+          "encrypted": true
+        },
+        "readOps": 11899,
+        "writeOps": 15905,
+        "readBytes": 555809280,
+        "writeBytes": 1950736896,
+        "averageReadMs": 11.62,
+        "averageWriteMs": 2.015,
+        "registry": {
+          "run": "warm",
+          "approximateBlobWindowMs": 695.362,
+          "responses": [
+            {
+              "digest": "sha256:52225fb6c367b6637a2fb76646b57c2e2c5df6416b7338803bb7ee96f14e516c",
+              "method": "GET",
+              "status": 200,
+              "bytes": 12610,
+              "durationMs": 0.361608,
+              "completedMs": 1795011564393
+            },
+            {
+              "digest": "sha256:0d4da1c38cd39a1dd115e9a6c26965a439c65b03d482b5fa7a24467582eadd75",
+              "method": "GET",
+              "status": 200,
+              "bytes": 13625081,
+              "durationMs": 55.228342,
+              "completedMs": 1795011564484
+            },
+            {
+              "digest": "sha256:46582ab21e581185bcda42d697491712772255e88fab186407e7cb91e2de7cb8",
+              "method": "GET",
+              "status": 200,
+              "bytes": 134,
+              "durationMs": 0.26254,
+              "completedMs": 1795011564500
+            },
+            {
+              "digest": "sha256:aefaabaf638518e8b604909cefaa93ca74a37d8fc7378bfb6303aa08dec1899c",
+              "method": "GET",
+              "status": 200,
+              "bytes": 408,
+              "durationMs": 0.260154,
+              "completedMs": 1795011564579
+            },
+            {
+              "digest": "sha256:4b3ffd8ccb5201a0fc03585952effb4ed2d1ea5e704d2e7330212fb8b16c86a3",
+              "method": "GET",
+              "status": 200,
+              "bytes": 29723147,
+              "durationMs": 101.023728,
+              "completedMs": 1795011564610
+            },
+            {
+              "digest": "sha256:256a6e01082ab012dfbb83b600c2a755d9ab2215c6b5b10205ae42f5afb91995",
+              "method": "GET",
+              "status": 200,
+              "bytes": 1298,
+              "durationMs": 0.282818,
+              "completedMs": 1795011564627
+            },
+            {
+              "digest": "sha256:1f9b59bb58bf8b81b14773ac0013295f06642cd0fe66c76f7f98fa16af482bf6",
+              "method": "GET",
+              "status": 200,
+              "bytes": 224,
+              "durationMs": 0.28832,
+              "completedMs": 1795011564639
+            },
+            {
+              "digest": "sha256:2a414139e6b03ffff1afe71b264b79ae9061b16c0b0f2d07e69712c681ed34f9",
+              "method": "GET",
+              "status": 200,
+              "bytes": 233,
+              "durationMs": 0.308034,
+              "completedMs": 1795011564650
+            },
+            {
+              "digest": "sha256:3240e01dfa65b6a1136770fa7ed2079aae74d894a4f0f9f810db8607e399f440",
+              "method": "GET",
+              "status": 200,
+              "bytes": 7477,
+              "durationMs": 0.467997,
+              "completedMs": 1795011564666
+            },
+            {
+              "digest": "sha256:beede58b20ed694598d02a6189af26ae2f6bf2ddd8e643cf4c34576dad493624",
+              "method": "GET",
+              "status": 200,
+              "bytes": 167,
+              "durationMs": 0.38783,
+              "completedMs": 1795011564680
+            },
+            {
+              "digest": "sha256:0497118c0496c2dc2454b4a81eb979ea4d46e0556c75187a7cd79a06db653ead",
+              "method": "GET",
+              "status": 200,
+              "bytes": 74423140,
+              "durationMs": 322.299443,
+              "completedMs": 1795011564978
+            },
+            {
+              "digest": "sha256:a3da54c918e017f446356e02e3e6f4306e8860575da12fd00af90b3ed9227476",
+              "method": "GET",
+              "status": 200,
+              "bytes": 161819539,
+              "durationMs": 647.570247,
+              "completedMs": 1795011565088
+            }
+          ]
+        },
+        "metrics": {
+          "volumereadbytes": {
+            "2026-11-18T14:18:00+00:00": 53880832.0,
+            "2026-11-18T14:19:00+00:00": 424616448.0,
+            "2026-11-18T14:20:00+00:00": 77312000.0,
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0
+          },
+          "volumewritebytes": {
+            "2026-11-18T14:18:00+00:00": 3072.0,
+            "2026-11-18T14:19:00+00:00": 546416128.0,
+            "2026-11-18T14:20:00+00:00": 1404051456.0,
+            "2026-11-18T14:21:00+00:00": 253952.0,
+            "2026-11-18T14:22:00+00:00": 12288.0,
+            "2026-11-18T14:23:00+00:00": 0.0
+          },
+          "volumereadops": {
+            "2026-11-18T14:18:00+00:00": 1451.0,
+            "2026-11-18T14:19:00+00:00": 8314.0,
+            "2026-11-18T14:20:00+00:00": 2134.0,
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0
+          },
+          "volumewriteops": {
+            "2026-11-18T14:18:00+00:00": 3.0,
+            "2026-11-18T14:19:00+00:00": 4628.0,
+            "2026-11-18T14:20:00+00:00": 11236.0,
+            "2026-11-18T14:21:00+00:00": 35.0,
+            "2026-11-18T14:22:00+00:00": 3.0,
+            "2026-11-18T14:23:00+00:00": 0.0
+          },
+          "volumetotalreadtime": {
+            "2026-11-18T14:18:00+00:00": 13.021418,
+            "2026-11-18T14:19:00+00:00": 105.221406,
+            "2026-11-18T14:20:00+00:00": 20.029134,
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0
+          },
+          "volumetotalwritetime": {
+            "2026-11-18T14:18:00+00:00": 0.001983,
+            "2026-11-18T14:19:00+00:00": 11.365994,
+            "2026-11-18T14:20:00+00:00": 20.637063,
+            "2026-11-18T14:21:00+00:00": 0.037587,
+            "2026-11-18T14:22:00+00:00": 0.002434,
+            "2026-11-18T14:23:00+00:00": 0.0
+          },
+          "volumequeuelength": {
+            "2026-11-18T14:18:00+00:00": 0.9345703125,
+            "2026-11-18T14:19:00+00:00": 1.9423828125,
+            "2026-11-18T14:20:00+00:00": 0.6884765625,
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0
+          },
+          "volumeiopsexceededcheck": {
+            "2026-11-18T14:18:00+00:00": 0.0,
+            "2026-11-18T14:19:00+00:00": 0.0,
+            "2026-11-18T14:20:00+00:00": 0.0,
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0
+          },
+          "volumethroughputexceededcheck": {
+            "2026-11-18T14:18:00+00:00": 0.0,
+            "2026-11-18T14:19:00+00:00": 0.0,
+            "2026-11-18T14:20:00+00:00": 1.0,
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0
+          },
+          "volumestallediocheck": {
+            "2026-11-18T14:18:00+00:00": 0.0,
+            "2026-11-18T14:19:00+00:00": 0.0,
+            "2026-11-18T14:20:00+00:00": 0.0,
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0
+          },
+          "instanceebsiopsexceededcheck": {
+            "2026-11-18T14:18:00+00:00": 0.0,
+            "2026-11-18T14:19:00+00:00": 0.0,
+            "2026-11-18T14:20:00+00:00": 0.0,
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0
+          },
+          "instanceebsthroughputexceededcheck": {
+            "2026-11-18T14:18:00+00:00": 0.0,
+            "2026-11-18T14:19:00+00:00": 0.0,
+            "2026-11-18T14:20:00+00:00": 0.0,
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0
+          },
+          "cpuutilization": {
+            "2026-11-18T14:18:00+00:00": 1.490349711243476
+          },
+          "networkin": {
+            "2026-11-18T14:18:00+00:00": 282265414.0
+          },
+          "networkout": {
+            "2026-11-18T14:18:00+00:00": 339789.0
+          }
+        },
+        "launchToFirstLayerMs": 55392.638
+      },
+      "rootInitializationSamples": [
+        {
+          "observedAt": "2026-11-18T14:18:50Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T14:19:31Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T14:20:12Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T14:20:53Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T14:21:34Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T14:22:15Z",
+          "initialization": "initializing"
+        }
+      ],
+      "beforeCache": {
+        "effective": {
+          "version": 18,
+          "enabled": true,
+          "storagePath": "/var/lib/shiftbox-registry-cache/timing-bind-warm-ide-bind-20261118",
+          "maxBytes": "15032385536",
+          "volumeHighPercent": 80,
+          "volumeLowPercent": 70
+        },
+        "activation": {
+          "phase": "ready"
+        },
+        "usage": {
+          "retainedBytes": "279619568",
+          "retiredBytes": "0",
+          "activeTransfers": 0,
+          "observedAt": "2026-11-18T14:18:26.861722093Z"
+        },
+        "effectiveness": {
+          "windowStartedAt": "2026-11-18T14:15:51.283401408Z",
+          "windowEndedAt": "2026-11-18T14:18:26.861722093Z",
+          "cachedBytes": "0",
+          "upstreamBytes": "279613458",
+          "metadataBytes": "4179",
+          "streamedBytes": "0"
+        }
+      },
+      "afterCache": {
+        "effective": {
+          "version": 18,
+          "enabled": true,
+          "storagePath": "/var/lib/shiftbox-registry-cache/timing-bind-warm-ide-bind-20261118",
+          "maxBytes": "15032385536",
+          "volumeHighPercent": 80,
+          "volumeLowPercent": 70
+        },
+        "activation": {
+          "phase": "ready"
+        },
+        "usage": {
+          "retainedBytes": "279619568",
+          "retiredBytes": "0",
+          "activeTransfers": 0,
+          "observedAt": "2026-11-18T14:20:29.290299489Z"
+        },
+        "effectiveness": {
+          "windowStartedAt": "2026-11-18T14:15:51.283401408Z",
+          "windowEndedAt": "2026-11-18T14:20:29.290299489Z",
+          "cachedBytes": "279613458",
+          "upstreamBytes": "279613458",
+          "metadataBytes": "5788",
+          "streamedBytes": "0"
+        }
+      },
+      "payloadAndMetadataBytes": {
+        "cachedBytes": 279613458,
+        "upstreamBytes": 0,
+        "metadataBytes": 1609,
+        "streamedBytes": 0
+      }
+    },
+    "cold": {
+      "identity": {
+        "instance": "i-0c3c6a0319884d97d",
+        "image": "ami-02d5a6f7ec323dc39",
+        "state": "running",
+        "workspace": "d36765b6-d1b4-45f6-b175-7f3c005b99e5",
+        "operation": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+        "root": "vol-052ac3b4811369acb",
+        "launchedAt": "2026-11-18T14:20:44+00:00",
+        "type": "m6i.xlarge",
+        "zone": "us-east-2a",
+        "public": false,
+        "role": false
+      },
+      "controller": {
+        "id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+        "workspaceId": "d36765b6-d1b4-45f6-b175-7f3c005b99e5",
+        "status": "succeeded",
+        "createdAt": "2026-11-18T14:20:42.875033215Z",
+        "startedAt": "2026-11-18T14:20:43.264183732Z",
+        "finishedAt": "2026-11-18T14:22:30.039441831Z",
+        "steps": {
+          "provision": {
+            "activeAt": "2026-11-18T14:20:43.271476946Z",
+            "succeededAt": "2026-11-18T14:20:48.823470657Z",
+            "durationMs": 5551.994
+          },
+          "enroll": {
+            "activeAt": "2026-11-18T14:20:48.838439633Z",
+            "succeededAt": "2026-11-18T14:21:23.473105842Z",
+            "durationMs": 34634.666
+          },
+          "configure": {
+            "activeAt": "2026-11-18T14:21:24.270127158Z",
+            "succeededAt": "2026-11-18T14:22:26.29348097Z",
+            "durationMs": 62023.353
+          },
+          "verify_ide": {
+            "activeAt": "2026-11-18T14:22:27.276457045Z",
+            "succeededAt": "2026-11-18T14:22:30.011776666Z",
+            "durationMs": 2735.319
+          },
+          "finish_setup": {
+            "activeAt": "2026-11-18T14:22:30.032026121Z",
+            "succeededAt": "2026-11-18T14:22:30.03944068Z",
+            "durationMs": 7.414
+          }
+        },
+        "eventCount": 311,
+        "durationMs": 107164.408
+      },
+      "guestTiming": {
+        "complete": true,
+        "exporter_ready": true,
+        "events": [
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "repository_preparation",
+            "duration_ms": 3014,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011687474291
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "image_config_read",
+            "duration_ms": 13607,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011701087330
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "image_prefetch_pull",
+            "duration_ms": 6810,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011707898048
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "image_prepare",
+            "duration_ms": 20418,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011707898048
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "docker_image_build",
+            "duration_ms": 16502,
+            "outcome": "observed",
+            "journal_time_us": 1795011734035806
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "docker_container_ready",
+            "duration_ms": 1629,
+            "outcome": "observed",
+            "journal_time_us": 1795011735667808
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "devcontainer_up",
+            "duration_ms": 27949,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011735847274
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "docker_image_build",
+            "duration_ms": 339,
+            "outcome": "observed",
+            "journal_time_us": 1795011737001634
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "docker_container_ready",
+            "duration_ms": 178,
+            "outcome": "observed",
+            "journal_time_us": 1795011737181692
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "devcontainer_up",
+            "duration_ms": 1158,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011737358680
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "retained_home",
+            "duration_ms": 1588,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011737435878
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "project_permissions",
+            "duration_ms": 56,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011737492825
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "required_hooks",
+            "duration_ms": 5428,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011742921038
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "ide_mount",
+            "duration_ms": 16,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011742937893
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "ide_start",
+            "duration_ms": 2935,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011745873358
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "browser_ide_start",
+            "duration_ms": 2952,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011745873911
+          },
+          {
+            "operation_id": "8ba513c9-be8c-4b10-9e10-09aa092c1ee0",
+            "phase": "remaining_hooks",
+            "duration_ms": 305,
+            "outcome": "succeeded",
+            "journal_time_us": 1795011746243826
+          }
+        ]
+      },
+      "performance": {
+        "source": "Six UTC minute samples starting at the EC2 launch minute. EBS latencies weighted by completed operations.",
+        "volume": {
+          "sizeGiB": 32,
+          "type": "gp3",
+          "iops": 3000,
+          "throughput": 125,
+          "snapshot": "snap-04fcefda1cfb0efec",
+          "fastRestored": null,
+          "encrypted": true
+        },
+        "readOps": 13377,
+        "writeOps": 16719,
+        "readBytes": 664877568,
+        "writeBytes": 1958859264,
+        "averageReadMs": 10.231,
+        "averageWriteMs": 1.799,
+        "registry": {
+          "run": "cold",
+          "approximateBlobWindowMs": 2381.837,
+          "responses": [
+            {
+              "digest": "sha256:52225fb6c367b6637a2fb76646b57c2e2c5df6416b7338803bb7ee96f14e516c",
+              "method": "GET",
+              "status": 200,
+              "bytes": 12610,
+              "durationMs": 118.837398,
+              "completedMs": 1795011701490
+            },
+            {
+              "digest": "sha256:aefaabaf638518e8b604909cefaa93ca74a37d8fc7378bfb6303aa08dec1899c",
+              "method": "GET",
+              "status": 200,
+              "bytes": 408,
+              "durationMs": 136.28526,
+              "completedMs": 1795011701771
+            },
+            {
+              "digest": "sha256:256a6e01082ab012dfbb83b600c2a755d9ab2215c6b5b10205ae42f5afb91995",
+              "method": "GET",
+              "status": 200,
+              "bytes": 1298,
+              "durationMs": 39.680337,
+              "completedMs": 1795011701819
+            },
+            {
+              "digest": "sha256:1f9b59bb58bf8b81b14773ac0013295f06642cd0fe66c76f7f98fa16af482bf6",
+              "method": "GET",
+              "status": 200,
+              "bytes": 224,
+              "durationMs": 42.318826,
+              "completedMs": 1795011701874
+            },
+            {
+              "digest": "sha256:0d4da1c38cd39a1dd115e9a6c26965a439c65b03d482b5fa7a24467582eadd75",
+              "method": "GET",
+              "status": 200,
+              "bytes": 13625081,
+              "durationMs": 341.67333,
+              "completedMs": 1795011702243
+            },
+            {
+              "digest": "sha256:4b3ffd8ccb5201a0fc03585952effb4ed2d1ea5e704d2e7330212fb8b16c86a3",
+              "method": "GET",
+              "status": 200,
+              "bytes": 29723147,
+              "durationMs": 652.245953,
+              "completedMs": 1795011702308
+            },
+            {
+              "digest": "sha256:46582ab21e581185bcda42d697491712772255e88fab186407e7cb91e2de7cb8",
+              "method": "GET",
+              "status": 200,
+              "bytes": 134,
+              "durationMs": 47.624705,
+              "completedMs": 1795011702373
+            },
+            {
+              "digest": "sha256:2a414139e6b03ffff1afe71b264b79ae9061b16c0b0f2d07e69712c681ed34f9",
+              "method": "GET",
+              "status": 200,
+              "bytes": 233,
+              "durationMs": 44.801017,
+              "completedMs": 1795011702450
+            },
+            {
+              "digest": "sha256:beede58b20ed694598d02a6189af26ae2f6bf2ddd8e643cf4c34576dad493624",
+              "method": "GET",
+              "status": 200,
+              "bytes": 167,
+              "durationMs": 59.933441,
+              "completedMs": 1795011702586
+            },
+            {
+              "digest": "sha256:3240e01dfa65b6a1136770fa7ed2079aae74d894a4f0f9f810db8607e399f440",
+              "method": "GET",
+              "status": 200,
+              "bytes": 7477,
+              "durationMs": 63.294765,
+              "completedMs": 1795011702706
+            },
+            {
+              "digest": "sha256:0497118c0496c2dc2454b4a81eb979ea4d46e0556c75187a7cd79a06db653ead",
+              "method": "GET",
+              "status": 200,
+              "bytes": 74423140,
+              "durationMs": 1170.027657,
+              "completedMs": 1795011703514
+            },
+            {
+              "digest": "sha256:a3da54c918e017f446356e02e3e6f4306e8860575da12fd00af90b3ed9227476",
+              "method": "GET",
+              "status": 200,
+              "bytes": 161819539,
+              "durationMs": 2109.996775,
+              "completedMs": 1795011703753
+            }
+          ]
+        },
+        "metrics": {
+          "volumereadbytes": {
+            "2026-11-18T14:21:00+00:00": 277375488.0,
+            "2026-11-18T14:22:00+00:00": 273723392.0,
+            "2026-11-18T14:23:00+00:00": 5251072.0,
+            "2026-11-18T14:24:00+00:00": 108527616.0,
+            "2026-11-18T14:25:00+00:00": 0.0
+          },
+          "volumewritebytes": {
+            "2026-11-18T14:21:00+00:00": 10674688.0,
+            "2026-11-18T14:22:00+00:00": 1936044032.0,
+            "2026-11-18T14:23:00+00:00": 6631424.0,
+            "2026-11-18T14:24:00+00:00": 4628480.0,
+            "2026-11-18T14:25:00+00:00": 880640.0
+          },
+          "volumereadops": {
+            "2026-11-18T14:21:00+00:00": 6869.0,
+            "2026-11-18T14:22:00+00:00": 4497.0,
+            "2026-11-18T14:23:00+00:00": 445.0,
+            "2026-11-18T14:24:00+00:00": 1566.0,
+            "2026-11-18T14:25:00+00:00": 0.0
+          },
+          "volumewriteops": {
+            "2026-11-18T14:21:00+00:00": 214.0,
+            "2026-11-18T14:22:00+00:00": 16008.0,
+            "2026-11-18T14:23:00+00:00": 195.0,
+            "2026-11-18T14:24:00+00:00": 216.0,
+            "2026-11-18T14:25:00+00:00": 86.0
+          },
+          "volumetotalreadtime": {
+            "2026-11-18T14:21:00+00:00": 88.416343,
+            "2026-11-18T14:22:00+00:00": 39.213722,
+            "2026-11-18T14:23:00+00:00": 3.296014,
+            "2026-11-18T14:24:00+00:00": 5.933446,
+            "2026-11-18T14:25:00+00:00": 0.0
+          },
+          "volumetotalwritetime": {
+            "2026-11-18T14:21:00+00:00": 0.258924,
+            "2026-11-18T14:22:00+00:00": 29.313098,
+            "2026-11-18T14:23:00+00:00": 0.213421,
+            "2026-11-18T14:24:00+00:00": 0.216611,
+            "2026-11-18T14:25:00+00:00": 0.077802
+          },
+          "volumequeuelength": {
+            "2026-11-18T14:21:00+00:00": 2.138671875,
+            "2026-11-18T14:22:00+00:00": 1.1396484375,
+            "2026-11-18T14:23:00+00:00": 0.05859375,
+            "2026-11-18T14:24:00+00:00": 0.1015625,
+            "2026-11-18T14:25:00+00:00": 0.0009765625
+          },
+          "volumeiopsexceededcheck": {
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0,
+            "2026-11-18T14:24:00+00:00": 0.0,
+            "2026-11-18T14:25:00+00:00": 0.0
+          },
+          "volumethroughputexceededcheck": {
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 1.0,
+            "2026-11-18T14:23:00+00:00": 0.0,
+            "2026-11-18T14:24:00+00:00": 0.0,
+            "2026-11-18T14:25:00+00:00": 0.0
+          },
+          "volumestallediocheck": {
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0,
+            "2026-11-18T14:24:00+00:00": 0.0,
+            "2026-11-18T14:25:00+00:00": 0.0
+          },
+          "instanceebsiopsexceededcheck": {
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0,
+            "2026-11-18T14:24:00+00:00": 0.0,
+            "2026-11-18T14:25:00+00:00": 0.0
+          },
+          "instanceebsthroughputexceededcheck": {
+            "2026-11-18T14:21:00+00:00": 0.0,
+            "2026-11-18T14:22:00+00:00": 0.0,
+            "2026-11-18T14:23:00+00:00": 0.0,
+            "2026-11-18T14:24:00+00:00": 0.0,
+            "2026-11-18T14:25:00+00:00": 0.0
+          },
+          "cpuutilization": {
+            "2026-11-18T14:20:00+00:00": 3.252122270050954,
+            "2026-11-18T14:25:00+00:00": 0.4872351076255632
+          },
+          "networkin": {
+            "2026-11-18T14:20:00+00:00": 282767746.0,
+            "2026-11-18T14:25:00+00:00": 33011.0
+          },
+          "networkout": {
+            "2026-11-18T14:20:00+00:00": 9966650.0,
+            "2026-11-18T14:25:00+00:00": 31164.0
+          }
+        },
+        "launchToFirstLayerMs": 57371.163
+      },
+      "rootInitializationSamples": [
+        {
+          "observedAt": "2026-11-18T14:21:14Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T14:21:55Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T14:22:36Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T14:23:16Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T14:23:57Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T14:24:38Z",
+          "initialization": "initializing"
+        }
+      ],
+      "beforeCache": {
+        "effective": {
+          "version": 19,
+          "enabled": true,
+          "storagePath": "/var/lib/shiftbox-registry-cache/timing-bind-cold-ide-bind-20261118",
+          "maxBytes": "15032385536",
+          "volumeHighPercent": 80,
+          "volumeLowPercent": 70
+        },
+        "activation": {
+          "phase": "ready"
+        },
+        "usage": {
+          "retainedBytes": "279619568",
+          "retiredBytes": "279619568",
+          "activeTransfers": 0,
+          "observedAt": "2026-11-18T14:20:41.78296039Z"
+        },
+        "effectiveness": {
+          "windowStartedAt": "2026-11-18T14:20:41.286212951Z",
+          "windowEndedAt": "2026-11-18T14:20:41.78296039Z",
+          "cachedBytes": "0",
+          "upstreamBytes": "0",
+          "metadataBytes": "0",
+          "streamedBytes": "0"
+        }
+      },
+      "afterCache": {
+        "effective": {
+          "version": 19,
+          "enabled": true,
+          "storagePath": "/var/lib/shiftbox-registry-cache/timing-bind-cold-ide-bind-20261118",
+          "maxBytes": "15032385536",
+          "volumeHighPercent": 80,
+          "volumeLowPercent": 70
+        },
+        "activation": {
+          "phase": "ready"
+        },
+        "usage": {
+          "retainedBytes": "559239136",
+          "retiredBytes": "279619568",
+          "activeTransfers": 0,
+          "observedAt": "2026-11-18T14:22:46.993854787Z"
+        },
+        "effectiveness": {
+          "windowStartedAt": "2026-11-18T14:20:41.286212951Z",
+          "windowEndedAt": "2026-11-18T14:22:46.993854787Z",
+          "cachedBytes": "0",
+          "upstreamBytes": "279613458",
+          "metadataBytes": "4179",
+          "streamedBytes": "0"
+        }
+      },
+      "payloadAndMetadataBytes": {
+        "cachedBytes": 0,
+        "upstreamBytes": 279613458,
+        "metadataBytes": 4179,
+        "streamedBytes": 0
+      }
+    }
+  }
+}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/auth"
+	"github.com/jflatten/ShiftBox/internal/imagecache"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
@@ -152,9 +153,14 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 					}
 				}
 			}
+			freshness, err := imagecache.ReadWorkspaceFreshness(ctx, tx, view.ID, view.Generation)
+			if err != nil {
+				return nil, err
+			}
 			// Expose the current entry decision without issuing a grant.
 			response := struct {
 				workspaceView
+				ImageCache               *imagecache.WorkspaceFreshness  `json:"imageCache,omitempty"`
 				Probes                   []workspace.ProbeResult         `json:"probes"`
 				CanOpenIDE               bool                            `json:"canOpenIde"`
 				CanOpenRepair            bool                            `json:"canOpenRepair"`
@@ -173,6 +179,7 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 				Maintenance              *workspace.WorkspaceMaintenance `json:"maintenance,omitempty"`
 			}{
 				workspaceView: view,
+				ImageCache:    freshness,
 				Probes:        probes,
 				CanOpenIDE:    auth.Authorize(principal, entry.Action, entry.Resource, entry.Grants, now()).Allowed,
 				CanOpenRepair: auth.Authorize(principal, repairEntry.Action, repairEntry.Resource, repairEntry.Grants, now()).Allowed,

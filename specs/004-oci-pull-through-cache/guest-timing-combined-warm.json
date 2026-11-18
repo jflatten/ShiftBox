@@ -1,0 +1,268 @@
+{
+  "amiName": "shiftbox-platform-2026111806-2c81a3e8-4a14-4057-b7b0-3e2f5e3c8788",
+  "identity": {
+    "instance": "i-0549d63b6d7dc574e",
+    "image": "ami-06f90d2cfd6790183",
+    "state": "running",
+    "workspace": "1d82e231-6cc5-4229-a483-f090f6fb8ba7",
+    "operation": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+    "root": "vol-04f85c55e0f8b43f8",
+    "launchedAt": "2026-11-18T15:20:51+00:00",
+    "type": "m6i.xlarge",
+    "zone": "us-east-2a",
+    "public": false,
+    "role": false
+  },
+  "fixture": {
+    "repository": "https://github.com/jflatten/shiftbox-mvp-fixture",
+    "commit": "dcbb326d75969861ca689b15d3f67ae37818b588",
+    "configuration": ".devcontainer/devcontainer.json",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+    "amd64Manifest": "sha256:3612b800eaae8513e7dca54f21d2e4eda48eda57426f3746a78677f342ac7ee9"
+  },
+  "guestAgentSHA256": "661adeffe29a56f3ab5147c75bc1e26fc9d91958b534d6fcf0c920a752e0aeea",
+  "controllerRevision": "shiftbox-demo-controller:29",
+  "launchRequest": {
+    "ami": "ami-06f90d2cfd6790183",
+    "instanceType": "m6i.xlarge",
+    "root": [
+      {
+        "deviceName": "/dev/sda1",
+        "volumeType": "gp3",
+        "sizeGiB": 32,
+        "initializationMiBps": 300
+      }
+    ]
+  },
+  "controller": {
+    "createdAt": "2026-11-18T15:20:49.734024941Z",
+    "verifiedAt": "2026-11-18T15:21:47.77553304Z",
+    "signalToVerifiedIDES": 58.041509,
+    "steps": {
+      "provision": {
+        "activeAt": "2026-11-18T15:20:50.364750319Z",
+        "succeededAt": "2026-11-18T15:20:55.968137897Z",
+        "durationS": 5.603387
+      },
+      "enroll": {
+        "activeAt": "2026-11-18T15:20:55.987239275Z",
+        "succeededAt": "2026-11-18T15:21:21.544848471Z",
+        "durationS": 25.557609
+      },
+      "configure": {
+        "activeAt": "2026-11-18T15:21:22.367226966Z",
+        "succeededAt": "2026-11-18T15:21:46.379163966Z",
+        "durationS": 24.011937
+      },
+      "verify_ide": {
+        "activeAt": "2026-11-18T15:21:47.36971923Z",
+        "succeededAt": "2026-11-18T15:21:47.77553304Z",
+        "durationS": 0.405814
+      }
+    }
+  },
+  "guestTiming": {
+    "complete": true,
+    "exporter_ready": true,
+    "events": [
+      {
+        "operation_id": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+        "phase": "repository_preparation",
+        "duration_ms": 963,
+        "outcome": "succeeded",
+        "journal_time_us": 1795015284102060
+      },
+      {
+        "operation_id": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+        "phase": "image_prepare",
+        "duration_ms": 6460,
+        "outcome": "succeeded",
+        "journal_time_us": 1795015290566974
+      },
+      {
+        "operation_id": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+        "phase": "docker_container_ready",
+        "duration_ms": 5228,
+        "outcome": "observed",
+        "journal_time_us": 1795015297071373
+      },
+      {
+        "operation_id": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+        "phase": "devcontainer_up",
+        "duration_ms": 6691,
+        "outcome": "succeeded",
+        "journal_time_us": 1795015297259014
+      },
+      {
+        "operation_id": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+        "phase": "docker_container_ready",
+        "duration_ms": 145,
+        "outcome": "observed",
+        "journal_time_us": 1795015298185709
+      },
+      {
+        "operation_id": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+        "phase": "devcontainer_up",
+        "duration_ms": 750,
+        "outcome": "succeeded",
+        "journal_time_us": 1795015298363669
+      },
+      {
+        "operation_id": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+        "phase": "retained_home",
+        "duration_ms": 1181,
+        "outcome": "succeeded",
+        "journal_time_us": 1795015298440863
+      },
+      {
+        "operation_id": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+        "phase": "project_permissions",
+        "duration_ms": 55,
+        "outcome": "succeeded",
+        "journal_time_us": 1795015298496828
+      },
+      {
+        "operation_id": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+        "phase": "required_hooks",
+        "duration_ms": 5449,
+        "outcome": "succeeded",
+        "journal_time_us": 1795015303946010
+      },
+      {
+        "operation_id": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+        "phase": "ide_mount",
+        "duration_ms": 18,
+        "outcome": "succeeded",
+        "journal_time_us": 1795015303964895
+      },
+      {
+        "operation_id": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+        "phase": "ide_start",
+        "duration_ms": 1465,
+        "outcome": "succeeded",
+        "journal_time_us": 1795015305430772
+      },
+      {
+        "operation_id": "adb4d52e-4c2b-4e2c-a4bc-7f58fdf0a888",
+        "phase": "remaining_hooks",
+        "duration_ms": 321,
+        "outcome": "succeeded",
+        "journal_time_us": 1795015305794764
+      }
+    ]
+  },
+  "layerResponses": {
+    "run": "warm",
+    "approximateBlobWindowMs": 749.354,
+    "responses": [
+      {
+        "digest": "sha256:52225fb6c367b6637a2fb76646b57c2e2c5df6416b7338803bb7ee96f14e516c",
+        "method": "GET",
+        "status": 200,
+        "bytes": 12610,
+        "durationMs": 0.353829,
+        "completedMs": 1795015284571
+      },
+      {
+        "digest": "sha256:aefaabaf638518e8b604909cefaa93ca74a37d8fc7378bfb6303aa08dec1899c",
+        "method": "GET",
+        "status": 200,
+        "bytes": 408,
+        "durationMs": 0.349647,
+        "completedMs": 1795015284625
+      },
+      {
+        "digest": "sha256:46582ab21e581185bcda42d697491712772255e88fab186407e7cb91e2de7cb8",
+        "method": "GET",
+        "status": 200,
+        "bytes": 134,
+        "durationMs": 0.258691,
+        "completedMs": 1795015284730
+      },
+      {
+        "digest": "sha256:2a414139e6b03ffff1afe71b264b79ae9061b16c0b0f2d07e69712c681ed34f9",
+        "method": "GET",
+        "status": 200,
+        "bytes": 233,
+        "durationMs": 0.283005,
+        "completedMs": 1795015284744
+      },
+      {
+        "digest": "sha256:4b3ffd8ccb5201a0fc03585952effb4ed2d1ea5e704d2e7330212fb8b16c86a3",
+        "method": "GET",
+        "status": 200,
+        "bytes": 29723147,
+        "durationMs": 132.205129,
+        "completedMs": 1795015284767
+      },
+      {
+        "digest": "sha256:0d4da1c38cd39a1dd115e9a6c26965a439c65b03d482b5fa7a24467582eadd75",
+        "method": "GET",
+        "status": 200,
+        "bytes": 13625081,
+        "durationMs": 53.26745,
+        "completedMs": 1795015284810
+      },
+      {
+        "digest": "sha256:256a6e01082ab012dfbb83b600c2a755d9ab2215c6b5b10205ae42f5afb91995",
+        "method": "GET",
+        "status": 200,
+        "bytes": 1298,
+        "durationMs": 0.417119,
+        "completedMs": 1795015284828
+      },
+      {
+        "digest": "sha256:1f9b59bb58bf8b81b14773ac0013295f06642cd0fe66c76f7f98fa16af482bf6",
+        "method": "GET",
+        "status": 200,
+        "bytes": 224,
+        "durationMs": 0.356058,
+        "completedMs": 1795015284837
+      },
+      {
+        "digest": "sha256:3240e01dfa65b6a1136770fa7ed2079aae74d894a4f0f9f810db8607e399f440",
+        "method": "GET",
+        "status": 200,
+        "bytes": 7477,
+        "durationMs": 0.335917,
+        "completedMs": 1795015284846
+      },
+      {
+        "digest": "sha256:beede58b20ed694598d02a6189af26ae2f6bf2ddd8e643cf4c34576dad493624",
+        "method": "GET",
+        "status": 200,
+        "bytes": 167,
+        "durationMs": 0.325839,
+        "completedMs": 1795015284869
+      },
+      {
+        "digest": "sha256:0497118c0496c2dc2454b4a81eb979ea4d46e0556c75187a7cd79a06db653ead",
+        "method": "GET",
+        "status": 200,
+        "bytes": 74423140,
+        "durationMs": 359.509729,
+        "completedMs": 1795015285153
+      },
+      {
+        "digest": "sha256:a3da54c918e017f446356e02e3e6f4306e8860575da12fd00af90b3ed9227476",
+        "method": "GET",
+        "status": 200,
+        "bytes": 161819539,
+        "durationMs": 711.541911,
+        "completedMs": 1795015285320
+      }
+    ]
+  },
+  "payloadBytes": {
+    "cache": 279613458,
+    "upstream": 0,
+    "upstreamMetadata": 1609
+  },
+  "browser": {
+    "openIDEButtonObservedAtUnixMs": 1795015308192,
+    "workbenchTitle": "Welcome \u2014 project \u2014 code-server",
+    "explorerVisible": true,
+    "firstUsableRenderTime": null
+  },
+  "previousWarmControllerSignalToVerifiedIDES": 115.706607
+}

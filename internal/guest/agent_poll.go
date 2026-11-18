@@ -130,6 +130,13 @@ func pollAgent(ctx context.Context, client *http.Client, endpoint string, input 
 	if probes != nil {
 		probes.enabled = result.DesiredState == "running" && response.Header.Get(ProbeReportsHeader) == "1"
 	}
+	if runtime.applyImageCache != nil {
+		mode := response.Header.Get(ImageCacheOfferHeader)
+		if err := runtime.applyImageCache(mode); err != nil {
+			return 0, err
+		}
+		runtime.imageCache = mode != ""
+	}
 	if err := applyGuestPoll(ctx, journal, runtime, result.Generation, result.DesiredState, result.Operation); err != nil {
 		return 0, err
 	}
@@ -314,6 +321,7 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 	}
 	project := filepath.Join(stateDir, "project")
 	runtime := devContainer{workspace: project, credentials: secretSocket != "", ide: true, retainHome: true,
+		applyImageCache: func(mode string) error { return updateImageCache(stateDir, identity.PollEndpoint, mode) },
 		repairImageFile: "/usr/local/share/shiftbox/repair-image", repairSocketDir: repairDirectory, repository: &repositoryPreparation{
 			project: project,
 			token: func(ctx context.Context) (string, error) {

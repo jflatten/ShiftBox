@@ -46,6 +46,7 @@ type Config struct {
 type Image struct {
 	ID, RootDeviceName, SnapshotID, Architecture   string
 	Artifact, ReleaseID, SourceAMI, SourceRevision string
+	CreationDate                                   string
 	SingleBoot                                     bool
 }
 
@@ -209,7 +210,7 @@ func (p *Provider) InspectImage(ctx context.Context, imageID string) (Image, err
 	tags := tagValues(image.Tags)
 	return Image{ID: imageID, Architecture: platformArchitecture(string(image.Architecture)), RootDeviceName: root, SnapshotID: aws.ToString(rootDisk.SnapshotId),
 		Artifact: tags[tagArtifact], ReleaseID: tags[tagRelease], SourceAMI: tags["ShiftBoxSourceAMI"],
-		SourceRevision: tags["ShiftBoxSourceCommit"]}, nil
+		SourceRevision: tags["ShiftBoxSourceCommit"], CreationDate: aws.ToString(image.CreationDate)}, nil
 }
 
 func apiError(err error) error {

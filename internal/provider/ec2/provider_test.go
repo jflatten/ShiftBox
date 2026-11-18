@@ -246,3 +246,13 @@ func TestInspectImageAllowsCanonicalVirtualMappings(t *testing.T) {
 func (m *lostLaunchAPI) DescribeImages(context.Context, *api.DescribeImagesInput, ...func(*api.Options)) (*api.DescribeImagesOutput, error) {
 	return &api.DescribeImagesOutput{Images: []types.Image{m.image}}, nil
 }
+
+// TestWorkspaceRootInitialization checks the requested hydration rate when a
+// fresh workspace boots from its platform AMI snapshot.
+func TestWorkspaceRootInitialization(t *testing.T) {
+	p := &Provider{}
+	input := p.launchInput(provider.CreateRequest{}, Image{RootDeviceName: "/dev/sda1"})
+	if got := aws.ToInt32(input.BlockDeviceMappings[0].Ebs.VolumeInitializationRate); got != 300 {
+		t.Errorf("launchInput(root).VolumeInitializationRate = %d, want 300 MiB/s", got)
+	}
+}

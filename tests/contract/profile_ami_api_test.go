@@ -132,4 +132,82 @@ func TestEC2ProfileImageAdmission(t *testing.T) {
 		len(choices.PlatformImages) != 2 || choices.PlatformImages[0].Architecture != "amd64" || choices.PlatformImages[0].AMIID != "ami-image-a" || choices.PlatformImages[0].MinimumDiskGiB != 32 {
 		t.Errorf("AMI catalog=%+v (%v), status=%d; want verified image facts and only the bound profile", choices, err, response.Code)
 	}
+
+	// A family profile keeps its saved selection while validation of a patch
+	// changes only subsequent admissions, including after a launch retry.
+	baseArtifactID, patchArtifactID := uuid.NewString(), uuid.NewString()
+	for _, patch := range []struct {
+		id, state string
+		created   int64
+	}{{baseArtifactID, "available", 100}, {patchArtifactID, "validating", 200}} {
+		_, err := db.Exec(`INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,
+			owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,
+			state,provider_kind,ec2_image_json,ec2_family,ec2_created_at)
+			SELECT $1,$1,architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,
+			manifest_json,manifest_sha256,$1,imported_by,imported_at,$2,'ec2',$3,'ubuntu',$4 FROM platform_artifacts WHERE id='artifact'`,
+			patch.id, patch.state, `{"amiId":"ami-`+patch.id+`","minimumRootDiskGiB":32,"family":"ubuntu"}`, patch.created)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, createProfile := web.CapacityHandlers(db, origin, clock, uuid.NewString, policy)
+	request(&createProfile, "/api/v1/admin/resource-profiles", "family-profile-create",
+		`{"name":"Ubuntu family profile","instanceType":"t3.medium","diskMiB":32768,"amiFamily":"ubuntu"}`, 201)
+	var familyProfileID string
+	if err := db.QueryRow("SELECT id FROM resource_profiles WHERE name='Ubuntu family profile' AND ec2_ami_family='ubuntu'").Scan(&familyProfileID); err != nil {
+		t.Fatal(err)
+	}
+	created = request(&create, "/api/v1/templates", "family-template-create",
+		`{"name":"Family template","repositoryUrl":"https://github.com/example/repo","resourceProfileId":"`+familyProfileID+`"}`, 201)
+	var familyTemplate struct{ ID string }
+	if err := json.Unmarshal(created.Body.Bytes(), &familyTemplate); err != nil || familyTemplate.ID == "" {
+		t.Fatalf("create family template = %q, %v; want template ID", created.Body.String(), err)
+	}
+	familyLaunch := `{"templateId":"` + familyTemplate.ID + `","templateRevision":1}`
+	old := request(&launch, "/api/v1/workspaces", "family-launch-before", familyLaunch, 202)
+	if _, err := db.Exec("UPDATE platform_artifacts SET state='available' WHERE id=$1", patchArtifactID); err != nil {
+		t.Fatal(err)
+	}
+	request(&launch, "/api/v1/workspaces", "family-launch-after", familyLaunch, 202)
+	if retry := request(&launch, "/api/v1/workspaces", "family-launch-before", familyLaunch, 202); retry.Body.String() != old.Body.String() {
+		t.Error("family launch replay changed after publishing a patch")
+	}
+	for key, want := range map[string]string{"family-launch-before": baseArtifactID, "family-launch-after": patchArtifactID} {
+		var image string
+		var singleBoot bool
+		err := db.QueryRow(`SELECT w.platform_artifact_id,b.operation_id IS NOT NULL FROM operations o
+			JOIN workspaces w ON w.id=o.workspace_id LEFT JOIN ec2_launch_enrollment b ON b.operation_id=o.id
+			WHERE o.request_key=$1`, key).Scan(&image, &singleBoot)
+		if err != nil || image != want || !singleBoot {
+			t.Errorf("launch %q = %q, single boot %t, %v; want %q, single boot", key, image, singleBoot, err, want)
+		}
+	}
+
+	// Retiring an older image must preserve workspaces still bound to it.
+	managedID := uuid.NewString()
+	if _, err := db.Exec(`INSERT INTO platform_artifacts(id,release_id,architecture,platform_version,guest_release,protocol_version,
+		owned_resources_json,digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,
+		state,provider_kind,ec2_image_json,ec2_family,ec2_created_at)
+		SELECT $1,'unused-release',architecture,platform_version,guest_release,protocol_version,owned_resources_json,digests_json,provenance_json,
+		manifest_json,manifest_sha256,'ami-unused',imported_by,imported_at,state,provider_kind,ec2_image_json,ec2_family,50
+		FROM platform_artifacts WHERE id=$2`, managedID, baseArtifactID); err != nil {
+		t.Fatal(err)
+	}
+	retire := web.RetireAMIHandler(db, origin, clock)
+	retireStatus := func(id string) int {
+		retireRequest := httptest.NewRequest(http.MethodDelete, origin+"/api/v1/admin/platform-artifacts/"+id, nil)
+		retireRequest.SetPathValue("artifactId", id)
+		retireRequest.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		retireRequest.Header.Set("Origin", origin)
+		retireRequest.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+		retired := httptest.NewRecorder()
+		retire.ServeHTTP(retired, retireRequest)
+		return retired.Code
+	}
+	if status := retireStatus(baseArtifactID); status != http.StatusConflict {
+		t.Errorf("retire image bound to an existing workspace = %d, want 409", status)
+	}
+	if status := retireStatus(managedID); status != http.StatusNoContent {
+		t.Errorf("retire unused family image = %d, want 204", status)
+	}
 }

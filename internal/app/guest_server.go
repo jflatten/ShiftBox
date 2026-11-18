@@ -34,6 +34,9 @@ type GuestListenerConfig struct {
 	TunnelAddress         string
 	Tunnels               *proxy.Tunnels
 	Checkpoint            *backup.WriteFence
+	ImageCache            http.Handler
+	OfferImageCache       func(context.Context, guest.Contact) string
+	ImageCacheContext     func(context.Context, guest.Contact) context.Context
 	GuestUpdates          func(context.Context, string) (release.GuestUpdate, error)
 	EC2Bootstrap          *guest.EC2Bootstrap
 	EC2Region, EC2Account string
@@ -109,7 +112,18 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 				return enrollment.ResolveSecret(ctx, leaf, stamp, config.Secrets, name)
 			}, now))
 	}
-	poll, err := listenGuest(config.PollAddress, guest.ServerTLS(tls.Certificate{}, authority), checkpointRequest(config.Checkpoint, internal), certificates)
+	var pollHandler http.Handler = checkpointRequest(config.Checkpoint, internal)
+	if config.ImageCache != nil {
+		cacheRoutes := http.NewServeMux()
+		var registry *proxy.Registry
+		if config.Tunnels != nil {
+			registry = config.Tunnels.Registry
+		}
+		cacheRoutes.Handle("/v2/", guestImageCache(config.ImageCache, enrollment, registry, config.Checkpoint, now, config.ImageCacheContext))
+		cacheRoutes.Handle("/", pollHandler)
+		pollHandler = cacheRoutes
+	}
+	poll, err := listenGuest(config.PollAddress, guest.ServerTLS(tls.Certificate{}, authority), pollHandler, certificates)
 	if err != nil {
 		_ = enroll.network.Close()
 		return nil, err
@@ -157,7 +171,11 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 			}
 			report.IDEConnected = config.Tunnels.Registry.HasIDEConnection
 		}
-		return enrollment.Exchange(ctx, leaf, stamp, report)
+		contact, command, err := enrollment.Exchange(ctx, leaf, stamp, report)
+		if err == nil && config.OfferImageCache != nil && contact.DesiredState == "running" {
+			contact.ImageCacheOffer = config.OfferImageCache(ctx, contact)
+		}
+		return contact, command, err
 	}
 	internal.Handle("/internal/v1/guest/poll", web.GuestPollHandler(compatibility, exchange, now, listeners.TunnelAddress))
 	return listeners, nil

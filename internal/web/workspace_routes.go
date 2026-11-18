@@ -118,12 +118,12 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 		return operation.Operation{}, Problem{Status: 409, Code: "workspace.retention_unavailable", Title: "Choose an allowed retention period"}
 	}
 	var allocation workspace.Allocation
-	var profileImage string
+	var profileImage, amiFamily string
 	caps := policy.Capabilities
 	intent.ProviderKind = launchProviderKind(caps)
-	err := tx.QueryRowContext(ctx, `SELECT cpu_count,memory_mib,disk_mib,instance_type,COALESCE(platform_artifact_id,'') FROM resource_profiles
+	err := tx.QueryRowContext(ctx, `SELECT cpu_count,memory_mib,disk_mib,instance_type,COALESCE(platform_artifact_id,''),ec2_ami_family FROM resource_profiles
 		WHERE id=$1 AND enabled=1`, revision.ProfileID).
-		Scan(&allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB, &allocation.InstanceType, &profileImage)
+		Scan(&allocation.CPU, &allocation.MemoryMiB, &allocation.DiskMiB, &allocation.InstanceType, &profileImage, &amiFamily)
 	if errors.Is(err, sql.ErrNoRows) {
 		return operation.Operation{}, templateLaunchUnavailable()
 	}
@@ -140,8 +140,18 @@ func applyWorkspaceLaunch(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 		if !ok {
 			return operation.Operation{}, launchCapabilityProblem()
 		}
-		singleBoot, err := verifyEC2LaunchImage(ctx, tx, policy, artifactID, instance.Architecture, currentGuest, previousGuest)
+		var singleBoot bool
+		if amiFamily != "" {
+			artifactID, err = selectEC2FamilyImage(ctx, tx, policy, amiFamily, instance.Architecture, allocation.DiskMiB, currentGuest, previousGuest)
+			singleBoot = true
+		} else {
+			singleBoot, err = verifyEC2LaunchImage(ctx, tx, policy, artifactID, instance.Architecture, currentGuest, previousGuest)
+		}
 		if errors.Is(err, sql.ErrNoRows) {
+			if amiFamily != "" {
+				return operation.Operation{}, Problem{Status: 409, Code: "workspace.platform_incompatible",
+					Title: "The AMI family has no compatible image", Detail: "Ask an infrastructure administrator to publish a validated image compatible with the resource profile."}
+			}
 			return operation.Operation{}, Problem{Status: 409, Code: "workspace.platform_incompatible",
 				Title:  "The resource profile needs a compatible AMI",
 				Detail: "Ask an infrastructure administrator to select a verified " + instance.Architecture + " AMI on the resource profile, then launch again."}

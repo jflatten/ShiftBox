@@ -112,3 +112,44 @@ run "controller_github_app" {
     error_message = "Only the controller task and its dedicated execution role may receive the GitHub App secret."
   }
 }
+
+# A dedicated cache disk can be attached without replacing tasks on the host.
+run "registry_cache_attach_without_service_mount" {
+  command = plan
+
+  variables {
+    registry_cache_volume_size_gib = 100
+  }
+
+  assert {
+    condition = (
+      one(aws_ebs_volume.registry_cache).size == 100 &&
+      one(aws_ebs_volume.registry_cache).encrypted &&
+      one(aws_ebs_volume.registry_cache).type == "gp3" &&
+      one(aws_volume_attachment.registry_cache).device_name == "/dev/sdg" &&
+      length(one(aws_ecs_task_definition.controller).volume) == 1 &&
+      length(one(aws_ecs_task_definition.postgres).volume) == 1
+    )
+    error_message = "Preparing cache storage must leave both existing service mounts intact."
+  }
+}
+
+# Only the controller receives the cache bind after the host mount is verified.
+run "registry_cache_verified_controller_bind" {
+  command = plan
+
+  variables {
+    registry_cache_volume_size_gib = 100
+    registry_cache_mount_ready     = true
+  }
+
+  assert {
+    condition = (
+      one(local.registry_cache_task_mounts).containerPath == "/var/lib/shiftbox-registry-cache" &&
+      one(local.registry_cache_task_mounts).sourceVolume == "registry-cache" &&
+      length(one(aws_ecs_task_definition.postgres).volume) == 1 &&
+      length(one(aws_ecs_task_definition.setup).volume) == 1
+    )
+    error_message = "The cache disk must be bound only into the controller."
+  }
+}

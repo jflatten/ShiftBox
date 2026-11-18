@@ -613,6 +613,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/platform-artifacts/{artifactId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["retireAMI"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/resource-profiles": {
         parameters: {
             query?: never;
@@ -656,6 +672,24 @@ export interface paths {
         };
         get?: never;
         put: operations["updateCapacityBudget"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/image-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read current configuration, runtime measurements and up to 100 retained image references. */
+        get: operations["getImageCache"];
+        /** @description Stage cache settings activation using the current version. */
+        put: operations["updateImageCache"];
         post?: never;
         delete?: never;
         options?: never;
@@ -809,6 +843,13 @@ export interface components {
             minimumDiskGiB?: number;
             /** @description AMI owned by an AWS resource profile. */
             platformArtifactId?: string;
+            /** @description Family followed by the image or resource profile. */
+            amiFamily?: string;
+            /**
+             * Format: int64
+             * @description AWS creation time for a validated family member.
+             */
+            imageCreatedAtUnixMillis?: number;
         };
         SetupStatus: {
             /** @enum {string} */
@@ -905,6 +946,7 @@ export interface components {
             probes?: components["schemas"]["ProbeResult"][];
             canOpenPreviews?: boolean;
             canEditPreviewPorts?: boolean;
+            imageCache?: components["schemas"]["WorkspaceImageCache"];
             /** Format: date-time */
             lastActivityAt?: string | null;
             /** Format: date-time */
@@ -934,6 +976,111 @@ export interface components {
             cpuCount: number;
             memoryMiB: number;
             diskMiB: number;
+        };
+        WorkspaceImageCache: {
+            warningActive: boolean;
+            warningMessage?: string;
+            updateAvailable: boolean;
+            /** Format: uuid */
+            operationId?: string;
+            bytes?: {
+                cachedBytes: string;
+                upstreamBytes: string;
+                metadataBytes: string;
+                streamedBytes: string;
+            };
+            references?: {
+                origin: string;
+                repository: string;
+                tag: string;
+                resolvedDigest: string;
+                verifiedDigest?: string;
+                /** Format: date-time */
+                verifiedAt?: string;
+                warningActive: boolean;
+            }[];
+        };
+        ImageCacheActivationOperation: components["schemas"]["Operation"] & {
+            /** Format: uuid */
+            operationId: string;
+        };
+        ImageCacheSettings: {
+            enabled: boolean;
+            /** @description Canonical absolute path in dedicated storage. */
+            storagePath: string;
+            /** @description Positive integer bytes within signed 64-bit range. Required when retaining content. */
+            maxBytes: string | null;
+            volumeHighPercent: number;
+            volumeLowPercent: number;
+        };
+        ImageCacheSnapshot: {
+            version: number;
+            desired: components["schemas"]["ImageCacheSettings"];
+            effective: {
+                version: number;
+            } & components["schemas"]["ImageCacheSettings"];
+            activation: {
+                /** @enum {string} */
+                phase: "disabled" | "staged" | "draining" | "ready" | "failed";
+                error: string | null;
+                /** Format: uuid */
+                operationId?: string;
+            };
+            health: {
+                /** @enum {string} */
+                state: "ready" | "disabled" | "degraded" | "unavailable" | "pressure" | "unknown";
+                /** Format: date-time */
+                observedAt: string | null;
+                detail: string | null;
+                /** Format: uri */
+                guestEndpoint: string | null;
+                capabilities: string[];
+            };
+            usage: components["schemas"]["ImageCacheUsage"] | null;
+            effectiveness: components["schemas"]["ImageCacheEffectiveness"] | null;
+            retiredLocations: {
+                storagePath: string;
+                bytes: string;
+                /** Format: date-time */
+                retiredAt: string;
+            }[];
+            cachedImages: {
+                reference: string;
+                digest: string;
+                architecture?: string;
+                /** @enum {string} */
+                availability: "complete" | "partial";
+            }[];
+        };
+        ImageCacheUsage: {
+            retainedBytes: string | null;
+            temporaryBytes: string | null;
+            reservedBytes: string | null;
+            retiredBytes: string | null;
+            budgetBytes: string | null;
+            volumeTotalBytes: string | null;
+            volumeUsedBytes: string | null;
+            volumeAvailableBytes: string | null;
+            activeTransfers: number;
+            /** Format: date-time */
+            lastEvictionAt: string | null;
+            lastEvictedBytes: string | null;
+            pressureReason: string | null;
+            /** Format: date-time */
+            observedAt: string;
+        };
+        ImageCacheEffectiveness: {
+            /** Format: date-time */
+            windowStartedAt: string;
+            /** Format: date-time */
+            windowEndedAt: string;
+            cachedBytes: string | null;
+            upstreamBytes: string | null;
+            metadataBytes: string | null;
+            streamedBytes: string | null;
+            directBytes: string | null;
+            guestLocalBytes: string | null;
+            controllerReusePercent: number | null;
         };
         /** @description Administrator workspace inactivity policy. Zero minutes means Unlimited. A finite maximum requires finite choices within it. */
         KeepAlivePolicy: {
@@ -1025,7 +1172,7 @@ export interface components {
             repositoryUrl: string;
             repositoryRef?: string | null;
             /** @default .devcontainer/devcontainer.json */
-            devcontainerPath: string;
+            devcontainerPath?: string;
             /** Format: uuid */
             resourceProfileId: string;
             /**
@@ -1138,7 +1285,9 @@ export interface components {
             /** @description The Packer AMI manifest for a cloud EC2 controller. */
             manifest?: Record<string, never>;
             /** @default false */
-            makeDefault: boolean;
+            makeDefault?: boolean;
+            /** @description Publish the validated EC2 image to this family without changing the default. */
+            amiFamily?: string;
         } & (unknown | unknown);
         ResourceProfileInput: {
             name: string;
@@ -1150,9 +1299,11 @@ export interface components {
             diskMiB: number;
             /** @description Approved platform AMI selected on the AWS profile. */
             platformArtifactId?: string;
+            /** @description Launch new workspaces with the newest compatible validated member. */
+            amiFamily?: string;
             /** @description EC2 type offered in the workspace Availability Zone. */
             instanceType?: string;
-        } | unknown | unknown;
+        } | unknown | unknown | unknown;
         ResourceProfileUpdate: {
             name: string;
             cpuCount?: number;
@@ -1160,9 +1311,11 @@ export interface components {
             diskMiB: number;
             /** @description Approved platform AMI selected on the AWS profile. */
             platformArtifactId?: string;
+            /** @description Launch new workspaces with the newest compatible validated member. */
+            amiFamily?: string;
             instanceType?: string;
             enabled: boolean;
-        } | unknown | unknown;
+        } | unknown | unknown | unknown;
         ResourceProfile: {
             id: string;
             name: string;
@@ -1171,6 +1324,8 @@ export interface components {
             diskMiB: number;
             /** @description Approved platform AMI selected on the AWS profile. */
             platformArtifactId?: string;
+            /** @description Family followed by the AWS profile. */
+            amiFamily?: string;
             instanceType?: string;
             enabled: boolean;
             platformImageName?: string;
@@ -1253,7 +1408,7 @@ export interface components {
             detail?: string;
             requestId: string;
             /** @default false */
-            retryable: boolean;
+            retryable?: boolean;
             fields?: {
                 [key: string]: string;
             };
@@ -2552,6 +2707,29 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    retireAMI: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                artifactId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Retired from family selection */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listResourceProfiles: {
         parameters: {
             query?: never;
@@ -2675,6 +2853,66 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getImageCache: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Registry cache snapshot */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageCacheSnapshot"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateImageCache: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImageCacheSettings"];
+            };
+        };
+        responses: {
+            /** @description Current settings already match the request */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageCacheSnapshot"];
+                };
+            };
+            /** @description Settings staged for activation */
+            202: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageCacheActivationOperation"];
+                };
             };
             default: components["responses"]["Error"];
         };

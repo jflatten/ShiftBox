@@ -22,6 +22,7 @@ type profileInput struct {
 	Name               string `json:"name"`
 	InstanceType       string `json:"instanceType,omitempty"`
 	PlatformArtifactID string `json:"platformArtifactId,omitempty"`
+	AMIFamily          string `json:"amiFamily,omitempty"`
 }
 
 type infrastructureProvider struct {
@@ -165,14 +166,15 @@ func CapacityHandlers(db *sql.DB, origin string, now func() time.Time, newID fun
 			if err := input.normalize(caps); err != nil {
 				return nil, err
 			}
-			if err := input.validateAMI(ctx, tx, policy); err != nil {
+			imageID, err := input.resolveAMI(ctx, tx, policy)
+			if err != nil {
 				return nil, err
 			}
 			if newID == nil {
 				return nil, errors.New("resource profile identity generator is missing")
 			}
-			err := workspace.CreateResourceProfileInTx(ctx, tx, workspace.ResourceProfile{
-				ID: newID(), Name: input.Name, Allocation: input.profileAllocation(), Enabled: true, PlatformArtifactID: input.PlatformArtifactID,
+			err = workspace.CreateResourceProfileInTx(ctx, tx, workspace.ResourceProfile{
+				ID: newID(), Name: input.Name, Allocation: input.profileAllocation(), Enabled: true, PlatformArtifactID: imageID, AMIFamily: input.AMIFamily,
 			}, caps)
 			switch {
 			case errors.Is(err, provider.ErrCapabilityUnsupported):

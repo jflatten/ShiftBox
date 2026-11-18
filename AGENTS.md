@@ -23,7 +23,11 @@ the developer and AI development agents.
 
   Always checkoff tasks when they are complete immediately in `tasks.md`
 
-  Tasks that are labeld with `[P]` shoudl be run in parallel inside a subagent.
+  Administrative and operator-facing capabilities are complete only when discoverable admin UI
+  controls and state, permissions, and validation ship with the backend and are checked end-to-end,
+  including save/reload persistence; API or database support alone is not complete.
+
+  Tasks that are labeld with `[P]` should be run in parallel inside a subagent.
 
   Do not run more than 5 subagent parallel tasks as one time.
 

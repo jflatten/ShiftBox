@@ -330,6 +330,71 @@ test('edits the saved AMI binding and validates the image root disk minimum', as
   })));
 });
 
+// Publishing an AMI sends the manifest and selected family to validation while
+// leaving the installation default alone.
+test('publishes a Packer image to an AMI family', async () => {
+  const manifest = { builds: [{ artifact_id: 'us-east-2:ami-test' }] };
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json({ ...status, provider: { name: 'ec2' } });
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
+    if (input === '/api/v1/templates/catalog') return json({ platformImages: [] });
+    if (input === '/api/v1/admin/platform-artifacts' && init?.method === 'POST') return json({ id: 'publish-operation' });
+    if (input === '/api/v1/operations/publish-operation') return json({ id: 'publish-operation', status: 'succeeded', steps: [] });
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  const page = () => <Providers><MantineProvider env="test"><Infrastructure /></MantineProvider></Providers>;
+  const mounted = render(page());
+  const panel = within(await screen.findByRole('region', { name: 'AMI families' }));
+  await user.type(panel.getByRole('textbox', { name: 'AMI family' }), 'ubuntu-noble');
+  await user.click(panel.getByRole('textbox', { name: 'Packer manifest' }));
+  await user.paste(JSON.stringify(manifest));
+  await user.click(panel.getByRole('button', { name: 'Validate and publish' }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/admin/platform-artifacts', expect.objectContaining({
+    method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'fixture' }), body: JSON.stringify({ amiFamily: 'ubuntu-noble', manifest }),
+  })));
+  expect(await panel.findByText('Completed')).toBeVisible();
+  mounted.unmount();
+  const reloaded = render(page());
+  expect(await within(await screen.findByRole('region', { name: 'AMI families' })).findByText('Completed')).toBeVisible();
+  reloaded.unmount();
+  window.sessionStorage.clear();
+});
+
+// Editing a family profile restores the family choice and saves the name of the
+// family even after its newest validated image has changed.
+test('keeps a resource profile bound to its AMI family after a patch', async () => {
+  const profile = { id: 'family-profile', name: 'AWS Ubuntu', amiFamily: 'ubuntu-noble',
+    instanceType: 't3.medium', cpuCount: 2, memoryMiB: 4096, diskMiB: 32768, enabled: true, version: 1 };
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json({ ...status, provider: { name: 'ec2',
+      instanceTypes: [{ name: 't3.medium', architecture: 'amd64', cpuCount: 2, memoryMiB: 4096 }],
+      minimumDiskGiB: 32, maximumDiskGiB: 2047 } });
+    if (input === '/api/v1/admin/resource-profiles') return json([profile]);
+    if (input === '/api/v1/templates/catalog') return json({ platformImages: [
+      { id: 'patch-1', name: 'Ubuntu first patch', providerKind: 'ec2', architecture: 'amd64', minimumDiskGiB: 32, amiFamily: 'ubuntu-noble' },
+      { id: 'patch-2', name: 'Ubuntu second patch', providerKind: 'ec2', architecture: 'amd64', minimumDiskGiB: 32, amiFamily: 'ubuntu-noble' },
+    ] });
+    if (input === '/api/v1/admin/resource-profiles/family-profile' && init?.method === 'PUT') return json({});
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><MantineProvider env="test"><Infrastructure /></MantineProvider></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Actions for AWS Ubuntu' }));
+  expect(within(screen.getByRole('table', { name: 'Resource profiles' })).getByText('ubuntu-noble')).toBeVisible();
+  await user.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+  const dialog = within(screen.getByRole('dialog', { name: 'Edit resource profile' }));
+  await waitFor(() => expect(dialog.getByRole('combobox', { name: 'AMI image' })).toHaveValue('ubuntu-noble (latest)'));
+  await user.click(dialog.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/admin/resource-profiles/family-profile', expect.objectContaining({
+    method: 'PUT', body: JSON.stringify({ name: 'AWS Ubuntu', amiFamily: 'ubuntu-noble', instanceType: 't3.medium', diskMiB: 32768, enabled: true }),
+  })));
+});
+
 // Editing refreshes the displayed name and state. A referenced profile remains
 // available to administer after a rejected delete.
 test('edits a profile and explains why deletion is blocked', async () => {

@@ -16,10 +16,13 @@ RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY migrations/ ./migrations/
+COPY LICENSE ./
+COPY scripts/stage-controller-licenses.sh ./scripts/
 COPY ui/export.go ./ui/
 COPY --from=browser /src/ui/out/ ./ui/out/
 RUN CGO_ENABLED=0 go test -tags shiftbox_ui ./cmd/shiftbox -run '^TestEmbeddedBrowserAssets$' -count=1 \
-    && CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -trimpath -tags shiftbox_ui -o /release/shiftbox ./cmd/shiftbox
+    && CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -trimpath -tags shiftbox_ui -o /release/shiftbox ./cmd/shiftbox \
+    && sh scripts/stage-controller-licenses.sh /release/shiftbox /release/licenses
 
 FROM ghcr.io/dexidp/dex:v2.46.1 AS dex
 
@@ -31,6 +34,7 @@ RUN apt-get update \
     && useradd --uid 10001 --gid shiftbox --home-dir /var/lib/shiftbox --shell /usr/sbin/nologin shiftbox \
     && install -d -m 0700 -o shiftbox -g shiftbox /var/lib/shiftbox
 COPY --from=controller /release/shiftbox /usr/local/bin/shiftbox
+COPY --from=controller /release/licenses/ /usr/share/licenses/shiftbox/
 # The controller discovers the managed Dex binary next to its own executable.
 COPY --from=dex /usr/local/bin/dex /usr/local/bin/dex
 COPY platform/container/cloud-start.sh /usr/local/bin/shiftbox-cloud

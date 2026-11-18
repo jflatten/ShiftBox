@@ -944,6 +944,20 @@ paths:
         '202': { $ref: '#/components/responses/OperationAccepted' }
         default: { $ref: '#/components/responses/Error' }
 
+  /admin/platform-artifacts/{artifactId}:
+    delete:
+      tags: [Infrastructure]
+      operationId: retireAMI
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - name: artifactId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Retired from family selection }
+        default: { $ref: '#/components/responses/Error' }
+
   /admin/resource-profiles:
     get:
       tags: [Infrastructure]
@@ -1020,6 +1034,49 @@ paths:
             schema: { $ref: '#/components/schemas/CapacityBudget' }
       responses:
         '204': { description: Capacity budget updated without evicting existing workspaces }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/image-cache:
+    get:
+      tags: [Infrastructure]
+      operationId: getImageCache
+      description: Read current configuration, runtime measurements and up to 100 retained image references.
+      responses:
+        '200':
+          description: Registry cache snapshot
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageCacheSnapshot' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Infrastructure]
+      operationId: updateImageCache
+      description: Stage cache settings activation using the current version.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImageCacheSettings' }
+      responses:
+        '200':
+          description: Current settings already match the request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageCacheSnapshot' }
+        '202':
+          description: Settings staged for activation
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageCacheActivationOperation' }
         default: { $ref: '#/components/responses/Error' }
 
   /admin/keep-alive:
@@ -1307,6 +1364,8 @@ components:
         amiId: { type: string, description: Verified regional AWS image identifier. }
         minimumDiskGiB: { type: integer, minimum: 1 }
         platformArtifactId: { type: string, description: AMI owned by an AWS resource profile. }
+        amiFamily: { type: string, description: Family followed by the image or resource profile. }
+        imageCreatedAtUnixMillis: { type: integer, format: int64, description: AWS creation time for a validated family member. }
     SetupStatus:
       type: object
       required: [state, localOnly, completedSteps, availableSteps]
@@ -1399,6 +1458,7 @@ components:
           items: { $ref: '#/components/schemas/ProbeResult' }
         canOpenPreviews: { type: boolean }
         canEditPreviewPorts: { type: boolean }
+        imageCache: { $ref: '#/components/schemas/WorkspaceImageCache' }
         lastActivityAt: { type: [string, 'null'], format: date-time }
         retentionDeadline: { type: [string, 'null'], format: date-time }
         keepAlivePolicy: { $ref: '#/components/schemas/KeepAlivePolicy' }
@@ -1431,6 +1491,142 @@ components:
         cpuCount: { type: integer, minimum: 1 }
         memoryMiB: { type: integer, minimum: 1 }
         diskMiB: { type: integer, minimum: 1 }
+
+    WorkspaceImageCache:
+      type: object
+      required: [warningActive, updateAvailable]
+      properties:
+        warningActive: { type: boolean }
+        warningMessage: { type: string }
+        updateAvailable: { type: boolean }
+        operationId: { type: string, format: uuid }
+        bytes:
+          type: object
+          required: [cachedBytes, upstreamBytes, metadataBytes, streamedBytes]
+          properties:
+            cachedBytes: { type: string }
+            upstreamBytes: { type: string }
+            metadataBytes: { type: string }
+            streamedBytes: { type: string }
+        references:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            required: [origin, repository, tag, resolvedDigest, warningActive]
+            properties:
+              origin: { type: string }
+              repository: { type: string }
+              tag: { type: string }
+              resolvedDigest: { type: string }
+              verifiedDigest: { type: string }
+              verifiedAt: { type: string, format: date-time }
+              warningActive: { type: boolean }
+    ImageCacheActivationOperation:
+      allOf:
+        - $ref: '#/components/schemas/Operation'
+        - type: object
+          required: [operationId]
+          properties:
+            operationId: { type: string, format: uuid }
+    ImageCacheSettings:
+      type: object
+      additionalProperties: false
+      required: [enabled, storagePath, maxBytes, volumeHighPercent, volumeLowPercent]
+      properties:
+        enabled: { type: boolean }
+        storagePath: { type: string, description: Canonical absolute path in dedicated storage. }
+        maxBytes:
+          type: [string, 'null']
+          pattern: '^[1-9][0-9]{0,18}$'
+          description: Positive integer bytes within signed 64-bit range. Required when retaining content.
+        volumeHighPercent: { type: integer, minimum: 2, maximum: 99 }
+        volumeLowPercent: { type: integer, minimum: 1, maximum: 98 }
+    ImageCacheSnapshot:
+      type: object
+      required: [version, desired, effective, activation, health, usage, effectiveness, retiredLocations, cachedImages]
+      properties:
+        version: { type: integer, minimum: 1 }
+        desired: { $ref: '#/components/schemas/ImageCacheSettings' }
+        effective:
+          allOf:
+            - type: object
+              required: [version]
+              properties:
+                version: { type: integer, minimum: 1 }
+            - $ref: '#/components/schemas/ImageCacheSettings'
+        activation:
+          type: object
+          required: [phase, error]
+          properties:
+            phase: { type: string, enum: [disabled, staged, draining, ready, failed] }
+            error: { type: [string, 'null'] }
+            operationId: { type: string, format: uuid }
+        health:
+          type: object
+          required: [state, observedAt, detail, guestEndpoint, capabilities]
+          properties:
+            state: { type: string, enum: [ready, disabled, degraded, unavailable, pressure, unknown] }
+            observedAt: { type: [string, 'null'], format: date-time }
+            detail: { type: [string, 'null'] }
+            guestEndpoint: { type: [string, 'null'], format: uri }
+            capabilities:
+              type: array
+              items: { type: string }
+        usage:
+          oneOf: [{ $ref: '#/components/schemas/ImageCacheUsage' }, { type: 'null' }]
+        effectiveness:
+          oneOf: [{ $ref: '#/components/schemas/ImageCacheEffectiveness' }, { type: 'null' }]
+        retiredLocations:
+          type: array
+          items:
+            type: object
+            required: [storagePath, bytes, retiredAt]
+            properties:
+              storagePath: { type: string }
+              bytes: { type: string }
+              retiredAt: { type: string, format: date-time }
+        cachedImages:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [reference, digest, availability]
+            properties:
+              reference: { type: string }
+              digest: { type: string }
+              architecture: { type: string }
+              availability: { type: string, enum: [complete, partial] }
+    ImageCacheUsage:
+      type: object
+      required: [retainedBytes, temporaryBytes, reservedBytes, retiredBytes, budgetBytes, volumeTotalBytes, volumeUsedBytes, volumeAvailableBytes, activeTransfers, lastEvictionAt, lastEvictedBytes, pressureReason, observedAt]
+      properties:
+        retainedBytes: { type: [string, 'null'] }
+        temporaryBytes: { type: [string, 'null'] }
+        reservedBytes: { type: [string, 'null'] }
+        retiredBytes: { type: [string, 'null'] }
+        budgetBytes: { type: [string, 'null'] }
+        volumeTotalBytes: { type: [string, 'null'] }
+        volumeUsedBytes: { type: [string, 'null'] }
+        volumeAvailableBytes: { type: [string, 'null'] }
+        activeTransfers: { type: integer, minimum: 0 }
+        lastEvictionAt: { type: [string, 'null'], format: date-time }
+        lastEvictedBytes: { type: [string, 'null'] }
+        pressureReason: { type: [string, 'null'] }
+        observedAt: { type: string, format: date-time }
+    ImageCacheEffectiveness:
+      type: object
+      required: [windowStartedAt, windowEndedAt, cachedBytes, upstreamBytes, metadataBytes, streamedBytes, directBytes, guestLocalBytes, controllerReusePercent]
+      properties:
+        windowStartedAt: { type: string, format: date-time }
+        windowEndedAt: { type: string, format: date-time }
+        cachedBytes: { type: [string, 'null'] }
+        upstreamBytes: { type: [string, 'null'] }
+        metadataBytes: { type: [string, 'null'] }
+        streamedBytes: { type: [string, 'null'] }
+        directBytes: { type: [string, 'null'] }
+        guestLocalBytes: { type: [string, 'null'] }
+        controllerReusePercent: { type: [number, 'null'], minimum: 0, maximum: 100 }
 
     KeepAlivePolicy:
       type: object
@@ -1657,6 +1853,10 @@ components:
           type: object
           description: The Packer AMI manifest for a cloud EC2 controller.
         makeDefault: { type: boolean, default: false }
+        amiFamily:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+          description: Publish the validated EC2 image to this family without changing the default.
 
     ResourceProfileInput:
       type: object
@@ -1665,12 +1865,14 @@ components:
       anyOf:
         - required: [cpuCount, memoryMiB]
         - required: [instanceType, platformArtifactId]
+        - required: [instanceType, amiFamily]
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
         cpuCount: { type: integer, minimum: 1, description: CPU count for manually sized providers. }
         memoryMiB: { type: integer, minimum: 1, description: Memory for manually sized providers. }
         diskMiB: { type: integer, minimum: 1, description: EC2 disk size must be a whole GiB expressed in MiB. }
         platformArtifactId: { type: string, description: Approved platform AMI selected on the AWS profile. }
+        amiFamily: { type: string, description: Launch new workspaces with the newest compatible validated member. }
         instanceType: { type: string, description: EC2 type offered in the workspace Availability Zone. }
 
     ResourceProfileUpdate:
@@ -1680,12 +1882,14 @@ components:
       anyOf:
         - required: [cpuCount, memoryMiB]
         - required: [instanceType, platformArtifactId]
+        - required: [instanceType, amiFamily]
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
         cpuCount: { type: integer, minimum: 1 }
         memoryMiB: { type: integer, minimum: 1 }
         diskMiB: { type: integer, minimum: 1 }
         platformArtifactId: { type: string, description: Approved platform AMI selected on the AWS profile. }
+        amiFamily: { type: string, description: Launch new workspaces with the newest compatible validated member. }
         instanceType: { type: string }
         enabled: { type: boolean }
 
@@ -1699,6 +1903,7 @@ components:
         memoryMiB: { type: integer }
         diskMiB: { type: integer }
         platformArtifactId: { type: string, description: Approved platform AMI selected on the AWS profile. }
+        amiFamily: { type: string, description: Family followed by the AWS profile. }
         instanceType: { type: string }
         enabled: { type: boolean }
         platformImageName: { type: string }

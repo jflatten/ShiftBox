@@ -250,6 +250,14 @@ resource "aws_ecs_task_definition" "controller" {
     host_path = "/var/lib/shiftbox-data/shiftbox"
   }
 
+  dynamic "volume" {
+    for_each = local.registry_cache_task_mounts
+    content {
+      name      = volume.value.sourceVolume
+      host_path = volume.value.containerPath
+    }
+  }
+
   container_definitions = jsonencode([{
     name              = "controller"
     image             = local.controller_image
@@ -257,16 +265,25 @@ resource "aws_ecs_task_definition" "controller" {
     memoryReservation = 512
     entryPoint        = ["/usr/local/bin/shiftbox-cloud"]
     command           = ["serve"]
-    mountPoints       = [{ sourceVolume = "installation", containerPath = "/var/lib/shiftbox" }]
-    environment       = local.controller_environment
-    secrets           = local.controller_secrets
-    logConfiguration  = local.task_logs
+    mountPoints = concat(
+      [{ sourceVolume = "installation", containerPath = "/var/lib/shiftbox" }],
+      local.registry_cache_task_mounts,
+    )
+    environment = concat(
+      local.controller_environment,
+      var.registry_cache_mount_ready ? [
+        { name = "SHIFTBOX_IMAGE_CACHE_VOLUME_ID", value = one(aws_ebs_volume.registry_cache[*].id) },
+      ] : [],
+    )
+    secrets          = local.controller_secrets
+    logConfiguration = local.task_logs
     portMappings = [for port in concat([local.browser_port], [for guest in local.guest_ports : tonumber(guest)]) :
       { containerPort = port, protocol = "tcp" }
     ]
   }])
   depends_on = [
     terraform_data.service_inputs,
+    aws_volume_attachment.registry_cache,
     aws_iam_role_policy_attachment.controller_execution,
     aws_iam_role_policy.controller_execution_secrets,
   ]
@@ -278,7 +295,7 @@ resource "aws_ecs_service" "postgres" {
   cluster                            = aws_ecs_cluster.shiftbox.id
   launch_type                        = "EC2"
   task_definition                    = aws_ecs_task_definition.postgres[0].arn
-  desired_count                      = 1
+  desired_count                      = var.registry_cache_postgres_enabled ? 1 : 0
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
   propagate_tags                     = "TASK_DEFINITION"

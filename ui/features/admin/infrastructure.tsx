@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Group, NumberInput, Paper, SimpleGrid, Stack, Tabs, Text, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { APIProblemView } from '../../components/api-problem';
@@ -15,6 +15,8 @@ import { Maintenance } from './maintenance';
 import { ResourceProfiles } from './resource-profiles';
 import { Secrets } from '../secrets/secrets';
 import { KeepAliveSettings } from './keep-alive';
+import { RegistryCache } from './registry-cache';
+import { AMIFamilies } from './ami-families';
 
 const capacityFields = [
   { name: 'cpuCount', label: 'CPU limit', description: 'Total virtual CPUs available to workspaces.' },
@@ -33,7 +35,20 @@ export function Infrastructure() {
   const canMaintain = allowed && current.permissions.includes('maintenance.manage');
   const canManageSecrets = allowed && !!current.organizationSecretScopeId && current.permissions.includes('secret.manage_organization');
   const [section, setSection] = useState<string | null>('resources');
-  const sections = ['resources', ...(canManage ? ['certificates'] : []), ...(canMaintain ? ['maintenance'] : []), ...(canManageSecrets ? ['secrets'] : [])];
+  useEffect(() => {
+    const fromURL = () => setSection(new URLSearchParams(window.location.search).get('section') ?? 'resources');
+    fromURL();
+    window.addEventListener('popstate', fromURL);
+    return () => window.removeEventListener('popstate', fromURL);
+  }, []);
+  const selectSection = (value: string | null) => {
+    setSection(value);
+    const url = new URL(window.location.href);
+    if (value === 'registry-cache') url.searchParams.set('section', value);
+    else url.searchParams.delete('section');
+    window.history.replaceState(window.history.state, '', url);
+  };
+  const sections = ['resources', 'registry-cache', ...(canManage ? ['certificates'] : []), ...(canMaintain ? ['maintenance'] : []), ...(canManageSecrets ? ['secrets'] : [])];
   const activeSection = section && sections.includes(section) ? section : 'resources';
   return (
     <ShiftBoxShell session={current} alerts={alerts} error={session.error ?? (allowed ? status.error : undefined) ?? undefined}>
@@ -51,9 +66,10 @@ export function Infrastructure() {
       {allowed && current ? (
         // Keep drafts and live operation subscriptions when switching settings.
         // Persistent conditions remain outside the tabs in the shared shell.
-        <Tabs value={activeSection} onChange={setSection} keepMounted keepMountedMode="display-none">
+        <Tabs value={activeSection} onChange={selectSection} keepMounted keepMountedMode="display-none">
           <Tabs.List aria-label="Infrastructure settings">
             <Tabs.Tab value="resources">Platform</Tabs.Tab>
+            <Tabs.Tab value="registry-cache">Cache</Tabs.Tab>
             {canManage ? <Tabs.Tab value="certificates">Certificates</Tabs.Tab> : null}
             {canMaintain ? <Tabs.Tab value="maintenance">Maintenance</Tabs.Tab> : null}
             {canManageSecrets ? <Tabs.Tab value="secrets">Secrets</Tabs.Tab> : null}
@@ -78,8 +94,14 @@ export function Infrastructure() {
                   </Stack>
                 </Paper>
               </> : null}
+              {data?.provider.name === 'ec2' ? <AMIFamilies key={`ami-families:${current.user.id}`} userID={current.user.id}
+                csrfToken={canManage ? current.csrfToken : undefined} /> : null}
               <ResourceProfiles key={current.user.id} userId={current.user.id} provider={data?.provider} csrfToken={canManage ? current.csrfToken : undefined} />
             </Stack>
+          </Tabs.Panel>
+          <Tabs.Panel value="registry-cache" pt="lg">
+            <RegistryCache key={current.user.id} userId={current.user.id} active={activeSection === 'registry-cache'}
+              csrfToken={canManage ? current.csrfToken : undefined} />
           </Tabs.Panel>
           {canManage ? <Tabs.Panel value="certificates" pt="lg">
             <Paper withBorder radius="md" p="lg">

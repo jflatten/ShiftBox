@@ -26,11 +26,11 @@ func newCloudEC2(ctx context.Context, settings config.EC2Runtime, store *release
 			if err != nil {
 				return ec2.Image{}, err
 			}
-			if image.ReleaseID != releaseID || !verifiedCloudAMI(settings, image.AMIID) {
+			if image.ReleaseID != releaseID || (image.Family == "" && !verifiedCloudAMI(settings, image.AMIID)) {
 				return ec2.Image{}, provider.ErrCapabilityUnsupported
 			}
 			resolved := launchImage(image)
-			resolved.SingleBoot = image.AMIID == settings.VerifiedSingleBootAMI
+			resolved.SingleBoot = image.Family != "" || image.AMIID == settings.VerifiedSingleBootAMI
 			return resolved, nil
 		})
 	if err != nil {
@@ -47,31 +47,26 @@ func launchImage(image release.EC2Image) ec2.Image {
 	return ec2.Image{ID: image.AMIID, RootDeviceName: image.RootDeviceName, SnapshotID: image.RootSnapshotID, Architecture: image.Architecture}
 }
 
-func (p *cloudEC2) Capabilities(ctx context.Context) (provider.Capabilities, error) {
-	caps, err := p.Provider.Capabilities(ctx)
-	if p.settings.VerifiedEnrollmentAMI == "" && p.settings.VerifiedSingleBootAMI == "" {
-		caps.Create = false
-	}
-	return caps, err
-}
-
 func (p *cloudEC2) ImportCandidate(ctx context.Context, req provider.CreateRequest, artifact release.Artifact) (provider.Inventory, error) {
-	if artifact.EC2 == nil || !verifiedCloudAMI(p.settings, artifact.EC2.AMIID) {
+	if artifact.EC2 == nil || artifact.EC2.Region != p.settings.Region || artifact.EC2.AccountID != p.settings.AccountID ||
+		(artifact.EC2.Family == "" && !verifiedCloudAMI(p.settings, artifact.EC2.AMIID)) {
 		return provider.Inventory{}, provider.ErrCapabilityUnsupported
 	}
 	image := launchImage(*artifact.EC2)
+	image.SingleBoot = artifact.EC2.Family != ""
 	image.Architecture = artifact.Manifest.Architecture
 	return p.CreateCandidate(ctx, req, image)
 }
 
 func (p *cloudEC2) importPlatform(ctx context.Context, dir, guestHost string, store *release.Store, catalog *release.Catalog,
-	ref provider.WorkspaceRef, actor, raw, current, previous string, makeDefault bool) error {
+	ref provider.WorkspaceRef, actor, raw, current, previous string, options app.PlatformImportOptions) error {
 	artifact, err := release.ReadEC2Manifest(strings.NewReader(raw))
 	if err != nil {
 		return err
 	}
 	image, manifest := artifact.EC2, artifact.Manifest
-	if image.Region != p.settings.Region || !verifiedCloudAMI(p.settings, image.AMIID) ||
+	if image.Region != p.settings.Region ||
+		(options.AMIFamily == "" && !verifiedCloudAMI(p.settings, image.AMIID)) ||
 		manifest.ProtocolVersion != guestProtocol || (manifest.Guest.Version != current && manifest.Guest.Version != previous) {
 		return release.ErrCatalogConflict
 	}
@@ -87,19 +82,27 @@ func (p *cloudEC2) importPlatform(ctx context.Context, dir, guestHost string, st
 		return release.ErrInvalidArtifact
 	}
 	image.AccountID, image.RootDeviceName, image.RootSnapshotID = p.settings.AccountID, observed.RootDeviceName, observed.SnapshotID
+	if options.AMIFamily != "" {
+		created, err := time.Parse(time.RFC3339Nano, observed.CreationDate)
+		if err != nil {
+			return release.ErrInvalidArtifact
+		}
+		image.Family, image.CreatedAtUnixMillis = options.AMIFamily, created.UnixMilli()
+	}
 	entry, err := store.ImportEC2(ctx, artifact, actor, time.Now())
 	if err != nil {
 		return err
 	}
 	req := provider.CreateRequest{Ref: ref, OperationID: ref.WorkspaceID, ArtifactID: entry.ID,
 		Release: manifest.ReleaseID, Resources: ec2.ReferenceResources(), NetworkMode: ec2.NetworkMode}
-	listeners := app.GuestListenerConfig{PublicHost: guestHost, EnrollmentAddress: ":19446", PollAddress: ":19447"}
+	listeners := app.GuestListenerConfig{PublicHost: guestHost, EnrollmentAddress: ":19446", PollAddress: ":19447",
+		EC2Region: p.settings.Region, EC2Account: p.settings.AccountID}
 	if err := catalog.ValidateImport(ctx, entry.ID, func(ctx context.Context, artifact release.Artifact) error {
 		return app.ValidatePlatformBoot(ctx, dir, p, req, artifact, listeners)
 	}); err != nil {
 		return err
 	}
-	if makeDefault {
+	if options.MakeDefault {
 		return store.SelectDefault(ctx, entry.ID, []string{guestProtocol})
 	}
 	return nil

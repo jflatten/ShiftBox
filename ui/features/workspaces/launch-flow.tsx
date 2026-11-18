@@ -6,6 +6,8 @@ import { readProblem } from '../../lib/api-problem';
 import { providerLabel } from '../../lib/provider-label';
 import { useOperation } from '../../lib/use-operation';
 import { useTemplates, type TemplateRevision } from '../templates/use-templates';
+import { useWorkspaceDetail } from './workspace-commands';
+import { WorkspaceImageCache } from './workspace-image-cache';
 
 interface AcceptedLaunch {
   id: string;
@@ -122,12 +124,14 @@ function templateKey(template: TemplateRevision) {
 
 function LaunchProgress({ accepted }: { accepted: AcceptedLaunch }) {
   const operation = useOperation(accepted.id);
+  const workspace = useWorkspaceDetail(accepted.workspaceId, !operation.accessDenied);
   if (operation.accessDenied) return <Text role="alert">You no longer have access to this operation.</Text>;
   return (
     <Stack align="flex-start">
       {operation.isError ? <APIProblemView error={operation.error} /> : null}
       {operation.isPending ? <Text role="status">Loading launch progress…</Text> : null}
       {operation.data ? <WorkflowStepper operation={operation.data} failureTitle="Workspace launch failed" /> : null}
+      <WorkspaceImageCache cache={workspace.isError ? undefined : workspace.data?.imageCache} />
       <Anchor href={`/workspaces/?id=${encodeURIComponent(accepted.workspaceId)}`}>View workspace</Anchor>
     </Stack>
   );

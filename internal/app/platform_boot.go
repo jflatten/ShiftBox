@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -83,6 +84,13 @@ func ValidatePlatformBoot(ctx context.Context, root string, machines PlatformBoo
 		return err
 	}
 	enrollment := guest.NewEnrollment(db, ca)
+	singleBoot := artifact.EC2 != nil && artifact.EC2.Family != ""
+	if singleBoot {
+		if config.EC2Account == "" || config.EC2Region == "" {
+			return provider.ErrInvalidState
+		}
+		config.EC2Bootstrap = guest.NewEC2Bootstrap(enrollment, config.EC2Region, config.EC2Account, time.Now, machines.Inspect)
+	}
 	listeners, err := ListenGuests(config, enrollment, ca, web.GuestCompatibility{
 		Protocol: manifest.ProtocolVersion, CurrentRelease: manifest.Guest.Version,
 	}, time.Now)
@@ -117,12 +125,27 @@ func ValidatePlatformBoot(ctx context.Context, root string, machines PlatformBoo
 			result = errors.Join(result, fmt.Errorf("remove validation VM %s: %w", req.Ref.WorkspaceID, err))
 		}
 	}()
+	var reference string
+	if singleBoot {
+		var entropy [32]byte
+		if _, err := rand.Read(entropy[:]); err != nil {
+			return err
+		}
+		reference = hex.EncodeToString(entropy[:])
+		req.BootstrapData, err = enrollment.EC2LaunchData(reference, listeners.EnrollURL, listeners.PollURL)
+		if err != nil {
+			return err
+		}
+	}
 	vm, err := machines.ImportCandidate(ctx, req, artifact)
 	if err != nil {
 		return fmt.Errorf("import validation VM: %w", err)
 	}
-	if err := seedPlatformBoot(ctx, db, req, vm, artifact); err != nil {
+	if err := seedPlatformBoot(ctx, db, req, vm, artifact, reference); err != nil {
 		return err
+	}
+	if singleBoot {
+		return waitForPlatformPoll(serveCtx, db, vm.Ref, manifest)
 	}
 	if _, err := enrollment.Deliver(ctx, req.OperationID, vm, time.Now(), dir, listeners.EnrollURL, listeners.PollURL, machines.DeliverEnrollment); err != nil {
 		return fmt.Errorf("deliver validation enrollment: %w", err)
@@ -137,10 +160,14 @@ func ValidatePlatformBoot(ctx context.Context, root string, machines PlatformBoo
 	return waitForPlatformPoll(serveCtx, db, vm.Ref, manifest)
 }
 
-func seedPlatformBoot(ctx context.Context, db *sql.DB, req provider.CreateRequest, vm provider.Inventory, artifact release.Artifact) error {
+func seedPlatformBoot(ctx context.Context, db *sql.DB, req provider.CreateRequest, vm provider.Inventory, artifact release.Artifact, reference string) error {
 	ref := req.Ref
 	ref.InstanceID = vm.InstanceID
-	if vm.Ref != ref || vm.InstanceID == "" || vm.Power != provider.Stopped {
+	expected := provider.Stopped
+	if reference != "" {
+		expected = provider.Running
+	}
+	if vm.Ref != ref || vm.InstanceID == "" || vm.Power != expected {
 		return provider.ErrOwnershipMismatch
 	}
 	const actor = "artifact-validation"
@@ -152,10 +179,10 @@ func seedPlatformBoot(ctx context.Context, db *sql.DB, req provider.CreateReques
 	}
 	artifact.Bundle = filepath.Base(artifact.Bundle)
 	req.Resources = vm.Effective
-	return seedPlatformEnrollment(ctx, db, req, ref, artifact, actor, now)
+	return seedPlatformEnrollment(ctx, db, req, ref, artifact, actor, now, reference)
 }
 
-func seedPlatformEnrollment(ctx context.Context, db *sql.DB, req provider.CreateRequest, ref provider.WorkspaceRef, artifact release.Artifact, actor string, now time.Time) error {
+func seedPlatformEnrollment(ctx context.Context, db *sql.DB, req provider.CreateRequest, ref provider.WorkspaceRef, artifact release.Artifact, actor string, now time.Time, reference string) error {
 	store := release.NewStore(db)
 	if err := store.BeginImport(ctx, req.ArtifactID, artifact, actor, now); err != nil {
 		return err
@@ -166,25 +193,40 @@ func seedPlatformEnrollment(ctx context.Context, db *sql.DB, req provider.Create
 		if _, err := tx.ExecContext(ctx, `UPDATE installations SET state='active' WHERE id=$1`, ref.InstallationID); err != nil {
 			return err
 		}
+		observed, phase := "stopped", "setup.mutate"
+		if reference != "" {
+			observed, phase = "running", "workspace.launch"
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO workspaces
 			(id,installation_id,owner_user_id,template_id,template_revision,platform_artifact_id,repository_url,devcontainer_path,
 			 cpu_count,memory_mib,disk_mib,network_policy_snapshot_json,desired_state,observed_state,generation,ownership_marker,
 			 provider_instance_id,created_at,updated_at,version)
-			VALUES($1,$2,$3,'validation',1,$4,'','', $5,$6,$7,'{}','running','stopped',$8,$9,$10,$11,$11,1)`,
+			VALUES($1,$2,$3,'validation',1,$4,'','', $5,$6,$7,'{}','running',$8,$9,$10,$11,$12,$12,1)`,
 			ref.WorkspaceID, ref.InstallationID, actor, req.ArtifactID, req.Resources.CPU, req.Resources.MemoryBytes>>20,
-			req.Resources.DiskBytes>>20, ref.Generation, ref.OwnershipMarker, ref.InstanceID, stamp); err != nil {
+			req.Resources.DiskBytes>>20, observed, ref.Generation, ref.OwnershipMarker, ref.InstanceID, stamp); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO guest_registrations(workspace_id,generation,state) VALUES($1,$2,'eligible')`, ref.WorkspaceID, ref.Generation); err != nil {
 			return err
 		}
 		op, err := journal.CreateInTx(ctx, tx, operation.Request{Actor: actor, Key: uuid.NewString(), Type: "provision",
-			OriginatingAction: "setup.mutate", WorkspaceID: &ref.WorkspaceID, Generation: ref.Generation,
+			OriginatingAction: phase, WorkspaceID: &ref.WorkspaceID, Generation: ref.Generation,
 			Steps: []operation.Step{{Key: "enroll", Label: "Verify platform agent enrollment"}}})
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE operations SET status='waiting' WHERE id=$1`, op.ID)
+		if reference == "" {
+			_, err = tx.ExecContext(ctx, `UPDATE operations SET status='waiting' WHERE id=$1`, op.ID)
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE operations SET status='waiting',current_step='enroll' WHERE id=$1`, op.ID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE operation_steps SET status='active' WHERE operation_id=$1 AND step_key='enroll'`, op.ID); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO ec2_launch_enrollment(operation_id,launch_reference,public_data) VALUES($1,$2,$3)`,
+			op.ID, reference, req.BootstrapData)
 		return err
 	})
 }

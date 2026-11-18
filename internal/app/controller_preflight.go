@@ -34,10 +34,16 @@ type ControllerState struct {
 	retentionMaximum   *int64
 	retentionGrace     time.Duration
 	retentionStatus    atomic.Pointer[retentionSnapshot]
+	imageCache         *imageCacheRuntime
 }
 
 // Close releases the authoritative database on shutdown or failed composition.
-func (s *ControllerState) Close() error { return s.DB.Close() }
+func (s *ControllerState) Close() error {
+	if s.imageCache != nil {
+		return errors.Join(s.imageCache.Close(), s.DB.Close())
+	}
+	return s.DB.Close()
+}
 
 // GitHub binds a configured App to the active installation's protected store.
 func (s *ControllerState) GitHub(clientID, clientSecret string, installationID int64) (*identity.GitHub, error) {

@@ -48,10 +48,10 @@ func TestPlatformImportAdmission(t *testing.T) {
 	journal := operation.NewJournal(db, func() time.Time { return now }, uuid.NewString)
 	var disconnect context.CancelFunc
 	var ids []string
-	importImage := func(_ context.Context, id, actor, folder string, makeDefault bool) error {
+	importImage := func(_ context.Context, id, actor, folder string, options PlatformImportOptions) error {
 		ids = append(ids, id)
-		if actor != "admin" || folder != "/test/image" || !makeDefault {
-			t.Errorf("worker import = %q, %q, %t; want accepted fixture input", actor, folder, makeDefault)
+		if actor != "admin" || folder != "/test/image" || !options.MakeDefault || options.AMIFamily != "" {
+			t.Errorf("worker import = %q, %q, %+v; want accepted fixture input", actor, folder, options)
 		}
 		if disconnect != nil {
 			disconnect()

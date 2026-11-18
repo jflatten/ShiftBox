@@ -3,12 +3,14 @@ package app
 import (
 	"errors"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/identity"
+	"github.com/jflatten/ShiftBox/internal/imagecache"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
@@ -46,6 +48,12 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 	budget, resourceProfile := web.CapacityHandlers(db, origin, now, uuid.NewString, launchPolicy)
 	publishNotice, listNotices, noticeReceipt := web.NoticeHandlers(db, origin, now, uuid.NewString)
 	listMaintenance, createMaintenance := web.MaintenanceHandlers(db, origin, now, journal)
+	defaultCachePath := filepath.Join(string(filepath.Separator), "var", "lib", "shiftbox", "cache", "registry")
+	var cacheStatus func() imagecache.RuntimeStatus
+	if state.imageCache != nil {
+		defaultCachePath, cacheStatus = state.imageCache.defaultPath, state.imageCache.status
+	}
+	getImageCache, updateImageCache := web.ImageCacheHandlers(db, origin, now, journal, defaultCachePath, cacheStatus)
 	handlers := web.GitAuthorizationHandlers(db, origin, now, github)
 	for id, handler := range web.SecretHandlers(db, origin, state.Secrets, now) {
 		handlers[id] = handler
@@ -59,7 +67,9 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 		listConnectionGrants, revokeConnectionGrant,
 		listWorkspaces, getWorkspace, getOperation, streamEvents, listTemplates, createTemplate, reviseTemplate, budget, resourceProfile,
 		web.TemplateCatalogHandler(db, origin, now, launchPolicy),
+		web.RetireAMIHandler(db, origin, now),
 		web.InfrastructureStatusHandler(db, origin, now, launchPolicy.Capabilities),
+		getImageCache, updateImageCache,
 		web.KeepAlivePolicyHandler(db, origin, now),
 		web.NetworkPolicyHandler(db, origin, now, uuid.NewString, launchPolicy.Capabilities),
 		state.browserCertificateHandler(journal, now),

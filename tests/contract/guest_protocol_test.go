@@ -116,7 +116,7 @@ func TestGuestEnrollmentHTTP(t *testing.T) {
 
 // TestGuestPollContract uses a real enrollment and poll over dedicated TLS
 // listeners to verify pinned compatibility, durable retries, generation
-// fencing, and independent controller-side IDE readiness.
+// fencing, cache-offer compatibility, and independent controller-side IDE readiness.
 func TestGuestPollContract(t *testing.T) {
 	ctx := t.Context()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -222,7 +222,14 @@ func TestGuestPollContract(t *testing.T) {
 	}
 	enroll(guestContractKey(t), http.StatusForbidden, "guest.enrollment_denied")
 
-	pollServer := serve(web.GuestPollHandler(compatibility, enrollment.Exchange, clock, ""), guest.ServerTLS(serverCert, authority))
+	exchange := func(ctx context.Context, leaf *x509.Certificate, stamp time.Time, report guest.PollReport) (guest.Contact, *guest.PollOperation, error) {
+		contact, command, err := enrollment.Exchange(ctx, leaf, stamp, report)
+		if err == nil && contact.DesiredState == "running" {
+			contact.ImageCacheOffer = "mirror"
+		}
+		return contact, command, err
+	}
+	pollServer := serve(web.GuestPollHandler(compatibility, exchange, clock, ""), guest.ServerTLS(serverCert, authority))
 	pollURL := pollServer.URL + "/internal/v1/guest/poll"
 	unauthenticated, err := client(tls.Certificate{}).Post(pollURL, "application/json", strings.NewReader("{}"))
 	if err == nil {
@@ -234,7 +241,19 @@ func TestGuestPollContract(t *testing.T) {
 		t.Helper()
 		return postGuestContract(t, registered, pollURL, map[string]any{"protocolVersion": "1", "guestRelease": release}, want, code)
 	}
-	poll("previous", http.StatusOK, "")
+	for _, release := range []string{"previous", "current"} {
+		input := strings.NewReader(`{"protocolVersion":"1","guestRelease":"` + release + `"}`)
+		response, err := registered.Post(pollURL, "application/json", input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil || response.StatusCode != http.StatusOK || response.Header.Get(guest.ImageCacheOfferHeader) != "mirror" ||
+			bytes.Contains(payload, []byte(`"imageCache"`)) {
+			t.Fatalf("%s poll cache contract = %d, header %q, body %s, error %v", release, response.StatusCode, response.Header.Get(guest.ImageCacheOfferHeader), payload, err)
+		}
+	}
 	poll("older", http.StatusConflict, "guest.release_unsupported")
 	if _, err := db.ExecContext(ctx, `UPDATE workspaces SET observed_state='running' WHERE id=$1`, workspaceID); err != nil {
 		t.Fatal(err)

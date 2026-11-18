@@ -72,6 +72,11 @@ variable "release_id" {
   }
 }
 
+variable "ami_name" {
+  type    = string
+  default = null
+}
+
 variable "guest_agent_release" {
   type    = string
   default = null
@@ -118,7 +123,7 @@ locals {
 source "amazon-ebs" "shiftbox" {
   region                      = var.region
   source_ami                  = var.source_ami
-  ami_name                    = "shiftbox-${var.release_id}-amd64"
+  ami_name                    = coalesce(var.ami_name, "shiftbox-${var.release_id}-amd64")
   ami_description             = "ShiftBox workspace platform ${var.release_id} on Ubuntu 24.04 Minimal amd64"
   instance_type               = "t3.medium"
   subnet_id                   = var.build_subnet_id
