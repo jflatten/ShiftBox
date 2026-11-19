@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const sharp = require(process.env.SHARP_MODULE || 'sharp');
 const root = path.dirname(fileURLToPath(import.meta.url));
-const web = path.resolve(root, '../web/public/brand');
+const ui = path.resolve(root, '../ui');
 const source = JSON.parse(await fs.readFile(path.join(root, 'source/command-space.json'), 'utf8'));
 const { mark, wordmark, colors: c } = source;
 const paths = (shape, fill) => shape.paths.map(d => `<path fill="${fill}" fill-rule="evenodd" d="${d}"/>`).join('');
@@ -66,11 +66,21 @@ for(const [name,bg,mc,wc] of [['light',c.white,c.violet,c.ink],['dark',c.ink,c.v
   await put(`repository/shiftbox-social-${name}.svg`,social);
   await raster(`repository/shiftbox-social-${name}-1280x640.png`,social,1280);
 }
-await put('brand-colors.json',JSON.stringify(c,null,2)+'\n');
+const palette = JSON.stringify(c, null, 2) + '\n';
+await put('brand-colors.json', palette);
 
 // Serve only the runtime assets; the guide, sources, and review board stay outside the WebUI bundle.
-await fs.mkdir(web,{recursive:true});
-for(const dir of ['svg','icons']) for(const file of await fs.readdir(path.join(root,dir))) await fs.copyFile(path.join(root,dir,file),path.join(web,file));
+const publicBrand = path.join(ui, 'public', 'brand');
+await fs.mkdir(publicBrand, { recursive: true });
+for (const asset of [
+  'svg/shiftbox-logo-light.svg', 'svg/shiftbox-logo-dark.svg',
+  'svg/shiftbox-mark-light.svg', 'svg/shiftbox-mark-dark.svg',
+  'icons/favicon.svg', 'icons/favicon.ico', 'icons/apple-touch-icon.png',
+]) {
+  await fs.copyFile(path.join(root, asset), path.join(publicBrand, path.basename(asset)));
+}
+await fs.mkdir(path.join(ui, 'lib'), { recursive: true });
+await fs.writeFile(path.join(ui, 'lib', 'brand-colors.json'), palette);
 
 const inset=(x,y,scale,mc,wc)=>`<g transform="translate(${x} ${y}) scale(${scale})">${lockupBody(mc,wc)}</g>`;
 const preview=svg(1600,1140,`<path fill="#F5F5F8" d="M0 0h1600v1140H0z"/><text x="72" y="74" fill="${c.ink}" font-family="sans-serif" font-size="30" font-weight="700">ShiftBox / Command Space</text><text x="72" y="108" fill="#666473" font-family="sans-serif" font-size="17">Production brand kit · outlined artwork · transparent exports</text><rect x="48" y="148" width="1504" height="306" rx="20" fill="white"/>${inset(110,152,.95,c.violet,c.ink)}<rect x="48" y="478" width="1504" height="306" rx="20" fill="${c.ink}"/>${inset(110,482,.95,c.violetLight,c.white)}<rect x="48" y="808" width="1504" height="284" rx="20" fill="white"/><g transform="translate(90 836) scale(.43)"><rect width="512" height="512" rx="96" fill="${c.violet}"/>${squareBody(c.white)}</g><g transform="translate(358 836) scale(.43)"><rect width="512" height="512" rx="96" fill="${c.ink}"/>${squareBody(c.violetLight)}</g><g transform="translate(626 836) scale(.43)">${squareBody('#000000')}</g><text x="944" y="874" fill="${c.ink}" font-family="sans-serif" font-size="20" font-weight="700">Violet · Ink · White</text><rect x="944" y="900" width="100" height="70" rx="8" fill="${c.violet}"/><rect x="1064" y="900" width="100" height="70" rx="8" fill="${c.ink}"/><rect x="1184" y="900" width="100" height="70" rx="8" fill="${c.violetLight}"/><text x="944" y="1008" fill="#666473" font-family="monospace" font-size="16">#4834F5   #191821   #A599FF</text><text x="944" y="1042" fill="#666473" font-family="sans-serif" font-size="16">Logo / app icon / repository avatar</text>`,'ShiftBox brand kit preview');

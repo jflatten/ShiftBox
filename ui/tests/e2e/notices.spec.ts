@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test';
+import { expectReadableText } from './text-contrast';
 
-for (const width of [1280, 390]) {
+for (const { width, colorScheme } of [{ width: 1280, colorScheme: 'light' }, { width: 390, colorScheme: 'dark' }] as const) {
   // Exercise the exported UI at desktop and phone widths, including saved receipts
-  // across navigation and keyboard focus entering/leaving the publishing dialog.
+  // across navigation, dialog keyboard focus, and publish confirmation contrast in both themes.
   test(`application notices and history at ${width}px`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme });
     await page.setViewportSize({ width, height: 900 });
     const notices = [
       { id: 'maintenance', title: 'Planned maintenance', body: 'Save your work before tonight’s update. Workspaces will restart.',
@@ -82,6 +84,7 @@ for (const width of [1280, 390]) {
     await dialog.getByRole('button', { name: 'Publish notice', exact: true }).click();
     await expect(dialog).toBeHidden();
     await expect(page.getByRole('article', { name: 'Service update' })).toBeVisible();
+    await expectReadableText(page.getByRole('status').filter({ hasText: 'Notice published.' }));
     expect(published).toBe(1);
   });
 }

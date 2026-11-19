@@ -5,6 +5,7 @@ const { join } = require('node:path');
 const { createElement: h } = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 const { Alert, Anchor, Button, ColorSchemeScript, Container, Group, Image, MantineProvider, PasswordInput, Stack, TextInput, Title, createTheme, mantineHtmlProps } = require('@mantine/core');
+const brandColors = require('../lib/brand-colors.json');
 
 const root = join(__dirname, '../out/dex/frontend');
 const templateDir = join(root, 'templates');
@@ -18,6 +19,7 @@ function page(children) {
       h('head', null,
         h('meta', { charSet: 'utf-8' }),
         h('meta', { name: 'viewport', content: 'width=device-width, initial-scale=1' }),
+        h('meta', { name: 'theme-color', content: brandColors.violet }),
         h('meta', { name: 'referrer', content: 'no-referrer' }),
         h('title', null, 'Log in to ShiftBox'),
         h('link', { rel: 'icon', href: asset + 'favicon.svg' }),

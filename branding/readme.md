@@ -39,29 +39,11 @@ Maintain clear space around the visible artwork of at least one arrow-stroke thi
 
 ## WebUI use
 
-Runtime copies are already available in `web/public/brand/`, served by Vite at `/brand/`. This kit supplies assets for the rebrand; existing application screens and deployment identities are not changed by generating it.
+The Next.js export serves runtime logos and icons from `ui/public/brand/` at `/brand/`. The Dex login build copies the assets it uses into its own theme. Both select the logo for the active Mantine color scheme and set the browser `theme-color` to violet (`#4834F5`) from the generated `ui/lib/brand-colors.json`.
 
-```tsx
-<img src="/brand/shiftbox-logo-light.svg" alt="ShiftBox" className="h-8 w-auto dark:hidden" />
-<img src="/brand/shiftbox-logo-dark.svg" alt="ShiftBox" className="hidden h-8 w-auto dark:block" />
-```
+If a nearby label or link already says ShiftBox, use `alt=""` for its decorative logo. Wrap a logo that navigates home in a labeled link.
 
-The existing WebUI's `dark` variant follows `.dark-mode`, so the visible asset follows the application's selected theme. If a nearby label or link already says ShiftBox, use `alt=""` for its decorative logo. Do not make the logo a focusable image; wrap it in a labeled link when it navigates home.
-
-Add these tags when adopting the new branding in `web/index.html`:
-
-```html
-<link rel="icon" href="/brand/favicon.ico" sizes="16x16 32x32 48x48" />
-<link rel="icon" href="/brand/favicon.svg" type="image/svg+xml" sizes="any" />
-<link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" sizes="180x180" />
-<meta name="theme-color" content="#4834F5" />
-```
-
-An optional `icons/site.webmanifest` is also copied to `/brand/site.webmanifest`. Its icon URLs are relative to that directory, and its start URL and scope assume an application hosted at `/`. Adjust those values for deployments under a path prefix before linking the manifest. The manifest supplies identity and launch icons; it does not add offline behavior.
-
-```html
-<link rel="manifest" href="/brand/site.webmanifest" />
-```
+The kit includes an optional `icons/site.webmanifest` for integrations that need launch icons. Its icon URLs are relative to that directory, and its start URL and scope assume an application hosted at `/`. Adjust those values for deployments under a path prefix before linking the manifest.
 
 ## Sources and regeneration
 

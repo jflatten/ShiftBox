@@ -3325,3 +3325,7 @@ This checkpoint does not itself change the goal status.
 ## Workspace launch project picker
 
 - [X] T147 Present launchable projects in a responsive Mantine card grid and paginated table, with a shared live name filter and launch review dialog. Verified desktop and narrow layouts, pagination, keyboard focus, and dark-mode contrast in Chromium. Verified search and review from both views while signed in on `shiftbox-demo-controller:38`.
+
+## Browser branding and text contrast
+
+- [X] T148 Apply the approved browser theme color to the app and Dex, regenerate brand assets into `ui/public/brand`, and verify readable muted text and notice confirmations in both themes. Deployed `shiftbox-demo-controller:39` and verified the running image digest, both live login logos, and signed-in workspace contrast of 8.18:1 in light mode and 7.83:1 in dark mode. Both notice confirmation tests passed against the deployed frontend with mocked publication.

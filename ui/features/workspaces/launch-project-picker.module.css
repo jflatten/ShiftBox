@@ -1,5 +1,4 @@
 .surface {
-  --mantine-color-dimmed: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
   --mantine-color-placeholder: var(--mantine-color-dimmed);
 }
 

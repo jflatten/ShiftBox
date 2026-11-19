@@ -46,7 +46,7 @@ function NoticeList({ userId, csrfToken, session }: { userId: string; csrfToken:
         </Stack>
         {canPublish ? <Button onClick={() => { setPublished(''); setPublishing(true); }}>Publish notice</Button> : null}
       </Group>
-      {published ? <Text role="status" c="green">{published}</Text> : null}
+      {published ? <Text role="status" c="var(--shiftbox-color-success-text)">{published}</Text> : null}
       <Paper withBorder p="md" radius="md">
         <Stack gap="md">
           <Group justify="space-between">

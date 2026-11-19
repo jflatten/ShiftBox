@@ -997,7 +997,7 @@ test('opens Workspaces from the root and the ShiftBox logo', async ({ page }) =>
 });
 
 // A controller denial after the login deadline takes the user straight to the
-// credential form and explains why access ended.
+// branded credential form and explains why access ended.
 test('expired login opens the login form with a banner', async ({ page }) => {
   const expiresAt = new Date(Date.now() + 60_000).toISOString();
   let expired = false;
@@ -1016,6 +1016,7 @@ test('expired login opens the login form with a banner', async ({ page }) => {
   await page.clock.setSystemTime(new Date(Date.parse(expiresAt) + 1));
   await activate(page, page.getByRole('button', { name: 'Refresh' }));
   await expect(page.getByRole('heading', { name: 'Log in to ShiftBox' })).toBeVisible();
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#4834F5');
   await expect(page.getByRole('alert')).toHaveText('Your session expired. Log in again to continue.');
 });
 
