@@ -39,6 +39,11 @@ type workspaceView struct {
 	createdAt          string
 }
 
+type workspaceListItem struct {
+	workspaceView
+	Services []string `json:"services"`
+}
+
 type workspaceLifecycle struct {
 	Current             string  `json:"current"`
 	Next                *string `json:"next"`
@@ -151,7 +156,9 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 		Resolve: func(_ context.Context, _ *sql.Tx, _ *http.Request, principal auth.Principal) (AuthorizationTarget, error) {
 			return AuthorizationTarget{Action: "workspace.list", Resource: auth.Resource{Type: "workspace", OwnerID: principal.User.ID}}, nil
 		},
-		Apply: listWorkspaces,
+		Apply: func(ctx context.Context, tx *sql.Tx, r *http.Request, principal auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
+			return listWorkspaces(ctx, tx, r, store, principal, now())
+		},
 	}
 	detail := AuthorizedHandler{
 		DB: db, Origin: origin, Now: now,
@@ -309,7 +316,7 @@ func resolveWorkspaceView(ctx context.Context, tx *sql.Tx, r *http.Request, prin
 	return AuthorizationTarget{Action: "workspace.view", Resource: resource}, nil
 }
 
-func listWorkspaces(ctx context.Context, tx *sql.Tx, r *http.Request, principal auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
+func listWorkspaces(ctx context.Context, tx *sql.Tx, r *http.Request, store *auth.Store, principal auth.Principal, now time.Time) (http.Handler, error) {
 	query := r.URL.Query()
 	owner, state, cursor := query.Get("owner"), query.Get("state"), query.Get("cursor")
 	excludeDeleted, lifecycleState := query.Get("excludeDeleted"), query.Get("lifecycleState")
@@ -334,9 +341,9 @@ func listWorkspaces(ctx context.Context, tx *sql.Tx, r *http.Request, principal 
 	}
 	defer rows.Close()
 	result := struct {
-		Items      []workspaceView `json:"items"`
-		NextCursor *string         `json:"nextCursor"`
-	}{Items: make([]workspaceView, 0, limit)}
+		Items      []workspaceListItem `json:"items"`
+		NextCursor *string             `json:"nextCursor"`
+	}{Items: make([]workspaceListItem, 0, limit)}
 	for rows.Next() {
 		view, err := scanWorkspace(rows)
 		if err != nil {
@@ -346,15 +353,55 @@ func listWorkspaces(ctx context.Context, tx *sql.Tx, r *http.Request, principal 
 			result.NextCursor = &result.Items[limit-1].ID
 			break
 		}
-		result.Items = append(result.Items, view)
+		result.Items = append(result.Items, workspaceListItem{workspaceView: view, Services: []string{}})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	// Release the query before reading service availability on the same transaction.
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range result.Items {
+		item := &result.Items[i]
+		available, err := codeServerAvailable(ctx, tx, store, principal, item.workspaceView, now)
+		if err != nil {
+			return nil, err
+		}
+		if available {
+			item.Services = append(item.Services, workspace.ProbeCodeServer)
+		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(result)
 	}), nil
+}
+
+// codeServerAvailable applies the existing IDE entry rules to a fresh healthy probe.
+func codeServerAvailable(ctx context.Context, tx *sql.Tx, store *auth.Store, principal auth.Principal, view workspaceView, now time.Time) (bool, error) {
+	if view.DesiredState != "running" || view.ObservedState != "running" {
+		return false, nil
+	}
+	probes, err := workspace.ReadProbeResults(ctx, tx, view.ID, view.Generation, now)
+	if err != nil {
+		return false, err
+	}
+	if !slices.Contains(probes, workspace.ProbeResult{ID: workspace.ProbeCodeServer, Status: workspace.ProbeHealthy}) {
+		return false, nil
+	}
+	resource, generation, err := serviceWorkspace(ctx, tx, view.ID, "ide")
+	if err != nil {
+		return false, err
+	}
+	if !resource.Eligible || generation != view.Generation {
+		return false, nil
+	}
+	entry, err := serviceEntryTarget(ctx, tx, store, principal, resource)
+	if err != nil {
+		return false, err
+	}
+	return auth.Authorize(principal, entry.Action, entry.Resource, entry.Grants, now).Allowed, nil
 }
 
 func scanWorkspace(row interface{ Scan(...any) error }) (workspaceView, error) {

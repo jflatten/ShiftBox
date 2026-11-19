@@ -975,6 +975,8 @@ export interface components {
             previewPorts?: number[];
             /** @description Recent probe results for the current guest generation, included on workspace detail only. */
             probes?: components["schemas"]["ProbeResult"][];
+            /** @description Services with a recent healthy probe that the caller can enter, included on workspace list items. */
+            services?: "code-server"[];
             canOpenPreviews?: boolean;
             canEditPreviewPorts?: boolean;
             imageCache?: components["schemas"]["WorkspaceImageCache"];

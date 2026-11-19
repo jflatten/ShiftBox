@@ -22,6 +22,7 @@ export interface Workspace {
   canOpenIde?: boolean;
   imageCache?: components['schemas']['WorkspaceImageCache'];
   probes?: components['schemas']['ProbeResult'][];
+  services?: components['schemas']['Workspace']['services'];
   previewPorts?: number[];
   canOpenPreviews?: boolean;
   canEditPreviewPorts?: boolean;

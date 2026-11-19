@@ -1503,6 +1503,10 @@ components:
           description: Recent probe results for the current guest generation, included on workspace detail only.
           type: array
           items: { $ref: '#/components/schemas/ProbeResult' }
+        services:
+          description: Services with a recent healthy probe that the caller can enter, included on workspace list items.
+          type: array
+          items: { type: string, enum: [code-server] }
         canOpenPreviews: { type: boolean }
         canEditPreviewPorts: { type: boolean }
         imageCache: { $ref: '#/components/schemas/WorkspaceImageCache' }

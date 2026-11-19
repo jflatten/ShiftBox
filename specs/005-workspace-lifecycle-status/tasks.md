@@ -36,6 +36,11 @@ Use the existing toolchain, application and test fixtures. The quickstart lists 
 
 - [X] T007 Run the focused checks and review scenarios in `specs/005-workspace-lifecycle-status/quickstart.md`. Deploy the implementation to `shiftbox-demo` using the procedure in `AGENTS.md`. Verify the owner and admin cases in the browser, including refresh/reload, keyboard focus, handoff, IDE permission and safe completion. Record the review URL, ECS revision and results in the quickstart and clean up disposable demo resources.
 
+## Workspaces Services follow-up
+
+- [X] T008 Add the Services column after Last activity. Expose the code-server badge when its current probe is healthy and IDE access is available. Reuse the Open IDE entry flow and verify with controller and UI tests.
+- [X] T009 Deploy the Services column to shiftbox-demo and verify badge visibility and IDE entry in the browser. ECS ran `shiftbox-demo-controller:35`. The badge appeared when code-server became healthy, opened the workbench in a separate tab, and disappeared when the demo workspace returned to Stopped.
+
 ## Dependencies and execution order
 
 - T001 precedes T002 and fixes the evidence mapping for T003. T003 may run in a subagent while T002 is in progress.

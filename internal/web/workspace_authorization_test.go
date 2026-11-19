@@ -101,6 +101,62 @@ type lifecyclePage struct {
 	NextCursor *string                  `json:"nextCursor"`
 }
 
+// TestWorkspaceListServices exposes only healthy, current services that the
+// caller can enter. An older Ready milestone alone must not show the badge.
+func TestWorkspaceListServices(t *testing.T) {
+	db := keepAliveDatabase(t)
+	principal, request := lifecycleReads(t, db)
+	executeLifecycleFixture(t, db, `UPDATE workspaces SET desired_state='running',observed_state='running';
+		INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,created_at,version,originating_action)
+		VALUES('start',$1,'start',1,'user','start','succeeded','2026-11-13T23:00:00Z',1,'workspace.start');
+		INSERT INTO operation_steps(operation_id,step_index,step_key,label,status)
+		VALUES('start',0,'verify_ide','Verify IDE','succeeded');
+		INSERT INTO guest_registrations(workspace_id,generation,state)
+		VALUES($1,1,'active'),($1,2,'active');
+		INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
+		VALUES('administrator','admin@example.test','administrator','active','local','setup','now','now',1)`, lifecycleWorkspaceID)
+	report := func(generation int, status, timestamp string) {
+		t.Helper()
+		executeLifecycleFixture(t, db, `UPDATE guest_registrations SET probe_results_json=$1,probe_reported_at=$2
+			WHERE workspace_id=$3 AND generation=$4`, `[{"id":"code-server","status":"`+status+`"}]`,
+			timestamp, lifecycleWorkspaceID, generation)
+	}
+	check := func(scenario string, want []string) {
+		t.Helper()
+		var page struct {
+			Items []struct {
+				Services []string `json:"services"`
+			} `json:"items"`
+		}
+		decodeLifecycleRead(t, request(""), &page)
+		if len(page.Items) != 1 {
+			t.Fatalf("listWorkspaces (%s) returned %d workspaces, want 1", scenario, len(page.Items))
+		}
+		if got := page.Items[0].Services; !reflect.DeepEqual(got, want) {
+			t.Errorf("listWorkspaces (%s) services = %#v, want %#v", scenario, got, want)
+		}
+	}
+	const recent = "2026-11-13T23:59:55.000000000Z"
+	hidden, visible := []string{}, []string{"code-server"}
+	report(2, "healthy", recent)
+	check("another generation reported", hidden)
+	report(1, "healthy", "2026-11-13T23:58:30.000000000Z")
+	check("report expired", hidden)
+	report(1, "error", recent)
+	check("IDE became unhealthy", hidden)
+	report(1, "healthy", recent)
+	check("authorized owner", visible)
+	executeLifecycleFixture(t, db, `UPDATE workspaces SET desired_state='stopped'`)
+	check("stop requested with a recent healthy report", hidden)
+	executeLifecycleFixture(t, db, `UPDATE workspaces SET desired_state='running'`)
+	principal.User.Role = "administrator"
+	principal.User.ID, principal.Session.UserID = "administrator", "administrator"
+	check("administrator without connection grant", hidden)
+	executeLifecycleFixture(t, db, `INSERT INTO resource_grants(id,subject_user_id,resource_type,resource_id,action,granted_by,granted_at)
+		VALUES('grant','administrator','workspace',$1,'workspace.connect_admin','administrator','2026-11-13T23:00:00Z')`, lifecycleWorkspaceID)
+	check("administrator with connection grant", visible)
+}
+
 // TestWorkspaceLifecycleReads verifies shared, durable display evidence, including
 // readiness before all hooks finish, pre-existing records, and workflow handoffs.
 func TestWorkspaceLifecycleReads(t *testing.T) {

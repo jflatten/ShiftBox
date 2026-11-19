@@ -114,7 +114,7 @@ function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfTo
               <Table aria-label="Workspaces" highlightOnHover verticalSpacing="md">
                 <Table.Thead><Table.Tr>
                   <Table.Th>Workspace</Table.Th><Table.Th>State</Table.Th><Table.Th>Resources</Table.Th>
-                  <Table.Th>Last activity</Table.Th><Table.Th>Actions</Table.Th>
+                  <Table.Th>Last activity</Table.Th><Table.Th>Services</Table.Th><Table.Th>Actions</Table.Th>
                 </Table.Tr></Table.Thead>
                 <Table.Tbody>
                   {data.items.map(workspace => (

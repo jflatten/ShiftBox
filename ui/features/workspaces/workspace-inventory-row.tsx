@@ -1,11 +1,13 @@
 import { useRef, useState } from 'react';
-import { Alert, Anchor, Button, Menu, Modal, Stack, Table, Text } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Button, Image, Menu, Modal, Stack, Table, Text, Tooltip } from '@mantine/core';
 import { useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { DeleteWorkspaceDialog, WorkspaceProgress } from './workspace-detail';
 import { availableWorkspaceCommands, openWorkspaceEntry, useWorkspaceCommand, useWorkspaceDetail, type WorkspaceService } from './workspace-commands';
 import { workspaceName, type Workspace } from './workspace';
 import { WorkspaceLifecycleStatus, WorkspaceTime } from './workspace-summary';
+
+const openCodeServerLabel = 'Open VS Code in a new tab';
 
 export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace; href: string; csrfToken: string }) {
   const client = useQueryClient();
@@ -62,6 +64,16 @@ export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace
         <Text size="xs" c="dimmed">{row.resources.diskMiB.toLocaleString()} MiB disk</Text>
       </Stack></Table.Td>
       <Table.Td><Text size="sm"><WorkspaceTime value={row.lastActivityAt} fallback="Not recorded" /></Text></Table.Td>
+      <Table.Td>
+        {row.services?.includes('code-server') ? (
+          <Tooltip label={openCodeServerLabel} events={{ hover: true, focus: true, touch: false }}>
+            <ActionIcon variant="subtle" size={32} aria-label={openCodeServerLabel} disabled={openingService}
+              onClick={() => void openEntry('ide')}>
+              <Image src="/services/vscode-icon.png" alt="" w={26} h={26} />
+            </ActionIcon>
+          </Tooltip>
+        ) : null}
+      </Table.Td>
       <Table.Td><Stack gap={4} align="flex-start">
         <Menu opened={opened} onChange={setOpened} position="bottom-end" withinPortal transitionProps={{ duration: 0 }}>
           <Menu.Target><Button ref={trigger} variant="default" size="compact-sm" aria-label={`Actions for ${name}`}>Actions</Button></Menu.Target>

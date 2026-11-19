@@ -148,7 +148,7 @@ test('shows Carbon-colored chips in a single workspace state column', async () =
   for (const [label, , color] of states) {
     const row = within(table).getByRole('row', { name: new RegExp(`${label} workspace`) });
     const cells = within(row).getAllByRole('cell');
-    expect(cells).toHaveLength(5);
+    expect(cells).toHaveLength(6);
     const state = within(cells[1]);
     const chip = state.getByText(label, { exact: true }).closest<HTMLElement>('.mantine-Chip-root');
     expect(chip?.style.getPropertyValue('--chip-bg')).toBe(color);
@@ -190,6 +190,57 @@ test('polls idle inventory rows for externally started state changes', async () 
   await waitFor(() => expect(cell.queryByRole('progressbar')).not.toBeInTheDocument());
   expect(cell.queryByText('Stopped')).not.toBeInTheDocument();
   expect(cell.getByText('Ready')).toBeVisible();
+  expect(fetch).not.toHaveBeenCalledWith(`/api/v1/workspaces/${workspace.id}`, expect.anything());
+});
+
+// The inventory updates when code-server becomes available or loses health.
+// The badge opens the same IDE grant flow from the keyboard without fetching detail.
+test('shows the VS Code badge in Services and opens the IDE in a separate tab', async () => {
+  const tabDocument = document.implementation.createHTMLDocument();
+  const entry = tabDocument.createElement('a');
+  jest.spyOn(tabDocument, 'createElement').mockReturnValue(entry);
+  const navigate = jest.spyOn(entry, 'click').mockImplementation(() => {});
+  const tab = { document: tabDocument, opener: window };
+  const openTab = jest.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+  const exchangeUrl = 'https://workspace.ide.test/_shiftbox/entry?grant=fixture';
+  let services: string[] = [];
+  const fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces?excludeDeleted=true') {
+      return json({ items: [{ ...workspace, observedState: 'running', lifecycle: lifecycle('ready'), services }], nextCursor: null });
+    }
+    if (input === `/api/v1/workspaces/${workspace.id}/entry-grants` && init?.method === 'POST') {
+      expect(openTab).toHaveBeenCalledWith('about:blank', '_blank');
+      return json({ exchangeUrl });
+    }
+    throw new Error(`unexpected request: ${input}`);
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+  const table = await screen.findByRole('table', { name: 'Workspaces' });
+  const activity = within(table).getByRole('columnheader', { name: 'Last activity' });
+  expect(activity.nextElementSibling).toBe(within(table).getByRole('columnheader', { name: 'Services' }));
+  const servicesCell = within(within(table).getAllByRole('cell')[4]);
+  const label = 'Open VS Code in a new tab';
+  expect(servicesCell.queryByRole('button', { name: label })).not.toBeInTheDocument();
+
+  services = ['code-server'];
+  const refresh = screen.getByRole('button', { name: 'Refresh' });
+  await user.click(refresh);
+  const badge = await servicesCell.findByRole('button', { name: label });
+  expect(badge.querySelector('img')).toHaveAttribute('src', '/services/vscode-icon.png');
+  badge.focus();
+  await user.keyboard('{Enter}');
+  await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+  expect(entry.href).toBe(exchangeUrl);
+  expect(fetch).toHaveBeenCalledWith(`/api/v1/workspaces/${workspace.id}/entry-grants`, expect.objectContaining({
+    body: '{"service":"ide"}',
+  }));
+
+  services = [];
+  await user.click(refresh);
+  await waitFor(() => expect(badge).not.toBeInTheDocument());
   expect(fetch).not.toHaveBeenCalledWith(`/api/v1/workspaces/${workspace.id}`, expect.anything());
 });
 
