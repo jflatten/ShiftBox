@@ -40,6 +40,8 @@ Use the existing toolchain, application and test fixtures. The quickstart lists 
 
 - [X] T008 Add the Services column after Last activity. Expose the code-server badge when its current probe is healthy and IDE access is available. Reuse the Open IDE entry flow and verify with controller and UI tests.
 - [X] T009 Deploy the Services column to shiftbox-demo and verify badge visibility and IDE entry in the browser. ECS ran `shiftbox-demo-controller:35`. The badge appeared when code-server became healthy, opened the workbench in a separate tab, and disappeared when the demo workspace returned to Stopped.
+- [X] T010 Fix stale lifecycle controls on the Workspaces list. Verify that Stop, Rebuild, and Delete workspace stay disabled while startup is active and become available when it finishes with the progress dialog closed.
+- [X] T011 Deploy the lifecycle controls fix to shiftbox-demo and verify Start and Stop from the Workspaces list without opening the progress dialog or reloading. ECS ran `shiftbox-demo-controller:36`. On `groundtruth`, Stop, Rebuild, and Delete workspace were enabled after startup. Stop returned the workspace to Stopped.
 
 ## Dependencies and execution order
 

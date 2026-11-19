@@ -314,7 +314,7 @@ function WorkspaceEntryButton({ id, csrfToken, service = 'ide', describedBy }: {
 }
 
 export function WorkspaceProgress({ workspaceId, operationId, onFinished, showFailureWarning = false }: {
-  workspaceId: string; operationId: string; onFinished: (busy: boolean) => void; showFailureWarning?: boolean;
+  workspaceId: string; operationId: string; onFinished?: (busy: boolean) => void; showFailureWarning?: boolean;
 }) {
   const operation = useOperation(operationId);
   const client = useQueryClient();
@@ -324,7 +324,7 @@ export function WorkspaceProgress({ workspaceId, operationId, onFinished, showFa
   useEffect(() => {
     const finished = state === 'succeeded' || state === 'failed' || state === 'cancelled';
     if (finished) {
-      onFinished(false);
+      onFinished?.(false);
       void client.invalidateQueries({ queryKey: ['workspaces', 'list'] });
     }
     if (finished || lastVerifiedStep || lastTimedOutStep) void client.invalidateQueries({ queryKey: ['workspaces', 'detail', workspaceId], exact: true });

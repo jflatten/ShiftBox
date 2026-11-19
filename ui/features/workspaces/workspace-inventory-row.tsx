@@ -15,7 +15,6 @@ export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace
   const [opened, setOpened] = useState(false);
   const [dialog, setDialog] = useState<'delete' | 'progress'>();
   const [operationID, setOperationID] = useState<string>();
-  const [operationBusy, setOperationBusy] = useState(false);
   const [openingService, setOpeningService] = useState(false);
   const [entryError, setEntryError] = useState<unknown>();
   const detail = useWorkspaceDetail(row.id, opened || dialog === 'delete');
@@ -24,13 +23,12 @@ export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace
   const lifecycle = commands.lifecycle;
   const command = useWorkspaceCommand(workspace, csrfToken, detail.refetch, (action, id) => {
     setOperationID(id);
-    setOperationBusy(true);
     void client.invalidateQueries({ queryKey: ['workspaces', 'list'] });
     if (action === 'delete') close();
   });
   const currentID = workspace && (opened || dialog === 'delete') ? workspace.currentOperationId : row.currentOperationId;
   const progressID = currentID ?? operationID;
-  const busy = !!currentID || operationBusy || !!command.submitting;
+  const busy = !!currentID || !!command.submitting;
   const name = workspaceName(row);
 
   function close() {
@@ -111,8 +109,8 @@ export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace
         <DeleteWorkspaceDialog name={workspace?.name || name} opened={dialog === 'delete'} busy={busy || !commands.delete}
           submitting={command.submitting === 'delete'} error={command.error} cancel={close} confirm={() => void command.run('delete')} />
         {operationID ? (
-          <Modal opened={dialog === 'progress'} onClose={close} title="Workspace operation" keepMounted transitionProps={{ duration: 0 }}>
-            <WorkspaceProgress key={operationID} workspaceId={row.id} operationId={operationID} onFinished={setOperationBusy} />
+          <Modal opened={dialog === 'progress'} onClose={close} title="Workspace operation" transitionProps={{ duration: 0 }}>
+            <WorkspaceProgress key={operationID} workspaceId={row.id} operationId={operationID} />
           </Modal>
         ) : null}
       </Stack></Table.Td>

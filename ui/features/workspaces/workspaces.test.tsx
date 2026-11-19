@@ -301,6 +301,59 @@ test('starts a stopped workspace from its inventory row', async () => {
   expect(screen.getByRole('table', { name: 'Workspaces' })).toBeVisible();
 });
 
+// Ready can appear while startup hooks still run. Lifecycle actions become available
+// after the controller clears the operation, even if View progress has never opened.
+test('enables inventory actions after startup finishes with progress closed', async () => {
+  jest.useFakeTimers();
+  mockMenuLayout();
+  const operationId = 'start-from-row';
+  let row = { ...workspace, desiredState: 'stopped', currentOperationId: null as string | null, canOpenIde: false };
+  const fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces?excludeDeleted=true') return json({ items: [row], nextCursor: null });
+    if (input === `/api/v1/workspaces/${workspace.id}`) return json(row);
+    if (input === `/api/v1/workspaces/${workspace.id}/actions/start` && init?.method === 'POST') {
+      row = { ...row, desiredState: 'running', currentOperationId: operationId, version: 5,
+        lifecycle: lifecycle('stopped', 'vm-running', operationId) };
+      return json({ id: operationId });
+    }
+    if (input === `/api/v1/operations/${operationId}`) {
+      return json({ id: operationId, status: row.currentOperationId ? 'running' : 'succeeded', version: 1, steps: [] });
+    }
+    throw new Error(`unexpected request: ${input}`);
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+  const actions = await screen.findByRole('button', { name: 'Actions for Example workspace' });
+  await user.click(actions);
+  const start = await screen.findByRole('menuitem', { name: 'Start' });
+  await act(async () => { await user.click(start); });
+  expect(actions).toHaveAttribute('aria-expanded', 'false');
+
+  row = { ...row, observedState: 'running', canOpenIde: true, lifecycle: lifecycle('ready', null, operationId) };
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  expect(await screen.findByRole('cell', { name: /Current state.*Ready/ })).toBeVisible();
+  await act(async () => { await user.click(actions); });
+  const lifecycleActions = ['Stop', 'Rebuild', 'Delete workspace'];
+  for (const name of lifecycleActions) {
+    expect(await screen.findByRole('menuitem', { name })).toBeDisabled();
+  }
+  expect(screen.getByRole('menuitem', { name: 'Open IDE' })).toBeEnabled();
+  await act(async () => { await user.click(actions); });
+
+  const requestCount = fetch.mock.calls.length;
+  row = { ...row, currentOperationId: null, version: 6 };
+  await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+  expect(fetch.mock.calls.slice(requestCount).some(([url]) => url === '/api/v1/workspaces?excludeDeleted=true')).toBe(true);
+  await act(async () => { await user.click(actions); });
+  for (const name of lifecycleActions) {
+    expect(await screen.findByRole('menuitem', { name })).toBeEnabled();
+  }
+  expect(screen.getByRole('menuitem', { name: 'View progress' })).toBeEnabled();
+  expect(screen.queryByRole('dialog', { name: 'Workspace operation' })).not.toBeInTheDocument();
+});
+
 // Running rows use detail capabilities for IDE and previews, and deletion
 // still requires the existing typed name and data-loss acknowledgement.
 test('offers ready actions and guarded deletion in the inventory', async () => {
