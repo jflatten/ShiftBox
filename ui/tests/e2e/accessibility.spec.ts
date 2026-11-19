@@ -369,13 +369,18 @@ test('workspace launch picker reflows and shares table and card search', async (
   }));
   await fixture(page, (route, path) => {
     if (path.endsWith('/session')) return route.fulfill({ json: admin([]) });
+    if (path.endsWith('/workspaces')) return route.fulfill({ json: { items: [], nextCursor: null } });
     if (path.endsWith('/templates')) return route.fulfill({ json: { items: projects, nextCursor: null } });
   });
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.goto('/workspaces/?launch=1');
-  const first = page.getByRole('button', { name: 'Review launch for Project 01' });
-  const second = page.getByRole('button', { name: 'Review launch for Project 02' });
+  await page.goto('/workspaces/');
+  await activate(page, page.getByRole('link', { name: 'Launch Project' }));
+  await expect(page).toHaveURL(/\/templates\/$/);
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Projects' })).toHaveAttribute('aria-current', 'page');
+  const first = page.getByRole('button', { name: 'Launch workspace for Project 01' });
+  const second = page.getByRole('button', { name: 'Launch workspace for Project 02' });
   await expect(second).toBeVisible();
   expect((await first.boundingBox())?.y).toBe((await second.boundingBox())?.y);
   const contrast = await first.getByText('Revision 1').evaluate(element => {
@@ -387,7 +392,7 @@ test('workspace launch picker reflows and shares table and card search', async (
       }, 0);
     }
     const text = luminance(getComputedStyle(element).color);
-    const card = luminance(getComputedStyle(element.closest('button')!).backgroundColor);
+    const card = luminance(getComputedStyle(element.closest('article')!).backgroundColor);
     return (Math.max(text, card) + 0.05) / (Math.min(text, card) + 0.05);
   });
   expect(contrast).toBeGreaterThanOrEqual(4.5);
@@ -426,12 +431,14 @@ for (const failed of [false, true]) {
         repositoryUrl: 'https://github.com/example/project', platformArtifactId: 'Ubuntu', resourceProfileId: 'Small' }], nextCursor: null } });
       if (path.endsWith('/workspaces') && route.request().method() === 'POST') return route.fulfill({ status: 202, json: { id: operationID, workspaceId: workspaceID } });
     }, snapshot);
-    await page.goto('/workspaces/?launch=1');
-    await activate(page, page.getByRole('button', { name: 'Review launch for Keyboard project' }), 'Space');
-    await expect(page.getByRole('dialog', { name: 'Review launch' })).toBeVisible();
+    await page.goto('/templates/');
+    await activate(page, page.getByRole('button', { name: 'Launch workspace for Keyboard project' }), 'Space');
+    const review = page.getByRole('dialog', { name: 'Review launch' });
+    await expect(review).toBeVisible();
     await tabTo(page, page.getByRole('textbox', { name: 'Workspace name' }));
     await page.keyboard.insertText('Keyboard workspace');
-    await activate(page, page.getByRole('button', { name: 'Launch workspace' }));
+    await activate(page, review.getByRole('button', { name: 'Launch workspace', exact: true }));
+    await expect(page.getByRole('heading', { name: 'Launch workspace', exact: true })).toBeFocused();
     if (failed) {
       const warning = page.getByRole('alert', { name: 'Workspace launch failed' });
       await expect(warning).toContainText('The guest could not enroll.');
@@ -860,13 +867,20 @@ test('project inventory keyboard dialogs and archive focus', async ({ page }) =>
     }
     if (path.endsWith('/templates')) return route.fulfill({ json: { items: archived ? [] : [project] } });
   });
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/templates/');
-  const details = page.getByRole('button', { name: 'View Keyboard project' });
-  await activate(page, details);
+  const actions = page.getByRole('button', { name: 'Actions for Keyboard project' });
+  await activate(page, actions);
+  await expect(page.getByRole('menu').locator('[data-autofocus]')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('End');
+  await expect(page.getByRole('menuitem', { name: 'Archive project' })).toBeFocused();
+  await page.keyboard.press('ArrowUp');
+  await expect(page.getByRole('menuitem', { name: 'View details' })).toBeFocused();
+  await page.keyboard.press('Enter');
   await expect(page.getByRole('dialog', { name: 'Project details' })).toContainText('Small');
   await activate(page, page.getByRole('button', { name: 'Done', exact: true }));
-  await expect(details).toBeFocused();
-  const actions = page.getByRole('button', { name: 'Actions for Keyboard project' });
+  await expect(actions).toBeFocused();
   await activate(page, actions);
   await expect(page.getByRole('menu').locator('[data-autofocus]')).toBeFocused();
   await page.keyboard.press('ArrowDown');

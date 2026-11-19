@@ -25,6 +25,13 @@ test('shows named project details and respects shared access', async () => {
   expect(screen.getByText('Project author')).toBeVisible();
   expect(screen.queryByText('profile-id')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Actions for/ })).not.toBeInTheDocument();
+  const launch = screen.getByRole('button', { name: 'Launch workspace for Example project' });
+  expect(within(launch).getByText('Launch workspace', { exact: true })).toBeVisible();
+  await user.click(launch);
+  const review = await screen.findByRole('dialog', { name: 'Review launch' });
+  await waitFor(() => expect(within(review).getByRole('textbox', { name: 'Workspace name' })).toHaveFocus());
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(launch).toHaveFocus());
   await user.click(view);
   const details = screen.getByRole('dialog', { name: 'Project details' });
   expect(within(details).getByRole('button', { name: 'Close project details' })).toBeVisible();
@@ -34,25 +41,33 @@ test('shows named project details and respects shared access', async () => {
   await waitFor(() => expect(view).toHaveFocus());
 });
 
-// Search is sent to the API before paging, preserves the archived view, and
-// resets a previous page cursor so matching templates are not skipped.
-test('searches across pages and preserves archive scope', async () => {
-  const fetch = jest.fn(async (input: RequestInfo | URL) => json(input === '/api/v1/session'
-    ? { ...session, user: { id: 'member', role: 'administrator' } }
-    : { items: [project], nextCursor: 'next' }));
+// Live search includes repositories and preserves the query when switching to archived projects.
+test('shares the search across views and restricts archived projects to details and management', async () => {
+  const archived = { ...project, id: 'archived', name: 'Archived example', state: 'archived' };
+  const other = { ...project, id: 'other', name: 'Different project', repositoryUrl: 'https://github.com/other/repo' };
+  const fetch = jest.fn(async (input: RequestInfo | URL) => {
+    if (input === '/api/v1/session') return json({ ...session, user: { id: 'member', role: 'administrator' } });
+    if (input === '/api/v1/templates?archived=true') return json({ items: [archived], nextCursor: null });
+    return json({ items: [project, other], nextCursor: null });
+  });
   globalThis.fetch = fetch;
   const user = userEvent.setup();
   render(<Providers><Templates /></Providers>);
-  await screen.findByRole('button', { name: 'View Example project' });
-  await user.click(screen.getByRole('button', { name: 'Next page' }));
-  await screen.findByText('Page 2');
-  await user.type(screen.getByRole('searchbox', { name: 'Search projects' }), 'Example{Enter}');
-  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/templates?q=Example', expect.anything()));
-  expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+  await screen.findByRole('button', { name: 'Launch workspace for Different project' });
+  const search = screen.getByRole('searchbox', { name: 'Search projects' });
+  await user.type(search, 'example/project');
+  expect(screen.queryByRole('button', { name: 'Launch workspace for Different project' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('radio', { name: 'Table' }));
+  const table = within(screen.getByRole('table', { name: 'Projects' }));
+  expect(table.getAllByRole('row')).toHaveLength(2);
+  expect(table.getByRole('button', { name: 'Launch workspace for Example project' })).toHaveTextContent('Launch workspace');
   await user.click(screen.getByRole('switch', { name: 'Archived projects' }));
-  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/templates?archived=true&q=Example', expect.anything()));
+  expect(await screen.findByRole('button', { name: 'View Archived example' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: /Launch workspace for/ })).not.toBeInTheDocument();
+  expect(search).toHaveValue('example/project');
   await user.click(screen.getByRole('button', { name: 'Clear search' }));
-  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/templates?archived=true', expect.anything()));
+  expect(search).toHaveValue('');
+  expect(fetch).toHaveBeenCalledWith('/api/v1/templates?archived=true', expect.anything());
 });
 
 // A failed list can be retried without reloading the app; a valid empty
@@ -74,25 +89,30 @@ test('recovers from list errors and explains empty search results', async () => 
   expect(await screen.findByText('No projects match your search.')).toBeVisible();
 });
 
-// Templates shows only the current server page and follows the cursor when
-// a user's permitted templates span more than one page.
-test('lists current project revisions and follows the server cursor', async () => {
+// A match on a later API page appears in both layouts, even when the user starts on a different table page.
+test('loads the full catalog and resets table pagination for a new search', async () => {
+  const items = Array.from({ length: 10 }, (_, index) => ({ ...project, id: `project-${index}`, name: `Project ${index}` }));
+  const second = { ...project, id: 'second', name: 'Second project', currentRevision: 3 };
   globalThis.fetch = jest.fn(async input => {
     const responses: Record<string, unknown> = {
-      '/api/v1/session': { user: { id: 'member', role: 'member' }, mode: 'normal', installationState: 'active', permissions: [], csrfToken: 'fixture' },
-      '/api/v1/templates': { items: [{ id: 'one', name: 'Example project', currentRevision: 2 }], nextCursor: 'after-one' },
-      '/api/v1/templates?cursor=after-one': { items: [{ id: 'two', name: 'Second project', currentRevision: 1 }], nextCursor: null },
+      '/api/v1/session': session,
+      '/api/v1/templates': { items, nextCursor: 'after-one' },
+      '/api/v1/templates?cursor=after-one': { items: [second], nextCursor: null },
     };
     if (typeof input !== 'string' || !(input in responses)) throw new Error('unexpected request');
     return { ok: true, status: 200, json: async () => responses[input] } as Response;
   });
   const user = userEvent.setup();
   render(<Providers><Templates /></Providers>);
-  expect(await screen.findByRole('button', { name: 'View Example project' })).toBeVisible();
-  expect(screen.getByText('Revision 2')).toBeVisible();
+  expect(await screen.findByRole('button', { name: 'Launch workspace for Second project' })).toBeVisible();
+  expect(screen.getByText('Revision 3')).toBeVisible();
+  await user.click(screen.getByRole('radio', { name: 'Table' }));
+  expect(screen.queryByRole('button', { name: 'Launch workspace for Second project' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Next page' }));
-  expect(await screen.findByRole('button', { name: 'View Second project' })).toBeVisible();
-  expect(screen.queryByRole('button', { name: 'View Example project' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Launch workspace for Second project' })).toBeVisible();
+  await user.type(screen.getByRole('searchbox', { name: 'Search projects' }), 'Project 0');
+  expect(screen.getByRole('button', { name: 'Launch workspace for Project 0' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Launch workspace for Second project' })).not.toBeInTheDocument();
 });
 
 // An installation default is preselected and saved when creating a template.

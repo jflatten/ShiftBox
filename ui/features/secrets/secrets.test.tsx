@@ -119,8 +119,8 @@ test('offers project secret management only for projects the user manages', asyn
   })) as unknown as typeof globalThis.fetch;
   const user = userEvent.setup();
   render(<Providers><Templates /></Providers>);
-  const own = await screen.findByRole('row', { name: /My project/ });
-  const shared = screen.getByRole('row', { name: /Shared project/ });
+  const own = await screen.findByRole('article', { name: 'My project' });
+  const shared = screen.getByRole('article', { name: 'Shared project' });
   expect(within(shared).queryByRole('button', { name: /Actions for/ })).not.toBeInTheDocument();
   await user.click(within(own).getByRole('button', { name: 'Actions for My project' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Project secrets' }));

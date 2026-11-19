@@ -8,7 +8,7 @@ export function TemplateSharing({ template, csrfToken, onClose, refresh }: {
   template: TemplateRevision;
   csrfToken: string;
   onClose: () => void;
-  refresh: () => Promise<{ data?: { items: TemplateRevision[] }; isError: boolean }>;
+  refresh: () => Promise<{ data?: TemplateRevision[]; isError: boolean }>;
 }) {
   const [userID, setUserID] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
@@ -53,7 +53,7 @@ export function TemplateSharing({ template, csrfToken, onClose, refresh }: {
       setGrants(current => current.filter(grant => grant.userId !== id));
       const updated = await refresh();
       if (!updated.isError) {
-        const current = updated.data?.items.find(item => item.id === template.id);
+        const current = updated.data?.find(item => item.id === template.id);
         if (current) setGrants(current.launchGrants ?? []);
       }
     } catch (error) {

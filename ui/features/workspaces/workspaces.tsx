@@ -9,6 +9,8 @@ import { APIProblemView } from '../../components/api-problem';
 import { ControllerUnavailableError, readControllerJSON } from '../../lib/api-problem';
 import { controllerPollInterval, controllerReadOptions } from '../../lib/query-client';
 import { SignInChoices } from '../session/sign-in';
+import { ProjectCatalog } from '../templates/project-catalog';
+import { useProjectCatalog, type TemplateRevision } from '../templates/use-templates';
 import { useSession } from '../../lib/use-session';
 import { LaunchFlow } from './launch-flow';
 import { WorkspaceDetail } from './workspace-detail';
@@ -36,8 +38,9 @@ export function Workspaces({ workspaceId, ownerId, launch = false }: {
         </>
       ) : (
         <div style={{ display: 'contents' }} inert={sessionUnavailable && !unavailable}>
-          {launch ? <LaunchFlow key={current.user.id} csrfToken={current.csrfToken} userID={current.user.id}
-            admin={current.role === 'administrator'} />
+          {launch ? <LaunchFlow key={current.user.id} csrfToken={current.csrfToken}>
+            {onReview => <WorkspaceLaunchPicker userID={current.user.id} admin={current.role === 'administrator'} onReview={onReview} />}
+          </LaunchFlow>
             : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken}
                 admin={current.role === 'administrator'} />
               : <WorkspaceList key={ownerId} ownerId={ownerId} csrfToken={current.csrfToken} />}
@@ -45,6 +48,17 @@ export function Workspaces({ workspaceId, ownerId, launch = false }: {
       )}
     </ShiftBoxShell>
   );
+}
+
+function WorkspaceLaunchPicker({ userID, admin, onReview }: {
+  userID: string; admin: boolean; onReview: (project: TemplateRevision) => void;
+}) {
+  const catalog = useProjectCatalog(userID, admin);
+  return <>
+    <Anchor href="/workspaces/">All workspaces</Anchor>
+    <Title order={1}>Launch workspace</Title>
+    <ProjectCatalog catalog={catalog} onProjectAction={onReview} />
+  </>;
 }
 
 function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfToken: string }) {
@@ -77,8 +91,14 @@ function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfTo
           <Title order={1}>Workspaces</Title>
           <Text c="dimmed" size="sm">{ownerId ? 'Workspaces for the selected user.' : 'Your development environments, resources, and lifecycle status.'}</Text>
         </Stack>
-        {ownerId ? <Anchor href="/workspaces/">All workspaces</Anchor> :
-          <Button component="a" href="/workspaces/?launch=1">Launch workspace</Button>}
+        {ownerId ? <Anchor href="/workspaces/">All workspaces</Anchor> : <Anchor href="/templates/" fw={600}>
+          <Group component="span" gap="xs" wrap="nowrap">
+            Launch Project
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <path d="M4 10h11m-5-5 5 5-5 5" />
+            </svg>
+          </Group>
+        </Anchor>}
       </Group>
       <Paper withBorder radius="md" p="md">
         <Stack gap="md">

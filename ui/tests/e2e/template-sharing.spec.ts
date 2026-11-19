@@ -90,8 +90,8 @@ test('shares a project while preserving workspace and guest owner authority', as
       }
       // A management session by itself does not open a private service.
       expect((await administrator.request.get(guestOrigin)).status()).toBe(403);
-      await member.goto('/workspaces/?launch=1');
-      await expect(member.getByRole('heading', { name: 'Launch workspace' })).toBeVisible();
+      await member.goto('/templates/');
+      await expect(member.getByRole('heading', { name: 'Projects' })).toBeVisible();
       const before = await member.request.get('/api/v1/templates');
       expect(before.status()).toBe(200);
       expect((await before.json()).items.some((item: { id: string }) => item.id === template.id)).toBe(false);
@@ -130,7 +130,7 @@ test('shares a project while preserving workspace and guest owner authority', as
       await share.getByRole('button', { name: 'Cancel' }).click();
 
       await member.reload();
-      await member.getByRole('button', { name: `Review launch for ${fixture.templateName}` }).click();
+      await member.getByRole('button', { name: `Launch workspace for ${fixture.templateName}` }).click();
       await expect(member.getByRole('heading', { name: `${fixture.templateName} · Revision ${template.currentRevision}` })).toBeVisible();
       const projectMetadata = await member.request.get(`/api/v1/secrets?scope=template&scopeId=${encodeURIComponent(template.id)}`);
       expect(projectMetadata.status()).toBe(403);
@@ -189,7 +189,7 @@ test('shares a project while preserving workspace and guest owner authority', as
       await expect(archive.getByText(/existing workspaces, files, and grants are preserved/i)).toBeVisible();
       await archive.getByRole('button', { name: 'Archive project' }).click();
       await expect(archive).toBeHidden();
-      await expect(templateRow(administrator, fixture.templateName)).toHaveCount(0);
+      await expect(administrator.getByRole('article', { name: fixture.templateName, exact: true })).toHaveCount(0);
       await assertLaunchDenied();
       await verifyGuestSecret(memberTerminal, projectOnlyKey, values.project);
 
@@ -277,12 +277,8 @@ async function signIn(page: Page, account: Account, role: string): Promise<Sessi
   return session;
 }
 
-function templateRow(page: Page, name: string) {
-  return page.getByRole('row').filter({ has: page.getByRole('button', { name: `View ${name}`, exact: true }) });
-}
-
 async function templateAction(page: Page, name: string, action: string) {
-  await templateRow(page, name).getByRole('button', { name: `Actions for ${name}` }).click();
+  await page.getByRole('button', { name: `Actions for ${name}` }).click();
   await page.getByRole('menuitem', { name: action, exact: true }).click();
 }
 

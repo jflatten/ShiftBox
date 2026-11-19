@@ -1,14 +1,15 @@
 'use client';
 
-import { platformImageLabel, providerLabel } from '../../lib/provider-label';
+import { providerLabel } from '../../lib/provider-label';
 
 import { useEffect, useRef, useState } from 'react';
-import { Anchor, Badge, Button, Group, Menu, Modal, Paper, SimpleGrid, Stack, Switch, Table, Text, TextInput, Title } from '@mantine/core';
-import { APIProblemView } from '../../components/api-problem';
+import { Button, Group, Menu, Modal, Paper, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { ShiftBoxShell } from '../../components/app-shell';
 import { SignInChoices } from '../session/sign-in';
 import { useSession } from '../../lib/use-session';
-import { useTemplates, type TemplateRevision } from './use-templates';
+import { useProjectCatalog, type TemplateRevision } from './use-templates';
+import { ProjectCatalog } from './project-catalog';
+import { LaunchFlow } from '../workspaces/launch-flow';
 import { TemplateArchive } from './archive';
 import { TemplateSharing } from './sharing';
 import { TemplateRevisionForm } from './revision';
@@ -26,26 +27,23 @@ export function Templates() {
       {!normal ? <Title order={1}>Projects</Title> : null}
       {session.isPending ? <Text role="status">Checking your session…</Text> : null}
       {session.data === null ? <SignInChoices /> : null}
-      {normal ? <TemplateList key={current.user.id} userID={current.user.id} admin={current.role === 'administrator'} csrfToken={current.csrfToken}
-        canCreate={current.permissions.includes('template.create')} /> : null}
+      {normal ? <LaunchFlow key={current.user.id} csrfToken={current.csrfToken}>
+        {onReview => <TemplateList userID={current.user.id} admin={current.role === 'administrator'} csrfToken={current.csrfToken}
+          canCreate={current.permissions.includes('template.create')} onReview={onReview} />}
+      </LaunchFlow> : null}
     </ShiftBoxShell>
   );
 }
 
-function TemplateList({ userID, admin, csrfToken, canCreate }: {
-  userID: string; admin: boolean; csrfToken: string; canCreate: boolean;
+function TemplateList({ userID, admin, csrfToken, canCreate, onReview }: {
+  userID: string; admin: boolean; csrfToken: string; canCreate: boolean; onReview: (project: TemplateRevision) => void;
 }) {
-  const [cursors, setCursors] = useState<string[]>([]);
   const [showArchived, setShowArchived] = useState(false);
-  const [searchDraft, setSearchDraft] = useState('');
-  const [search, setSearch] = useState('');
   const [dialog, setDialog] = useState<TemplateDialog>();
   const trigger = useRef<HTMLButtonElement | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
-  const cursor = cursors.at(-1);
   const archived = admin && showArchived;
-  const page = useTemplates(cursor, true, archived, userID, admin, search);
-  const { items, nextCursor } = page.isError ? {} : page.data ?? {};
+  const catalog = useProjectCatalog(userID, admin, archived);
   useEffect(() => {
     if (dialog || !trigger.current) return;
     // Archiving can remove the row; the page heading provides a stable
@@ -64,10 +62,22 @@ function TemplateList({ userID, admin, csrfToken, canCreate }: {
       <Group justify="space-between" align="flex-start">
         <Stack gap={4}>
           <Title order={1} ref={heading} tabIndex={-1}>Projects</Title>
-          <Text size="sm" c="dimmed">Reusable project configurations for new workspaces.</Text>
+          <Text size="sm" c="dimmed">Choose a project to review and launch a workspace.</Text>
         </Stack>
         {canCreate && dialog?.action !== 'secrets' ? <Button onClick={event => open({ action: 'create' }, event.currentTarget)}>New project</Button> : null}
       </Group>
+      <div hidden={dialog?.action === 'secrets'}>
+        <ProjectCatalog catalog={catalog} onProjectAction={(template, control) => {
+          if (template.state === 'archived') open({ action: 'details', template }, control);
+          else onReview(template);
+        }} management={{
+          userID, archived, canCreate, onArchivedChange: admin ? setShowArchived : undefined,
+          actions: template => template.ownerId === userID || admin
+            ? <TemplateActions template={template} open={open} />
+            : <Button variant="subtle" size="compact-sm" aria-label={`View ${template.name}`} aria-haspopup="dialog"
+                onClick={event => open({ action: 'details', template }, event.currentTarget)}>View details</Button>,
+        }} />
+      </div>
       {dialog?.action === 'secrets' ? <Stack>
         <Button variant="default" style={{ alignSelf: 'flex-start' }} onClick={close}>Back to projects</Button>
         <Paper withBorder radius="md" p="md">
@@ -77,81 +87,12 @@ function TemplateList({ userID, admin, csrfToken, canCreate }: {
             <Secrets scope="template" scopeID={dialog.template.id} userID={userID} csrfToken={csrfToken} />
           </Stack>
         </Paper>
-      </Stack> : <Paper withBorder radius="md" p="md">
-        <Stack gap="md">
-          <Group justify="space-between" align="flex-end">
-            <form onSubmit={event => { event.preventDefault(); setSearch(searchDraft.trim()); setCursors([]); }} style={{ flex: '1 1 280px' }}>
-              <Group align="flex-end" gap="xs">
-                <TextInput type="search" label="Search projects" placeholder="Name or repository" value={searchDraft} maxLength={200}
-                  onChange={event => setSearchDraft(event.currentTarget.value)} style={{ flex: '1 1 160px' }} />
-                <Button type="submit" variant="default">Search</Button>
-                {search || searchDraft ? <Button variant="subtle" onClick={() => { setSearchDraft(''); setSearch(''); setCursors([]); }}>Clear search</Button> : null}
-              </Group>
-            </form>
-            {admin ? <Switch label="Archived projects" checked={archived} mb={8} onChange={event => {
-              setCursors([]); setShowArchived(event.currentTarget.checked);
-            }} /> : null}
-            <Button variant="default" loading={page.isFetching} onClick={() => void page.refetch()}>Refresh</Button>
-          </Group>
-          <Text size="xs" c="dimmed">{archived
-            ? 'Showing archived projects. Restore a project to allow new launches; existing workspaces and grants are preserved.'
-            : 'Showing active projects. New revisions apply to future launches; existing workspaces keep their configuration.'}</Text>
-          {page.isError ? <Stack align="flex-start">
-            <APIProblemView error={page.error} />
-            <Button variant="default" onClick={() => void page.refetch()}>Retry</Button>
-          </Stack> : null}
-          {page.isPending ? <Text role="status">Loading projects…</Text> : null}
-          {items && items.length > 0 ? (
-            <Table.ScrollContainer minWidth={680}>
-              <Table aria-label="Projects" highlightOnHover verticalSpacing="md">
-                <Table.Thead><Table.Tr>
-                  <Table.Th>Project</Table.Th><Table.Th>Repository</Table.Th><Table.Th>Configuration</Table.Th>
-                  <Table.Th>Owner</Table.Th><Table.Th>Actions</Table.Th>
-                </Table.Tr></Table.Thead>
-                <Table.Tbody>{items.map(template => <Table.Tr key={template.id}>
-                  <Table.Td style={{ maxWidth: 230, overflowWrap: 'anywhere' }}>
-                    <Stack gap={4} align="flex-start">
-                      <Anchor component="button" type="button" fw={600} ta="left" aria-label={`View ${template.name}`}
-                        onClick={event => open({ action: 'details', template }, event.currentTarget)}>{template.name}</Anchor>
-                      <Text size="xs" c="dimmed">Revision {template.currentRevision}</Text>
-                      <Badge size="sm" variant="light" color={template.state === 'archived' ? 'gray' : 'green'}>{template.state === 'archived' ? 'Archived' : 'Active'}</Badge>
-                    </Stack>
-                  </Table.Td>
-                  <Table.Td style={{ maxWidth: 230, overflowWrap: 'anywhere' }}>
-                    <Text size="sm" title={template.repositoryUrl}>{template.repositoryUrl?.replace(/^https:\/\/github\.com\//, '') || 'Unavailable'}</Text>
-                    <Text size="xs" c="dimmed">{template.repositoryRef || 'Default branch'}</Text>
-                  </Table.Td>
-                  <Table.Td style={{ maxWidth: 200, overflowWrap: 'anywhere' }}>
-                    <Text size="sm">{template.resourceProfileName || 'Profile unavailable'}</Text>
-                    <Text size="xs" c="dimmed">{template.platformImageName ? platformImageLabel(template.platformImageName, template.providerKind) : 'Image unavailable'}</Text>
-                  </Table.Td>
-                  <Table.Td style={{ maxWidth: 180, overflowWrap: 'anywhere' }}>
-                    <Text size="sm">{template.ownerId === userID ? 'You' : template.ownerName || 'Project owner'}</Text>
-                  </Table.Td>
-                  <Table.Td>{template.ownerId === userID || admin ? <TemplateActions template={template} open={open} /> : <Text size="sm" c="dimmed">Shared with you</Text>}</Table.Td>
-                </Table.Tr>)}</Table.Tbody>
-              </Table>
-            </Table.ScrollContainer>
-          ) : items ? <Stack align="center" gap="xs" py="xl">
-            <Text fw={600}>{search ? 'No projects match your search.' : cursor ? 'No projects on this page.' : archived ? 'No archived projects.' : 'No projects yet.'}</Text>
-            <Text size="sm" c="dimmed">{search ? 'Try a different name or repository, or clear the search.' : cursor ? 'Return to the previous page.' : archived ? 'Archived projects will appear here.' :
-              canCreate ? 'Create a project to define a repeatable workspace configuration.' : 'Ask a project owner to share launch access with you.'}</Text>
-          </Stack> : null}
-          <Group justify="space-between">
-            <Text size="sm" c="dimmed" role="status">{items ? `${items.length} ${items.length === 1 ? 'project' : 'projects'} on this page` : page.isPending ? 'Loading…' : 'Project list unavailable'}</Text>
-            <Group gap="xs">
-              <Button variant="default" disabled={!cursor || page.isFetching} onClick={() => setCursors(current => current.slice(0, -1))}>Previous page</Button>
-              <Text size="sm">Page {cursors.length + 1}</Text>
-              <Button variant="default" disabled={!nextCursor || page.isFetching} onClick={() => { if (nextCursor) setCursors(current => [...current, nextCursor]); }}>Next page</Button>
-            </Group>
-          </Group>
-        </Stack>
-      </Paper>}
+      </Stack> : null}
       {dialog?.action === 'details' ? <TemplateDetails template={dialog.template} onClose={close} /> : null}
-      {dialog?.action === 'share' ? <TemplateSharing template={dialog.template} csrfToken={csrfToken} onClose={close} refresh={page.refetch} /> : null}
-      {dialog?.action === 'archive' ? <TemplateArchive template={dialog.template} csrfToken={csrfToken} onClose={close} refresh={page.refetch} /> : null}
+      {dialog?.action === 'share' ? <TemplateSharing template={dialog.template} csrfToken={csrfToken} onClose={close} refresh={catalog.refetch} /> : null}
+      {dialog?.action === 'archive' ? <TemplateArchive template={dialog.template} csrfToken={csrfToken} onClose={close} refresh={catalog.refetch} /> : null}
       {dialog?.action === 'create' || dialog?.action === 'revise' ? <TemplateRevisionForm
-        template={dialog.action === 'revise' ? dialog.template : undefined} admin={admin} csrfToken={csrfToken} onClose={close} refresh={page.refetch} /> : null}
+        template={dialog.action === 'revise' ? dialog.template : undefined} admin={admin} csrfToken={csrfToken} onClose={close} refresh={catalog.refetch} /> : null}
     </Stack>
   );
 }
@@ -166,6 +107,7 @@ function TemplateActions({ template, open }: { template: TemplateRevision; open:
       {!archived ? <Menu.Item onClick={() => run('revise')}>New revision</Menu.Item> : null}
       <Menu.Item onClick={() => run('share')}>{archived ? 'Manage launch grants' : 'Share launch access'}</Menu.Item>
       {!archived ? <Menu.Item onClick={() => run('secrets')}>Project secrets</Menu.Item> : null}
+      {!archived ? <Menu.Item onClick={() => run('details')}>View details</Menu.Item> : null}
       <Menu.Divider />
       <Menu.Item color={archived ? undefined : 'red'} onClick={() => run('archive')}>{archived ? 'Restore project' : 'Archive project'}</Menu.Item>
     </Menu.Dropdown>

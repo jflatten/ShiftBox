@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Anchor, Button, Group, Modal, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
 import { APIProblemView } from '../../components/api-problem';
 import { WorkflowStepper } from '../../components/workflow-stepper';
@@ -6,8 +6,6 @@ import { readProblem } from '../../lib/api-problem';
 import { providerLabel } from '../../lib/provider-label';
 import { useOperation } from '../../lib/use-operation';
 import type { TemplateRevision } from '../templates/use-templates';
-import { LaunchProjectPicker } from './launch-project-picker';
-import styles from './launch-project-picker.module.css';
 import { useWorkspaceDetail } from './workspace-commands';
 import { WorkspaceImageCache } from './workspace-image-cache';
 
@@ -16,13 +14,21 @@ interface AcceptedLaunch {
   workspaceId: string;
 }
 
-export function LaunchFlow({ csrfToken, userID, admin }: { csrfToken: string; userID: string; admin: boolean }) {
+export function LaunchFlow({ csrfToken, children }: {
+  csrfToken: string;
+  children: (onReview: (project: TemplateRevision) => void) => ReactNode;
+}) {
   const [name, setName] = useState('');
   const [review, setReview] = useState<TemplateRevision>();
   const [accepted, setAccepted] = useState<AcceptedLaunch>();
   const [error, setError] = useState<unknown>();
   const [submitting, setSubmitting] = useState(false);
   const requestKeys = useRef(new Map<string, string>());
+  const progressHeading = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    if (accepted) progressHeading.current?.focus();
+  }, [accepted]);
 
   function closeReview() {
     if (submitting) return;
@@ -54,11 +60,12 @@ export function LaunchFlow({ csrfToken, userID, admin }: { csrfToken: string; us
 
   return (
     <>
-      <Anchor href="/workspaces/">All workspaces</Anchor>
-      <Title order={1}>Launch workspace</Title>
-      {accepted ? <LaunchProgress accepted={accepted} /> : <LaunchProjectPicker userID={userID} admin={admin} onReview={setReview} />}
+      {accepted ? <>
+        <Anchor href="/workspaces/">All workspaces</Anchor>
+        <Title order={1} ref={progressHeading} tabIndex={-1}>Launch workspace</Title>
+        <LaunchProgress accepted={accepted} />
+      </> : children(setReview)}
       <Modal opened={!!review && !accepted} onClose={closeReview} title="Review launch" centered size="lg" padding="lg"
-        classNames={{ content: styles.surface }}
         styles={{ title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' }, body: { paddingBottom: 0 } }}
         closeOnClickOutside={false} closeOnEscape={!submitting} closeButtonProps={{ 'aria-label': 'Close launch review', disabled: submitting }}>
         {review ? (

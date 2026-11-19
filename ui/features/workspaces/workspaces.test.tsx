@@ -785,6 +785,13 @@ test('requests a rebuild and shows its progress', async () => {
   }
 });
 
+// The workspace inventory's launch action opens the Projects catalog.
+test('links Launch Project to Projects', async () => {
+  globalThis.fetch = jest.fn(async input => json(input === '/api/v1/session' ? session : { items: [], nextCursor: null }));
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+  expect(await screen.findByRole('link', { name: 'Launch Project' })).toHaveAttribute('href', '/templates/');
+});
+
 // The workspace list opened from People keeps the disabled member's scope
 // across pages so the operator can return to their stop workflows.
 test('keeps the owner filter when paging from People', async () => {
@@ -815,13 +822,13 @@ test('filters project cards and table rows by name across the launch catalog', a
   render(<Providers><Workspaces workspaceId={null} launch /></Providers>);
   const search = await screen.findByRole('searchbox', { name: 'Search projects' });
   await user.type(search, ' GROUND ');
-  expect(await screen.findByRole('button', { name: 'Review launch for Groundtruth' })).toBeVisible();
-  expect(screen.queryByRole('button', { name: 'Review launch for Other project' })).not.toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Launch workspace for Groundtruth' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Launch workspace for Other project' })).not.toBeInTheDocument();
 
   await user.click(screen.getByRole('radio', { name: 'Table' }));
   const table = screen.getByRole('table', { name: 'Projects' });
   expect(within(table).getAllByRole('row')).toHaveLength(2);
-  const review = within(table).getByRole('button', { name: 'Review launch for Groundtruth' });
+  const review = within(table).getByRole('button', { name: 'Launch workspace for Groundtruth' });
   await user.click(review);
   const dialog = await screen.findByRole('dialog', { name: 'Review launch' });
   await waitFor(() => expect(within(dialog).getByText('Groundtruth · Revision 2')).toBeVisible());
@@ -847,7 +854,7 @@ test('paginates the project table and resets its page when the search changes', 
   });
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={null} launch /></Providers>);
-  expect(await screen.findByRole('button', { name: 'Review launch for Project 12' })).toBeVisible();
+  expect(await screen.findByRole('button', { name: 'Launch workspace for Project 12' })).toBeVisible();
   await user.click(screen.getByRole('radio', { name: 'Table' }));
   const table = screen.getByRole('table', { name: 'Projects' });
   expect(within(table).getAllByRole('row')).toHaveLength(11);
@@ -881,7 +888,7 @@ test('reviews a project revision and reports a capacity refusal', async () => {
   globalThis.fetch = fetch;
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={null} launch /></Providers>);
-  const project = await screen.findByRole('button', { name: 'Review launch for Example project' });
+  const project = await screen.findByRole('button', { name: 'Launch workspace for Example project' });
   await user.click(project);
   const dialog = within(await screen.findByRole('dialog', { name: 'Review launch' }));
   await waitFor(() => expect(dialog.getByText('https://github.com/example/project')).toBeVisible());
@@ -920,7 +927,7 @@ test('shows an inline warning and the Stepper after a workspace launch fails', a
   });
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={null} launch /></Providers>);
-  await user.click(await screen.findByRole('button', { name: 'Review launch for Example project' }));
+  await user.click(await screen.findByRole('button', { name: 'Launch workspace for Example project' }));
   await user.type(await screen.findByRole('textbox', { name: /workspace name/i }), 'My development workspace');
   await user.click(screen.getByRole('button', { name: 'Launch workspace' }));
   const warning = await screen.findByRole('alert', { name: 'Workspace launch failed' });

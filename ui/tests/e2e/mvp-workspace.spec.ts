@@ -178,11 +178,12 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
       if (streamAttempts === 1) await route.abort('connectionreset');
       else await route.continue();
     });
-    await page.goto(new URL('/workspaces/?launch=1', managementOrigin).href);
-    await activate(page.getByRole('button', { name: `Review launch for ${templateName}` }), 'Space');
+    await page.goto(new URL('/workspaces/', managementOrigin).href);
+    await activate(page.getByRole('link', { name: 'Launch Project' }));
+    await activate(page.getByRole('button', { name: `Launch workspace for ${templateName}` }), 'Space');
     await expect(page.getByRole('heading', { name: `${templateName} · Revision 1` })).toBeVisible();
     await enter(page.getByRole('textbox', { name: /workspace name/i }), templateName);
-    await activate(page.getByRole('button', { name: 'Launch workspace' }));
+    await activate(page.getByRole('dialog', { name: 'Review launch' }).getByRole('button', { name: 'Launch workspace', exact: true }));
     const details = page.getByRole('link', { name: 'View workspace' });
     await expect(details).toBeVisible();
     workspaceURL = new URL((await details.getAttribute('href')) ?? '', managementOrigin).href;

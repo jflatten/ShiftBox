@@ -3329,3 +3329,8 @@ This checkpoint does not itself change the goal status.
 ## Browser branding and text contrast
 
 - [X] T148 Apply the approved browser theme color to the app and Dex, regenerate brand assets into `ui/public/brand`, and verify readable muted text and notice confirmations in both themes. Deployed `shiftbox-demo-controller:39` and verified the running image digest, both live login logos, and signed-in workspace contrast of 8.18:1 in light mode and 7.83:1 in dark mode. Both notice confirmation tests passed against the deployed frontend with mocked publication.
+
+## Projects catalog and launch navigation
+
+- [X] T149 Reuse the workspace launch picker design on Projects, retain project management controls, and route Launch Project from Workspaces to Projects. Verified responsive layouts, search, pagination, keyboard focus, and project management in Chromium. Verified signed-in navigation, launch review from both views, project details, and the archived filter on `shiftbox-demo-controller:40`.
+- [X] T150 Label the project launch action “Launch workspace” in the card grid and table. Verified both labels and the launch review while signed in on `shiftbox-demo-controller:41`.
