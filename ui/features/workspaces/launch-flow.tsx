@@ -1,11 +1,13 @@
 import { useRef, useState } from 'react';
-import { Anchor, Button, Group, Radio, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Anchor, Button, Group, Modal, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
 import { APIProblemView } from '../../components/api-problem';
 import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
 import { providerLabel } from '../../lib/provider-label';
 import { useOperation } from '../../lib/use-operation';
-import { useTemplates, type TemplateRevision } from '../templates/use-templates';
+import type { TemplateRevision } from '../templates/use-templates';
+import { LaunchProjectPicker } from './launch-project-picker';
+import styles from './launch-project-picker.module.css';
 import { useWorkspaceDetail } from './workspace-commands';
 import { WorkspaceImageCache } from './workspace-image-cache';
 
@@ -15,18 +17,18 @@ interface AcceptedLaunch {
 }
 
 export function LaunchFlow({ csrfToken, userID, admin }: { csrfToken: string; userID: string; admin: boolean }) {
-  const [cursors, setCursors] = useState<string[]>([]);
-  const [selected, setSelected] = useState('');
   const [name, setName] = useState('');
   const [review, setReview] = useState<TemplateRevision>();
   const [accepted, setAccepted] = useState<AcceptedLaunch>();
   const [error, setError] = useState<unknown>();
   const [submitting, setSubmitting] = useState(false);
   const requestKeys = useRef(new Map<string, string>());
-  const cursor = cursors.at(-1);
-  const templates = useTemplates(cursor, !accepted, false, userID, admin);
-  const data = templates.isError ? undefined : templates.data;
-  const chosen = data?.items.find(item => templateKey(item) === selected);
+
+  function closeReview() {
+    if (submitting) return;
+    setReview(undefined);
+    setError(undefined);
+  }
 
   const begin = async () => {
     if (!review || !name.trim() || submitting) return;
@@ -54,67 +56,43 @@ export function LaunchFlow({ csrfToken, userID, admin }: { csrfToken: string; us
     <>
       <Anchor href="/workspaces/">All workspaces</Anchor>
       <Title order={1}>Launch workspace</Title>
-      {accepted ? <LaunchProgress accepted={accepted} /> : review ? (
-        <Stack>
-          <Title order={2}>{review.name} · Revision {review.currentRevision}</Title>
-          <TextInput label="Workspace name" required maxLength={120} value={name} disabled={submitting}
-            onChange={event => setName(event.currentTarget.value)} />
-          <dl>
-            <Text component="dt" size="sm" c="dimmed">Repository</Text>
-            <Text component="dd" ml={0} mb="sm" style={{ overflowWrap: 'anywhere' }}>{review.repositoryUrl}</Text>
-            {review.repositoryRef ? <>
-              <Text component="dt" size="sm" c="dimmed">Repository ref</Text>
-              <Text component="dd" ml={0} mb="sm">{review.repositoryRef}</Text>
-            </> : null}
-            <Text component="dt" size="sm" c="dimmed">Dev Container configuration</Text>
-            <Text component="dd" ml={0} mb="sm">{review.devcontainerPath}</Text>
-            <Text component="dt" size="sm" c="dimmed">Resource profile</Text>
-            <Text component="dd" ml={0} mb="sm">{review.resourceProfileName || 'Unavailable'}</Text>
-            <Text component="dt" size="sm" c="dimmed">Provider</Text>
-            <Text component="dd" ml={0} mb="sm">{providerLabel(review.providerKind)}</Text>
-            <Text component="dt" size="sm" c="dimmed">Platform image</Text>
-            <Text component="dd" ml={0} mb="sm">{review.platformImageName || 'Unavailable'}</Text>
-            <Text component="dt" size="sm" c="dimmed">Secret references</Text>
-            <Text component="dd" ml={0}>{review.secretNames?.join(', ') || 'None'}</Text>
-          </dl>
-          {error !== undefined ? <APIProblemView error={error} /> : null}
-          <Group>
-            <Button disabled={!name.trim()} loading={submitting} onClick={() => void begin()}>Launch workspace</Button>
-            <Button variant="default" disabled={submitting} onClick={() => {
-              setReview(undefined);
-              setError(undefined);
-            }}>Back to projects</Button>
-          </Group>
-        </Stack>
-      ) : (
-        <Stack align="flex-start">
-          {templates.isError ? <APIProblemView error={templates.error} /> : null}
-          {templates.isPending ? <Text role="status">Loading projects…</Text> : null}
-          {data?.items.length === 0 ? <Text>No projects on this page.</Text> : null}
-          {!!data?.items.length ? (
-            <Radio.Group label="Choose a project" value={selected} onChange={setSelected}>
-              <Stack gap="sm" mt="sm">
-                {data.items.map(item => <Radio key={templateKey(item)} value={templateKey(item)}
-                  label={`${item.name} · Revision ${item.currentRevision}`} />)}
-              </Stack>
-            </Radio.Group>
-          ) : null}
-          {cursor || data?.nextCursor ? (
-            <Group>
-              <Button variant="default" disabled={!cursor} onClick={() => setCursors(current => current.slice(0, -1))}>Previous page</Button>
-              <Button variant="default" disabled={!data?.nextCursor} onClick={() => {
-                const next = data?.nextCursor;
-                if (next) setCursors(current => [...current, next]);
-              }}>Next page</Button>
+      {accepted ? <LaunchProgress accepted={accepted} /> : <LaunchProjectPicker userID={userID} admin={admin} onReview={setReview} />}
+      <Modal opened={!!review && !accepted} onClose={closeReview} title="Review launch" centered size="lg" padding="lg"
+        classNames={{ content: styles.surface }}
+        styles={{ title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' }, body: { paddingBottom: 0 } }}
+        closeOnClickOutside={false} closeOnEscape={!submitting} closeButtonProps={{ 'aria-label': 'Close launch review', disabled: submitting }}>
+        {review ? (
+          <Stack component="form" gap="lg" onSubmit={event => { event.preventDefault(); void begin(); }}>
+            <Title order={2} size="h4">{review.name} · Revision {review.currentRevision}</Title>
+            <TextInput label="Workspace name" required maxLength={120} value={name} disabled={submitting} data-autofocus
+              onChange={event => setName(event.currentTarget.value)} />
+            <SimpleGrid component="dl" cols={{ base: 1, xs: 2 }} spacing="md" m={0}>
+              <LaunchDetail label="Repository" value={review.repositoryUrl} />
+              <LaunchDetail label="Repository ref" value={review.repositoryRef || 'Default branch'} />
+              <LaunchDetail label="Dev Container configuration" value={review.devcontainerPath} />
+              <LaunchDetail label="Resource profile" value={review.resourceProfileName || 'Unavailable'} />
+              <LaunchDetail label="Provider" value={providerLabel(review.providerKind)} />
+              <LaunchDetail label="Platform image" value={review.platformImageName || 'Unavailable'} />
+              <LaunchDetail label="Secret references" value={review.secretNames?.join(', ') || 'None'} />
+            </SimpleGrid>
+            {error !== undefined ? <APIProblemView error={error} /> : null}
+            <Group grow gap={0} mx="calc(-1 * var(--mantine-spacing-lg))" wrap="nowrap">
+              <Button variant="default" radius={0} size="lg" disabled={submitting} onClick={closeReview}>Cancel</Button>
+              <Button type="submit" radius={0} size="lg" disabled={!name.trim()} loading={submitting}>Launch workspace</Button>
             </Group>
-          ) : null}
-          {data?.items.length ? <Button disabled={!chosen} onClick={() => {
-            if (!chosen) return;
-            setReview(chosen);
-          }}>Review launch</Button> : null}
-        </Stack>
-      )}
+          </Stack>
+        ) : null}
+      </Modal>
     </>
+  );
+}
+
+function LaunchDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <Text component="dt" size="sm" c="dimmed">{label}</Text>
+      <Text component="dd" ml={0} style={{ overflowWrap: 'anywhere' }}>{value}</Text>
+    </div>
   );
 }
 

@@ -130,8 +130,7 @@ test('shares a project while preserving workspace and guest owner authority', as
       await share.getByRole('button', { name: 'Cancel' }).click();
 
       await member.reload();
-      await member.getByRole('radio', { name: `${fixture.templateName} · Revision ${template.currentRevision}` }).check();
-      await member.getByRole('button', { name: 'Review launch' }).click();
+      await member.getByRole('button', { name: `Review launch for ${fixture.templateName}` }).click();
       await expect(member.getByRole('heading', { name: `${fixture.templateName} · Revision ${template.currentRevision}` })).toBeVisible();
       const projectMetadata = await member.request.get(`/api/v1/secrets?scope=template&scopeId=${encodeURIComponent(template.id)}`);
       expect(projectMetadata.status()).toBe(403);

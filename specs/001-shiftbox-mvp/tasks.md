@@ -3321,3 +3321,7 @@ This checkpoint does not itself change the goal status.
 
 - [X] T145 Add a reusable observed-to-desired state control with an indeterminate connector and live controller polling on workspace detail. Verified external state changes, deletion failure and completion, motion direction, and reduced motion. Deployed `shiftbox-demo-controller:32` and verified three-second workspace polling in a signed-in browser session.
 - [X] T146 Halve the state transition connector and use the control in a single live State column on the workspace inventory. Verified connector width on desktop and mobile, inventory polling from idle through completion, and keyboard navigation in Chrome. Deployed `shiftbox-demo-controller:33` and verified the single State column and three-second inventory polling while signed in.
+
+## Workspace launch project picker
+
+- [X] T147 Present launchable projects in a responsive Mantine card grid and paginated table, with a shared live name filter and launch review dialog. Verified desktop and narrow layouts, pagination, keyboard focus, and dark-mode contrast in Chromium. Verified search and review from both views while signed in on `shiftbox-demo-controller:38`.

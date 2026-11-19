@@ -179,8 +179,7 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
       else await route.continue();
     });
     await page.goto(new URL('/workspaces/?launch=1', managementOrigin).href);
-    await activate(page.getByRole('radio', { name: `${templateName} · Revision 1` }), 'Space');
-    await activate(page.getByRole('button', { name: 'Review launch' }));
+    await activate(page.getByRole('button', { name: `Review launch for ${templateName}` }), 'Space');
     await expect(page.getByRole('heading', { name: `${templateName} · Revision 1` })).toBeVisible();
     await enter(page.getByRole('textbox', { name: /workspace name/i }), templateName);
     await activate(page.getByRole('button', { name: 'Launch workspace' }));

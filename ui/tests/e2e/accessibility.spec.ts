@@ -361,6 +361,56 @@ for (const configuration of [
   });
 }
 
+// The launch picker reflows at narrow widths, keeps metadata legible in dark mode, and shares its name filter between views.
+test('workspace launch picker reflows and shares table and card search', async ({ page }) => {
+  const projects = Array.from({ length: 12 }, (_, index) => ({
+    id: `project-${index + 1}`, name: `Project ${String(index + 1).padStart(2, '0')}`, currentRevision: 1,
+    repositoryUrl: 'https://github.com/example/project', resourceProfileName: 'Small', providerKind: 'ec2',
+  }));
+  await fixture(page, (route, path) => {
+    if (path.endsWith('/session')) return route.fulfill({ json: admin([]) });
+    if (path.endsWith('/templates')) return route.fulfill({ json: { items: projects, nextCursor: null } });
+  });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/workspaces/?launch=1');
+  const first = page.getByRole('button', { name: 'Review launch for Project 01' });
+  const second = page.getByRole('button', { name: 'Review launch for Project 02' });
+  await expect(second).toBeVisible();
+  expect((await first.boundingBox())?.y).toBe((await second.boundingBox())?.y);
+  const contrast = await first.getByText('Revision 1').evaluate(element => {
+    function luminance(color: string) {
+      const components = color.match(/\d+/g)?.slice(0, 3).map(component => Number(component) / 255) ?? [];
+      return components.reduce((sum, channel, index) => {
+        const linear = channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+        return sum + linear * [0.2126, 0.7152, 0.0722][index];
+      }, 0);
+    }
+    const text = luminance(getComputedStyle(element).color);
+    const card = luminance(getComputedStyle(element.closest('button')!).backgroundColor);
+    return (Math.max(text, card) + 0.05) / (Math.min(text, card) + 0.05);
+  });
+  expect(contrast).toBeGreaterThanOrEqual(4.5);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect((await second.boundingBox())?.y).toBeGreaterThan((await first.boundingBox())?.y ?? 0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  await page.getByText('Table', { exact: true }).click();
+  const table = page.getByRole('table', { name: 'Projects' });
+  await expect(table.getByRole('row')).toHaveCount(11);
+  await page.getByRole('button', { name: 'Next page' }).click();
+  await expect(table.getByRole('row')).toHaveCount(3);
+  await page.getByRole('searchbox', { name: 'Search projects' }).fill('project 02');
+  await expect(table.getByRole('row')).toHaveCount(2);
+  await expect(table.getByRole('rowheader', { name: /Project 02/ })).toBeVisible();
+  await page.getByText('Cards', { exact: true }).click();
+  await expect(first).toHaveCount(0);
+  await activate(page, second);
+  await expect(page.getByRole('textbox', { name: 'Workspace name' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(second).toBeFocused();
+});
+
 for (const failed of [false, true]) {
   // Keyboard launch keeps the Stepper visible and puts a failed step's
   // server-provided explanation in an inline warning.
@@ -377,8 +427,8 @@ for (const failed of [false, true]) {
       if (path.endsWith('/workspaces') && route.request().method() === 'POST') return route.fulfill({ status: 202, json: { id: operationID, workspaceId: workspaceID } });
     }, snapshot);
     await page.goto('/workspaces/?launch=1');
-    await activate(page, page.getByRole('radio', { name: /Keyboard project/ }), 'Space');
-    await activate(page, page.getByRole('button', { name: 'Review launch' }));
+    await activate(page, page.getByRole('button', { name: 'Review launch for Keyboard project' }), 'Space');
+    await expect(page.getByRole('dialog', { name: 'Review launch' })).toBeVisible();
     await tabTo(page, page.getByRole('textbox', { name: 'Workspace name' }));
     await page.keyboard.insertText('Keyboard workspace');
     await activate(page, page.getByRole('button', { name: 'Launch workspace' }));

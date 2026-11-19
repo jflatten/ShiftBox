@@ -1,0 +1,37 @@
+.surface {
+  --mantine-color-dimmed: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
+  --mantine-color-placeholder: var(--mantine-color-dimmed);
+}
+
+.search {
+  flex: 1 1 16rem;
+  max-width: 28rem;
+}
+
+.search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.card {
+  min-width: 0;
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .card:hover {
+    background-color: var(--mantine-color-default-hover);
+  }
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-light-color);
+  outline-offset: 2px;
+}
+
+.cardAction {
+  margin-top: auto;
+  padding-top: var(--mantine-spacing-md);
+  color: var(--mantine-primary-color-light-color);
+}

@@ -748,6 +748,68 @@ test('keeps the owner filter when paging from People', async () => {
   expect(await screen.findByText('No workspaces on this page.')).toBeVisible();
 });
 
+// Search matches names across API pages and keeps its filter when switching views.
+test('filters project cards and table rows by name across the launch catalog', async () => {
+  const repositoryOnly = { ...launchTemplate, id: 'other', name: 'Other project', repositoryUrl: 'https://github.com/example/groundtruth' };
+  const match = { ...launchTemplate, id: 'groundtruth', name: 'Groundtruth' };
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/templates') return json({ items: [repositoryOnly], nextCursor: 'more' });
+    if (input === '/api/v1/templates?cursor=more') return json({ items: [match], nextCursor: null });
+    throw new Error(`unexpected request: ${input}`);
+  });
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={null} launch /></Providers>);
+  const search = await screen.findByRole('searchbox', { name: 'Search projects' });
+  await user.type(search, ' GROUND ');
+  expect(await screen.findByRole('button', { name: 'Review launch for Groundtruth' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Review launch for Other project' })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('radio', { name: 'Table' }));
+  const table = screen.getByRole('table', { name: 'Projects' });
+  expect(within(table).getAllByRole('row')).toHaveLength(2);
+  const review = within(table).getByRole('button', { name: 'Review launch for Groundtruth' });
+  await user.click(review);
+  const dialog = await screen.findByRole('dialog', { name: 'Review launch' });
+  await waitFor(() => expect(within(dialog).getByText('Groundtruth · Revision 2')).toBeVisible());
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(review).toHaveFocus());
+  expect(search).toHaveValue(' GROUND ');
+
+  await user.type(search, 'missing');
+  expect(screen.getByRole('status')).toHaveTextContent('No projects match your search.');
+  await user.click(screen.getByRole('button', { name: 'Clear search' }));
+  expect(within(screen.getByRole('table', { name: 'Projects' })).getAllByRole('row')).toHaveLength(3);
+});
+
+// A filter entered on a later table page starts from the first page of matches.
+test('paginates the project table and resets its page when the search changes', async () => {
+  const items = Array.from({ length: 12 }, (_, index) => ({
+    ...launchTemplate, id: `project-${index + 1}`, name: `Project ${String(index + 1).padStart(2, '0')}`,
+  }));
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/templates') return json({ items, nextCursor: null });
+    throw new Error(`unexpected request: ${input}`);
+  });
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={null} launch /></Providers>);
+  expect(await screen.findByRole('button', { name: 'Review launch for Project 12' })).toBeVisible();
+  await user.click(screen.getByRole('radio', { name: 'Table' }));
+  const table = screen.getByRole('table', { name: 'Projects' });
+  expect(within(table).getAllByRole('row')).toHaveLength(11);
+  await user.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(within(table).getAllByRole('row')).toHaveLength(3);
+  expect(within(table).getByText('Project 12')).toBeVisible();
+  const search = screen.getByRole('searchbox', { name: 'Search projects' });
+  await user.type(search, 'Project 01');
+  expect(within(table).getAllByRole('row')).toHaveLength(2);
+  expect(within(table).getByText('Project 01')).toBeVisible();
+  await user.clear(search);
+  expect(within(table).getAllByRole('row')).toHaveLength(11);
+  expect(within(table).queryByText('Project 12')).not.toBeInTheDocument();
+});
+
 // Launch requires review of the selected revision and preserves the reviewed
 // request identity when capacity refusal leaves the form available for retry.
 test('reviews a project revision and reports a capacity refusal', async () => {
@@ -766,17 +828,18 @@ test('reviews a project revision and reports a capacity refusal', async () => {
   globalThis.fetch = fetch;
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={null} launch /></Providers>);
-  await user.click(await screen.findByRole('radio', { name: /Example project/ }));
-  await user.click(screen.getByRole('button', { name: 'Review launch' }));
-  expect(screen.getByText('https://github.com/example/project')).toBeVisible();
-  expect(screen.getByText('API_KEY')).toBeVisible();
+  const project = await screen.findByRole('button', { name: 'Review launch for Example project' });
+  await user.click(project);
+  const dialog = within(await screen.findByRole('dialog', { name: 'Review launch' }));
+  await waitFor(() => expect(dialog.getByText('https://github.com/example/project')).toBeVisible());
+  expect(dialog.getByText('API_KEY')).toBeVisible();
   expect(fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
   await user.type(screen.getByRole('textbox', { name: /workspace name/i }), 'My development workspace');
   await user.click(screen.getByRole('button', { name: 'Launch workspace' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('insufficient CPU capacity');
-  await user.click(screen.getByRole('button', { name: 'Back to projects' }));
-  await user.click(screen.getByRole('button', { name: 'Review launch' }));
-  await user.click(screen.getByRole('button', { name: 'Launch workspace' }));
+  await user.click(dialog.getByRole('button', { name: 'Cancel' }));
+  await user.click(project);
+  await user.click(await screen.findByRole('button', { name: 'Launch workspace' }));
   const submitted = fetch.mock.calls.filter(([, init]) => init?.method === 'POST');
   expect(submitted).toHaveLength(2);
   expect(submitted[0][1]?.body).toBe('{"templateId":"template-one","templateRevision":2,"name":"My development workspace"}');
@@ -804,9 +867,8 @@ test('shows an inline warning and the Stepper after a workspace launch fails', a
   });
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={null} launch /></Providers>);
-  await user.click(await screen.findByRole('radio', { name: /Example project/ }));
-  await user.click(screen.getByRole('button', { name: 'Review launch' }));
-  await user.type(screen.getByRole('textbox', { name: /workspace name/i }), 'My development workspace');
+  await user.click(await screen.findByRole('button', { name: 'Review launch for Example project' }));
+  await user.type(await screen.findByRole('textbox', { name: /workspace name/i }), 'My development workspace');
   await user.click(screen.getByRole('button', { name: 'Launch workspace' }));
   const warning = await screen.findByRole('alert', { name: 'Workspace launch failed' });
   expect(warning).toHaveTextContent('Configure the development container');
