@@ -10,6 +10,18 @@ type ManagementRoute struct {
 	Resolver    string
 }
 
+// WorkspaceSSHRoutes catalogs workstation access and its pairing endpoints.
+// The SSH router enforces the credential rules for each endpoint.
+func WorkspaceSSHRoutes() []ManagementRoute {
+	return []ManagementRoute{
+		{Method: "GET", Path: "/ssh/workspaces", OperationID: "listSSHWorkspaces", Resolver: "workspace_ssh"},
+		{Method: "GET", Path: "/ssh/workspaces/{workspaceId}/connect", OperationID: "connectWorkspaceSSH", Resolver: "workspace_ssh"},
+		{Method: "GET", Path: "/ssh/helper/download", OperationID: "downloadWorkspaceSSHHelper", Action: "workspace.list"},
+		{Method: "POST", Path: "/ssh/helper/approve", OperationID: "approveWorkspaceSSHHelper", Resolver: "helper_pairing"},
+		{Method: "POST", Path: "/ssh/helper/exchange", OperationID: "exchangeWorkspaceSSHHelper", Resolver: "helper_pairing"},
+	}
+}
+
 // ManagementRoutes returns an independent catalog for guarded route registration.
 // It declares policy requirements, not implemented handlers or granted authority.
 func ManagementRoutes() []ManagementRoute {

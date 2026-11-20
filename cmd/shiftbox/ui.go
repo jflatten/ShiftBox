@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"io/fs"
 	"net/http"
 
@@ -24,4 +25,18 @@ func browserAssets() (http.Handler, error) {
 		return nil, err
 	}
 	return web.NewStaticHandler(files)
+}
+
+func helperArchive() ([]byte, error) {
+	files, err := ui.Assets()
+	if err != nil {
+		return nil, err
+	}
+	// The browser static handler excludes _shiftbox. Only the authenticated
+	// download route serves this optional private MVP artifact.
+	archive, err := fs.ReadFile(files, "_shiftbox/ShiftBox-Local-Helper.zip")
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return archive, err
 }

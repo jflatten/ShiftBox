@@ -209,6 +209,7 @@ func GuestPollHandler(compatibility GuestCompatibility,
 		if tunnelAddress != "" && contact.DesiredState == "running" {
 			w.Header().Set(guest.TunnelAddressHeader, tunnelAddress)
 			w.Header().Set(guest.PreviewPortsHeader, contact.PreviewPorts)
+			w.Header().Set(guest.TunnelSSHHeader, "1")
 		}
 		delaySeconds := 30
 		if contact.LaunchAwaitingDispatch {

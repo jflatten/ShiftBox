@@ -26,6 +26,46 @@ type PowerIntent struct {
 	Version                                  int64
 }
 
+// SSHStart identifies an ordinary start that may be joined or admitted for a
+// retained workspace. Capacity is reserved only by AdmitPower.
+type SSHStart struct {
+	OperationID string
+	Version     int64
+	CanStart    bool
+}
+
+const activePowerWork = `EXISTS (
+	SELECT 1 FROM operations WHERE workspace_id=w.id AND generation=w.generation
+		AND status IN ('pending','running','waiting'))
+	OR EXISTS (` + dueMaintenanceTarget + ` AND c.deadline<=$2)`
+
+// ReadSSHStart applies the same competing-work check as AdmitPower and
+// identifies an already admitted start for the exact workspace generation.
+func ReadSSHStart(ctx context.Context, tx *sql.Tx, id string, generation int64, now time.Time) (SSHStart, error) {
+	var start SSHStart
+	err := tx.QueryRowContext(ctx, `SELECT w.version,
+		(w.desired_state='stopped' AND w.observed_state='stopped' AND NOT (`+activePowerWork+`)),
+		COALESCE((SELECT o.id FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
+			AND o.type='start' AND o.originating_action='workspace.start' AND o.status IN ('pending','running','waiting')
+			AND w.desired_state='running' AND w.observed_state IN ('stopped','starting','running','unreachable')
+			ORDER BY o.created_at DESC,o.id DESC LIMIT 1),'')
+		FROM workspaces w JOIN installations i ON i.id=w.installation_id JOIN users owner ON owner.id=w.owner_user_id
+		WHERE w.id=$1 AND w.generation=$3 AND i.state='active' AND owner.membership_state='active'
+			AND w.provider_instance_id IS NOT NULL AND w.deletion_commit_at IS NULL`,
+		id, now.UTC().Format(maintenanceTime), generation).Scan(&start.Version, &start.CanStart, &start.OperationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SSHStart{}, nil
+	}
+	return start, err
+}
+
+// LockPowerAdmission serializes a start-or-join decision with ordinary
+// lifecycle admission in the caller's transaction.
+func LockPowerAdmission(ctx context.Context, tx *sql.Tx, installation string) error {
+	result, err := tx.ExecContext(ctx, `UPDATE installations SET version=version WHERE id=$1 AND state='active'`, installation)
+	return capacityWrite(result, err)
+}
+
 // AdmitPower records the desired state, start reservation and operation in the
 // caller's transaction. Provider state and stop accounting change during reconciliation.
 func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, intent PowerIntent, now time.Time) (operation.Operation, error) {
@@ -58,8 +98,7 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 	}
 	// Use the same admission lock as launch, since the request key is scoped
 	// to the actor and can collide across workspaces and action types.
-	result, err := tx.ExecContext(ctx, `UPDATE installations SET version=version WHERE id=$1 AND state='active'`, installation)
-	if err := capacityWrite(result, err); err != nil {
+	if err := LockPowerAdmission(ctx, tx, installation); err != nil {
 		return operation.Operation{}, err
 	}
 	var id string
@@ -91,9 +130,7 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		return requestMaintenanceTarget(ctx, tx, journal, installation, intent, now)
 	}
 	var active bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM operations WHERE workspace_id=w.id AND generation=w.generation AND status IN ('pending','running','waiting'))
-		OR EXISTS (`+dueMaintenanceTarget+` AND c.deadline<=$2) FROM workspaces w WHERE w.id=$1`,
+	if err := tx.QueryRowContext(ctx, `SELECT `+activePowerWork+` FROM workspaces w WHERE w.id=$1`,
 		intent.WorkspaceID, now.UTC().Format(maintenanceTime)).Scan(&active); err != nil {
 		return operation.Operation{}, err
 	}
@@ -124,7 +161,7 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 			return operation.Operation{}, provider.ErrInvalidState
 		}
 	}
-	result, err = tx.ExecContext(ctx, `UPDATE workspaces SET desired_state=$2,updated_at=$3,version=version+1,
+	result, err := tx.ExecContext(ctx, `UPDATE workspaces SET desired_state=$2,updated_at=$3,version=version+1,
 		last_activity_at=CASE WHEN $5 THEN $3 ELSE last_activity_at END,
 		deletion_commit_at=CASE WHEN $2='deleted' THEN $3 ELSE deletion_commit_at END
 		WHERE id=$1 AND version=$4`, intent.WorkspaceID, desired, now.UTC().Format(time.RFC3339Nano), version, intent.Action == "start")

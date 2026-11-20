@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -306,7 +307,7 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 		defer stopWatches()
 	}
 	tunnel := &agentTunnel{protocol: protocol, tls: client.Transport.(*http.Transport).TLSClientConfig.Clone(),
-		retry: 5 * time.Second, serve: ServeTunnel}
+		retry: 5 * time.Second, serve: serveTunnel}
 	defer tunnel.close()
 	journal, err := loadLocalJournal(filepath.Join(stateDir, "operation.json"))
 	if err != nil {
@@ -328,6 +329,15 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 				return guestGitAccessToken(ctx, client, identity.PollEndpoint)
 			},
 		}}
+	if runtime.credentials {
+		ssh, err := newWorkspaceSSH(stateDir, runtime)
+		if err != nil {
+			// A missing or damaged private key should leave the established
+			// browser services available and never substitute a different key.
+			slog.WarnContext(ctx, "Workspace SSH host key is unavailable")
+		}
+		tunnel.ssh = ssh
+	}
 	probes := &probeReporter{socket: proxy.IDESocket}
 	firstPoll := true
 	renewAfter := guestRenewAfter(identity.Certificate.Leaf)

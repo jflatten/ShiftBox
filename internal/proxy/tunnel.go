@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/yamux"
+	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -31,6 +32,12 @@ const IDESocket = "/run/shiftbox-ide/code-server.sock"
 // RepairSocket serves the independent repair workbench.
 const RepairSocket = "/run/shiftbox-repair/repair.sock"
 
+// SSHService names the in-process SSH service and its dedicated stream protocol.
+const SSHService = "ssh"
+
+// ErrTunnelServiceUnavailable means no live guest registration offers the service.
+var ErrTunnelServiceUnavailable = errors.New("guest tunnel service unavailable")
+
 // IsWorkbenchSocket binds each workbench service to its private socket.
 func IsWorkbenchSocket(service, target string) bool {
 	return service == "ide" && target == IDESocket || service == "repair" && target == RepairSocket
@@ -40,9 +47,10 @@ var tunnelServiceKey = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // TunnelService declares a service bound to a local endpoint in the guest.
 type TunnelService struct {
-	Key       string   `json:"key"`
-	Target    string   `json:"target"`
-	Protocols []string `json:"protocols"`
+	Key           string   `json:"key"`
+	Target        string   `json:"target"`
+	Protocols     []string `json:"protocols"`
+	HostPublicKey string   `json:"hostPublicKey,omitempty"`
 }
 
 // TunnelRegistration is the first frame on the guest's control stream.
@@ -80,6 +88,7 @@ type activeTunnel struct {
 	allowlist *ServiceAllowlist
 	authority TunnelAuthority
 	check     func(context.Context) (TunnelAuthority, error)
+	sshKey    string
 }
 
 // Serve authenticates and registers a guest-initiated TLS/Yamux connection.
@@ -140,6 +149,12 @@ func (t *Tunnels) Serve(ctx context.Context, conn *tls.Conn, protocol string,
 	}
 	entry := &activeTunnel{session: session, allowlist: allowlist, authority: auth,
 		check: func(ctx context.Context) (TunnelAuthority, error) { return authenticate(ctx, leaf) }}
+	for _, service := range registration.Services {
+		if service.Key == SSHService {
+			entry.sshKey = service.HostPublicKey
+			break
+		}
+	}
 	unregister, err := t.Registry.Register(Scope{UserID: auth.OwnerID, WorkspaceID: auth.WorkspaceID}, func() error {
 		return entry.authorize(handshake)
 	}, session.Close)
@@ -183,35 +198,55 @@ func (t *Tunnels) Serve(ctx context.Context, conn *tls.Conn, protocol string,
 // Open creates one stream to an advertised service after checking current guest
 // authority. Callers must separately authorize the user's browser request.
 func (t *Tunnels) Open(ctx context.Context, workspace string, generation int64, header StreamHeader) (net.Conn, error) {
+	if header.ServiceKey == SSHService {
+		return nil, ErrTunnelServiceUnavailable
+	}
+	stream, _, err := t.open(ctx, workspace, generation, header)
+	return stream, err
+}
+
+// OpenSSH returns a stream and the host key from the same authenticated guest
+// registration. Callers must first authorize the user's workspace connection.
+func (t *Tunnels) OpenSSH(ctx context.Context, workspace string, generation int64, requestID string) (net.Conn, string, error) {
+	stream, entry, err := t.open(ctx, workspace, generation, StreamHeader{
+		ServiceKey: SSHService, RequestID: requestID, Protocol: SSHService,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return stream, entry.sshKey, nil
+}
+
+func (t *Tunnels) open(ctx context.Context, workspace string, generation int64, header StreamHeader) (net.Conn, *activeTunnel, error) {
 	t.mu.Lock()
 	entry := t.active[workspace]
 	t.mu.Unlock()
 	if entry == nil || !ValidStreamHeader(header) || !entry.allowlist.Allows(workspace, generation, header.ServiceKey, header.Protocol) {
-		return nil, errors.New("guest tunnel service unavailable")
+		return nil, nil, ErrTunnelServiceUnavailable
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := entry.authorize(ctx); err != nil {
 		if ctx.Err() == nil {
 			_ = entry.session.Close()
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	stream, err := entry.session.OpenStream()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	_ = stream.SetWriteDeadline(time.Now().Add(tunnelHandshakeTimeout))
 	if err := WriteTunnelFrame(stream, header); err != nil {
 		stream.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	_ = stream.SetWriteDeadline(time.Time{})
-	return stream, nil
+	return stream, entry, nil
 }
 
 func (t *activeTunnel) authorize(ctx context.Context) error {
@@ -227,21 +262,29 @@ func (t *activeTunnel) authorize(ctx context.Context) error {
 	return nil
 }
 
-// ValidateTunnelServices admits named HTTP and WebSocket loopback targets and
-// the dedicated IDE socket.
+// ValidateTunnelServices admits HTTP/WebSocket loopback targets and the private
+// workbench sockets. SSH is an in-process handler with a registered host key.
 func ValidateTunnelServices(input []TunnelService) ([]Service, error) {
 	if len(input) == 0 || len(input) > 64 {
 		return nil, errors.New("invalid guest tunnel service count")
 	}
 	services := make([]Service, 0, len(input))
 	for _, service := range input {
+		if service.Key == SSHService {
+			if !validSSHService(service) {
+				return nil, errors.New("invalid SSH tunnel service")
+			}
+			services = append(services, Service{Key: service.Key, Protocols: service.Protocols})
+			continue
+		}
 		target, err := netip.ParseAddrPort(service.Target)
 		local := err == nil && target.Addr().IsLoopback() && target.Port() != 0
 		if strings.HasPrefix(service.Key, "preview-") && (!local || service.Key != "preview-"+strconv.Itoa(int(target.Port()))) {
 			return nil, errors.New("preview service must match its loopback port")
 		}
 		if (!local && !IsWorkbenchSocket(service.Key, service.Target) || service.Key == "repair" && target.IsValid()) ||
-			len(service.Key) > 63 || !tunnelServiceKey.MatchString(service.Key) || len(service.Protocols) > 2 {
+			len(service.Key) > 63 || !tunnelServiceKey.MatchString(service.Key) || len(service.Protocols) > 2 ||
+			service.HostPublicKey != "" {
 			return nil, errors.New("invalid guest tunnel service")
 		}
 		services = append(services, Service{Key: service.Key, Protocols: service.Protocols})
@@ -249,11 +292,20 @@ func ValidateTunnelServices(input []TunnelService) ([]Service, error) {
 	return services, nil
 }
 
+func validSSHService(service TunnelService) bool {
+	if service.Target != "" || len(service.Protocols) != 1 || service.Protocols[0] != SSHService {
+		return false
+	}
+	key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(service.HostPublicKey))
+	return err == nil && key.Type() == ssh.KeyAlgoED25519 &&
+		strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))) == service.HostPublicKey
+}
+
 // ValidStreamHeader bounds request metadata before it crosses the tunnel.
 func ValidStreamHeader(h StreamHeader) bool {
 	return len(h.ServiceKey) <= 63 && tunnelServiceKey.MatchString(h.ServiceKey) &&
 		len(h.RequestID) <= 128 && tunnelServiceKey.MatchString(h.RequestID) &&
-		(h.Protocol == "http" || h.Protocol == "websocket")
+		validServiceProtocol(h.ServiceKey, h.Protocol)
 }
 
 // TunnelYamuxConfig sets shared heartbeat and stream bounds.

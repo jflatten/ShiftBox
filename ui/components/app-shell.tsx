@@ -91,6 +91,7 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
                 </Menu.Label>
                 <Menu.Divider />
                 {account ? <Menu.Item component="a" href="/account/">Personal settings</Menu.Item> : null}
+                {normal && permitted('workspace.list') ? <Menu.Item component="a" href="/account/helper/">Install Local Helper</Menu.Item> : null}
                 {normal && session.role === 'member' && permitted('notice.list') ?
                   <Menu.Item component="a" href="/notices/">Notice history</Menu.Item> : null}
                 {permitted('session.logout') && session.csrfToken ? <SignOut csrfToken={session.csrfToken}

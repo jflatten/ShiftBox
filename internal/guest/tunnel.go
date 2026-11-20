@@ -16,6 +16,12 @@ import (
 // ServeTunnel registers services on an outbound guest mTLS session and serves
 // only the registered local targets until cancellation or disconnection.
 func ServeTunnel(ctx context.Context, address string, config *tls.Config, protocol string, generation int64, services []proxy.TunnelService) error {
+	return serveTunnel(ctx, address, config, protocol, generation, services, nil)
+}
+
+func serveTunnel(ctx context.Context, address string, config *tls.Config, protocol string, generation int64, services []proxy.TunnelService,
+	sshHandler func(context.Context, net.Conn),
+) error {
 	if config == nil || config.InsecureSkipVerify || config.MinVersion < tls.VersionTLS13 ||
 		len(config.Certificates) != 1 || protocol == "" || generation < 1 {
 		return errors.New("invalid guest tunnel configuration")
@@ -27,6 +33,9 @@ func ServeTunnel(ctx context.Context, address string, config *tls.Config, protoc
 	allowlist, err := proxy.NewServiceAllowlist("local", generation, allowed)
 	if err != nil {
 		return err
+	}
+	if allowlist.Allows("local", generation, proxy.SSHService, proxy.SSHService) && sshHandler == nil {
+		return errors.New("SSH tunnel service has no server")
 	}
 	targets := make(map[string]string, len(services))
 	for _, service := range services {
@@ -68,7 +77,7 @@ func ServeTunnel(ctx context.Context, address string, config *tls.Config, protoc
 		case slots <- struct{}{}:
 			streams.Go(func() {
 				defer func() { <-slots }()
-				serveTunnelStream(runCtx, stream, generation, allowlist, targets)
+				serveTunnelStream(runCtx, stream, generation, allowlist, targets, sshHandler)
 			})
 		default:
 			stream.Close()
@@ -95,7 +104,9 @@ func registerTunnel(session *yamux.Session, registration proxy.TunnelRegistratio
 
 // serveTunnelStream takes the dial address from the guest's registered
 // services. The incoming stream can only name a service in this generation.
-func serveTunnelStream(ctx context.Context, stream *yamux.Stream, generation int64, allowlist *proxy.ServiceAllowlist, targets map[string]string) {
+func serveTunnelStream(ctx context.Context, stream *yamux.Stream, generation int64, allowlist *proxy.ServiceAllowlist,
+	targets map[string]string, sshHandler func(context.Context, net.Conn),
+) {
 	defer stream.Close()
 	_ = stream.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var header proxy.StreamHeader
@@ -104,6 +115,10 @@ func serveTunnelStream(ctx context.Context, stream *yamux.Stream, generation int
 		return
 	}
 	_ = stream.SetReadDeadline(time.Time{})
+	if header.ServiceKey == proxy.SSHService {
+		sshHandler(ctx, stream)
+		return
+	}
 	dialer := net.Dialer{Timeout: 5 * time.Second}
 	target := targets[header.ServiceKey]
 	network := "tcp"

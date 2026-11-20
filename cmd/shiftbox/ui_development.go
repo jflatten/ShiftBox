@@ -11,3 +11,5 @@ import (
 func browserAssets() (http.Handler, error) { return nil, nil }
 
 func loginFrontendAssets() (fs.FS, error) { return nil, nil }
+
+func helperArchive() ([]byte, error) { return nil, nil }

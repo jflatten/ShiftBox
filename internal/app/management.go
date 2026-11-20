@@ -98,11 +98,14 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 
 // NewManagementSite mounts the API, login and identity handlers alongside the
 // embedded browser assets. The caller serves it only on the management origin.
-func NewManagementSite(api, login, dex, assets http.Handler) (http.Handler, error) {
-	if api == nil || login == nil || dex == nil || assets == nil {
+func NewManagementSite(api, login, dex, assets http.Handler, workstation ...http.Handler) (http.Handler, error) {
+	if api == nil || login == nil || dex == nil || assets == nil || len(workstation) > 1 {
 		return nil, errors.New("management site is incompletely configured")
 	}
 	mux := http.NewServeMux()
+	if len(workstation) == 1 && workstation[0] != nil {
+		mux.Handle("/api/v1/ssh/", workstation[0])
+	}
 	mux.Handle("/api/v1/", api)
 	mux.Handle("/auth/", login)
 	mux.Handle("/dex/", dex)

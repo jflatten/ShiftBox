@@ -21,10 +21,20 @@ const TunnelAddressHeader = "Shiftbox-Tunnel-Address"
 // PreviewPortsHeader carries the controller-authorized JSON array of local ports.
 const PreviewPortsHeader = "Shiftbox-Preview-Ports"
 
+// TunnelSSHHeader enables negotiation with agents that can serve private SSH.
+const TunnelSSHHeader = "Shiftbox-Tunnel-SSH"
+
 type tunnelOffer struct {
 	address    string
 	generation int64
 	previews   string
+	ssh        bool
+}
+
+// sshTunnelService is advertised only when the agent has a usable server.
+type sshTunnelService struct {
+	hostKey string
+	serve   func(context.Context, net.Conn)
 }
 
 func readTunnelOffer(endpoint string, headers http.Header, generation int64, desired string) (tunnelOffer, error) {
@@ -53,6 +63,12 @@ func readTunnelOffer(endpoint string, headers http.Header, generation int64, des
 		}
 		offer.previews = previews[0]
 	}
+	if values := headers.Values(TunnelSSHHeader); len(values) != 0 {
+		if len(values) != 1 || values[0] != "1" {
+			return tunnelOffer{}, errors.New("invalid guest tunnel SSH offer")
+		}
+		offer.ssh = true
+	}
 	return offer, nil
 }
 
@@ -63,7 +79,8 @@ type agentTunnel struct {
 	protocol string
 	tls      *tls.Config
 	retry    time.Duration
-	serve    func(context.Context, string, *tls.Config, string, int64, []proxy.TunnelService) error
+	serve    func(context.Context, string, *tls.Config, string, int64, []proxy.TunnelService, func(context.Context, net.Conn)) error
+	ssh      *sshTunnelService
 	cancel   context.CancelFunc
 	done     chan struct{}
 }
@@ -93,8 +110,15 @@ func (t *agentTunnel) update(ctx context.Context, offer tunnelOffer) {
 					Target: net.JoinHostPort("127.0.0.1", text), Protocols: []string{"http", "websocket"}})
 			}
 		}
+		var sshHandler func(context.Context, net.Conn)
+		if offer.ssh && t.ssh != nil {
+			sshHandler = t.ssh.serve
+			services = append(services, proxy.TunnelService{
+				Key: proxy.SSHService, Protocols: []string{proxy.SSHService}, HostPublicKey: t.ssh.hostKey,
+			})
+		}
 		for runCtx.Err() == nil {
-			_ = t.serve(runCtx, offer.address, t.tls, t.protocol, offer.generation, services)
+			_ = t.serve(runCtx, offer.address, t.tls, t.protocol, offer.generation, services, sshHandler)
 			timer := time.NewTimer(t.retry)
 			select {
 			case <-timer.C:

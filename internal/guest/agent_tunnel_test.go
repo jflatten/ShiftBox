@@ -3,12 +3,33 @@ package guest
 import (
 	"context"
 	"crypto/tls"
+	"net"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/proxy"
 )
+
+// TestTunnelOfferNegotiatesSSH verifies old controllers keep their original
+// IDE/preview tunnel offer and SSH requires an explicit authenticated opt-in.
+func TestTunnelOfferNegotiatesSSH(t *testing.T) {
+	headers := http.Header{TunnelAddressHeader: {"internal.test:9443"}}
+	endpoint := "https://internal.test:8443" + pollPath
+	offer, err := readTunnelOffer(endpoint, headers, 1, "running")
+	if err != nil || offer.ssh {
+		t.Fatalf("readTunnelOffer(legacy) = %+v, %v, want SSH disabled", offer, err)
+	}
+	headers.Set(TunnelSSHHeader, "1")
+	offer, err = readTunnelOffer(endpoint, headers, 1, "running")
+	if err != nil || !offer.ssh {
+		t.Fatalf("readTunnelOffer(SSH) = %+v, %v, want SSH enabled", offer, err)
+	}
+	headers.Add(TunnelSSHHeader, "1")
+	if _, err := readTunnelOffer(endpoint, headers, 1, "running"); err == nil {
+		t.Error("readTunnelOffer(duplicate SSH offer) = nil, want rejection")
+	}
+}
 
 // TestAgentTunnelReconnectAndStop verifies that a dropped tunnel retries and
 // that a stopped workspace cancels the connection before it can retry again.
@@ -19,7 +40,7 @@ func TestAgentTunnelReconnectAndStop(t *testing.T) {
 	dropped := make(chan struct{}, 1)
 	supervisor := agentTunnel{
 		retry: time.Millisecond,
-		serve: func(ctx context.Context, address string, _ *tls.Config, _ string, generation int64, services []proxy.TunnelService) error {
+		serve: func(ctx context.Context, address string, _ *tls.Config, _ string, generation int64, services []proxy.TunnelService, _ func(context.Context, net.Conn)) error {
 			if len(services) != 2 || services[0].Key != "ide" || services[0].Target != "/run/shiftbox-ide/code-server.sock" ||
 				services[1].Key != "repair" || services[1].Target != "/run/shiftbox-repair/repair.sock" {
 				t.Error("supervisor did not advertise distinct development and repair IDE sockets")
@@ -83,7 +104,7 @@ func TestAgentAdvertisesConfiguredPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	advertised := make(chan []proxy.TunnelService, 1)
-	supervisor := agentTunnel{retry: time.Second, serve: func(ctx context.Context, _ string, _ *tls.Config, _ string, _ int64, services []proxy.TunnelService) error {
+	supervisor := agentTunnel{retry: time.Second, serve: func(ctx context.Context, _ string, _ *tls.Config, _ string, _ int64, services []proxy.TunnelService, _ func(context.Context, net.Conn)) error {
 		advertised <- services
 		<-ctx.Done()
 		return ctx.Err()

@@ -250,3 +250,17 @@ test('groups recovery review access without normal workspace navigation', () => 
   expect(within(nav).getByRole('link', { name: 'Backup & Recovery' })).toBeVisible();
   expect(within(nav).queryByRole('link', { name: 'Workspaces' })).toBeNull();
 });
+
+// The private macOS installer is discoverable from the signed-in user's menu.
+test('offers Install Local Helper in the keyboard-accessible user menu', async () => {
+  const user = userEvent.setup();
+  render(<MantineProvider><ShiftBoxShell session={{ role: 'member', mode: 'normal', installationState: 'active',
+    permissions: ['workspace.list'],
+  }} alerts={[]}><h1>Workspaces</h1></ShiftBoxShell></MantineProvider>);
+  const menu = screen.getByRole('button', { name: 'User menu' });
+  menu.focus();
+  await user.keyboard('{Enter}');
+  expect(await screen.findByRole('menuitem', { name: 'Install Local Helper' })).toHaveAttribute('href', '/account/helper/');
+  await user.keyboard('{Escape}');
+  expect(menu).toHaveFocus();
+});

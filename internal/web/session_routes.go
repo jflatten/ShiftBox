@@ -143,6 +143,10 @@ func sessionPermissions(principal auth.Principal, now time.Time) []string {
 			permissions = append(permissions, action)
 		}
 	}
+	// The helper menu uses the same workspace listing authority as its download and pairing routes.
+	if auth.Authorize(principal, "workspace.list", auth.Resource{Type: "workspace", OwnerID: principal.User.ID}, nil, now).Allowed {
+		permissions = append(permissions, "workspace.list")
+	}
 	if principal.InstallationID != "" && auth.Authorize(principal, "secret.manage_organization",
 		auth.Resource{Type: "organization", ID: principal.InstallationID}, nil, now).Allowed {
 		permissions = append(permissions, "secret.manage_organization")

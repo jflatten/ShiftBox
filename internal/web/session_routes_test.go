@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -121,8 +122,8 @@ func TestSessionReadUsesCurrentAuthority(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
 		t.Fatal(err)
 	}
-	if view.User.ID != principal.User.ID || view.CSRFToken != auth.CSRFToken(token) || view.Mode != "normal" || len(view.Permissions) == 0 {
-		t.Error("GET session did not return current principal, mode, permissions and bound CSRF")
+	if view.User.ID != principal.User.ID || view.CSRFToken != auth.CSRFToken(token) || view.Mode != "normal" || !slices.Contains(view.Permissions, "workspace.list") {
+		t.Error("GET session did not return current principal, mode, workspace listing permission and bound CSRF")
 	}
 	if !view.ExpiresAt.Equal(principal.Session.ExpiresAt) {
 		t.Errorf("GET session expiry = %v, want %v", view.ExpiresAt, principal.Session.ExpiresAt)

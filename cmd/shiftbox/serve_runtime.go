@@ -190,7 +190,12 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if err != nil {
 		return err
 	}
-	site, err := app.NewManagementSite(api, signIn, dex, assets)
+	archive, err := helperArchive()
+	if err != nil {
+		return err
+	}
+	workstation := web.NewWorkspaceSSHAPI(state.DB, tunnels.Registry, journal, tunnels.OpenSSH, time.Now, origin, archive)
+	site, err := app.NewManagementSite(api, signIn, dex, assets, workstation)
 	if err != nil {
 		return err
 	}

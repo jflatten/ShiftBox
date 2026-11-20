@@ -107,6 +107,11 @@ func TestMigrationProfiles(t *testing.T) {
 			if err := database.CheckSchema(ctx, db, profile); err != nil {
 				t.Fatalf("CheckSchema(%s) after migration = %v, want compatible schema", profile, err)
 			}
+			// Both persistence profiles must install the scoped helper table.
+			var helperCredentials int
+			if err := db.QueryRowContext(ctx, "SELECT COUNT(credential_digest) FROM helper_credentials").Scan(&helperCredentials); err != nil {
+				t.Fatalf("helper credential migration (%s) = %v, want installed table", profile, err)
+			}
 			version, err := database.Version(ctx, db, profile)
 			if err != nil || version < 1 {
 				t.Fatalf("Version(%s) = %d, %v; want installed foundation", profile, version, err)

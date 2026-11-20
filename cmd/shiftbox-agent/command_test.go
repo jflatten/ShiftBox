@@ -4,11 +4,32 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/jflatten/ShiftBox/internal/guest"
 )
+
+// TestWorkspaceSSHInternalCommand verifies the internal editor channel uses
+// the existing guest binary's stdio without adding to its output.
+func TestWorkspaceSSHInternalCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	args := []string{"ssh-forward", "127.0.0.1", "40123"}
+	got := workspaceCommand(t.Context(), args, strings.NewReader("payload"), &stdout, &stderr, workspaceCommands{
+		ssh: func(_ context.Context, forwarded []string, stdin io.Reader, stdout io.Writer) error {
+			if !slices.Equal(forwarded, args) {
+				t.Errorf("forwarded command = %q, want %q", forwarded, args)
+			}
+			_, err := io.Copy(stdout, stdin)
+			return err
+		},
+	})
+	if got != 0 || stdout.String() != "payload" || stderr.Len() != 0 {
+		t.Errorf("workspaceCommand(ssh-forward) = %d, %q, %q, want 0, payload and empty stderr", got, stdout.String(), stderr.String())
+	}
+}
 
 // TestWorkspaceHelpTriggers verifies that discovery never contacts a guest
 // service and that unknown commands still list every supported command.

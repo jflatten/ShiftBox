@@ -2,7 +2,7 @@ package proxy
 
 import "errors"
 
-// Service is a named HTTP/WebSocket endpoint offered through the guest tunnel.
+// Service is a named endpoint offered through the guest tunnel.
 // Targets are deliberately absent: the controller opens a named tunnel stream,
 // never a browser-selected host or port on the controller's network.
 type Service struct {
@@ -30,7 +30,7 @@ func NewServiceAllowlist(workspaceID string, generation int64, services []Servic
 		}
 		protocols := make(map[string]bool, len(service.Protocols))
 		for _, protocol := range service.Protocols {
-			if protocol != "http" && protocol != "websocket" {
+			if !validServiceProtocol(service.Key, protocol) {
 				return nil, errors.New("unsupported service protocol")
 			}
 			protocols[protocol] = true
@@ -38,6 +38,13 @@ func NewServiceAllowlist(workspaceID string, generation int64, services []Servic
 		allowed[service.Key] = protocols
 	}
 	return &ServiceAllowlist{workspaceID: workspaceID, generation: generation, services: allowed}, nil
+}
+
+func validServiceProtocol(service, protocol string) bool {
+	if service == SSHService {
+		return protocol == SSHService
+	}
+	return protocol == "http" || protocol == "websocket"
 }
 
 // Allows checks the exact workspace generation, service, and protocol before a

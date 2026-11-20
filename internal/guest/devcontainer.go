@@ -39,6 +39,7 @@ type devContainer struct {
 	repairImageFile  string
 	repairSocketDir  string
 	run              func(context.Context, string, ...string) ([]byte, error)
+	sshExec          func(context.Context, ...string) *exec.Cmd
 	setProjectOwner  func(context.Context, string, int, int) error
 	timing           func(phase string, elapsed time.Duration, outcome string)
 }
@@ -182,8 +183,7 @@ func (d devContainer) command(ctx context.Context, stage string, options ...stri
 		}
 		defer os.Remove(dockerPath)
 	}
-	args := []string{stage, "--workspace-folder", d.workspace, "--docker-path", dockerPath,
-		"--docker-compose-path", "/bin/false", "--log-format", "json", "--id-label", developmentLabel}
+	args := d.commandBase(stage, dockerPath, "json")
 	if stage == "up" && d.ide {
 		args = append(args, "--mount", "type=bind,source="+ideDirectory+",target="+ideDirectory)
 	}
@@ -217,6 +217,11 @@ func (d devContainer) command(ctx context.Context, stage string, options ...stri
 		return nil, errors.New("Dev Container CLI " + stage + " failed")
 	}
 	return output, nil
+}
+
+func (d devContainer) commandBase(stage, dockerPath, format string) []string {
+	return []string{stage, "--workspace-folder", d.workspace, "--docker-path", dockerPath,
+		"--docker-compose-path", "/bin/false", "--log-format", format, "--id-label", developmentLabel}
 }
 
 func (d devContainer) runner() func(context.Context, string, ...string) ([]byte, error) {

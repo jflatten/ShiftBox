@@ -198,6 +198,118 @@ paths:
                   expiresAt: { type: string, format: date-time }
         default: { $ref: '#/components/responses/Error' }
 
+  /ssh/helper/download:
+    get:
+      tags: [Workspaces]
+      operationId: downloadWorkspaceSSHHelper
+      responses:
+        '200':
+          description: Signed internal macOS app archive for the current installation
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+
+  /ssh/helper/approve:
+    post:
+      tags: [Workspaces]
+      operationId: approveWorkspaceSSHHelper
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [state, challenge, redirectUri]
+              properties:
+                state: { type: string }
+                challenge: { type: string, description: Base64url SHA-256 proof challenge }
+                redirectUri: { type: string, format: uri, description: Exact numeric HTTP loopback callback }
+      responses:
+        '200':
+          description: Single-use approval code and state in the exact loopback callback
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [callbackUrl]
+                properties:
+                  callbackUrl: { type: string, format: uri }
+        default: { $ref: '#/components/responses/Error' }
+
+  /ssh/helper/exchange:
+    post:
+      tags: [Workspaces]
+      security: []
+      operationId: exchangeWorkspaceSSHHelper
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code, state, verifier, redirectUri]
+              properties:
+                code: { type: string }
+                state: { type: string }
+                verifier: { type: string, writeOnly: true }
+                redirectUri: { type: string, format: uri }
+      responses:
+        '200':
+          description: Workspace-scoped credential and expiry for the approving account
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credential, expiresAt, accountId]
+                properties:
+                  credential: { type: string }
+                  expiresAt: { type: string, format: date-time }
+                  accountId: { type: string, format: uuid }
+        default: { $ref: '#/components/responses/Error' }
+
+  /ssh/workspaces:
+    get:
+      tags: [Workspaces]
+      security:
+        - workspaceHelper: []
+      operationId: listSSHWorkspaces
+      responses:
+        '200':
+          description: Workspaces eligible for SSH for the current helper session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name]
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+
+  /ssh/workspaces/{workspaceId}/connect:
+    get:
+      tags: [Workspaces]
+      security:
+        - workspaceHelper: []
+      operationId: connectWorkspaceSSH
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '101':
+          description: Authorized shiftbox.ssh.v1 upgrade with workspace readiness followed by the SSH byte stream
+        default: { $ref: '#/components/responses/Error' }
+
   /workspaces:
     get:
       tags: [Workspaces]
@@ -1321,6 +1433,9 @@ paths:
 
 components:
   securitySchemes:
+    workspaceHelper:
+      type: http
+      scheme: bearer
     sessionCookie:
       type: apiKey
       in: cookie

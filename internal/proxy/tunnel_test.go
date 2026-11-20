@@ -2,9 +2,13 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/binary"
 	"io"
+	"strings"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // TestTunnelFramesPreserveHTTPBytes verifies framing bounds and distinguishes
@@ -27,6 +31,51 @@ func TestTunnelFramesPreserveHTTPBytes(t *testing.T) {
 	}
 	if err := ReadTunnelFrame(&buffer, &got); err == nil {
 		t.Error("ReadTunnelFrame(oversized frame) = nil, want rejection")
+	}
+}
+
+// TestSSHTunnelService binds the SSH protocol and host key to one private
+// service in an authenticated workspace generation.
+func TestSSHTunnelService(t *testing.T) {
+	public, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ssh.NewPublicKey(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := TunnelService{Key: "ssh", Protocols: []string{"ssh"}, HostPublicKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))}
+	services, err := ValidateTunnelServices([]TunnelService{valid})
+	if err != nil {
+		t.Fatalf("ValidateTunnelServices(SSH) = %v, want success", err)
+	}
+	allowed, err := NewServiceAllowlist("workspace-a", 7, services)
+	if err != nil || !allowed.Allows("workspace-a", 7, "ssh", "ssh") {
+		t.Fatalf("NewServiceAllowlist(SSH) = %v, %v, want scoped SSH access", allowed, err)
+	}
+	if allowed.Allows("workspace-b", 7, "ssh", "ssh") || allowed.Allows("workspace-a", 8, "ssh", "ssh") ||
+		allowed.Allows("workspace-a", 7, "ssh", "http") {
+		t.Error("SSH service accepted a different workspace, generation, or protocol")
+	}
+	changes := map[string]func(*TunnelService){
+		"host":         func(service *TunnelService) { service.Target = "127.0.0.1:22" },
+		"protocol":     func(service *TunnelService) { service.Protocols = []string{"ssh", "http"} },
+		"key":          func(service *TunnelService) { service.HostPublicKey = "bad" },
+		"otherService": func(service *TunnelService) { service.Key = "other" },
+	}
+	for name, change := range changes {
+		t.Run(name, func(t *testing.T) {
+			invalid := valid
+			change(&invalid)
+			if _, err := ValidateTunnelServices([]TunnelService{invalid}); err == nil {
+				t.Errorf("ValidateTunnelServices(%+v) = nil, want rejection", invalid)
+			}
+		})
+	}
+	if !ValidStreamHeader(StreamHeader{ServiceKey: "ssh", Protocol: "ssh", RequestID: "fixture"}) ||
+		ValidStreamHeader(StreamHeader{ServiceKey: "ide", Protocol: "ssh", RequestID: "fixture"}) {
+		t.Error("SSH stream header did not enforce the fixed service")
 	}
 }
 

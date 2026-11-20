@@ -36,6 +36,7 @@ func main() {
 	defer stop()
 	code := workspaceCommand(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, workspaceCommands{
 		serve: func(ctx context.Context) error { return run(ctx, []string{"serve"}) },
+		ssh:   guest.RunWorkspaceSSHCommand,
 		secret: func(ctx context.Context, key string) (string, error) {
 			return guest.ReadLocalSecret(ctx, guest.SecretSocketPath, key)
 		},

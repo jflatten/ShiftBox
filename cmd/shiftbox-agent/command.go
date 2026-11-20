@@ -34,6 +34,7 @@ type workspaceCommands struct {
 	keys   func(context.Context) ([]guest.SecretKey, error)
 	git    func(context.Context, string) (string, error)
 	watch  func(context.Context, int) error
+	ssh    func(context.Context, []string, io.Reader, io.Writer) error
 }
 
 func workspaceCommand(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, services workspaceCommands) int {
@@ -45,6 +46,15 @@ func workspaceCommand(ctx context.Context, args []string, stdin io.Reader, stdou
 		return 0
 	}
 	switch args[0] {
+	case "ssh-sftp", "ssh-forward":
+		if services.ssh == nil {
+			break
+		}
+		if err := services.ssh(ctx, args, stdin, stdout); err != nil {
+			fmt.Fprintln(stderr, "The workspace SSH subprocess failed.")
+			return 1
+		}
+		return 0
 	case "serve":
 		if len(args) != 1 || services.serve == nil {
 			break

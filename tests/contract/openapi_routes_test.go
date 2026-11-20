@@ -43,7 +43,7 @@ func TestManagementRouteContract(t *testing.T) {
 	if declared := strings.Count(paths, "operationId:"); declared != len(want) {
 		t.Fatalf("OpenAPI operation enumeration found %d of %d declarations; update the contract reader for the changed layout", len(want), declared)
 	}
-	for _, route := range web.ManagementRoutes() {
+	for _, route := range append(web.ManagementRoutes(), web.WorkspaceSSHRoutes()...) {
 		if got := route.Method + " " + route.Path; got != want[route.OperationID] {
 			t.Errorf("ManagementRoutes(%s) = %q, want %q", route.OperationID, got, want[route.OperationID])
 		}
