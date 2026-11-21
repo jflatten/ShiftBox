@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,13 +12,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"filippo.io/age"
+	"golang.org/x/sys/unix"
 )
 
 const manifestName = "manifest.json"
 
-var errArchiveInvalid = errors.New("management archive validation failed")
+var (
+	errArchiveInvalid          = errors.New("management archive validation failed")
+	errArchiveDirectoryMissing = errors.New("backup output directory does not exist")
+)
 
 // ArchiveEvidence is safe to persist after the encrypted file is closed and read back.
 type ArchiveEvidence struct {
@@ -30,7 +36,7 @@ type ArchiveEvidence struct {
 // CaptureArchive owns the private staging directory through publication.
 // The profile's capture function must release its management write fence
 // before returning the staged files for encryption.
-func CaptureArchive(ctx context.Context, output, password string, metadata ArchiveMetadata,
+func CaptureArchive(ctx context.Context, output, password string, metadata ArchiveMetadata, checkpointParent string,
 	capture func(context.Context, string) (map[string]string, error),
 ) (ArchiveEvidence, error) {
 	if !filepath.IsAbs(output) || !metadata.valid() || password == "" || capture == nil {
@@ -39,10 +45,18 @@ func CaptureArchive(ctx context.Context, output, password string, metadata Archi
 	if err := ctx.Err(); err != nil {
 		return ArchiveEvidence{}, err
 	}
-	if _, err := os.Lstat(output); !errors.Is(err, os.ErrNotExist) {
-		return ArchiveEvidence{}, errors.New("backup output path is unavailable")
+	parent, name, err := openArchiveDestination(output)
+	if err != nil {
+		return ArchiveEvidence{}, err
 	}
-	dir, err := os.MkdirTemp(filepath.Dir(output), ".backup-checkpoint-")
+	defer parent.Close()
+
+	// Plaintext belongs in a private controller staging area. The requested
+	// destination directory receives only the encrypted archive.
+	if !privateCheckpointDirectory(checkpointParent) {
+		return ArchiveEvidence{}, errors.New("backup checkpoint requires a private staging parent")
+	}
+	dir, err := os.MkdirTemp(checkpointParent, ".backup-checkpoint-")
 	if err != nil {
 		return ArchiveEvidence{}, errors.New("cannot stage protected backup checkpoint")
 	}
@@ -51,7 +65,7 @@ func CaptureArchive(ctx context.Context, output, password string, metadata Archi
 	if err != nil {
 		return ArchiveEvidence{}, err
 	}
-	return CreateArchive(ctx, output, password, metadata, sources)
+	return createArchive(ctx, parent, name, password, metadata, sources)
 }
 
 // CreateArchive writes an age-encrypted management archive from staged files.
@@ -60,9 +74,53 @@ func CreateArchive(ctx context.Context, output, password string, metadata Archiv
 	if !filepath.IsAbs(output) || !metadata.valid() || password == "" {
 		return ArchiveEvidence{}, errArchiveInvalid
 	}
-	if _, err := os.Lstat(output); !errors.Is(err, os.ErrNotExist) {
-		return ArchiveEvidence{}, errors.New("backup output path is unavailable")
+	parent, name, err := openArchiveDestination(output)
+	if err != nil {
+		return ArchiveEvidence{}, err
 	}
+	defer parent.Close()
+	return createArchive(ctx, parent, name, password, metadata, sources)
+}
+
+// CheckArchiveDestination rejects an occupied archive path before the CLI
+// starts a backup. Publication checks again atomically.
+func CheckArchiveDestination(output string) error {
+	parent, _, err := openArchiveDestination(output)
+	if errors.Is(err, errArchiveDirectoryMissing) {
+		// The CLI preflight reports conflicts. Capture records a missing
+		// parent as a failed operation, just as it does for other I/O errors.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return parent.Close()
+}
+
+func openArchiveDestination(output string) (*os.Root, string, error) {
+	if !filepath.IsAbs(output) || filepath.Clean(output) != output || strings.ContainsRune(output, 0) {
+		return nil, "", errArchiveInvalid
+	}
+	name := filepath.Base(output)
+	if !filepath.IsLocal(name) {
+		return nil, "", errArchiveInvalid
+	}
+	// The authorized operator can choose an existing directory, including a
+	// directory alias. Keep its handle so later path changes cannot redirect I/O.
+	parent, err := os.OpenRoot(filepath.Dir(output))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, "", errArchiveDirectoryMissing
+	}
+	if err != nil {
+		return nil, "", errors.New("backup output directory is unavailable")
+	}
+	if _, err := parent.Lstat(name); !errors.Is(err, os.ErrNotExist) {
+		return nil, "", errors.Join(errors.New("backup output path is unavailable"), parent.Close())
+	}
+	return parent, name, nil
+}
+
+func createArchive(ctx context.Context, parent *os.Root, name, password string, metadata ArchiveMetadata, sources map[string]string) (ArchiveEvidence, error) {
 	names := archiveNames(metadata.Profile)
 	if len(sources) != len(names) {
 		return ArchiveEvidence{}, errArchiveInvalid
@@ -88,19 +146,23 @@ func CreateArchive(ctx context.Context, output, password string, metadata Archiv
 	if err != nil {
 		return ArchiveEvidence{}, errArchiveInvalid
 	}
-	dir := filepath.Dir(output)
-	file, err := os.CreateTemp(dir, ".backup-*.age")
+	temp := ".backup-" + rand.Text() + ".age"
+	file, err := parent.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return ArchiveEvidence{}, errors.New("cannot create encrypted backup output")
 	}
-	defer os.Remove(file.Name())
+	defer parent.Remove(temp)
 	writeErr := encodeArchive(ctx, file, recipient, data, doc, sources)
-	if err := errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
+	info, statErr := file.Stat()
+	if err := errors.Join(writeErr, statErr, file.Sync(), file.Close()); err != nil {
 		return ArchiveEvidence{}, errors.New("cannot finish encrypted backup")
 	}
-	closed, err := os.Open(file.Name())
+	closed, err := parent.OpenFile(temp, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return ArchiveEvidence{}, errArchiveInvalid
+	}
+	if closedInfo, err := closed.Stat(); err != nil || !os.SameFile(info, closedInfo) {
+		return ArchiveEvidence{}, errors.Join(errArchiveInvalid, closed.Close())
 	}
 	evidence, err := VerifyArchive(ctx, closed, password)
 	if err := errors.Join(err, closed.Close()); err != nil || evidence.Metadata != metadata ||
@@ -110,17 +172,47 @@ func CreateArchive(ctx context.Context, output, password string, metadata Archiv
 	if err := ctx.Err(); err != nil {
 		return ArchiveEvidence{}, err
 	}
-	if err := os.Link(file.Name(), output); err != nil {
-		return ArchiveEvidence{}, errors.New("cannot publish encrypted backup without replacing an existing file")
-	}
-	parent, err := os.Open(dir)
-	if err != nil {
-		return ArchiveEvidence{}, errors.New("cannot confirm backup directory durability")
-	}
-	if err := errors.Join(parent.Sync(), parent.Close()); err != nil {
-		return ArchiveEvidence{}, errors.New("cannot confirm backup directory durability")
+	if err := publishArchive(parent, temp, name, info); err != nil {
+		return ArchiveEvidence{}, err
 	}
 	return evidence, nil
+}
+
+func publishArchive(parent *os.Root, temp, name string, verified os.FileInfo) error {
+	// If the chosen path was renamed or retargeted during capture, the CLI
+	// must not report a successful backup at an address that no longer names it.
+	current, err := os.OpenRoot(parent.Name())
+	if err != nil {
+		return errors.New("backup output directory changed before publication")
+	}
+	defer current.Close()
+	originalInfo, err := parent.Stat(".")
+	if err != nil {
+		return errors.New("cannot confirm backup output directory")
+	}
+	currentInfo, err := current.Stat(".")
+	if err != nil || !os.SameFile(originalInfo, currentInfo) {
+		return errors.New("backup output directory changed before publication")
+	}
+	staged, err := parent.Lstat(temp)
+	if err != nil || !os.SameFile(verified, staged) {
+		return errArchiveInvalid
+	}
+	if err := parent.Link(temp, name); err != nil {
+		return errors.New("cannot publish encrypted backup without replacing an existing file")
+	}
+	published, err := parent.Lstat(name)
+	if err != nil || !os.SameFile(verified, published) {
+		return errArchiveInvalid
+	}
+	directory, err := parent.Open(".")
+	if err != nil {
+		return errors.New("cannot confirm backup directory durability")
+	}
+	if err := errors.Join(directory.Sync(), directory.Close()); err != nil {
+		return errors.New("cannot confirm backup directory durability")
+	}
+	return nil
 }
 
 func encodeArchive(ctx context.Context, dst io.Writer, recipient *age.ScryptRecipient, data []byte, doc manifest, sources map[string]string) error {

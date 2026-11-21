@@ -1220,7 +1220,7 @@ func TestRestartRestorePublication(t *testing.T) {
 		Schema: schema, HostID: "restart-fixture-host"}
 	const passphrase = "fixture restore passphrase"
 	archivePath := filepath.Join(dir, "management.age")
-	if _, err := backup.CaptureArchive(ctx, archivePath, passphrase, metadata, backupRestartCheckpoint(source)); err != nil {
+	if _, err := backup.CaptureArchive(ctx, archivePath, passphrase, metadata, dir, backupRestartCheckpoint(source)); err != nil {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(dir, "replacement")
@@ -1598,6 +1598,9 @@ func TestRestartBackup(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			ctx := t.Context()
 			dir := t.TempDir()
+			if err := os.Chmod(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
 			cfg := database.Config{Profile: "sqlite", SQLitePath: filepath.Join(dir, "backup.db")}
 			db, err := database.Open(ctx, cfg)
 			if err != nil {
@@ -1620,7 +1623,7 @@ func TestRestartBackup(t *testing.T) {
 				t.Fatal(err)
 			}
 			journal := operation.NewJournal(db, time.Now, uuid.NewString)
-			service := backup.NewService(db, journal, metadata)
+			service := backup.NewService(db, journal, metadata, dir)
 			op, err := service.QueueLocal(ctx, "first-backup-after-admission")
 			if err != nil {
 				t.Fatal(err)
@@ -1687,7 +1690,7 @@ func TestRestartBackup(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = reopened.Close() })
 			restartedJournal := operation.NewJournal(reopened, time.Now, uuid.NewString)
-			restarted := backup.NewService(reopened, restartedJournal, metadata)
+			restarted := backup.NewService(reopened, restartedJournal, metadata, dir)
 			for range 2 {
 				if err := restarted.InterruptIncomplete(ctx); err != nil {
 					t.Fatal(err)

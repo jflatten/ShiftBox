@@ -19,14 +19,16 @@ const (
 // Service tracks operator-driven backup operations. Secrets are held only
 // by the caller for the duration of a single attempt.
 type Service struct {
-	db       *sql.DB
-	journal  *operation.Journal
-	metadata ArchiveMetadata
+	db               *sql.DB
+	journal          *operation.Journal
+	metadata         ArchiveMetadata
+	checkpointParent string
 }
 
-// NewService binds backups to the active installation and schema.
-func NewService(db *sql.DB, journal *operation.Journal, metadata ArchiveMetadata) *Service {
-	return &Service{db: db, journal: journal, metadata: metadata}
+// NewService binds backups to the active installation, schema, and private
+// controller directory for staging plaintext checkpoints.
+func NewService(db *sql.DB, journal *operation.Journal, metadata ArchiveMetadata, checkpointParent string) *Service {
+	return &Service{db: db, journal: journal, metadata: metadata, checkpointParent: checkpointParent}
 }
 
 // InterruptIncomplete closes unfinished operations during exclusive startup.
@@ -161,7 +163,7 @@ func (s *Service) Run(ctx context.Context, id, output, password string, capture 
 	effectCtx, cancel := context.WithTimeout(ctx, backupLease-time.Minute)
 	defer cancel()
 	step := 0
-	evidence, err := CaptureArchive(effectCtx, output, password, s.metadata, func(ctx context.Context, dir string) (map[string]string, error) {
+	evidence, err := CaptureArchive(effectCtx, output, password, s.metadata, s.checkpointParent, func(ctx context.Context, dir string) (map[string]string, error) {
 		sources, err := capture(ctx, dir)
 		if err != nil {
 			return nil, err

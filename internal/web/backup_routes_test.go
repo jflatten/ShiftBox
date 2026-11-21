@@ -40,7 +40,11 @@ func TestBackupRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	journal := operation.NewJournal(db, time.Now, uuid.NewString)
-	service := backup.NewService(db, journal, backup.ArchiveMetadata{InstallationID: org, Release: "v1", Profile: "sqlite", Schema: 19})
+	checkpointParent, err := os.MkdirTemp(dir, "checkpoints-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := backup.NewService(db, journal, backup.ArchiveMetadata{InstallationID: org, Release: "v1", Profile: "sqlite", Schema: 19}, checkpointParent)
 	role := "member"
 	token := strings.Repeat("A", 43)
 	const pass = "fixture secret passphrase"

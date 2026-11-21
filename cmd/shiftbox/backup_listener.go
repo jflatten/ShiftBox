@@ -51,7 +51,7 @@ func listenLocalBackup(dir string, service *backup.Service,
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if _, err := os.Lstat(input.Destination); !errors.Is(err, os.ErrNotExist) {
+		if err := backup.CheckArchiveDestination(input.Destination); err != nil {
 			w.WriteHeader(http.StatusConflict)
 			return
 		}

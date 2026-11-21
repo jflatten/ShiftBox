@@ -39,9 +39,12 @@ const (
 func TestBackupRestoreAPI(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	db, metadata := recoveryContractDB(t, filepath.Join(dir, "application.db"))
 	journal := operation.NewJournal(db, time.Now, uuid.NewString)
-	service := backup.NewService(db, journal, metadata)
+	service := backup.NewService(db, journal, metadata, dir)
 	backupJobs := make(chan web.BackupJob, 1)
 	restoreJobs := make(chan web.RestoreValidationJob, 2)
 	create := web.BackupRoute(db, service, recoveryOrigin, metadata.InstallationID, time.Now, func(job web.BackupJob) { backupJobs <- job })

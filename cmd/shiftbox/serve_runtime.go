@@ -171,7 +171,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if err != nil {
 		return err
 	}
-	backups := backup.NewService(state.DB, journal, metadata)
+	backups := backup.NewService(state.DB, journal, metadata, cfg.InstallationDir)
 	if err := backups.InterruptIncomplete(ctx); err != nil {
 		return err
 	}

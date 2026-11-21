@@ -50,7 +50,7 @@ func TestBackupCommandUsesController(t *testing.T) {
 	if err := os.WriteFile(configPath, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	service := backup.NewService(db, operation.NewJournal(db, time.Now, uuid.NewString), backup.ArchiveMetadata{InstallationID: id, Release: "fixture", Profile: "sqlite", Schema: 19})
+	service := backup.NewService(db, operation.NewJournal(db, time.Now, uuid.NewString), backup.ArchiveMetadata{InstallationID: id, Release: "fixture", Profile: "sqlite", Schema: 19}, dir)
 	calls := 0
 	listener, err := listenLocalBackup(dir, service, func(_ context.Context, stage string) (map[string]string, error) {
 		calls++
@@ -95,6 +95,12 @@ func TestBackupCommandUsesController(t *testing.T) {
 	}
 	if _, err := os.Stat(output); err != nil {
 		t.Fatal(err)
+	}
+	// The same path must report a conflict without starting another capture.
+	result.Reset()
+	err = runBackup(ctx, args, strings.NewReader(password+"\n"+password+"\n"), &result, &status)
+	if !errors.As(err, &exit) || exit.code != 6 {
+		t.Fatalf("backup with existing output = %v; want conflict exit 6", err)
 	}
 	if calls != 1 {
 		t.Fatalf("capture ran %d times; want one", calls)

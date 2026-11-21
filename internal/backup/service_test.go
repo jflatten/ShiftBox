@@ -43,7 +43,7 @@ func testBackupRecords(t *testing.T, profile, uri string) {
 	}
 	journal := operation.NewJournal(db, time.Now, uuid.NewString)
 	meta := ArchiveMetadata{InstallationID: uuid.NewString(), Release: "v1", Profile: profile, Schema: 19}
-	service := NewService(db, journal, meta)
+	service := NewService(db, journal, meta, checkpointStage(t))
 	check := func(want bool) {
 		t.Helper()
 		got, err := HasCompletedBackup(ctx, db, meta)
