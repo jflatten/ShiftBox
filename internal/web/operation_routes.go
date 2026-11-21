@@ -10,6 +10,7 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/launchlog"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 )
@@ -29,9 +30,20 @@ func OperationHandlers(db *sql.DB, origin string, now func() time.Time, journal 
 			if err != nil {
 				return nil, err
 			}
+			response := struct {
+				operation.Operation
+				LaunchPerformance *launchlog.Performance `json:"launchPerformance,omitempty"`
+			}{Operation: op}
+			if op.Type == "provision" && op.OriginatingAction == "workspace.launch" {
+				performance, err := launchlog.Read(ctx, tx, op.ID, now())
+				if err != nil {
+					return nil, err
+				}
+				response.LaunchPerformance = &performance
+			}
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(op)
+				_ = json.NewEncoder(w).Encode(response)
 			}), nil
 		},
 	}
@@ -87,6 +99,14 @@ func resolveOperationView(ctx context.Context, tx *sql.Tx, journal *operation.Jo
 }
 
 func authorizeOperationStream(r *http.Request, db *sql.DB, journal *operation.Journal, id string, now time.Time) (proxy.Scope, error) {
+	return authorizeManagementStream(r, db, now, func(ctx context.Context, tx *sql.Tx, _ *http.Request, principal auth.Principal) (AuthorizationTarget, error) {
+		return resolveOperationView(ctx, tx, journal, id, principal, now)
+	})
+}
+
+func authorizeManagementStream(r *http.Request, db *sql.DB, now time.Time,
+	resolve func(context.Context, *sql.Tx, *http.Request, auth.Principal) (AuthorizationTarget, error),
+) (proxy.Scope, error) {
 	token, err := SessionToken(r)
 	if err != nil {
 		return proxy.Scope{}, err
@@ -101,9 +121,12 @@ func authorizeOperationStream(r *http.Request, db *sql.DB, journal *operation.Jo
 		if err != nil {
 			return err
 		}
-		target, err := resolveOperationView(ctx, tx, journal, id, principal, now)
+		target, err := resolve(ctx, tx, r, principal)
 		if err != nil {
 			return err
+		}
+		if !auth.Authorize(principal, target.Action, target.Resource, target.Grants, now).Allowed {
+			return Problem{Status: 403, Code: "auth.forbidden", Title: "This action is not permitted"}
 		}
 		scope = proxy.Scope{UserID: principal.User.ID, SessionID: principal.Session.ID}
 		if target.Resource.Type == "workspace" {

@@ -17,6 +17,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/identity"
 	"github.com/jflatten/ShiftBox/internal/secret"
+	"github.com/jflatten/ShiftBox/internal/workspacelog"
 )
 
 // ControllerState carries the active database and trust material loaded at startup.
@@ -35,6 +36,7 @@ type ControllerState struct {
 	retentionGrace     time.Duration
 	retentionStatus    atomic.Pointer[retentionSnapshot]
 	imageCache         *imageCacheRuntime
+	workspaceLogs      workspacelog.Store
 }
 
 // Close releases the authoritative database on shutdown or failed composition.

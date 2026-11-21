@@ -27,10 +27,12 @@ import (
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/guest"
+	"github.com/jflatten/ShiftBox/internal/launchlog"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/web"
 	"github.com/jflatten/ShiftBox/internal/workspace"
+	"github.com/jflatten/ShiftBox/internal/workspacelog"
 )
 
 // TestGuestEnrollmentHTTP checks enrollment over server-authenticated TLS,
@@ -229,7 +231,12 @@ func TestGuestPollContract(t *testing.T) {
 		}
 		return contact, command, err
 	}
-	pollServer := serve(web.GuestPollHandler(compatibility, exchange, clock, ""), guest.ServerTLS(serverCert, authority))
+	pollMux := http.NewServeMux()
+	pollMux.Handle("/internal/v1/guest/poll", web.GuestPollHandler(compatibility, exchange, clock, ""))
+	pollMux.Handle(launchlog.GuestPath, web.GuestLaunchTimingHandler(enrollment.RecordLaunchTiming, clock))
+	var logs workspacelog.Store
+	pollMux.Handle(workspacelog.GuestPath, web.GuestWorkspaceLogHandler(enrollment.AuthorizeWorkspaceLog, &logs, clock))
+	pollServer := serve(pollMux, guest.ServerTLS(serverCert, authority))
 	pollURL := pollServer.URL + "/internal/v1/guest/poll"
 	unauthenticated, err := client(tls.Certificate{}).Post(pollURL, "application/json", strings.NewReader("{}"))
 	if err == nil {
@@ -305,17 +312,56 @@ func TestGuestPollContract(t *testing.T) {
 		Operation            *guest.PollOperation
 	}
 	var first pollView
+	clockOffset.Store(int64(2 * time.Second))
 	response := poll("current", http.StatusOK, "")
 	if err := json.Unmarshal(response, &first); err != nil || first.WorkspaceGeneration != 1 || first.NextPollAfterSeconds != 30 ||
 		first.Operation == nil || first.Operation.ID != op.ID || first.Operation.Command != "ensure-development-container" {
 		t.Fatalf("registered poll returned %s (%v), want generation 1 and the workspace launch dispatch", response, err)
 	}
 	var retried pollView
+	clockOffset.Store(int64(3 * time.Second))
 	if err := json.Unmarshal(poll("current", http.StatusOK, ""), &retried); err != nil {
 		t.Fatal(err)
 	}
 	if diff := cmp.Diff(first, retried); diff != "" {
 		t.Fatalf("replayed poll changed the dispatch (-want +got):\n%s", diff)
+	}
+	// Only the current dispatch can upload build output. A lost HTTP reply
+	// and retry must not duplicate the output available to the owner.
+	logURL := pollServer.URL + workspacelog.GuestPath
+	build := map[string]any{"operationId": op.ID, "dispatchVersion": first.Operation.Version,
+		"batchId": uuid.NewString(), "text": "#1 Building image\n", "format": "1"}
+	postGuestContract(t, registered, logURL, build, http.StatusBadRequest, "guest.invalid_workspace_log")
+	build["format"] = workspacelog.Format
+	postGuestContract(t, registered, logURL, build, http.StatusNoContent, "")
+	postGuestContract(t, registered, logURL, build, http.StatusNoContent, "")
+	build["dispatchVersion"] = first.Operation.Version + 1
+	postGuestContract(t, registered, logURL, build, http.StatusForbidden, "guest.identity_denied")
+	build["dispatchVersion"] = first.Operation.Version
+	build["operationId"] = uuid.NewString()
+	postGuestContract(t, registered, logURL, build, http.StatusForbidden, "guest.identity_denied")
+	if history := logs.After(workspaceID, 0); len(history) != 1 || history[0].Text != "#1 Building image\n" {
+		t.Fatalf("workspace log = %+v", history)
+	}
+	// A certified guest can report launch timings before lifecycle completion.
+	// A lost acknowledgement may repeat the same ID. Invalid or foreign data must be refused.
+	timingURL := pollServer.URL + launchlog.GuestPath
+	sample := launchlog.GuestSample{ID: uuid.NewString(), Phase: "ide_extensions", Outcome: "succeeded", DurationMS: 2700}
+	timing := map[string]any{"operationId": op.ID, "dispatchVersion": first.Operation.Version, "sample": sample}
+	postGuestContract(t, registered, timingURL, timing, http.StatusNoContent, "")
+	postGuestContract(t, registered, timingURL, timing, http.StatusNoContent, "")
+	timing["operationId"] = uuid.NewString()
+	postGuestContract(t, registered, timingURL, timing, http.StatusForbidden, "guest.identity_denied")
+	timing["operationId"] = op.ID
+	sample.Phase = "project stdout"
+	timing["sample"] = sample
+	postGuestContract(t, registered, timingURL, timing, http.StatusBadRequest, "guest.invalid_launch_timing")
+	performance, err := launchlog.Read(ctx, db, op.ID, clock())
+	if err != nil || len(performance.Events) != 3 || performance.Events[0].Phase != "guest_authenticated" ||
+		performance.Events[1].Phase != "configure_dispatched" || !performance.Events[1].OccurredAt.Equal(now.Add(2*time.Second)) ||
+		performance.Events[2].Phase != "ide_extensions" ||
+		performance.Events[2].DurationMS != 2700 {
+		t.Fatalf("persisted launch timings = %+v, %v", performance.Events, err)
 	}
 	report := map[string]any{
 		"operationId": op.ID, "workspaceGeneration": 1, "status": "running", "step": "devcontainer.wait_for", "attempt": 1,
@@ -338,8 +384,14 @@ func TestGuestPollContract(t *testing.T) {
 	evidence["containerId"] = strings.Repeat("a", 17<<10)
 	postGuestContract(t, registered, pollURL, input, http.StatusRequestEntityTooLarge, "request.too_large")
 	evidence["containerId"] = strings.Repeat("a", 64)
+	clockOffset.Store(int64(11 * time.Second))
 	for range 2 {
 		postGuestContract(t, registered, pollURL, input, http.StatusOK, "")
+	}
+	// Only the first authenticated acceptance persists the configuration receipt.
+	performance, err = launchlog.Read(ctx, db, op.ID, clock())
+	if err != nil || len(performance.Events) != 4 || performance.Events[3].Phase != "configure_reported" || !performance.Events[3].OccurredAt.Equal(now.Add(11*time.Second)) {
+		t.Fatalf("accepted setup report timings = %+v, %v", performance.Events, err)
 	}
 	if err := journal.CompleteStep(ctx, claim, 2, "connected at waitFor"); err != nil {
 		t.Fatal(err)

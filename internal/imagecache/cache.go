@@ -130,11 +130,24 @@ func (c *Cache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	response := &observedResponse{ResponseWriter: w}
+	observation := Observation{Origin: origin.Host, Repository: repository, StartedAt: time.Now()}
+	report := func(observation Observation) {
+		observation.FinishedAt = time.Now()
+		observation.Status = response.status
+		if response.failed || r.Context().Err() != nil {
+			observation.Status = 0
+		}
+		if observe, ok := r.Context().Value(observationKey{}).(func(Observation)); ok {
+			observe(observation)
+		}
+	}
 	select {
 	case c.slots <- struct{}{}:
 		defer func() { <-c.slots }()
 	default:
-		http.Error(w, "The image cache is busy", http.StatusServiceUnavailable)
+		http.Error(response, "The image cache is busy", http.StatusServiceUnavailable)
+		report(observation)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Minute)
@@ -142,16 +155,14 @@ func (c *Cache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	request := &pullRequest{
 		remote:      remoteRegistry{origin: origin, repository: repository, client: c.client},
 		request:     r,
-		writer:      w,
-		observation: Observation{Origin: origin.Host, Repository: repository},
+		writer:      response,
+		observation: observation,
 	}
 	defer func() {
 		c.statsMu.Lock()
 		c.stats.add(request.observation.PullStats)
 		c.statsMu.Unlock()
-		if observe, ok := ctx.Value(observationKey{}).(func(Observation)); ok {
-			observe(request.observation)
-		}
+		report(request.observation)
 		if request.blob != nil {
 			request.blob.Body.Close()
 		}
@@ -165,7 +176,7 @@ func (c *Cache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pull.URL.RawQuery = url.Values{"ns": {origin.Host}}.Encode()
 	pull.URL.ForceQuery = false
 	pull.RequestURI = pull.URL.RequestURI()
-	c.app.ServeHTTP(w, pull)
+	c.app.ServeHTTP(response, pull)
 }
 
 func pullTarget(u *url.URL) (url.URL, string, bool) {

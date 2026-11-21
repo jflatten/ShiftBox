@@ -16,11 +16,13 @@ import (
 	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/identity"
+	"github.com/jflatten/ShiftBox/internal/launchlog"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/release"
 	"github.com/jflatten/ShiftBox/internal/secret"
 	"github.com/jflatten/ShiftBox/internal/web"
 	"github.com/jflatten/ShiftBox/internal/workspace"
+	"github.com/jflatten/ShiftBox/internal/workspacelog"
 )
 
 // GuestListenerConfig assigns distinct binds and the guest-reachable TLS host.
@@ -31,6 +33,7 @@ type GuestListenerConfig struct {
 	PublicHost            string
 	GitHub                *identity.GitHub
 	Secrets               *secret.Service
+	WorkspaceLogs         *workspacelog.Store
 	TunnelAddress         string
 	Tunnels               *proxy.Tunnels
 	Checkpoint            *backup.WriteFence
@@ -86,6 +89,10 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		return nil, err
 	}
 	internal := http.NewServeMux()
+	if config.WorkspaceLogs != nil {
+		internal.Handle(workspacelog.GuestPath, web.GuestWorkspaceLogHandler(enrollment.AuthorizeWorkspaceLog, config.WorkspaceLogs, now))
+	}
+	internal.Handle(launchlog.GuestPath, web.GuestLaunchTimingHandler(enrollment.RecordLaunchTiming, now))
 	internal.Handle(guest.RenewalPath, web.GuestRenewalHandler(enrollment.Renew, now))
 	if config.GuestUpdates != nil {
 		internal.Handle(guest.UpdateDownloadPath, web.GuestUpdateHandler(func(ctx context.Context, leaf *x509.Certificate, stamp time.Time) (string, error) {
@@ -177,7 +184,15 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		}
 		return contact, command, err
 	}
-	internal.Handle("/internal/v1/guest/poll", web.GuestPollHandler(compatibility, exchange, now, listeners.TunnelAddress))
+	pollRoute := web.GuestPollHandler(compatibility, exchange, now, listeners.TunnelAddress)
+	internal.HandleFunc("/internal/v1/guest/poll", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(guest.LaunchTimingOfferHeader, "1")
+		w.Header().Set(guest.DetailedConfigureTimingHeader, "1")
+		if config.WorkspaceLogs != nil {
+			w.Header().Set(guest.WorkspaceLogOfferHeader, workspacelog.Format)
+		}
+		pollRoute.ServeHTTP(w, r)
+	})
 	return listeners, nil
 }
 

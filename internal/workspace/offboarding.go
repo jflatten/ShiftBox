@@ -81,7 +81,7 @@ func QueueOffboardingStops(ctx context.Context, tx *sql.Tx, journal *operation.J
 			return nil, nil, err
 		}
 		for _, id := range superseded {
-			if err := journal.CancelInTx(ctx, tx, id, now); err != nil {
+			if err := journal.CancelInTx(ctx, tx, id, "Superseded by membership offboarding.", now); err != nil {
 				return nil, nil, err
 			}
 		}

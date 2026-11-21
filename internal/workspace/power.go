@@ -44,11 +44,26 @@ func (e *PowerExecutor) Observe(ctx context.Context, op operation.Operation, ste
 	if err != nil {
 		return "", false, err
 	}
+	interrupt := op.OriginatingAction == deploymentStopAction
+	if interrupt && req.Ref.InstanceID == "" {
+		completed, err := recordUnprovisionedPower(ctx, e.store, op, "stopped", e.now())
+		if err != nil || completed {
+			return "Deployment stopped before any provider resources were requested.", completed, err
+		}
+	}
 	got, err := e.provider.Inspect(ctx, req.Ref)
 	if err != nil {
+		if interrupt && req.Ref.InstanceID == "" && errors.Is(err, provider.ErrNotFound) {
+			return "", false, &operation.StepWaiting{Cause: err,
+				Detail: "Waiting for the provider to confirm whether deployment created a VM. Workspace capacity remains reserved."}
+		}
 		return "", false, err
 	}
-	if req.Ref.InstanceID == "" && op.OriginatingAction == "user.disable" {
+	discovered := req.Ref.InstanceID == "" && (interrupt || op.OriginatingAction == "user.disable")
+	if discovered {
+		if got.InstanceID == "" {
+			return "", false, provider.ErrOutcomeUnknown
+		}
 		req.Ref.InstanceID = got.InstanceID
 	}
 	if err := verifyWorkspaceVM(req, got); err != nil {
@@ -137,7 +152,8 @@ func (e *PowerExecutor) Apply(ctx context.Context, op operation.Operation, step 
 func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, error) {
 	offboarding := op.OriginatingAction == "user.disable" && op.Type == "stop" && step.Key == "stop"
 	inactivity := op.OriginatingAction == inactivityStopAction && op.Type == "stop" && step.Key == "stop" && op.Actor == "controller"
-	if (!offboarding && !inactivity && !isRepairRetry(op) && op.OriginatingAction != "workspace."+op.Type) ||
+	interrupt := op.OriginatingAction == deploymentStopAction && op.Type == "stop" && step.Key == "stop"
+	if (!offboarding && !inactivity && !interrupt && !isRepairRetry(op) && op.OriginatingAction != "workspace."+op.Type) ||
 		op.WorkspaceID == nil || op.StartedAt == nil || op.Status != "running" || step.Status != "active" ||
 		!validPowerStep(op.Type, step.Key) {
 		return provider.CreateRequest{}, provider.ErrInvalidState
@@ -149,7 +165,7 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 		FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id
 		JOIN installations i ON i.id=w.installation_id JOIN users owner ON owner.id=w.owner_user_id
 		LEFT JOIN users actor ON actor.id=$3 JOIN operations o ON o.id=$5 AND o.workspace_id=w.id AND o.generation=w.generation
-		WHERE w.id=$1 AND w.generation=$2 AND ($6 OR w.provider_instance_id IS NOT NULL) AND w.observed_state<>'deleted'
+		WHERE w.id=$1 AND w.generation=$2 AND ($6 OR $9 OR w.provider_instance_id IS NOT NULL) AND w.observed_state<>'deleted'
 		  AND i.state='active' AND o.status='running' AND o.originating_action=$7
 		  AND (($6 AND owner.membership_state IN ('pending','disabled')) OR
 		       ($8 AND o.requested_by='controller' AND owner.membership_state='active') OR
@@ -159,7 +175,7 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 		        AND ($4='start' OR w.observed_state='running')
 		        AND EXISTS (SELECT 1 FROM reservations r WHERE r.workspace_id=w.id
 		                     AND r.cpu_memory_state='reserved' AND r.disk_state='reserved')))`,
-		req.Ref.WorkspaceID, op.Generation, op.Actor, op.Type, op.ID, offboarding, op.OriginatingAction, inactivity).
+		req.Ref.WorkspaceID, op.Generation, op.Actor, op.Type, op.ID, offboarding, op.OriginatingAction, inactivity, interrupt).
 		Scan(&req.Ref.InstallationID, &req.Ref.OwnershipMarker, &req.Ref.InstanceID, &req.ArtifactID, &req.Release, &policy)
 	if err != nil {
 		return provider.CreateRequest{}, err
@@ -167,7 +183,7 @@ func (e *PowerExecutor) request(ctx context.Context, op operation.Operation, ste
 	var network struct {
 		Mode string `json:"mode"`
 	}
-	if json.Unmarshal([]byte(policy), &network) != nil || network.Mode == "" || (req.Ref.InstanceID == "" && !offboarding) {
+	if json.Unmarshal([]byte(policy), &network) != nil || network.Mode == "" {
 		return provider.CreateRequest{}, provider.ErrInvalidState
 	}
 	req.NetworkMode = network.Mode
@@ -249,6 +265,19 @@ func (e *PowerExecutor) record(ctx context.Context, op operation.Operation, req 
 	}
 	ref := req.Ref
 	err := database.Transaction(ctx, e.store.db, func(tx *sql.Tx) error {
+		interrupt := op.OriginatingAction == deploymentStopAction
+		var adopt bool
+		if interrupt {
+			if err := tx.QueryRowContext(ctx, "SELECT provider_instance_id IS NULL FROM workspaces WHERE id=$1",
+				ref.WorkspaceID).Scan(&adopt); err != nil {
+				return err
+			}
+			if adopt {
+				if err := verifyProvisionResources(got); err != nil {
+					return err
+				}
+			}
+		}
 		// Reconcile only the matching operation and VM. Repeated observations
 		// leave the version alone once this power state is already recorded.
 		result, err := tx.ExecContext(ctx, `UPDATE workspaces SET observed_state=$1,provider_instance_id=COALESCE(provider_instance_id,$7),
@@ -258,11 +287,16 @@ func (e *PowerExecutor) record(ctx context.Context, op operation.Operation, req 
 			  AND (provider_instance_id=$7 OR ($9 AND provider_instance_id IS NULL)) AND desired_state=$1 AND observed_state<>'deleted'
 			  AND EXISTS (SELECT 1 FROM operations o WHERE o.id=$8 AND o.workspace_id=$3 AND o.generation=$5 AND o.status='running')`,
 			string(want), got.ObservedAt.UTC().Format(time.RFC3339Nano), ref.WorkspaceID, ref.InstallationID, ref.Generation,
-			ref.OwnershipMarker, ref.InstanceID, op.ID, op.OriginatingAction == "user.disable")
+			ref.OwnershipMarker, ref.InstanceID, op.ID, interrupt || op.OriginatingAction == "user.disable")
 		if err := capacityWrite(result, err); err != nil {
 			return err
 		}
 		if want == provider.Stopped {
+			if adopt {
+				if err := recordProvisionResources(ctx, tx, got); err != nil {
+					return err
+				}
+			}
 			return ReleaseReservation(ctx, tx, got, now)
 		}
 		return nil

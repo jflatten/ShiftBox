@@ -28,6 +28,7 @@ test('saves a manually configured preview port', async () => {
   globalThis.fetch = fetch;
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={id} /></Providers>);
+  await user.click(await screen.findByRole('tab', { name: 'Connections' }));
   const ports = await screen.findByRole('textbox', { name: 'Preview ports' });
   await user.type(ports, '8080');
   await user.click(screen.getByRole('button', { name: 'Save preview ports' }));
@@ -59,7 +60,7 @@ test('restores keyboard focus after cancelling workspace deletion', async () => 
   globalThis.fetch = fetch;
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={id} /></Providers>);
-  const deletion = await screen.findByRole('button', { name: 'Delete workspace' });
+  const settings = await screen.findByRole('tab', { name: 'Settings' });
   // The compact navigation toggle is the first keyboard stop. Opening it
   // keeps the page title present and exposes the labeled workspace link.
   const toggle = screen.getByRole('button', { name: 'Toggle navigation' });
@@ -78,7 +79,11 @@ test('restores keyboard focus after cancelling workspace deletion', async () => 
   await user.tab();
   const nav = within(screen.getByRole('navigation', { name: 'Main navigation' }));
   expect(nav.getByRole('link', { name: 'Workspaces' })).toHaveFocus();
-  deletion.focus();
+  settings.focus();
+  await user.keyboard('{Enter}');
+  const deletion = screen.getByRole('button', { name: 'Delete workspace' });
+  await user.tab();
+  expect(deletion).toHaveFocus();
   await user.keyboard('{Enter}');
   const dialog = within(await screen.findByRole('dialog', { name: 'Delete workspace' }));
   await waitFor(() => expect(dialog.getByRole('button', { name: 'Cancel' })).toHaveFocus());

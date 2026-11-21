@@ -14,6 +14,7 @@ export interface InfrastructureStatus {
   version: number;
   conditions: Condition[];
   keepAlivePolicy?: KeepAlivePolicy;
+  launchLogRetention?: components['schemas']['InfrastructureStatus']['launchLogRetention'];
 }
 
 const conditionTitles: Record<string, string> = {

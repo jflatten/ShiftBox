@@ -66,42 +66,17 @@ func OperationEvents(journal *operation.Journal, registry *proxy.Registry, autho
 			return
 		}
 
-		ctx, cancel := context.WithCancel(r.Context())
-		defer cancel()
-		r = r.WithContext(ctx)
-		done := make(chan struct{})
-		defer close(done)
 		control := http.NewResponseController(w)
-		unregister, err := registry.Register(scope, func() error {
-			current, err := authorize(r, id)
-			if err != nil {
-				return err
-			}
-			if current != scope {
-				return Problem{Status: 403, Code: "auth.changed", Title: "Access changed"}
-			}
-			return nil
-		}, func() error {
-			cancel()
-			if err := control.SetWriteDeadline(time.Now()); err != nil {
-				select {
-				case <-done:
-					return nil
-				default:
-					return err
-				}
-			}
-			<-done
-			return nil
+		ctx, release, err := registerEventStream(r.Context(), control, registry, scope, func() (proxy.Scope, error) {
+			return authorize(r, id)
 		})
 		if err != nil {
-			WriteProblem(w, RequestID(ctx), err)
+			WriteProblem(w, RequestID(r.Context()), err)
 			return
 		}
-		defer unregister()
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("X-Accel-Buffering", "no")
+		defer release()
+		r = r.WithContext(ctx)
+		setEventStreamHeaders(w)
 		if err := writeEventChunk(ctx, control, w, ": connected\n\n"); err != nil {
 			return
 		}
@@ -168,12 +143,56 @@ func OperationEvents(journal *operation.Journal, registry *proxy.Registry, autho
 	})
 }
 
+func registerEventStream(ctx context.Context, control *http.ResponseController, registry *proxy.Registry,
+	scope proxy.Scope, authorize func() (proxy.Scope, error),
+) (context.Context, func(), error) {
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	unregister, err := registry.Register(scope, func() error {
+		current, err := authorize()
+		if err != nil {
+			return err
+		}
+		if current != scope {
+			return Problem{Status: 403, Code: "auth.changed", Title: "Access changed"}
+		}
+		return nil
+	}, func() error {
+		cancel()
+		if err := control.SetWriteDeadline(time.Now()); err != nil {
+			select {
+			case <-done:
+				return nil
+			default:
+				return err
+			}
+		}
+		<-done
+		return nil
+	})
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	return ctx, func() {
+		close(done)
+		cancel()
+		unregister()
+	}, nil
+}
+
+func setEventStreamHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+}
+
 func eventCursor(r *http.Request) (int64, error) {
 	values := r.Header.Values("Last-Event-ID")
 	if len(values) == 0 {
 		return 0, nil
 	}
-	invalid := Problem{Status: 400, Code: "request.invalid_event_cursor", Title: "Invalid operation event cursor"}
+	invalid := Problem{Status: 400, Code: "request.invalid_event_cursor", Title: "Invalid event cursor"}
 	if len(values) != 1 || values[0] == "" {
 		return 0, invalid
 	}
@@ -200,5 +219,10 @@ func writeEventChunk(ctx context.Context, control *http.ResponseController, w ht
 	if _, err := fmt.Fprint(w, chunk); err != nil {
 		return err
 	}
-	return control.Flush()
+	if err := control.Flush(); err != nil {
+		return err
+	}
+	// An HTTP/2 write deadline aborts the stream even while it waits for new
+	// events. Limit the write and flush without imposing an idle timeout.
+	return control.SetWriteDeadline(time.Time{})
 }

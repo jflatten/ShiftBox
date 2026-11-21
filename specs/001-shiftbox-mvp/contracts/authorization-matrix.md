@@ -42,7 +42,7 @@ Email address, guest-supplied owner/template/scope values, provider display name
 | `notice.publish` | Never | Allowed | Security-relevant publication is audited |
 | `audit.list` | Never | Allowed | Returned metadata is redacted and bounded |
 | `infrastructure.view` | Never | Allowed | Includes provider, capacity, artifact, certificate, key, storage, and compatibility conditions |
-| `infrastructure.manage` | Never | Allowed | Covers profiles, budgets, artifacts, supported network policies, certificate replacement, and external identity configuration |
+| `infrastructure.manage` | Never | Allowed | Covers profiles, budgets, artifacts, supported network policies, certificate replacement, launch log retention, and external identity configuration |
 | `maintenance.manage` | Never | Allowed | Maintenance authority cannot force-kill unsafe work or become deletion authority |
 | `backup.create` | Never | Allowed | Password remains request-local and workspace disks remain excluded |
 | `restore.validate` / `restore.activate` | Never | Allowed through protected operator/recovery flow | Target, host, key, compatibility, and recovery gates must pass |
@@ -64,6 +64,7 @@ Every OpenAPI operation maps to exactly one action. Grouped operation IDs below 
 | `listWorkspaces` | `workspace.list` |
 | `launchWorkspace` | `workspace.launch` |
 | `getWorkspace` | `workspace.view` |
+| `streamWorkspaceLogs` | `workspace.view` | Workspace owner only. |
 | `updateWorkspacePolicy` | `workspace.update_policy` |
 | `requestWorkspaceAction` with `start`, `stop`, `rebuild`, `repair`, `delete`, or `update` | Corresponding `workspace.<action>` |
 | `requestWorkspaceAction` with `retry` | The action of the failed operation being retried; retry never grants new authority |
@@ -87,7 +88,7 @@ Every OpenAPI operation maps to exactly one action. Grouped operation IDs below 
 | `updateNoticeReceipt` | `notice.read` or `notice.dismiss` from requested receipt state |
 | `listAuditEvents` | `audit.list` |
 | `getInfrastructureStatus`, `getBrowserCertificate`, `listResourceProfiles`, `getImageCache` | `infrastructure.view` |
-| `replaceBrowserCertificate`, `importPlatformArtifact`, `retireAMI`, `createResourceProfile`, `updateResourceProfile`, `deleteResourceProfile`, `updateCapacityBudget`, `updateKeepAlivePolicy`, `createNetworkPolicy`, `updateImageCache`, `getSessionTimeout`, `updateSessionTimeout` | `infrastructure.manage` |
+| `replaceBrowserCertificate`, `importPlatformArtifact`, `retireAMI`, `createResourceProfile`, `updateResourceProfile`, `deleteResourceProfile`, `updateCapacityBudget`, `updateKeepAlivePolicy`, `createNetworkPolicy`, `updateImageCache`, `getSessionTimeout`, `updateSessionTimeout`, `updateLaunchLogRetention` | `infrastructure.manage` |
 | `listMaintenanceCampaigns` | `infrastructure.view` |
 | `createMaintenanceCampaign` | `maintenance.manage` |
 | `runMigrationPreflight` | `migration.preflight` |

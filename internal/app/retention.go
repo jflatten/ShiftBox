@@ -10,6 +10,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/audit"
 	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/config"
+	"github.com/jflatten/ShiftBox/internal/launchlog"
 )
 
 // RunHistoryRetention prunes management history on startup and daily afterward.
@@ -24,6 +25,17 @@ func RunHistoryRetention(ctx context.Context, db *sql.DB, cfg config.Config, fen
 		})
 	}, func(error) {
 		slog.WarnContext(ctx, "Management history cleanup failed; check database availability and schema")
+	})
+}
+
+// RunLaunchLogRetention expires completed launch diagnostics at startup and every four hours.
+func RunLaunchLogRetention(ctx context.Context, db *sql.DB, fence *backup.WriteFence) error {
+	return runHistoryRetention(ctx, 4*time.Hour, func(ctx context.Context) error {
+		return withCheckpointActivity(ctx, fence, func() error {
+			return launchlog.Prune(ctx, db, time.Now())
+		})
+	}, func(error) {
+		slog.WarnContext(ctx, "Launch log cleanup failed; check database availability")
 	})
 }
 

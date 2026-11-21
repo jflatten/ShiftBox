@@ -26,7 +26,8 @@ const operationLabels = { pending: 'Pending', running: 'In progress', waiting: '
 function stepDescription(step: WorkflowOperation['steps'][number]) {
   const status = stepLabels[step.status];
   if (!step.timeout) return status;
-  return step.status === 'active' ? 'Timed out' : `${status} · Timed out`;
+  if (step.status === 'active') return 'Timed out · Still checking';
+  return step.status === 'succeeded' ? 'Completed after timeout' : `${status} · Timed out`;
 }
 
 /** WorkflowStepper displays server progress and lets users inspect reached steps. */
@@ -54,7 +55,8 @@ export function WorkflowStepper({ operation, failureTitle }: { operation: Workfl
           {[...failureDetails].map(detail => detail ? <Text key={detail} size="sm">{detail}</Text> : null)}
         </Stack>
       </Alert> : <Text role="status" aria-live="polite" aria-atomic="true">
-        {operationLabels[status]}{steps[active] ? ` — ${steps[active].label}` : ''}
+        {steps[active]?.status === 'active' && steps[active]?.timeout ? 'Timed out · Still checking' : operationLabels[status]}
+        {steps[active] ? ` — ${steps[active].label}` : ''}
       </Text>}
       <Stepper active={active} allowNextStepsSelect={false} orientation="vertical" onStepClick={index => {
         const step = steps[index];

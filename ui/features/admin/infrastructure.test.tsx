@@ -619,3 +619,34 @@ test('shows AMD64 and native ARM64 provider capabilities', async () => {
   render(<Providers><Infrastructure /></Providers>);
   expect(await screen.findByText('x86-64 (amd64), ARM64')).toBeVisible();
 });
+
+// Retention starts at the server default and the edited value survives a new page load.
+test('saves launch log retention and reads the saved value on reload', async () => {
+  let launchLogRetention = { days: 30, version: 1 };
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json({ ...status, launchLogRetention });
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
+    if (input === '/api/v1/admin/launch-log-retention' && init?.method === 'PUT') {
+      launchLogRetention = { ...JSON.parse(String(init.body)), version: 2 };
+      return json(null);
+    }
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  const page = render(<Providers><Infrastructure /></Providers>);
+  const input = await screen.findByRole('textbox', { name: 'Retention days' });
+  expect(input).toHaveValue('30');
+  await user.clear(input);
+  await user.type(input, '14');
+  await user.click(screen.getByRole('button', { name: 'Save log retention' }));
+  expect(await screen.findByText('Launch log retention saved.')).toBeVisible();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/admin/launch-log-retention', expect.objectContaining({
+    body: JSON.stringify({ days: 14 }),
+    headers: expect.objectContaining({ 'If-Match': '"1"', 'X-CSRF-Token': 'fixture' }),
+  }));
+  page.unmount();
+  render(<Providers><Infrastructure /></Providers>);
+  expect(await screen.findByRole('textbox', { name: 'Retention days' })).toHaveValue('14');
+});

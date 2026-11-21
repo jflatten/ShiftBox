@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Anchor, Button, Group, Modal, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
 import { APIProblemView } from '../../components/api-problem';
+import { LaunchPerformance } from './launch-performance';
 import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
 import { providerLabel } from '../../lib/provider-label';
 import { useOperation } from '../../lib/use-operation';
 import type { TemplateRevision } from '../templates/use-templates';
-import { useWorkspaceDetail } from './workspace-commands';
+import { useWorkspaceCommand, useWorkspaceDetail } from './workspace-commands';
 import { WorkspaceImageCache } from './workspace-image-cache';
 
 interface AcceptedLaunch {
@@ -63,7 +64,7 @@ export function LaunchFlow({ csrfToken, children }: {
       {accepted ? <>
         <Anchor href="/workspaces/">All workspaces</Anchor>
         <Title order={1} ref={progressHeading} tabIndex={-1}>Launch workspace</Title>
-        <LaunchProgress accepted={accepted} />
+        <LaunchProgress accepted={accepted} csrfToken={csrfToken} focusHeading={() => progressHeading.current?.focus()} />
       </> : children(setReview)}
       <Modal opened={!!review && !accepted} onClose={closeReview} title="Review launch" centered size="lg" padding="lg"
         styles={{ title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' }, body: { paddingBottom: 0 } }}
@@ -107,15 +108,30 @@ function templateKey(template: TemplateRevision) {
   return `${template.id}/${template.currentRevision}`;
 }
 
-function LaunchProgress({ accepted }: { accepted: AcceptedLaunch }) {
-  const operation = useOperation(accepted.id);
-  const workspace = useWorkspaceDetail(accepted.workspaceId, !operation.accessDenied);
+function LaunchProgress({ accepted, csrfToken, focusHeading }: { accepted: AcceptedLaunch; csrfToken: string; focusHeading: () => void }) {
+  const [stopId, setStopId] = useState<string>();
+  const workspace = useWorkspaceDetail(accepted.workspaceId);
+  const data = workspace.isError ? undefined : workspace.data;
+  const workflow = data?.desiredState === 'stopped' ? data.lifecycle.workflowOperationId : null;
+  const operationId = stopId ?? workflow ?? accepted.id;
+  const operation = useOperation(operationId);
+  const command = useWorkspaceCommand(data, csrfToken, workspace.refetch, (_action, id) => {
+    setStopId(id);
+    focusHeading();
+  });
   if (operation.accessDenied) return <Text role="alert">You no longer have access to this operation.</Text>;
   return (
     <Stack align="flex-start">
       {operation.isError ? <APIProblemView error={operation.error} /> : null}
-      {operation.isPending ? <Text role="status">Loading launch progress…</Text> : null}
-      {operation.data ? <WorkflowStepper operation={operation.data} failureTitle="Workspace launch failed" /> : null}
+      {operation.isPending ? <Text role="status">Loading workspace progress…</Text> : null}
+      {operation.data ? <WorkflowStepper operation={operation.data}
+        failureTitle={operationId === accepted.id ? 'Workspace launch failed' : 'Workspace shutdown failed'} /> : null}
+      {operation.data?.launchPerformance ? <LaunchPerformance performance={operation.data.launchPerformance} /> : null}
+      {data?.canInterruptDeployment && !stopId && operationId === accepted.id ? (
+        <Button variant="default" loading={command.submitting === 'stop'}
+          onClick={() => void command.run('stop')}>Stop deployment</Button>
+      ) : null}
+      {command.error !== undefined ? <APIProblemView error={command.error} /> : null}
       <WorkspaceImageCache cache={workspace.isError ? undefined : workspace.data?.imageCache} />
       <Anchor href={`/workspaces/?id=${encodeURIComponent(accepted.workspaceId)}`}>View workspace</Anchor>
     </Stack>

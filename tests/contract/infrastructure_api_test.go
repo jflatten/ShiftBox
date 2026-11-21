@@ -468,3 +468,61 @@ func TestEC2ResourceProfileShape(t *testing.T) {
 		t.Fatalf("profiles = %+v; want edited m6i.xlarge and legacy t3.medium", profiles)
 	}
 }
+
+// TestLaunchLogRetentionAPI checks authorization, validation, optimistic concurrency, and readback.
+func TestLaunchLogRetentionAPI(t *testing.T) {
+	const origin = "https://management.test"
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "retention.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	token := strings.Repeat("A", 43)
+	seedWorkspaceLaunch(t, db, uuid.NewString(), token, now)
+	update := web.LaunchLogRetentionHandler(db, origin, func() time.Time { return now })
+	read := web.InfrastructureStatusHandler(db, origin, func() time.Time { return now }, provider.Capabilities{})
+	mux := http.NewServeMux()
+	mux.Handle("PUT /api/v1/admin/launch-log-retention", &update)
+	mux.Handle("GET /api/v1/admin/infrastructure", &read)
+	request := func(method, path, version, body string, want int) []byte {
+		t.Helper()
+		req := httptest.NewRequest(method, origin+path, strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", origin)
+		req.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+		req.Header.Set("If-Match", version)
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, req)
+		if response.Code != want {
+			t.Fatalf("request %s %s = %d %s, want %d", method, path, response.Code, response.Body, want)
+		}
+		return response.Body.Bytes()
+	}
+	const settings = "/api/v1/admin/launch-log-retention"
+	request("PUT", settings, `"1"`, `{"days":14}`, 403)
+	if _, err := db.ExecContext(ctx, "UPDATE users SET role='administrator' WHERE id='member'"); err != nil {
+		t.Fatal(err)
+	}
+	const status = "/api/v1/admin/infrastructure"
+	if got := string(request("GET", status, "", "", 200)); !strings.Contains(got, `"launchLogRetention":{"days":30,"version":1}`) {
+		t.Fatalf("default retention missing: %s", got)
+	}
+	request("PUT", settings, "", `{"days":14}`, 428)
+	request("PUT", settings, `"1"`, `{"days":0}`, 400)
+	request("PUT", settings, `"1"`, `{"days":14.5}`, 400)
+	request("PUT", settings, `"1"`, `{"days":14}`, 204)
+	request("PUT", settings, `"1"`, `{"days":21}`, 412)
+	if got := string(request("GET", status, "", "", 200)); !strings.Contains(got, `"launchLogRetention":{"days":14,"version":2}`) {
+		t.Fatalf("saved retention missing: %s", got)
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_events WHERE action='settings.launch_log_retention.update'").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("audit records = %d, %v, want 1", count, err)
+	}
+}

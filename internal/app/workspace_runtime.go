@@ -38,6 +38,7 @@ func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfi
 	}
 	enrollment := guest.NewEnrollment(state.DB, state.GuestCA)
 	listeners.Secrets = state.Secrets
+	listeners.WorkspaceLogs = &state.workspaceLogs
 	if state.imageCache != nil {
 		listeners.ImageCache = state.imageCache
 		listeners.OfferImageCache = state.imageCache.offer

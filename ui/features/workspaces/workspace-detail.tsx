@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Alert, Anchor, Button, Checkbox, Group, Modal, Paper, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Anchor, Box, Button, Checkbox, Group, Modal, Paper, Scroller, SimpleGrid, Stack, Tabs, Text, TextInput, Title } from '@mantine/core';
 import { useQueryClient } from '@tanstack/react-query';
 import { useControllerUnavailable } from '../../app/providers';
 import { APIProblemView } from '../../components/api-problem';
+import { HistoricalLaunchPerformance, LaunchPerformance } from './launch-performance';
 import { WorkflowStepper } from '../../components/workflow-stepper';
 import { ControllerUnavailableError, readProblem } from '../../lib/api-problem';
 import { providerLabel } from '../../lib/provider-label';
@@ -13,16 +14,18 @@ import { RetentionWarning } from './retention';
 import { WorkspaceConnectionGrants } from './connection-grants';
 import { WorkspaceKeepAlive } from './keep-alive';
 import { WorkspaceImageCache } from './workspace-image-cache';
+import { WorkspaceLogs } from './workspace-logs';
 import { availableWorkspaceCommands, openWorkspaceEntry, useWorkspaceCommand, useWorkspaceDetail, type WorkspaceService } from './workspace-commands';
 
 const probeNames = { 'code-server': 'Code-server' } satisfies Record<NonNullable<Workspace['probes']>[number]['id'], string>;
 
-export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToken: string; admin: boolean }) {
+export function WorkspaceDetail({ id, userId, csrfToken, admin }: { id: string; userId: string; csrfToken: string; admin: boolean }) {
   const unavailable = useControllerUnavailable();
   const workspace = useWorkspaceDetail(id);
   const readUnavailable = workspace.error instanceof ControllerUnavailableError;
   const data = !workspace.isError || readUnavailable ? workspace.data : undefined;
   const repairDescriptionId = useId();
+  const [section, setSection] = useState<string | null>('overview');
   const [operationId, setOperationId] = useState<string>();
   const [operationBusy, setOperationBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -32,17 +35,22 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
   const displayedOperation = data?.currentOperationId
     ? recordedWorkflow ?? data.currentOperationId
     : operationBusy ? operationId : recordedWorkflow ?? operationId;
-  const { lifecycle: action, rebuild, update, delete: canDelete } = availableWorkspaceCommands(data);
+  const { lifecycle: action, rebuild, interrupt, update, delete: canDelete } = availableWorkspaceCommands(data);
   const { run: requestAction, submitting, error, setError } = useWorkspaceCommand(data, csrfToken, workspace.refetch,
     (action, id, trigger) => {
-      if (action !== 'delete') progressFocus.current = { id, trigger };
+      progressFocus.current = { id, trigger };
       setOperationBusy(true);
       setOperationId(id);
+      setSection('overview');
       if (action === 'delete') setConfirmDelete(false);
     });
   const busy = !!data?.currentOperationId || operationBusy || !!submitting;
   const maintenance = data?.maintenance;
   const probes = data?.probes ?? [];
+  const operation = useWorkspaceProgress(id, displayedOperation, setOperationBusy);
+  const canViewLogs = !!data && data.ownerId === userId && data.desiredState !== 'deleted';
+  const hasPreviews = data?.canOpenPreviews || data?.canEditPreviewPorts;
+  const hasKeepAlive = !!data?.keepAlivePolicy && data.keepAliveMinutes !== undefined;
 
   useEffect(() => {
     const handoff = progressFocus.current;
@@ -59,10 +67,7 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
     <div style={{ display: 'contents' }} inert={readUnavailable && !unavailable}>
       <Anchor href="/workspaces/">All workspaces</Anchor>
       <Group justify="space-between" align="flex-start">
-        <Stack gap={4} style={{ minWidth: 0 }}>
-          <Title order={1} style={{ overflowWrap: 'anywhere' }}>{data ? workspaceName(data) : 'Workspace'}</Title>
-          <Text size="sm" c="dimmed">Manage your environment, connections, and retained data.</Text>
-        </Stack>
+        <Title order={1} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{data ? workspaceName(data) : 'Workspace'}</Title>
         <Button variant="default" onClick={() => void workspace.refetch()}>Refresh</Button>
       </Group>
       {workspace.isError && !readUnavailable ? <Stack align="flex-start">
@@ -74,41 +79,50 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
         <Stack gap="lg">
           <Paper component="section" aria-label="Workspace controls" withBorder radius="md" p="md">
             <Stack gap="md">
-              <WorkspaceLifecycleStatus lifecycle={data.lifecycle} />
-              <Group align="flex-start">
-                {data.canOpenIde ? <WorkspaceEntryButton id={id} csrfToken={csrfToken} /> : null}
-                {data.canOpenRepair ? <WorkspaceEntryButton id={id} csrfToken={csrfToken} service="repair" describedBy={repairDescriptionId} /> : null}
-                {action ? (
-                  <Group>
-                    <Button variant={data.canOpenIde ? "default" : "filled"} loading={submitting === action} disabled={!!data.currentOperationId || operationBusy || !!submitting}
-                      onClick={() => void requestAction(action)}>
-                      {action === 'start' ? 'Start workspace' : 'Stop workspace'}
-                    </Button>
-                    {rebuild ? (
-                      <Button variant="default" loading={submitting === 'rebuild'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
-                        onClick={() => void requestAction('rebuild')}>
-                        Rebuild container
+              <Group align="flex-end" justify="space-between" gap="md">
+                <Box style={{ flex: '1 1 16rem', minWidth: 0 }}>
+                  <WorkspaceLifecycleStatus lifecycle={data.lifecycle} />
+                </Box>
+                <Group align="flex-start">
+                  {data.canOpenIde ? <WorkspaceEntryButton id={id} csrfToken={csrfToken} /> : null}
+                  {data.canOpenRepair ? <WorkspaceEntryButton id={id} csrfToken={csrfToken} service="repair" describedBy={repairDescriptionId} /> : null}
+                  {interrupt ? (
+                    <Button variant="default" loading={submitting === 'stop'} disabled={!!submitting}
+                      onClick={() => void requestAction('stop')}>Stop deployment</Button>
+                  ) : null}
+                  {action && !interrupt ? (
+                    <Group>
+                      <Button variant={data.canOpenIde ? "default" : "filled"} loading={submitting === action} disabled={!!data.currentOperationId || operationBusy || !!submitting}
+                        onClick={() => void requestAction(action)}>
+                        {action === 'start' ? 'Start workspace' : 'Stop workspace'}
                       </Button>
-                    ) : null}
-                    {data.canStartRepair ? (
-                      <Button variant="default" loading={submitting === 'repair'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
-                        aria-describedby={repairDescriptionId} onClick={() => void requestAction('repair')}>
-                        Start repair
-                      </Button>
-                    ) : null}
-                    {data.canRetryAfterRepair ? (
-                      <Button variant="default" loading={submitting === 'retry'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
-                        onClick={() => void requestAction('retry')}>
-                        Exit repair and retry setup
-                      </Button>
-                    ) : null}
-                  </Group>
-                ) : null}
+                      {rebuild ? (
+                        <Button variant="default" loading={submitting === 'rebuild'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
+                          onClick={() => void requestAction('rebuild')}>
+                          Rebuild container
+                        </Button>
+                      ) : null}
+                      {data.canStartRepair ? (
+                        <Button variant="default" loading={submitting === 'repair'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
+                          aria-describedby={repairDescriptionId} onClick={() => void requestAction('repair')}>
+                          Start repair
+                        </Button>
+                      ) : null}
+                      {data.canRetryAfterRepair ? (
+                        <Button variant="default" loading={submitting === 'retry'} disabled={!!data.currentOperationId || operationBusy || !!submitting}
+                          onClick={() => void requestAction('retry')}>
+                          Exit repair and retry setup
+                        </Button>
+                      ) : null}
+                    </Group>
+                  ) : null}
+                </Group>
               </Group>
               {error !== undefined && !confirmDelete ? <APIProblemView error={error} /> : null}
-              <WorkspaceKeepAlive key={data.id} workspace={data} csrfToken={csrfToken}
-                disabled={busy || data.desiredState === 'deleted'} refresh={workspace.refetch} />
-              <Text size="sm">Stop and start preserve project files, the developer home, and named application volumes. Rebuilding also preserves this data and replaces the container’s writable layer.</Text>
+              {data.observedState === 'stopped' && data.desiredState === 'stopped' && data.canStart === false ? (
+                <Text size="sm">This deployment stopped before a VM was created. Launch a new workspace from Projects.</Text>
+              ) : null}
+              <Text size="sm" c="dimmed">Stop and start preserve project files, the developer home, and named application volumes. Rebuilding also preserves this data and replaces the container’s writable layer.</Text>
               {data.canStartRepair || data.canOpenRepair || data.canRetryAfterRepair ? (
                 <Text id={repairDescriptionId} size="sm">Repair opens your project files in a separate IDE and skips project hooks, tasks, and extensions.</Text>
               ) : null}
@@ -126,72 +140,116 @@ export function WorkspaceDetail({ id, csrfToken, admin }: { id: string; csrfToke
               ) : null}
             </Stack>
           </Alert> : null}
-          {displayedOperation ? <Stack gap="xs">
-            <Title order={2} size="h4" tabIndex={-1} ref={progressHeading}>Workspace operation</Title>
-            <WorkspaceProgress key={displayedOperation} workspaceId={id} operationId={displayedOperation}
-              onFinished={setOperationBusy} showFailureWarning />
-          </Stack> : null}
-          <Paper component="section" aria-label="Probes" withBorder radius="md" p="md">
-            <Stack gap="md">
-              <Title order={2} size="h3">Probes</Title>
-              {probes.length ? (
-                <Group gap="xs">
-                  {probes.map(probe => (
-                    <WorkspaceStatus key={probe.id} value={probe.status}
-                      label={`${probeNames[probe.id]} · ${workspaceState(probe.status)}`} />
-                  ))}
-                </Group>
-              ) : <Text size="sm" c="dimmed">No recent probe results.</Text>}
-            </Stack>
-          </Paper>
-          <Paper component="section" aria-label="Workspace configuration" withBorder radius="md" p="md">
-            <Stack gap="md">
-              <Title order={2} size="h3">Configuration</Title>
-              <Text fw={600}>{data.resources.cpuCount} vCPU · {data.resources.memoryMiB} MiB memory · {data.resources.diskMiB} MiB disk</Text>
-              <SimpleGrid component="dl" cols={{ base: 1, sm: 2 }} spacing="md" m={0}>
-                <div>
-                  <Text component="dt" size="sm" c="dimmed">Project revision</Text>
-                  <Text component="dd" m={0}>Revision {data.templateRevision}</Text>
-                </div>
-                <div>
-                  <Text component="dt" size="sm" c="dimmed">Platform image</Text>
-                  <Text component="dd" m={0}>{data.platformRelease}</Text>
-                </div>
-                <div>
-                  <Text component="dt" size="sm" c="dimmed">Provider</Text>
-                  <Text component="dd" m={0}>{providerLabel(data.providerKind)}</Text>
-                </div>
-                <div>
-                  <Text component="dt" size="sm" c="dimmed">Last activity</Text>
-                  <Text component="dd" m={0}><WorkspaceTime value={data.lastActivityAt} fallback="No activity recorded" /></Text>
-                </div>
-                <div>
-                  <Text component="dt" size="sm" c="dimmed">Retention deadline</Text>
-                  <Text component="dd" m={0}><WorkspaceTime value={data.retentionDeadline} fallback="No deadline scheduled" /></Text>
-                </div>
-              </SimpleGrid>
-            </Stack>
-          </Paper>
-          {data.canOpenPreviews || data.canEditPreviewPorts ? (
-            <Paper component="section" aria-label="Previews" withBorder radius="md" p="md">
-              <Stack gap="md">
-                <Title order={2} size="h3">Previews</Title>
-                <WorkspacePreviews key={(data.previewPorts ?? []).join(',')} workspace={data} csrfToken={csrfToken}
-                  disabled={busy || data.desiredState === 'deleted'} refresh={workspace.refetch} />
+          <Tabs value={section} onChange={setSection} keepMounted={false} keepMountedMode="display-none">
+            <Tabs.List aria-label="Workspace details">
+              <Scroller>
+                <Tabs.Tab value="overview">Overview</Tabs.Tab>
+                <Tabs.Tab value="performance">Performance</Tabs.Tab>
+                {canViewLogs ? <Tabs.Tab value="logs">Logs</Tabs.Tab> : null}
+                <Tabs.Tab value="connections">Connections</Tabs.Tab>
+                <Tabs.Tab value="settings">Settings</Tabs.Tab>
+              </Scroller>
+            </Tabs.List>
+            <Tabs.Panel value="overview" pt="lg" tabIndex={displayedOperation ? undefined : 0} keepMounted>
+              <Stack gap="lg">
+                {displayedOperation ? <Stack gap="xs">
+                  <Title order={2} size="h4" tabIndex={-1} ref={progressHeading}>Workspace operation</Title>
+                  <WorkspaceOperationStepper key={displayedOperation} operation={operation} showFailureWarning />
+                </Stack> : null}
+                <Paper component="section" aria-label="Workspace configuration" withBorder radius="md" p="md">
+                  <Stack gap="md">
+                    <Title order={2} size="h3">Configuration</Title>
+                    <Text fw={600}>{data.resources.cpuCount} vCPU · {data.resources.memoryMiB} MiB memory · {data.resources.diskMiB} MiB disk</Text>
+                    <SimpleGrid component="dl" cols={{ base: 1, sm: 2 }} spacing="md" m={0}>
+                      <div>
+                        <Text component="dt" size="sm" c="dimmed">Project revision</Text>
+                        <Text component="dd" m={0}>Revision {data.templateRevision}</Text>
+                      </div>
+                      <div>
+                        <Text component="dt" size="sm" c="dimmed">Platform image</Text>
+                        <Text component="dd" m={0} style={{ overflowWrap: 'anywhere' }}>{data.platformRelease}</Text>
+                      </div>
+                      <div>
+                        <Text component="dt" size="sm" c="dimmed">Provider</Text>
+                        <Text component="dd" m={0}>{providerLabel(data.providerKind)}</Text>
+                      </div>
+                      <div>
+                        <Text component="dt" size="sm" c="dimmed">Last activity</Text>
+                        <Text component="dd" m={0}><WorkspaceTime value={data.lastActivityAt} fallback="No activity recorded" /></Text>
+                      </div>
+                      <div>
+                        <Text component="dt" size="sm" c="dimmed">Retention deadline</Text>
+                        <Text component="dd" m={0}><WorkspaceTime value={data.retentionDeadline} fallback="No deadline scheduled" /></Text>
+                      </div>
+                    </SimpleGrid>
+                  </Stack>
+                </Paper>
+                <Paper component="section" aria-label="Probes" withBorder radius="md" p="md">
+                  <Stack gap="md">
+                    <Title order={2} size="h3">Probes</Title>
+                    {probes.length ? (
+                      <Group gap="xs">
+                        {probes.map(probe => (
+                          <WorkspaceStatus key={probe.id} value={probe.status}
+                            label={`${probeNames[probe.id]} · ${workspaceState(probe.status)}`} />
+                        ))}
+                      </Group>
+                    ) : <Text size="sm" c="dimmed">No recent probe results.</Text>}
+                  </Stack>
+                </Paper>
               </Stack>
-            </Paper>
-          ) : null}
-          {admin ? <Paper withBorder radius="md" p="md"><WorkspaceConnectionGrants workspaceId={id} csrfToken={csrfToken} /></Paper> : null}
-          {canDelete ? (
-            <Paper component="section" aria-label="Delete workspace" withBorder radius="md" p="md">
-              <Stack gap="sm" align="flex-start">
-                <Title order={2} size="h3">Delete workspace</Title>
-                <Text size="sm" c="dimmed">Permanently remove this environment and its files. Push work you need to keep before deleting.</Text>
-                <Button variant="light" color="red" disabled={busy}
-                  onClick={() => { setError(undefined); setConfirmDelete(true); }}>Delete workspace</Button>
+            </Tabs.Panel>
+            <Tabs.Panel value="performance" pt="lg" tabIndex={0}>
+              {data.launchOperationId && data.launchOperationId !== displayedOperation ? (
+                <HistoricalLaunchPerformance operationId={data.launchOperationId} />
+              ) : operation.data?.launchPerformance ? (
+                <LaunchPerformance performance={operation.data.launchPerformance} />
+              ) : data.launchOperationId && operation.isPending ? (
+                <Text role="status">Loading launch performance…</Text>
+              ) : (
+                <Text size="sm" c="dimmed">No launch timings are available for this workspace.</Text>
+              )}
+            </Tabs.Panel>
+            {canViewLogs ? (
+              <Tabs.Panel value="logs" pt="lg">
+                <WorkspaceLogs workspaceId={id} />
+              </Tabs.Panel>
+            ) : null}
+            <Tabs.Panel value="connections" pt="lg" tabIndex={hasPreviews || admin ? undefined : 0} keepMounted>
+              <Stack gap="lg">
+                {hasPreviews ? (
+                  <Paper component="section" aria-label="Previews" withBorder radius="md" p="md">
+                    <Stack gap="md">
+                      <Title order={2} size="h3">Previews</Title>
+                      <WorkspacePreviews key={(data.previewPorts ?? []).join(',')} workspace={data} csrfToken={csrfToken}
+                        disabled={busy || data.desiredState === 'deleted'} refresh={workspace.refetch} />
+                    </Stack>
+                  </Paper>
+                ) : null}
+                {admin ? <Paper withBorder radius="md" p="md"><WorkspaceConnectionGrants workspaceId={id} csrfToken={csrfToken} /></Paper> : null}
+                {!hasPreviews && !admin ? <Text size="sm" c="dimmed">No workspace connections are available.</Text> : null}
               </Stack>
-            </Paper>
-          ) : null}
+            </Tabs.Panel>
+            <Tabs.Panel value="settings" pt="lg" tabIndex={canDelete || data.canEditKeepAlive ? undefined : 0} keepMounted>
+              <Stack gap="lg">
+                {hasKeepAlive ? <Paper component="section" aria-label="Inactivity shutdown" withBorder radius="md" p="md">
+                  <WorkspaceKeepAlive key={data.id} workspace={data} csrfToken={csrfToken}
+                    disabled={busy || data.desiredState === 'deleted'} refresh={workspace.refetch} />
+                </Paper> : null}
+                {canDelete ? (
+                  <Paper component="section" aria-label="Delete workspace" withBorder radius="md" p="md">
+                    <Stack gap="sm" align="flex-start">
+                      <Title order={2} size="h3">Delete workspace</Title>
+                      <Text size="sm" c="dimmed">Permanently remove this environment and its files. Push work you need to keep before deleting.</Text>
+                      <Button variant="light" color="red" disabled={busy}
+                        onClick={() => { setError(undefined); setConfirmDelete(true); }}>Delete workspace</Button>
+                    </Stack>
+                  </Paper>
+                ) : null}
+                {!hasKeepAlive && !canDelete ? <Text size="sm" c="dimmed">No workspace settings are available.</Text> : null}
+              </Stack>
+            </Tabs.Panel>
+          </Tabs>
           <DeleteWorkspaceDialog name={data.name || id} opened={confirmDelete} busy={busy} submitting={submitting === 'delete'} error={error}
             cancel={() => setConfirmDelete(false)} confirm={() => void requestAction('delete')} />
         </Stack>
@@ -313,9 +371,17 @@ function WorkspaceEntryButton({ id, csrfToken, service = 'ide', describedBy }: {
   );
 }
 
-export function WorkspaceProgress({ workspaceId, operationId, onFinished, showFailureWarning = false }: {
-  workspaceId: string; operationId: string; onFinished?: (busy: boolean) => void; showFailureWarning?: boolean;
+export function WorkspaceProgress({ workspaceId, operationId }: {
+  workspaceId: string; operationId: string;
 }) {
+  const operation = useWorkspaceProgress(workspaceId, operationId);
+  return <>
+    <WorkspaceOperationStepper operation={operation} />
+    {operation.data?.launchPerformance ? <LaunchPerformance performance={operation.data.launchPerformance} /> : null}
+  </>;
+}
+
+function useWorkspaceProgress(workspaceId: string, operationId: string | undefined, onFinished?: (busy: boolean) => void) {
   const operation = useOperation(operationId);
   const client = useQueryClient();
   const state = operation.data?.status;
@@ -329,6 +395,12 @@ export function WorkspaceProgress({ workspaceId, operationId, onFinished, showFa
     }
     if (finished || lastVerifiedStep || lastTimedOutStep) void client.invalidateQueries({ queryKey: ['workspaces', 'detail', workspaceId], exact: true });
   }, [client, lastTimedOutStep, lastVerifiedStep, onFinished, state, workspaceId]);
+  return operation;
+}
+
+function WorkspaceOperationStepper({ operation, showFailureWarning = false }: {
+  operation: ReturnType<typeof useOperation>; showFailureWarning?: boolean;
+}) {
   if (operation.accessDenied) return <Text role="alert">You no longer have access to this operation.</Text>;
   if (operation.isError && !(operation.error instanceof ControllerUnavailableError)) return <APIProblemView error={operation.error} />;
   if (!operation.data) return <Text role="status">Loading operation…</Text>;

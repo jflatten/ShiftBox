@@ -25,6 +25,7 @@ export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace
     setOperationID(id);
     void client.invalidateQueries({ queryKey: ['workspaces', 'list'] });
     if (action === 'delete') close();
+    if (action === 'stop' && commands.interrupt) setDialog('progress');
   });
   const currentID = workspace && (opened || dialog === 'delete') ? workspace.currentOperationId : row.currentOperationId;
   const progressID = currentID ?? operationID;
@@ -79,7 +80,10 @@ export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace
             {detail.isFetching ? <Menu.Label>Checking available actions…</Menu.Label> : detail.isError ? (
               <Menu.Item closeMenuOnClick={false} onClick={() => void detail.refetch()}>Retry loading actions</Menu.Item>
             ) : workspace ? <>
-              {lifecycle ? <Menu.Item disabled={busy} onClick={() => void command.run(lifecycle)}>
+              {commands.interrupt ? <Menu.Item disabled={!!command.submitting} onClick={() => void command.run('stop')}>
+                Stop deployment
+              </Menu.Item> : null}
+              {lifecycle && !commands.interrupt ? <Menu.Item disabled={busy} onClick={() => void command.run(lifecycle)}>
                 {lifecycle === 'start' ? 'Start' : 'Stop'}
               </Menu.Item> : null}
               {commands.rebuild ? <Menu.Item disabled={busy} onClick={() => void command.run('rebuild')}>Rebuild</Menu.Item> : null}

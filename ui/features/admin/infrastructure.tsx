@@ -15,6 +15,7 @@ import { ResourceProfiles } from './resource-profiles';
 import { KeepAliveSettings } from './keep-alive';
 import { RegistryCache } from './registry-cache';
 import { AMIFamilies } from './ami-families';
+import { LaunchLogRetention } from './launch-log-retention';
 
 const capacityFields = [
   { name: 'cpuCount', label: 'CPU limit', description: 'Total virtual CPUs available to workspaces.' },
@@ -89,6 +90,8 @@ export function Infrastructure() {
                   </Stack>
                 </Paper>
               </> : null}
+              {data?.launchLogRetention ? <LaunchLogRetention settings={data.launchLogRetention}
+                csrfToken={canManage ? current.csrfToken : undefined} refresh={status.refetch} /> : null}
               {data?.provider.name === 'ec2' ? <AMIFamilies key={`ami-families:${current.user.id}`} userID={current.user.id}
                 csrfToken={canManage ? current.csrfToken : undefined} /> : null}
               <ResourceProfiles key={current.user.id} userId={current.user.id} provider={data?.provider} csrfToken={canManage ? current.csrfToken : undefined} />

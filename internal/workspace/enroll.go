@@ -99,7 +99,11 @@ func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step
 	default:
 		return "", provider.ErrOutcomeUnknown
 	}
-	if _, err := e.enrollment.Deliver(ctx, op.ID, got, e.now(), e.mediaRoot, e.endpoint, e.pollEndpoint, e.provision.provider.DeliverEnrollment); err != nil {
+	timed := e.provision.observeLaunchTiming(ctx, op.ID)
+	deliverStarted := time.Now()
+	_, err = e.enrollment.Deliver(ctx, op.ID, got, e.now(), e.mediaRoot, e.endpoint, e.pollEndpoint, e.provision.provider.DeliverEnrollment)
+	provider.ReportLaunchTiming(timed, "enrollment_delivery", deliverStarted, err)
+	if err != nil {
 		return "", err
 	}
 	// Recheck the workspace after the external attachment. Only this path,
@@ -111,7 +115,9 @@ func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step
 	if current != req {
 		return "", provider.ErrOwnershipMismatch
 	}
-	started, err := e.provision.provider.Start(ctx, provider.StartRequest{Ref: req.Ref, OperationID: op.ID, NetworkMode: req.NetworkMode})
+	bootStarted := time.Now()
+	started, err := e.provision.provider.Start(timed, provider.StartRequest{Ref: req.Ref, OperationID: op.ID, NetworkMode: req.NetworkMode})
+	provider.ReportLaunchTiming(timed, "vm_start", bootStarted, err)
 	if err != nil {
 		return "", err
 	}
@@ -121,6 +127,7 @@ func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step
 	if started.Power != provider.Running {
 		return "", provider.ErrOutcomeUnknown
 	}
+	e.provision.markLaunchVMRunning(ctx, op.ID, started)
 	return e.confirmContact(ctx, req)
 }
 
@@ -179,7 +186,11 @@ func (e *LaunchExecutor) inspectEnrollment(ctx context.Context, op operation.Ope
 	if err != nil {
 		return req, got, err
 	}
-	return req, got, verifyWorkspaceVM(req, got)
+	err = verifyWorkspaceVM(req, got)
+	if err == nil && got.Power == provider.Running {
+		e.provision.markLaunchVMRunning(ctx, op.ID, got)
+	}
+	return req, got, err
 }
 
 // verifyWorkspaceVM binds provider observations to the retained instance and

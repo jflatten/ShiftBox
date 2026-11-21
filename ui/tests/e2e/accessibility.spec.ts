@@ -179,7 +179,7 @@ test('workspace inventory freezes its connector during a controller outage', asy
 });
 
 // Filtering cannot strand the user on a stale cursor, deleted
-// workspaces stay hidden by default, and status chips fit a narrow screen.
+// workspaces stay hidden by default, and narrow detail tabs work by keyboard.
 test('workspace inventory filters and detail layout', async ({ page }) => {
   const current = { id: workspaceID, name: 'Keyboard workspace', resources, desiredState: 'stopped', observedState: 'stopped',
     currentOperationId: null, lifecycle: workspaceLifecycle('stopped'), templateRevision: 1, platformRelease: 'Demo release', version: 1, canEditPreviewPorts: true };
@@ -245,7 +245,23 @@ test('workspace inventory filters and detail layout', async ({ page }) => {
   await expect(page).toHaveURL(new RegExp('\\?id=' + workspaceID + '$'));
   await expect(page.getByRole('heading', { name: 'Keyboard workspace', level: 1 })).toBeVisible();
   await tabTo(page, page.getByRole('button', { name: 'Start workspace', exact: true }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  const tabs = page.getByRole('tablist', { name: 'Workspace details' });
+  const overview = tabs.getByRole('tab', { name: 'Overview' });
+  await tabTo(page, overview);
+  await expect(overview).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('ArrowRight');
+  await expect(tabs.getByRole('tab', { name: 'Performance' })).toBeFocused();
+  await expect(page.getByRole('tabpanel', { name: 'Performance' })).toBeVisible();
+  await page.keyboard.press('ArrowRight');
+  await expect(tabs.getByRole('tab', { name: 'Connections' })).toBeFocused();
   await expect(page.getByRole('region', { name: 'Previews', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start workspace', exact: true })).toBeVisible();
+  await page.keyboard.press('End');
+  await expect(tabs.getByRole('tab', { name: 'Settings' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('tabpanel', { name: 'Settings' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Previews', exact: true })).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
@@ -516,6 +532,9 @@ test('workspace deletion focus and progress', async ({ page }) => {
     if (path.endsWith('/actions/delete')) return route.fulfill({ status: 202, json: { id: operationID } });
   }, operation(labels));
   await page.goto(`/workspaces/?id=${workspaceID}`);
+  await tabTo(page, page.getByRole('tab', { name: 'Overview', exact: true }));
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
   const trigger = page.getByRole('button', { name: 'Delete workspace' });
   await activate(page, trigger);
   const dialog = page.getByRole('dialog');
@@ -530,6 +549,7 @@ test('workspace deletion focus and progress', async ({ page }) => {
   await activate(page, dialog.getByRole('checkbox', { name: /pushed work/i }), 'Space');
   await activate(page, confirm);
   await expect(dialog).toBeHidden();
+  await expect(page.getByRole('heading', { name: 'Workspace operation' })).toBeFocused();
   await checkWorkflow(page, labels);
 });
 

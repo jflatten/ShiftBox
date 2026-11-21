@@ -113,21 +113,33 @@ test('polls through a deletion failure and stops reporting progress once it is c
   expect(jest.mocked(globalThis.fetch).mock.calls.filter(([input]) => input === `/api/v1/workspaces/${workspace.id}`)).toHaveLength(requests);
 });
 
-// Owners choose the inactivity shutdown period beside Start/Stop, with the
-// server's current inactivity and retained-data guidance visible in that panel.
-test('places keep-alive selection in the workspace controls', async () => {
+// Owners can find inactivity settings and keep an unsaved selection across tabs.
+test('keeps workspace controls visible and preserves a keep-alive draft across tabs', async () => {
+  mockMenuLayout();
   globalThis.fetch = jest.fn(async input => input === '/api/v1/session' ? json(session) : json({
     ...workspace, desiredState: 'running', observedState: 'running', currentOperationId: null,
     keepAlivePolicy: { maximumMinutes: 0, allowedMinutes: [30, 60, 120, 240, 480, 720, 0], defaultMinutes: 30, version: 1 },
     keepAliveMinutes: 30, keepAliveOverrideMinutes: null, canEditKeepAlive: true,
     inactivityMinutes: 5, inactivityShutdownAt: '2026-11-17T22:30:00Z',
   }));
+  const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
   const controls = await screen.findByRole('region', { name: 'Workspace controls' });
   expect(within(controls).getByRole('button', { name: 'Stop workspace' })).toBeVisible();
-  expect(within(controls).getByRole('combobox', { name: 'Shutdown after inactivity' })).toHaveValue('Administrator default (30 minutes)');
-  expect(within(controls).getByText(/Inactive for 5 minutes/)).toBeVisible();
   expect(within(controls).getByText(/Stop and start preserve project files/)).toBeVisible();
+  expect(screen.queryByRole('combobox', { name: 'Shutdown after inactivity' })).not.toBeInTheDocument();
+  const settings = screen.getByRole('tab', { name: 'Settings' });
+  await user.click(settings);
+  const panel = within(screen.getByRole('tabpanel', { name: 'Settings' }));
+  const inactivity = panel.getByRole('combobox', { name: 'Shutdown after inactivity' });
+  expect(inactivity).toHaveValue('Administrator default (30 minutes)');
+  expect(panel.getByText(/Inactive for 5 minutes/)).toBeVisible();
+  await user.click(inactivity);
+  await user.click(await screen.findByRole('option', { name: '1 hour' }));
+  await user.click(screen.getByRole('tab', { name: 'Overview' }));
+  await user.click(settings);
+  expect(inactivity).toHaveValue('1 hour');
+  expect(within(controls).getByRole('button', { name: 'Stop workspace' })).toBeVisible();
 });
 
 // Each row keeps its Carbon status chip and shows the active target in the same cell.
@@ -432,20 +444,67 @@ test('retries workspace list domain errors and distinguishes filtered empty resu
   expect(screen.getByLabelText('Current state')).toHaveValue('');
 });
 
-// Details identify the workspace by name and separate routine actions from
-// previews and irreversible deletion without losing readiness gating.
-test('organizes workspace controls by purpose', async () => {
+// A completed launch keeps its historical metrics and lower-frequency controls in separate tabs.
+test('groups workspace detail without burying status or routine actions', async () => {
+  const user = userEvent.setup();
+  const launch = '/api/v1/operations/original-launch';
   globalThis.fetch = jest.fn(async input => {
     if (input === '/api/v1/session') return json(session);
-    return json({ ...workspace, currentOperationId: null, observedState: 'running', canEditPreviewPorts: true });
+    if (input === launch) return json({ id: 'original-launch', status: 'succeeded', version: 1, steps: [],
+      launchPerformance: { timeToIdeReadyMs: 42000, steps: [], events: [] },
+    });
+    return json({ ...workspace, currentOperationId: null, observedState: 'running', canEditPreviewPorts: true, launchOperationId: 'original-launch' });
   });
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
   expect(await screen.findByRole('heading', { level: 1, name: 'Example workspace' })).toBeVisible();
-  expect(within(screen.getByRole('region', { name: 'Workspace controls' })).getByRole('button', { name: 'Stop workspace' })).toBeVisible();
-  expect(within(screen.getByRole('region', { name: 'Previews' })).getByLabelText('Preview ports')).toBeVisible();
-  expect(within(screen.getByRole('region', { name: 'Delete workspace' })).getByRole('button', { name: 'Delete workspace' })).toBeVisible();
+  const controls = within(screen.getByRole('region', { name: 'Workspace controls' }));
+  const tabs = within(screen.getByRole('tablist', { name: 'Workspace details' }));
+  expect(tabs.getByRole('tab', { name: 'Overview', selected: true })).toBeVisible();
+  const tabLabels = tabs.getAllByRole('tab').map(tab => tab.textContent);
+  expect(tabLabels[tabLabels.indexOf('Performance') + 1]).toBe('Logs');
+  expect(within(screen.getByRole('tabpanel', { name: 'Overview' })).getByRole('heading', { name: 'Configuration' })).toBeVisible();
+  expect(screen.queryByRole('region', { name: 'Launch performance' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Previews' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Delete workspace' })).not.toBeInTheDocument();
+  expect(globalThis.fetch).not.toHaveBeenCalledWith(launch, expect.anything());
+  await user.click(tabs.getByRole('tab', { name: 'Performance' }));
+  const performance = within(screen.getByRole('tabpanel', { name: 'Performance' }));
+  expect(await performance.findByText('42 s')).toBeVisible();
+  await user.click(tabs.getByRole('tab', { name: 'Connections' }));
+  const connections = within(screen.getByRole('tabpanel', { name: 'Connections' }));
+  expect(connections.getByLabelText('Preview ports')).toBeVisible();
+  expect(connections.queryByRole('region', { name: 'Administrator connection grants' })).not.toBeInTheDocument();
+  await user.click(tabs.getByRole('tab', { name: 'Settings' }));
+  expect(within(screen.getByRole('tabpanel', { name: 'Settings' })).getByRole('button', { name: 'Delete workspace' })).toBeVisible();
+  expect(controls.getByRole('button', { name: 'Stop workspace' })).toBeVisible();
   expect(screen.queryByText(workspace.id, { exact: true })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Open IDE' })).not.toBeInTheDocument();
+});
+
+// Live launch timings share the operation subscription with the overview Stepper.
+test('keeps following the launch when switching from Overview to Performance', async () => {
+  const subscribe = jest.fn();
+  class OperationStream extends EventTarget {
+    constructor(url: string) { super(); subscribe(url); }
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: OperationStream });
+  const id = 'active-launch';
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === `/api/v1/operations/${id}`) return json({ id, type: 'provision', version: 1, status: 'waiting', currentStep: 'configure',
+      steps: [{ key: 'configure', index: 0, label: 'Configure the development container', status: 'active' }],
+      launchPerformance: { steps: [], events: [] },
+    });
+    return json({ ...workspace, launchOperationId: id, currentOperationId: id, lifecycle: lifecycle('vm-running', 'container-ready', id) });
+  });
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  expect(await screen.findByRole('button', { name: 'Configure the development container: In progress' })).toBeVisible();
+  await user.click(screen.getByRole('tab', { name: 'Performance' }));
+  expect(await screen.findByRole('region', { name: 'Launch performance' })).toBeVisible();
+  expect(screen.queryByRole('heading', { name: 'Workspace operation' })).not.toBeInTheDocument();
+  expect(subscribe).toHaveBeenCalledTimes(1);
 });
 
 // Administrators can confirm revocation by email and see the active list refresh.
@@ -465,6 +524,7 @@ test('revokes an administrator connection grant from workspace details', async (
   globalThis.fetch = fetch;
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId="workspace-one" /></Providers>);
+  await user.click(await screen.findByRole('tab', { name: 'Connections' }));
   await user.click(await screen.findByRole('button', { name: 'Revoke access for admin@example.test' }));
   const dialog = await screen.findByRole('dialog', { name: 'Revoke connection grant' });
   await waitFor(() => {
@@ -638,6 +698,7 @@ test('submits stop with CSRF and the workspace version', async () => {
   globalThis.fetch = fetch;
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  await user.click(await screen.findByRole('tab', { name: 'Performance' }));
   await user.click(await screen.findByRole('button', { name: 'Stop workspace' }));
   expect(await screen.findByRole('alert', { name: 'Workspace operation failed' })).toHaveTextContent('Stop workspace workloads');
   expect(screen.getByRole('heading', { name: 'Workspace operation' })).toHaveFocus();
@@ -673,6 +734,7 @@ test('confirms workspace deletion and follows its durable operation', async () =
   globalThis.fetch = fetch;
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  await user.click(await screen.findByRole('tab', { name: 'Settings' }));
   await user.click(await screen.findByRole('button', { name: 'Delete workspace' }));
   const dialog = within(await screen.findByRole('dialog', { name: 'Delete workspace' }));
   await waitFor(() => expect(dialog.getByRole('button', { name: 'Cancel' })).toHaveFocus());
@@ -971,6 +1033,7 @@ test.each([
   });
   const user = userEvent.setup();
   render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  if (service.startsWith('preview-')) await user.click(await screen.findByRole('tab', { name: 'Connections' }));
   await user.click(await screen.findByRole('button', { name: button }));
   expect(grantRequested).toBe(true);
   expect(openedBeforeGrant).toBe(true);
@@ -1069,7 +1132,7 @@ test('reopens a timed-out workspace and preserves history after late success', a
     if (input === `/api/v1/workspaces/${workspace.id}`) return json({
       ...workspace, desiredState: 'stopped', observedState: completed ? 'stopped' : 'running',
       currentOperationId: completed ? null : operationId,
-      lifecycle: completed ? lifecycle('stopped', null, operationId) : lifecycle('ready', 'failed', operationId),
+      lifecycle: completed ? lifecycle('stopped', null, operationId) : { ...lifecycle('ready', 'stopped', operationId), mode: 'timed_out' },
     });
     if (input === `/api/v1/operations/${operationId}`) return json({
       id: operationId, status: completed ? 'succeeded' : 'waiting', version: completed ? 2 : 1,
@@ -1081,9 +1144,9 @@ test('reopens a timed-out workspace and preserves history after late success', a
   const first = render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
   const controls = within(await screen.findByRole('region', { name: 'Workspace controls' }));
   expect(controls.getByText('Ready')).toBeVisible();
-  expect(controls.getByText('Failed')).toBeVisible();
+  expect(controls.getByText('Timed out · Still checking')).toBeVisible();
   expect(controls.queryByRole('progressbar')).not.toBeInTheDocument();
-  expect(await screen.findByRole('button', { name: 'Verify provider stop: Timed out' })).toBeVisible();
+  expect(await screen.findByRole('button', { name: 'Verify provider stop: Timed out · Still checking' })).toBeVisible();
   first.unmount();
 
   completed = true;
@@ -1091,7 +1154,7 @@ test('reopens a timed-out workspace and preserves history after late success', a
   const recovered = within(await screen.findByRole('region', { name: 'Workspace controls' }));
   expect(recovered.getByText('Stopped')).toBeVisible();
   expect(recovered.queryByText('Failed')).not.toBeInTheDocument();
-  expect(await screen.findByRole('button', { name: 'Verify provider stop: Completed · Timed out' })).toBeVisible();
+  expect(await screen.findByRole('button', { name: 'Verify provider stop: Completed after timeout' })).toBeVisible();
   expect(screen.getByText(timeout.reason)).toBeVisible();
 });
 
@@ -1166,4 +1229,129 @@ test('recovers from an initial session outage and handles a real workspace denia
   expect(await screen.findByText('Workspace access denied')).toBeVisible();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.queryByText(workspace.name)).not.toBeInTheDocument();
+});
+
+// An active deployment can switch to the stop workflow before or after the
+// deadline, and a reload follows the accepted stop operation.
+test.each(['transitioning', 'timed_out'])('stops an active deployment in the %s state', async mode => {
+  class OperationStream extends EventTarget { close() {} }
+  Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: OperationStream });
+  const launchId = 'stalled-launch';
+  const stopId = 'deployment-stop';
+  let stopping = false;
+  let version = workspace.version;
+  const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === `/api/v1/workspaces/${workspace.id}`) return json({
+      ...workspace, version, desiredState: stopping ? 'stopped' : 'running', observedState: 'starting',
+      currentOperationId: stopping ? stopId : launchId, canInterruptDeployment: !stopping,
+      lifecycle: stopping ? lifecycle('provisioned', 'stopped', stopId) : { ...lifecycle('provisioned', 'vm-running', launchId), mode },
+    });
+    if (input === `/api/v1/workspaces/${workspace.id}/actions/stop` && init?.method === 'POST') {
+      if (mode === 'transitioning' && version === workspace.version) {
+        version++;
+        return problem(412, 'request.version_mismatch', 'Refresh before making this change');
+      }
+      stopping = true;
+      return json({ id: stopId });
+    }
+    if (input === `/api/v1/operations/${launchId}`) return json({
+      id: launchId, version: 1, status: 'waiting', currentStep: 'enroll',
+      steps: [{ key: 'enroll', index: 0, label: 'Enroll the guest', status: 'active' }],
+    });
+    if (input === `/api/v1/operations/${stopId}`) return json({
+      id: stopId, version: 1, status: 'running', currentStep: 'stop',
+      steps: [{ key: 'stop', index: 0, label: 'Stop workspace', status: 'active' }],
+    });
+    throw new Error(`unexpected request: ${input}`);
+  });
+  globalThis.fetch = fetcher;
+  const first = render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Stop deployment' }));
+  expect(await screen.findByRole('button', { name: 'Stop workspace: In progress' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Stop deployment' })).not.toBeInTheDocument();
+  if (mode === 'transitioning') {
+    const requests = fetcher.mock.calls.filter(([, init]) => init?.method === 'POST').map(([, init]) => new Headers(init?.headers));
+    expect(requests.map(headers => headers.get('If-Match'))).toEqual(['"4"', '"5"']);
+    expect(requests[1].get('Idempotency-Key')).toBe(requests[0].get('Idempotency-Key'));
+  }
+  first.unmount();
+
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  expect(await screen.findByRole('button', { name: 'Stop workspace: In progress' })).toBeVisible();
+});
+
+// The inventory action skips the busy deployment gate and opens the new workflow.
+test('switches inventory progress to shutdown when a deployment is stopped', async () => {
+  mockMenuLayout();
+  class OperationStream extends EventTarget { close() {} }
+  Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: OperationStream });
+  const launchId = 'inventory-launch';
+  const stopId = 'inventory-stop';
+  let current = { ...workspace, observedState: 'starting', currentOperationId: launchId,
+    canInterruptDeployment: true, lifecycle: lifecycle('provisioned', 'vm-running', launchId) };
+  globalThis.fetch = jest.fn(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces?excludeDeleted=true') return json({ items: [current], nextCursor: null });
+    if (input === `/api/v1/workspaces/${workspace.id}`) return json(current);
+    if (input === `/api/v1/workspaces/${workspace.id}/actions/stop` && init?.method === 'POST') {
+      current = { ...current, desiredState: 'stopped', currentOperationId: stopId, canInterruptDeployment: false,
+        lifecycle: lifecycle('provisioned', 'stopped', stopId) };
+      return json({ id: stopId });
+    }
+    if (input === `/api/v1/operations/${stopId}`) return json({
+      id: stopId, version: 1, status: 'waiting', currentStep: 'stop',
+      steps: [{ key: 'stop', index: 0, label: 'Stop workspace', status: 'active' }],
+    });
+    throw new Error(`unexpected request: ${input}`);
+  });
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Actions for Example workspace' }));
+  const stop = await screen.findByRole('menuitem', { name: 'Stop deployment' });
+  expect(stop).toBeEnabled();
+  expect(screen.getByRole('menuitem', { name: 'Delete workspace' })).toBeDisabled();
+  await user.click(stop);
+  const workflow = within(await screen.findByRole('dialog', { name: 'Workspace operation' }));
+  expect(await workflow.findByRole('button', { name: 'Stop workspace: In progress' })).toBeVisible();
+});
+
+// A newly launched workspace offers shutdown directly on its launch progress page.
+test('hands off launch progress to shutdown without leaving Projects', async () => {
+  class OperationStream extends EventTarget { close() {} }
+  Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: OperationStream });
+  const launchId = 'project-launch';
+  const stopId = 'project-stop';
+  let stopping = false;
+  globalThis.fetch = jest.fn(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/templates') return json({ items: [launchTemplate], nextCursor: null });
+    if (input === '/api/v1/workspaces' && init?.method === 'POST') return json({ id: launchId, workspaceId: workspace.id });
+    if (input === `/api/v1/workspaces/${workspace.id}`) return json({
+      ...workspace, desiredState: stopping ? 'stopped' : 'running', observedState: 'starting',
+      currentOperationId: stopping ? stopId : launchId, canInterruptDeployment: !stopping,
+      lifecycle: stopping ? lifecycle('provisioned', 'stopped', stopId) : lifecycle('provisioned', 'vm-running', launchId),
+    });
+    if (input === `/api/v1/workspaces/${workspace.id}/actions/stop` && init?.method === 'POST') {
+      stopping = true;
+      return json({ id: stopId });
+    }
+    if (input === `/api/v1/operations/${launchId}`) return json({
+      id: launchId, version: 1, status: 'running', currentStep: 'enroll',
+      steps: [{ key: 'enroll', index: 0, label: 'Enroll the guest', status: 'active' }],
+    });
+    if (input === `/api/v1/operations/${stopId}`) return json({
+      id: stopId, version: 1, status: 'running', currentStep: 'stop',
+      steps: [{ key: 'stop', index: 0, label: 'Stop workspace', status: 'active' }],
+    });
+    throw new Error(`unexpected request: ${input}`);
+  });
+  const user = userEvent.setup();
+  render(<Providers><Workspaces workspaceId={null} launch /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Launch workspace for Example project' }));
+  await user.type(await screen.findByRole('textbox', { name: 'Workspace name' }), 'Disposable workspace');
+  await user.click(screen.getByRole('button', { name: 'Launch workspace' }));
+  await user.click(await screen.findByRole('button', { name: 'Stop deployment' }));
+  expect(await screen.findByRole('button', { name: 'Stop workspace: In progress' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Enroll the guest: In progress' })).not.toBeInTheDocument();
 });

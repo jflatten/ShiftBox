@@ -11,6 +11,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/backup"
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/imagecache"
+	"github.com/jflatten/ShiftBox/internal/launchlog"
 	"github.com/jflatten/ShiftBox/internal/proxy"
 )
 
@@ -79,13 +80,35 @@ func imageCacheContext(db *sql.DB, fence *backup.WriteFence) func(context.Contex
 		var arch string
 		_ = db.QueryRowContext(ctx, `SELECT a.architecture FROM workspaces w JOIN platform_artifacts a ON a.id=w.platform_artifact_id
 			WHERE w.id=$1 AND w.generation=$2`, contact.WorkspaceID, contact.Generation).Scan(&arch)
+		operationID, err := launchlog.ActiveCacheLaunch(ctx, db, contact.WorkspaceID, contact.Generation)
+		if err != nil && ctx.Err() == nil {
+			slog.WarnContext(ctx, "Could not associate an image cache request with a launch")
+		}
 		return imagecache.WithObservation(imagecache.WithPlatform(ctx, arch), func(observation imagecache.Observation) {
+			recordLaunchCache(ctx, db, fence, operationID, observation)
 			if err := withCheckpointActivity(ctx, fence, func() error {
 				return imagecache.RecordWorkspaceFreshness(ctx, db, contact.WorkspaceID, contact.Generation, observation, false)
 			}); err != nil && ctx.Err() == nil {
 				slog.Warn("could not record workspace image cache observation")
 			}
 		})
+	}
+}
+
+func recordLaunchCache(ctx context.Context, db *sql.DB, fence *backup.WriteFence, operationID string, observation imagecache.Observation) {
+	if operationID == "" || observation.StartedAt.IsZero() {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	err := withCheckpointActivity(writeCtx, fence, func() error {
+		return launchlog.RecordCache(writeCtx, db, operationID, launchlog.CacheSample{
+			StartedAt: observation.StartedAt, FinishedAt: observation.FinishedAt, Status: observation.Status,
+			CachedBytes: observation.CachedBytes, UpstreamBytes: observation.UpstreamBytes,
+		})
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "Could not record launch image cache totals", "operation_id", operationID)
 	}
 }
 

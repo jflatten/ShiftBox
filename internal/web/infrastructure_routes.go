@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jflatten/ShiftBox/internal/auth"
+	"github.com/jflatten/ShiftBox/internal/launchlog"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
@@ -81,6 +82,10 @@ func InfrastructureStatusHandler(db *sql.DB, origin string, now func() time.Time
 			if err != nil {
 				return nil, err
 			}
+			retention, err := launchlog.ReadRetention(ctx, tx)
+			if err != nil {
+				return nil, err
+			}
 			conditions, err := browserCertificateConditions(ctx, tx, now())
 			if err != nil {
 				return nil, err
@@ -104,12 +109,13 @@ func InfrastructureStatusHandler(db *sql.DB, origin string, now func() time.Time
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(version, 10)))
 				_ = json.NewEncoder(w).Encode(struct {
-					Provider        infrastructureProvider    `json:"provider"`
-					Capacity        workspaceResources        `json:"capacity"`
-					Conditions      []infrastructureCondition `json:"conditions"`
-					Version         int64                     `json:"version"`
-					KeepAlivePolicy workspace.KeepAlivePolicy `json:"keepAlivePolicy"`
-				}{Provider: providerView, Capacity: capacity, Conditions: conditions, Version: version, KeepAlivePolicy: keepAlivePolicy})
+					Provider           infrastructureProvider    `json:"provider"`
+					Capacity           workspaceResources        `json:"capacity"`
+					Conditions         []infrastructureCondition `json:"conditions"`
+					Version            int64                     `json:"version"`
+					KeepAlivePolicy    workspace.KeepAlivePolicy `json:"keepAlivePolicy"`
+					LaunchLogRetention launchlog.Retention       `json:"launchLogRetention"`
+				}{Provider: providerView, Capacity: capacity, Conditions: conditions, Version: version, KeepAlivePolicy: keepAlivePolicy, LaunchLogRetention: retention})
 			}), nil
 		},
 	}

@@ -18,6 +18,7 @@ export interface Workspace {
   desiredState: string;
   observedState: string;
   currentOperationId: string | null;
+  launchOperationId?: string;
   lifecycle: WorkspaceLifecycle;
   canOpenIde?: boolean;
   imageCache?: components['schemas']['WorkspaceImageCache'];
@@ -35,6 +36,8 @@ export interface Workspace {
   canOpenRepair?: boolean;
   canStartRepair?: boolean;
   canRetryAfterRepair?: boolean;
+  canInterruptDeployment?: boolean;
+  canStart?: boolean;
   lastActivityAt: string | null;
   retentionDeadline: string | null;
   retention?: { state: 'disabled' | 'paused' | 'grace' | 'ready'; graceUntil?: string };

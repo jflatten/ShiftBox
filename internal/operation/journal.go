@@ -179,7 +179,7 @@ func (j *Journal) InterruptInTx(ctx context.Context, tx *sql.Tx, id, detail stri
 
 // CancelInTx fences a superseded workflow and publishes its terminal snapshot
 // in the caller's transaction. Completed workflows are left untouched.
-func (j *Journal) CancelInTx(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
+func (j *Journal) CancelInTx(ctx context.Context, tx *sql.Tx, id, reason string, now time.Time) error {
 	if err := lockOperation(ctx, tx, id); err != nil {
 		return err
 	}
@@ -194,10 +194,13 @@ func (j *Journal) CancelInTx(ctx context.Context, tx *sql.Tx, id string, now tim
 		op.FinishedAt = &now
 		for i := range op.Steps {
 			if op.Steps[i].Status == "pending" || op.Steps[i].Status == "active" {
+				if op.Steps[i].Status == "active" {
+					op.Steps[i].Detail = reason
+				}
 				op.Steps[i].Status = "skipped"
 			}
 		}
-		return saveOperation(ctx, tx, &op, "Superseded by membership offboarding.", now)
+		return saveOperation(ctx, tx, &op, reason, now)
 	default:
 		return nil
 	}

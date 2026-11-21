@@ -117,6 +117,7 @@ test.describe('operations with a fixture controller', () => {
       return route.fulfill({ status: 404, json: {} });
     });
     await page.goto(`/workspaces/?id=${workspaceId}`);
+    await page.getByRole('tab', { name: 'Settings', exact: true }).click();
     await page.getByRole('button', { name: 'Delete workspace' }).click();
     const dialog = page.getByRole('dialog', { name: 'Delete workspace' });
     await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
@@ -267,6 +268,7 @@ test.describe('operations with a fixture controller', () => {
       return route.fulfill({ contentType: 'text/html', body: '<h1>Private preview entry fixture</h1>' });
     });
     await page.goto(`/workspaces/?id=${workspaceId}`);
+    await page.getByRole('tab', { name: 'Connections', exact: true }).click();
     const consoleURL = page.url();
     expect(new URL(consoleURL).origin).not.toBe(previewOrigin);
     const [previewTab] = await Promise.all([
@@ -432,6 +434,7 @@ async function openLivePreview(page: Page, management: string, preview: URL, wor
   let liveSocket: WebSocket | undefined;
   const consoleURL = new URL(workspacePath, management).href;
   await page.goto(consoleURL);
+  await page.getByRole('tab', { name: 'Connections', exact: true }).click();
   const [tab] = await Promise.all([
     page.context().waitForEvent('page').then(tab => {
       tab.on('websocket', socket => {

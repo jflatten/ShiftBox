@@ -18,7 +18,8 @@ import (
 )
 
 // TestWorkspacePowerAPI exercises version checks, replay, and transactional
-// capacity accounting for a retained VM through the management endpoint.
+// capacity accounting for a retained VM through the management endpoint,
+// including rollback and replay when shutdown supersedes an active start.
 func TestWorkspacePowerAPI(t *testing.T) {
 	const origin = "https://management.test"
 	const templateID = "00000000-0000-4000-8000-000000000003"
@@ -116,11 +117,23 @@ func TestWorkspacePowerAPI(t *testing.T) {
 		t.Fatalf("replay returned %s, want %s", replay.ID, start.ID)
 	}
 	request("stop", `"6"`, startKey, "", 409, "workspace.action_conflict")
-	request("stop", `"6"`, "workspace-stop-key-one", "", 409, "workspace.operation_in_progress")
-	exec("UPDATE operations SET status='succeeded' WHERE id=$1", start.ID)
+	exec(`CREATE TRIGGER fail_stop_journal BEFORE INSERT ON operation_events
+		WHEN NEW.operation_id<>'` + start.ID + `' BEGIN SELECT RAISE(ABORT, 'journal unavailable'); END`)
+	request("stop", `"6"`, "workspace-stop-key-one", "", 500, "")
+	checkState("running", "reserved", 6, 1)
+	if previous, err := journal.Get(ctx, start.ID); err != nil || previous.Status != "pending" {
+		t.Fatalf("start after rejected shutdown = %s, %v, want pending", previous.Status, err)
+	}
+	exec("DROP TRIGGER fail_stop_journal")
 	stop := request("stop", `"6"`, "workspace-stop-key-one", "", 202, "")
 	if stop.Type != "stop" {
 		t.Fatalf("unexpected accepted stop: %+v", stop)
+	}
+	if previous, err := journal.Get(ctx, start.ID); err != nil || previous.Status != "cancelled" {
+		t.Fatalf("superseded start = %s, %v, want cancelled", previous.Status, err)
+	}
+	if replay := request("stop", `"6"`, "workspace-stop-key-one", "", 202, ""); replay.ID != stop.ID {
+		t.Fatalf("shutdown replay returned %s, want %s", replay.ID, stop.ID)
 	}
 	checkState("stopped", "reserved", 7, 2)
 	// Rebuild keeps the same running VM and returns the original operation on replay.
@@ -133,7 +146,8 @@ func TestWorkspacePowerAPI(t *testing.T) {
 	if replay := request("rebuild", `"7"`, "workspace-rebuild-one", "", 202, ""); replay.ID != rebuild.ID {
 		t.Fatalf("rebuild replay returned %s, want %s", replay.ID, rebuild.ID)
 	}
-	request("stop", `"8"`, "workspace-stop-key-two", "", 409, "workspace.operation_in_progress")
+	request("delete", `"8"`, "workspace-delete-one", `{"confirmDataLoss":true}`, 409, "workspace.operation_in_progress")
+	request("stop", `"8"`, "workspace-stop-key-two", "", 202, "")
 	exec("UPDATE users SET membership_state='disabled' WHERE id='member'")
 	request("start", `"5"`, startKey, "", 401, "auth.required")
 }

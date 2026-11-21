@@ -27,21 +27,25 @@ const (
 var dockerContainerID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type devContainer struct {
-	workspace        string
-	config           string
-	repository       *repositoryPreparation
-	credentials      bool
-	imageCache       bool
-	applyImageCache  func(string) error
-	ide              bool
-	codeServerSource string
-	retainHome       bool
-	repairImageFile  string
-	repairSocketDir  string
-	run              func(context.Context, string, ...string) ([]byte, error)
-	sshExec          func(context.Context, ...string) *exec.Cmd
-	setProjectOwner  func(context.Context, string, int, int) error
-	timing           func(phase string, elapsed time.Duration, outcome string)
+	workspace               string
+	config                  string
+	repository              *repositoryPreparation
+	credentials             bool
+	imageCache              bool
+	applyImageCache         func(string) error
+	ide                     bool
+	codeServerSource        string
+	retainHome              bool
+	repairImageFile         string
+	repairSocketDir         string
+	run                     func(context.Context, string, ...string) ([]byte, error)
+	sshExec                 func(context.Context, ...string) *exec.Cmd
+	setProjectOwner         func(context.Context, string, int, int) error
+	timing                  func(phase string, elapsed time.Duration, outcome string)
+	launchTiming            chan<- launchTimingReport
+	logQueue                chan<- workspaceLogOutput
+	logOutput               func(string)
+	detailedConfigureTiming bool
 }
 
 // containerConnection records successful execution through the declared waitFor
@@ -86,7 +90,7 @@ func (d devContainer) configure(ctx context.Context, previous rebuildSource) (co
 	if previous.id != "" {
 		options = append(options, "--remove-existing-container")
 	}
-	result, err := d.up(ctx, options...)
+	result, err := d.up(ctx, "initial_devcontainer_setup", options...)
 	if err != nil {
 		return containerConnection{}, err
 	}
@@ -149,10 +153,10 @@ func (d devContainer) finishSetup(ctx context.Context, connection containerConne
 	return err
 }
 
-func (d devContainer) up(ctx context.Context, options ...string) (devContainerResult, error) {
+func (d devContainer) up(ctx context.Context, phase string, options ...string) (devContainerResult, error) {
 	started := time.Now()
 	result, err := d.invoke(ctx, "up", options...)
-	d.measurePhase("devcontainer_up", started, err)
+	d.measurePhase(phase, started, err)
 	return result, err
 }
 
@@ -229,20 +233,33 @@ func (d devContainer) runner() func(context.Context, string, ...string) ([]byte,
 		return d.run
 	}
 	return func(ctx context.Context, executable string, args ...string) ([]byte, error) {
-		if d.timing != nil && executable == devContainerCLI && len(args) > 0 && args[0] == "up" {
+		if executable != devContainerCLI || len(args) == 0 {
+			return runDevContainerCLI(ctx, executable, args...)
+		}
+		var stderr io.Writer
+		if d.timing != nil && args[0] == "up" {
 			dockerPath := "/usr/bin/docker"
 			if index := slices.Index(args, "--docker-path"); index >= 0 && index+1 < len(args) {
 				dockerPath = args[index+1]
 			}
-			timings := &devContainerCLITimings{
+			stderr = &devContainerCLITimings{
 				dockerPath: dockerPath,
 				record: func(name string, elapsed time.Duration) {
 					d.timing(name, elapsed, "observed")
 				},
 			}
-			return runDevContainerCommand(ctx, executable, timings, args...)
 		}
-		return runDevContainerCLI(ctx, executable, args...)
+		if d.logOutput != nil {
+			d.logOutput("=== devcontainer " + args[0] + " ===\n")
+			logs := &devContainerLogs{record: d.logOutput}
+			defer logs.flush()
+			if stderr == nil {
+				stderr = logs
+			} else {
+				stderr = io.MultiWriter(stderr, logs)
+			}
+		}
+		return runDevContainerCommand(ctx, executable, stderr, args...)
 	}
 }
 

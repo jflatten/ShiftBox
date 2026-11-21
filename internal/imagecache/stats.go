@@ -37,6 +37,8 @@ type Observation struct {
 	PullStats
 	Origin, Repository, Reference, Digest string
 	Verified, Stale                       bool
+	StartedAt, FinishedAt                 time.Time
+	Status                                int
 }
 
 type observationKey struct{}
@@ -69,4 +71,29 @@ type platformKey struct{}
 // WithPlatform records the controller-authorized platform for stale image closure checks.
 func WithPlatform(ctx context.Context, architecture string) context.Context {
 	return context.WithValue(ctx, platformKey{}, architecture)
+}
+
+// observedResponse preserves response-controller operations through Unwrap.
+type observedResponse struct {
+	http.ResponseWriter
+	status int
+	failed bool
+}
+
+func (w *observedResponse) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *observedResponse) WriteHeader(status int) {
+	if w.status == 0 && status >= 200 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *observedResponse) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.failed = w.failed || err != nil
+	return n, err
 }

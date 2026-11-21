@@ -104,6 +104,12 @@ type deletionExecutor struct {
 
 // Observe checks shutdown evidence and owned resources before replaying deletion.
 func (e deletionExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
+	if op.OriginatingAction == "workspace.delete" && op.WorkspaceID != nil && step.Key == "delete" && len(op.Steps) == 1 {
+		completed, err := recordUnprovisionedPower(ctx, e.store, op, "deleted", e.now())
+		if err != nil || completed {
+			return "Removed the record of the deployment that stopped before provisioning.", completed, err
+		}
+	}
 	req, shutdownAt, err := e.request(ctx, op, step)
 	if err != nil {
 		return "", false, err

@@ -41,7 +41,7 @@ export function Workspaces({ workspaceId, ownerId, launch = false }: {
           {launch ? <LaunchFlow key={current.user.id} csrfToken={current.csrfToken}>
             {onReview => <WorkspaceLaunchPicker userID={current.user.id} admin={current.role === 'administrator'} onReview={onReview} />}
           </LaunchFlow>
-            : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} csrfToken={current.csrfToken}
+            : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} userId={current.user.id} csrfToken={current.csrfToken}
                 admin={current.role === 'administrator'} />
               : <WorkspaceList key={ownerId} ownerId={ownerId} csrfToken={current.csrfToken} />}
         </div>

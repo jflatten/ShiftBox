@@ -19,7 +19,7 @@ func NewWorker(journal *operation.Journal, launch *LaunchExecutor, power *PowerE
 	return &operation.Worker{
 		Journal: journal, Name: "workspace-controller", LeaseDuration: 4 * time.Minute,
 		Executor:        workspaceExecutor{launch: launch, power: power},
-		Actions:         []string{"workspace.launch", "workspace.start", "workspace.stop", "workspace.rebuild", "workspace.repair", "workspace.delete", "user.disable", retentionDeleteAction, inactivityStopAction},
+		Actions:         []string{"workspace.launch", "workspace.start", "workspace.stop", deploymentStopAction, "workspace.rebuild", "workspace.repair", "workspace.delete", "user.disable", retentionDeleteAction, inactivityStopAction},
 		TransitionLimit: lifecycleTransitionLimit,
 	}
 }
@@ -39,7 +39,7 @@ func (e workspaceExecutor) executor(op operation.Operation) operation.Executor {
 		if (op.OriginatingAction == "workspace."+op.Type || isRepairRetry(op)) && e.power != nil {
 			return e.power
 		}
-	case "user.disable", inactivityStopAction:
+	case deploymentStopAction, "user.disable", inactivityStopAction:
 		if op.Type == "stop" && e.power != nil {
 			return e.power
 		}

@@ -23,17 +23,19 @@ export function useWorkspaceDetail(id: string, enabled = true) {
 
 export function availableWorkspaceCommands(workspace: Workspace | undefined) {
   const lifecycle: 'start' | 'stop' | undefined = workspace?.desiredState === 'running' && workspace.observedState === 'running' ? 'stop' :
-    workspace?.desiredState === 'stopped' && workspace.observedState === 'stopped' ? 'start' : undefined;
+    workspace?.desiredState === 'stopped' && workspace.observedState === 'stopped' && workspace.canStart !== false ? 'start' : undefined;
   const maintenance = workspace?.maintenance;
   return {
     lifecycle,
+    interrupt: workspace?.canInterruptDeployment === true,
     rebuild: lifecycle === 'stop' && !workspace?.canOpenRepair && !workspace?.canRetryAfterRepair,
     update: !!lifecycle && !maintenance?.operationId && (maintenance?.state === 'pending' || maintenance?.state === 'waiting_safe'),
     delete: !!workspace && workspace.desiredState !== 'deleted' && workspace.observedState !== 'deleted',
   };
 }
 
-export function useWorkspaceCommand(workspace: Workspace | undefined, csrfToken: string, refresh: () => Promise<unknown>,
+export function useWorkspaceCommand(workspace: Workspace | undefined, csrfToken: string,
+  refresh: () => Promise<{ data?: Workspace; isSuccess: boolean }>,
   onAccepted: (action: WorkspaceAction, operationID: string, trigger: Element | null) => void,
 ) {
   const [submitting, setSubmitting] = useState<WorkspaceAction>();
@@ -49,14 +51,27 @@ export function useWorkspaceCommand(workspace: Workspace | undefined, csrfToken:
       if (request.current?.action !== action || request.current.version !== workspace.version) {
         request.current = { action, version: workspace.version, key: crypto.randomUUID() };
       }
-      const response = await fetch(`/api/v1/workspaces/${encodeURIComponent(workspace.id)}/actions/${action}`, {
+      const key = request.current.key;
+      const submit = (version: number) => fetch(`/api/v1/workspaces/${encodeURIComponent(workspace.id)}/actions/${action}`, {
         method: 'POST',
         headers: {
-          'X-CSRF-Token': csrfToken, 'If-Match': `"${workspace.version}"`, 'Idempotency-Key': request.current.key,
+          'X-CSRF-Token': csrfToken, 'If-Match': `"${version}"`, 'Idempotency-Key': key,
           ...(action === 'delete' ? { 'Content-Type': 'application/json' } : {}),
         },
         body: action === 'delete' ? JSON.stringify({ confirmDataLoss: true }) : undefined,
       });
+      let response = await submit(workspace.version);
+      if (response.status === 412 && action === 'stop' && workspace.canInterruptDeployment) {
+        // Provider observations can advance the version during deployment.
+        // Replay the click only while the same deployment still owns the workspace.
+        const refreshed = await refresh();
+        const current = refreshed.data;
+        if (refreshed.isSuccess && current?.canInterruptDeployment &&
+          current.currentOperationId === workspace.currentOperationId && current.version !== workspace.version) {
+          request.current = { action, version: current.version, key };
+          response = await submit(current.version);
+        }
+      }
       if (!response.ok) {
         if (response.status === 412) void refresh();
         throw await readProblem(response);

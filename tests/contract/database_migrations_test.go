@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/launchlog"
 	_ "modernc.org/sqlite"
 )
 
@@ -115,6 +117,34 @@ func TestMigrationProfiles(t *testing.T) {
 			version, err := database.Version(ctx, db, profile)
 			if err != nil || version < 1 {
 				t.Fatalf("Version(%s) = %d, %v; want installed foundation", profile, version, err)
+			}
+			// Execute the diagnostics upserts on both dialects, rolling back the disposable launch.
+			tx, err := db.BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			const operationID = "migration-launch-timing"
+			stamp := time.Now().UTC()
+			if _, err := tx.ExecContext(ctx, `INSERT INTO operations(id,type,generation,requested_by,request_key,status,created_at,version,originating_action)
+				VALUES($1,'provision',1,'actor','migration-launch-timing','pending',$2,1,'workspace.launch')`, operationID, stamp.Format(time.RFC3339Nano)); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := launchlog.RecordCache(ctx, tx, operationID, launchlog.CacheSample{StartedAt: stamp,
+					FinishedAt: stamp.Add(time.Second), CachedBytes: 10, Status: 200}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := launchlog.RecordProvider(ctx, tx, operationID, "vm_create", stamp, stamp.Add(time.Second), nil); err != nil {
+				t.Fatal(err)
+			}
+			info, err := launchlog.Read(ctx, tx, operationID, stamp)
+			if err != nil || info.Cache == nil || info.Cache.CachedBytes != 20 || info.Cache.WindowMS != 1000 || len(info.Events) != 1 {
+				t.Fatalf("launch diagnostics (%s) = %+v, %v", profile, info, err)
+			}
+			if err := tx.Rollback(); err != nil {
+				t.Fatal(err)
 			}
 			versions[profile] = version
 			if err := database.Rollback(ctx, db, profile); !errors.Is(err, database.ErrRecoveryRequired) {

@@ -177,8 +177,17 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	}
 	response := lookup(path)
 	check(response, 200, "")
-	if response.Body.String() != accepted.Body.String() {
-		t.Error("operation detail differs from launch response")
+	// Launch timing state is visible to the owner alongside the same durable workflow.
+	var timingDetail struct {
+		operation.Operation
+		LaunchPerformance *struct {
+			Steps []struct{ Key string }
+		} `json:"launchPerformance"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &timingDetail); err != nil ||
+		timingDetail.ID != op.ID || timingDetail.Version != op.Version || timingDetail.LaunchPerformance == nil ||
+		len(timingDetail.LaunchPerformance.Steps) != len(op.Steps) {
+		t.Fatalf("operation detail omitted launch timings: %+v, %v", timingDetail, err)
 	}
 	workspacePath := "/api/v1/workspaces/" + *op.WorkspaceID
 	if _, err := db.Exec("UPDATE workspaces SET retention_deadline=$1 WHERE id=$2", now.Format(time.RFC3339Nano), *op.WorkspaceID); err != nil {
@@ -193,12 +202,13 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 		DesiredState       string                       `json:"desiredState"`
 		ObservedState      string                       `json:"observedState"`
 		CurrentOperationID string                       `json:"currentOperationId"`
+		LaunchOperationID  string                       `json:"launchOperationId"`
 		Retention          web.WorkspaceRetentionStatus `json:"retention"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil ||
 		view.OwnerID != "member" || view.DesiredState != "running" || view.ObservedState != "unknown" ||
 		view.PlatformRelease != "release-arm64" || view.TemplateRevision != 2 ||
-		view.CurrentOperationID != op.ID || response.Header().Get("ETag") != `"1"` ||
+		view.CurrentOperationID != op.ID || view.LaunchOperationID != op.ID || response.Header().Get("ETag") != `"1"` ||
 		view.Retention.State != "grace" || view.Retention.GraceUntil == nil || !view.Retention.GraceUntil.Equal(graceUntil) {
 		t.Fatalf("workspace view = %+v, %v, want member-owned pending launch", view, err)
 	}
@@ -322,6 +332,7 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	token = otherToken
+	check(lookup(path), 404, "operation.not_found")
 	check(lookup(workspacePath), 404, "workspace.not_found")
 	if response := lookup("/api/v1/workspaces"); response.Code != 200 || strings.Contains(response.Body.String(), *op.WorkspaceID) {
 		t.Errorf("other member saw a foreign workspace: %d %s", response.Code, response.Body)
@@ -331,6 +342,9 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(lookup(workspacePath), 200, "")
+	if response := lookup(path); response.Code != 200 || !strings.Contains(response.Body.String(), `"launchPerformance"`) {
+		t.Errorf("administrator launch timing = %d %s", response.Code, response.Body)
+	}
 	if response := lookup("/api/v1/workspaces"); response.Code != 200 || !strings.Contains(response.Body.String(), *op.WorkspaceID) {
 		t.Errorf("administrator list omitted workspace: %d %s", response.Code, response.Body)
 	}

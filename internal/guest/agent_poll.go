@@ -17,7 +17,11 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/workspace"
+	"github.com/jflatten/ShiftBox/internal/workspacelog"
 )
+
+// WorkspaceLogOfferHeader advertises support for guest console output.
+const WorkspaceLogOfferHeader = "ShiftBox-Workspace-Logs"
 
 const pollPath = "/internal/v1/guest/poll"
 
@@ -138,6 +142,13 @@ func pollAgent(ctx context.Context, client *http.Client, endpoint string, input 
 		}
 		runtime.imageCache = mode != ""
 	}
+	if response.Header.Get(LaunchTimingOfferHeader) != "1" {
+		runtime.launchTiming = nil
+	}
+	if response.Header.Get(WorkspaceLogOfferHeader) != workspacelog.Format {
+		runtime.logQueue = nil
+	}
+	runtime.detailedConfigureTiming = response.Header.Get(DetailedConfigureTimingHeader) == "1"
 	if err := applyGuestPoll(ctx, journal, runtime, result.Generation, result.DesiredState, result.Operation); err != nil {
 		return 0, err
 	}
@@ -227,6 +238,9 @@ func applyGuestPoll(ctx context.Context, journal *localJournal, runtime devConta
 	if desiredState != "running" || !validDevContainerPath(dispatch.Arguments.Devcontainer) ||
 		replacement != (dispatch.Type == "rebuild") {
 		return errors.New("invalid development container dispatch")
+	}
+	if dispatch.Type != "provision" {
+		runtime.launchTiming = nil
 	}
 	runtime.config = dispatch.Arguments.Devcontainer
 	_, err := journal.ensureDevelopment(ctx, guestDispatch{
@@ -337,6 +351,34 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 			slog.WarnContext(ctx, "Workspace SSH host key is unavailable")
 		}
 		tunnel.ssh = ssh
+	}
+	if endpoint := launchTimingEndpoint(identity.PollEndpoint); endpoint != "" {
+		uploadCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		defer func() {
+			cancel()
+			<-done
+		}()
+		queue := make(chan launchTimingReport, 128)
+		runtime.launchTiming = queue
+		go func() {
+			defer close(done)
+			runLaunchTiming(uploadCtx, client, endpoint, queue, time.Second)
+		}()
+	}
+	if endpoint := guestDiagnosticEndpoint(identity.PollEndpoint, workspacelog.GuestPath); endpoint != "" {
+		uploadCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		defer func() {
+			cancel()
+			<-done
+		}()
+		queue := make(chan workspaceLogOutput, 256)
+		runtime.logQueue = queue
+		go func() {
+			defer close(done)
+			runWorkspaceLogUploads(uploadCtx, client, endpoint, queue)
+		}()
 	}
 	probes := &probeReporter{socket: proxy.IDESocket}
 	firstPoll := true

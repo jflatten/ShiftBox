@@ -261,6 +261,22 @@ export interface paths {
         patch: operations["updateWorkspacePolicy"];
         trace?: never;
     };
+    "/workspaces/{workspaceId}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["streamWorkspaceLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspaceId}/actions/{action}": {
         parameters: {
             query?: never;
@@ -795,6 +811,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/launch-log-retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Sets the retention period for completed launch diagnostic records. */
+        put: operations["updateLaunchLogRetention"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/keep-alive": {
         parameters: {
             query?: never;
@@ -1051,6 +1084,11 @@ export interface components {
             resources: components["schemas"]["Resources"];
             /** Format: uuid */
             currentOperationId?: string | null;
+            /**
+             * Format: uuid
+             * @description Initial launch operation when available on workspace detail.
+             */
+            launchOperationId?: string;
             lifecycle: components["schemas"]["WorkspaceLifecycle"];
             previewPorts?: number[];
             /** @description Recent probe results for the current guest generation, included on workspace detail only. */
@@ -1059,6 +1097,10 @@ export interface components {
             services?: "code-server"[];
             canOpenPreviews?: boolean;
             canEditPreviewPorts?: boolean;
+            /** @description Included on workspace detail. The caller can use the stop action to cancel an active deployment and start shutdown. */
+            canInterruptDeployment?: boolean;
+            /** @description Included on workspace detail. The caller has start permission and a retained provider VM. */
+            canStart?: boolean;
             imageCache?: components["schemas"]["WorkspaceImageCache"];
             /** Format: date-time */
             lastActivityAt?: string | null;
@@ -1091,7 +1133,7 @@ export interface components {
             current: components["schemas"]["WorkspaceLifecycleMilestone"];
             next: components["schemas"]["WorkspaceLifecycleMilestone"] | "failed" | null;
             /** @enum {string} */
-            mode: "settled" | "transitioning" | "failed";
+            mode: "settled" | "transitioning" | "timed_out" | "failed";
             /** Format: uuid */
             workflowOperationId: string | null;
         };
@@ -1239,6 +1281,43 @@ export interface components {
             /** Format: date-time */
             finishedAt?: string | null;
             version: number;
+            /** @description Launch-only timing details. Guest events are guest reported. */
+            launchPerformance?: components["schemas"]["LaunchPerformance"];
+        };
+        LaunchPerformance: {
+            timeToIdeReadyMs?: number;
+            timeToSetupCompleteMs?: number;
+            vmRunningToGuestContactMs?: number;
+            steps: {
+                key: string;
+                label: string;
+                /** @enum {string} */
+                status: "pending" | "active" | "succeeded" | "failed" | "skipped";
+                /** Format: date-time */
+                startedAt?: string;
+                durationMs: number;
+            }[];
+            events: {
+                id: string;
+                /** @enum {string} */
+                source: "controller" | "provider" | "guest";
+                phase: string;
+                /** @enum {string} */
+                outcome: "succeeded" | "failed" | "observed";
+                /** Format: date-time */
+                occurredAt: string;
+                durationMs: number;
+                reasonCode?: string;
+            }[];
+            cache?: {
+                requests: number;
+                cachedRequests: number;
+                failedRequests: number;
+                rateLimitedRequests: number;
+                cachedBytes: number;
+                upstreamBytes: number;
+                windowMs: number;
+            };
         };
         OperationStep: {
             key: string;
@@ -1382,6 +1461,11 @@ export interface components {
             provider: components["schemas"]["InfrastructureProvider"];
             capacity: components["schemas"]["CapacityBudget"];
             keepAlivePolicy?: components["schemas"]["KeepAlivePolicy"];
+            launchLogRetention?: {
+                /** @default 30 */
+                days: number;
+                version: number;
+            };
             conditions: {
                 key: string;
                 /** @enum {string} */
@@ -2076,6 +2160,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    streamWorkspaceLogs: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Last-Event-ID"?: string;
+            };
+            path: {
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner-only stream of recent and live Dev Container output. Each workspace.log event carries a JSON object with the output text. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": {
+                        text: string;
+                    };
                 };
             };
             default: components["responses"]["Error"];
@@ -3236,6 +3347,34 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ImageCacheActivationOperation"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateLaunchLogRetention: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    days: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Launch log retention saved */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

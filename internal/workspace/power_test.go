@@ -348,3 +348,136 @@ func (p *powerFixtureProvider) Stop(ctx context.Context, request provider.StopRe
 	}
 	return p.Provider.Stop(ctx, request)
 }
+
+// TestInterruptDeployment hands off a stalled launch to a durable stop even
+// if the provider created the VM before ShiftBox could record its instance ID.
+func TestInterruptDeployment(t *testing.T) {
+	for _, scenario := range []string{"lost create response", "before provisioning", "provider outcome unknown"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx := t.Context()
+			db := openWorkspaceDatabase(t, "sqlite")
+			clock := time.Now
+			journal := operation.NewJournal(db, clock, uuid.NewString)
+			id := "stalled-workspace"
+			seedInactivityWorkspaces(t, db, clock(), id)
+			t.Cleanup(func() {
+				for _, query := range []string{"DELETE FROM guest_registrations WHERE workspace_id=$1", "DELETE FROM provider_resources WHERE workspace_id=$1"} {
+					if _, err := db.Exec(query, id); err != nil {
+						t.Error(err)
+					}
+				}
+			})
+			inactivityExec(t, db, "UPDATE workspaces SET provider_instance_id=NULL,observed_state='unknown' WHERE id=$1", id)
+			store := NewStore(db)
+			if err := store.SetCapacityBudget(ctx, testInstallation, Allocation{CPU: 2, MemoryMiB: 1024, DiskMiB: 40}, 0, "reservation-owner", clock()); err != nil {
+				t.Fatal(err)
+			}
+			var launch operation.Operation
+			err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+				if err := ReserveStart(ctx, tx, testInstallation, id, 1, clock()); err != nil {
+					return err
+				}
+				var err error
+				launch, err = journal.CreateInTx(ctx, tx, operation.Request{Actor: "reservation-owner", Key: uuid.NewString(),
+					Type: "provision", OriginatingAction: "workspace.launch", WorkspaceID: &id, Generation: 1,
+					Steps: []operation.Step{{Key: "provision", Label: "Provision workspace"}, {Key: "enroll", Label: "Enroll the guest"}}})
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var claim operation.Claim
+			if scenario != "before provisioning" {
+				claim, err = journal.Claim(ctx, launch.ID, "previous-worker", time.Minute)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := journal.StartStep(ctx, claim, 0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			machines := fake.New()
+			ref := provider.WorkspaceRef{InstallationID: testInstallation, WorkspaceID: id, Generation: 1, OwnershipMarker: "owned"}
+			if scenario == "lost create response" {
+				vm, err := machines.Create(ctx, provider.CreateRequest{Ref: ref, OperationID: launch.ID, ArtifactID: "reservation-artifact",
+					Release: "reservation-release", NetworkMode: "nat", Resources: provider.Resources{CPU: 2, MemoryBytes: 1024 << 20, DiskBytes: 40 << 20}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ref = vm.Ref
+				if _, err := machines.Start(ctx, provider.StartRequest{Ref: ref, OperationID: launch.ID}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var version int64
+			if err := db.QueryRow("SELECT version FROM workspaces WHERE id=$1", id).Scan(&version); err != nil {
+				t.Fatal(err)
+			}
+			intent := PowerIntent{WorkspaceID: id, ActorID: "reservation-owner", Action: "stop", RequestKey: uuid.NewString(), Version: version}
+			admit := func() operation.Operation {
+				t.Helper()
+				var stopped operation.Operation
+				if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+					var err error
+					stopped, err = AdmitPower(ctx, tx, journal, intent, clock())
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+				return stopped
+			}
+			stopped := admit()
+			if got := admit().ID; got != stopped.ID {
+				t.Fatalf("stop replay = %s, want %s", got, stopped.ID)
+			}
+			if previous, err := journal.Get(ctx, launch.ID); err != nil || previous.Status != "cancelled" {
+				t.Fatalf("launch = %s, %v; want cancelled", previous.Status, err)
+			}
+			if claim.Token != "" {
+				if err := journal.CompleteStep(ctx, claim, 0, "late provider response"); !errors.Is(err, operation.ErrConflict) {
+					t.Fatalf("old claim completion = %v, want conflict", err)
+				}
+			}
+			worker := NewWorker(journal, nil, NewPowerExecutor(store, machines, clock, nil))
+			err = worker.RunOnce(ctx, stopped.ID)
+			var desired, observed, instance, compute, disk string
+			if err := db.QueryRow(`SELECT desired_state,observed_state,COALESCE(provider_instance_id,''),cpu_memory_state,disk_state
+				FROM workspaces JOIN reservations ON workspace_id=id WHERE id=$1`, id).Scan(&desired, &observed, &instance, &compute, &disk); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "provider outcome unknown" {
+				if err == nil || desired != "stopped" || observed != "unknown" || compute != "reserved" || disk != "reserved" {
+					t.Fatalf("uncertain shutdown = %v, states %s/%s, reservations %s/%s", err, desired, observed, compute, disk)
+				}
+				return
+			}
+			wantDisk := "released"
+			if scenario == "lost create response" {
+				wantDisk = "reserved"
+				got, inspectErr := machines.Inspect(ctx, ref)
+				if inspectErr != nil || got.Power != provider.Stopped || instance != ref.InstanceID {
+					t.Fatalf("provider = %s, %v; recorded instance %q", got.Power, inspectErr, instance)
+				}
+			}
+			if err != nil || desired != "stopped" || observed != "stopped" || compute != "released" || disk != wantDisk {
+				t.Fatalf("shutdown = %v, states %s/%s, reservations %s/%s (disk want %s)", err, desired, observed, compute, disk, wantDisk)
+			}
+			if final, err := journal.Get(ctx, stopped.ID); err != nil || final.Status != "succeeded" {
+				t.Fatalf("shutdown journal = %s, %v; want succeeded", final.Status, err)
+			}
+			if scenario == "before provisioning" {
+				if err := db.QueryRow("SELECT version FROM workspaces WHERE id=$1", id).Scan(&intent.Version); err != nil {
+					t.Fatal(err)
+				}
+				intent.Action, intent.RequestKey = "delete", uuid.NewString()
+				deletion := admit()
+				if err := worker.RunOnce(ctx, deletion.ID); err != nil {
+					t.Fatal(err)
+				}
+				if err := db.QueryRow("SELECT observed_state FROM workspaces WHERE id=$1", id).Scan(&observed); err != nil || observed != "deleted" {
+					t.Fatalf("unprovisioned deletion = %s, %v; want deleted", observed, err)
+				}
+			}
+		})
+	}
+}

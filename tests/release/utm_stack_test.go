@@ -354,7 +354,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	}
 	if scenario == nativeControllerTrust {
 		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
-			return journal.CancelInTx(ctx, tx, op.ID, time.Now())
+			return journal.CancelInTx(ctx, tx, op.ID, "Cancelled by release test.", time.Now())
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -373,7 +373,7 @@ func runUTMGuestFixture(t *testing.T, maintenance *nativeMaintenanceFixture, sce
 	}
 	if scenario == nativeRetention {
 		if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
-			return journal.CancelInTx(ctx, tx, op.ID, time.Now())
+			return journal.CancelInTx(ctx, tx, op.ID, "Cancelled by release test.", time.Now())
 		}); err != nil {
 			t.Fatal(err)
 		}

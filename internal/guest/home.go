@@ -72,7 +72,7 @@ func (d devContainer) ensureRetainedHome(ctx context.Context, result devContaine
 	}
 	if !mounted {
 		previous := result.ID
-		result, err = d.up(ctx, append(options, "--remove-existing-container")...)
+		result, err = d.up(ctx, "recreate_with_retained_home", append(options, "--remove-existing-container")...)
 		if err != nil {
 			return devContainerResult{}, err
 		}

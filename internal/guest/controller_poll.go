@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/launchlog"
 	"github.com/jflatten/ShiftBox/internal/template"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
@@ -64,7 +65,7 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 		if err != nil {
 			return err
 		}
-		if err := acceptGuestReport(ctx, tx, contact, report); err != nil {
+		if err := acceptGuestReport(ctx, tx, contact, report, now); err != nil {
 			return err
 		}
 		// Keep the last accepted release even when a guest stops polling.
@@ -79,6 +80,9 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 			return ErrGuestUnauthorized
 		}
 		if contact.DesiredState == "running" {
+			if err := launchlog.MarkGuestAuthenticated(ctx, tx, contact.WorkspaceID, contact.Generation, now); err != nil {
+				return err
+			}
 			if err := workspace.RecordProbeResults(ctx, tx, contact.WorkspaceID, contact.Generation, now, report.Probes); err != nil {
 				return err
 			}
@@ -91,7 +95,7 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 		if err := workspace.RecordProcessActivity(ctx, tx, contact.WorkspaceID, contact.Generation, now, report.WatchedProcesses); err != nil {
 			return err
 		}
-		dispatch, err = nextGuestOperation(ctx, tx, contact)
+		dispatch, err = nextGuestOperation(ctx, tx, contact, now)
 		if err != nil || dispatch != nil || report.Operation != nil || contact.DesiredState != "running" {
 			return err
 		}
@@ -118,7 +122,7 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 	return contact, dispatch, nil
 }
 
-func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*PollOperation, error) {
+func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact, now time.Time) (*PollOperation, error) {
 	if update, err := nextGuestUpdateStage(ctx, tx, contact); err != nil || update != nil {
 		return update, err
 	}
@@ -194,16 +198,28 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact) (*Poll
 		dispatch.Arguments = pollArguments{RetainedMounts: []string{}}
 	}
 	// Freeze the dispatched version across worker journal and lease updates.
-	if _, err := tx.ExecContext(ctx, `INSERT INTO guest_dispatches(operation_id,dispatch_version,status)
-		VALUES($1,$2,'pending') ON CONFLICT(operation_id) DO NOTHING`, dispatch.ID, dispatch.Version); err != nil {
+	inserted, err := tx.ExecContext(ctx, `INSERT INTO guest_dispatches(operation_id,dispatch_version,status)
+		VALUES($1,$2,'pending') ON CONFLICT(operation_id) DO NOTHING`, dispatch.ID, dispatch.Version)
+	if err != nil {
 		return nil, err
+	}
+	if dispatch.Type == "provision" {
+		count, err := inserted.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if count == 1 {
+			if err := launchlog.MarkConfigureDispatched(ctx, tx, dispatch.ID, now); err != nil {
+				return nil, err
+			}
+		}
 	}
 	err = tx.QueryRowContext(ctx, `SELECT dispatch_version FROM guest_dispatches WHERE operation_id=$1`, dispatch.ID).
 		Scan(&dispatch.Version)
 	return &dispatch, err
 }
 
-func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input PollReport) error {
+func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input PollReport, now time.Time) error {
 	report := input.Operation
 	if report == nil {
 		if input.LastOperationID != "" || input.Version != 0 {
@@ -267,6 +283,9 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE guest_dispatches SET status=$1,container_id=$2,problem=$3 WHERE operation_id=$4`,
 		report.Status, report.Evidence.ContainerID, report.Problem, report.ID)
+	if err == nil && kind == "provision" && step == "configure" && report.Step == "devcontainer.wait_for" {
+		return launchlog.MarkConfigureReported(ctx, tx, report.ID, now)
+	}
 	return err
 }
 

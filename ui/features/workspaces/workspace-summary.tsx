@@ -15,14 +15,15 @@ const statusColors = new Map([
   ['ready', healthy], ['repair-ready', healthy], ['updated', healthy], ['healthy', healthy],
   ['provisioned', progress], ['vm-running', progress], ['container-ready', progress],
   ['stopped', inactive], ['deleted', inactive],
-  ['unreachable', unreachable], ['failed', error], ['error', error],
+  ['unreachable', unreachable], ['timed_out', unreachable], ['failed', error], ['error', error],
 ]);
 
 export function WorkspaceLifecycleStatus({ lifecycle, compact }: { lifecycle: WorkspaceLifecycle; compact?: boolean }) {
   const paused = useControllerUnavailable();
   return (
     <StateTransition compact={compact} current={<WorkspaceStatus value={lifecycle.current} />}
-      next={lifecycle.next === null ? null : <WorkspaceStatus value={lifecycle.next} />}
+      next={lifecycle.mode === 'timed_out' ? <WorkspaceStatus value="timed_out" label="Timed out · Still checking" /> :
+        lifecycle.next === null ? null : <WorkspaceStatus value={lifecycle.next} />}
       transitioning={lifecycle.mode === 'transitioning'} paused={paused} />
   );
 }

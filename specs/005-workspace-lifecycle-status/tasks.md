@@ -52,3 +52,9 @@ Use the existing toolchain, application and test fixtures. The quickstart lists 
 ## Implementation strategy
 
 Validate T001–T002 as the first reviewable slice. Then add deadline handling and outage recovery. Complete T007 before calling the feature ready.
+
+## Timeout and deployment shutdown follow-up
+
+- [X] T012 Distinguish active timeouts from terminal failures in workspace state and the Stepper. Preserve the timeout in operation history after late completion.
+- [X] T013 Let authorized owners and administrators interrupt deployment and hand off to a durable, data-preserving shutdown. Verify the action on the launch, inventory, and detail screens, including version changes as provider observations arrive.
+- [X] T014 Deploy to shiftbox-demo and verify timeout display with controlled tests and shutdown handoff with a disposable workspace. ECS ran `shiftbox-demo-controller:46`. On the demo, Stop deployment took over during startup, Stopped persisted after reload, the 32 GiB volume was retained until cleanup, and both fixtures were removed.

@@ -47,6 +47,9 @@ func (p *ProvisionExecutor) Observe(ctx context.Context, op operation.Operation,
 		return "", false, nil
 	}
 	evidence, err := p.record(ctx, req, got)
+	if err == nil {
+		p.markLaunchVMRunning(ctx, op.ID, got)
+	}
 	return evidence, err == nil, err
 }
 
@@ -65,11 +68,18 @@ func (p *ProvisionExecutor) Apply(ctx context.Context, op operation.Operation, s
 	if err := p.prepareBootstrap(ctx, &req); err != nil {
 		return "", err
 	}
-	got, err := p.provider.Create(ctx, req)
+	timed := p.observeLaunchTiming(ctx, op.ID)
+	started := time.Now()
+	got, err := p.provider.Create(timed, req)
+	provider.ReportLaunchTiming(timed, "vm_create", started, err)
 	if err != nil {
 		return "", err
 	}
-	return p.record(ctx, req, got)
+	evidence, err := p.record(ctx, req, got)
+	if err == nil {
+		p.markLaunchVMRunning(ctx, op.ID, got)
+	}
+	return evidence, err
 }
 
 func (p *ProvisionExecutor) request(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, error) {
@@ -131,6 +141,18 @@ func verifyProvisionInventory(req provider.CreateRequest, got provider.Inventory
 		!got.DiskCapacityKnown || got.Effective != req.Resources {
 		return provider.ErrOutcomeUnknown
 	}
+	if err := verifyProvisionResources(got); err != nil {
+		return err
+	}
+	return nil
+}
+
+// verifyProvisionResources checks a complete inventory before binding an instance
+// that may have been created before the original launch response was recorded.
+func verifyProvisionResources(got provider.Inventory) error {
+	if got.InstanceID == "" || !got.DiskCapacityKnown {
+		return provider.ErrOutcomeUnknown
+	}
 	ids := make(map[string]bool, len(got.Resources))
 	hasVM, hasDisk := false, false
 	for _, asset := range got.Resources {
@@ -141,10 +163,10 @@ func verifyProvisionInventory(req provider.CreateRequest, got provider.Inventory
 		if asset.Shared || asset.Immutable {
 			continue
 		}
-		if asset.Generation != want.Generation || asset.OwnershipMarker != want.OwnershipMarker {
+		if asset.Generation != got.Ref.Generation || asset.OwnershipMarker != got.Ref.OwnershipMarker {
 			return provider.ErrOwnershipMismatch
 		}
-		hasVM = hasVM || (asset.Type == "vm" && asset.ID == got.InstanceID)
+		hasVM = hasVM || asset.Type == "vm" && asset.ID == got.InstanceID
 		hasDisk = hasDisk || asset.Type == "disk"
 	}
 	if !hasVM || !hasDisk {
@@ -172,36 +194,7 @@ func (p *ProvisionExecutor) record(ctx context.Context, req provider.CreateReque
 		if err := capacityWrite(result, err); err != nil {
 			return err
 		}
-		for _, asset := range got.Resources {
-			facts, err := json.Marshal(asset)
-			if err != nil {
-				return err
-			}
-			result, err := tx.ExecContext(ctx, `INSERT INTO provider_resources
-				(workspace_id,provider_resource_id,resource_type,generation,observed_json,ownership_proof,last_observed_at)
-				VALUES($1,$2,$3,$4,$5,$6,$7)
-				ON CONFLICT(workspace_id,provider_resource_id) DO UPDATE SET observed_json=excluded.observed_json,
-				  last_observed_at=excluded.last_observed_at
-				WHERE provider_resources.resource_type=excluded.resource_type AND provider_resources.generation=excluded.generation
-				  AND provider_resources.ownership_proof=excluded.ownership_proof AND provider_resources.deleted_at IS NULL`,
-				ref.WorkspaceID, asset.ID, asset.Type, ref.Generation, string(facts), asset.OwnershipMarker, stamp)
-			if err := capacityWrite(result, err); err != nil {
-				return err
-			}
-		}
-		// An omitted resource remains unresolved until a later lifecycle
-		// operation reconciles it. A retry cannot silently discard it.
-		var tracked int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM provider_resources
-			WHERE workspace_id=$1 AND generation=$2 AND deleted_at IS NULL`, ref.WorkspaceID, ref.Generation).Scan(&tracked); err != nil {
-			return err
-		}
-		if tracked != len(got.Resources) {
-			return provider.ErrOutcomeUnknown
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO guest_registrations(workspace_id,generation,state)
-			VALUES($1,$2,'eligible') ON CONFLICT(workspace_id,generation) DO NOTHING`, ref.WorkspaceID, ref.Generation)
-		return err
+		return recordProvisionResources(ctx, tx, got)
 	})
 	if err != nil {
 		return "", err
@@ -210,6 +203,41 @@ func (p *ProvisionExecutor) record(ctx context.Context, req provider.CreateReque
 		return "Provider confirmed the running workspace VM and its resources.", nil
 	}
 	return "Provider confirmed the stopped workspace VM and its resources.", nil
+}
+
+func recordProvisionResources(ctx context.Context, tx *sql.Tx, got provider.Inventory) error {
+	ref := got.Ref
+	stamp := got.ObservedAt.UTC().Format(time.RFC3339Nano)
+	for _, asset := range got.Resources {
+		facts, err := json.Marshal(asset)
+		if err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `INSERT INTO provider_resources
+			(workspace_id,provider_resource_id,resource_type,generation,observed_json,ownership_proof,last_observed_at)
+			VALUES($1,$2,$3,$4,$5,$6,$7)
+			ON CONFLICT(workspace_id,provider_resource_id) DO UPDATE SET observed_json=excluded.observed_json,
+			  last_observed_at=excluded.last_observed_at
+			WHERE provider_resources.resource_type=excluded.resource_type AND provider_resources.generation=excluded.generation
+			  AND provider_resources.ownership_proof=excluded.ownership_proof AND provider_resources.deleted_at IS NULL`,
+			ref.WorkspaceID, asset.ID, asset.Type, ref.Generation, string(facts), asset.OwnershipMarker, stamp)
+		if err := capacityWrite(result, err); err != nil {
+			return err
+		}
+	}
+	// An omitted resource remains unresolved until a later lifecycle
+	// operation reconciles it. A retry cannot silently discard it.
+	var tracked int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM provider_resources
+		WHERE workspace_id=$1 AND generation=$2 AND deleted_at IS NULL`, ref.WorkspaceID, ref.Generation).Scan(&tracked); err != nil {
+		return err
+	}
+	if tracked != len(got.Resources) {
+		return provider.ErrOutcomeUnknown
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO guest_registrations(workspace_id,generation,state)
+		VALUES($1,$2,'eligible') ON CONFLICT(workspace_id,generation) DO NOTHING`, ref.WorkspaceID, ref.Generation)
+	return err
 }
 
 // Freeze the public user data before the external launch. Retries reuse the

@@ -130,7 +130,7 @@ test('shows the timed-out step and reason through late completion', () => {
     step.key === 'boot' ? { ...step, timeout } : step,
   ) };
   const { rerender } = render(view(waiting));
-  expect(screen.getByRole('button', { name: 'Start machine: Timed out' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Start machine: Timed out · Still checking' })).toBeVisible();
   expect(screen.getByText(timeout.reason)).toBeVisible();
 
   rerender(view({
@@ -138,6 +138,6 @@ test('shows the timed-out step and reason through late completion', () => {
     steps: waiting.steps.map(step => ({ ...step, status: 'succeeded' })),
   }));
   expect(screen.getByRole('status')).toHaveTextContent('Completed');
-  expect(screen.getByRole('button', { name: 'Start machine: Completed · Timed out' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Start machine: Completed after timeout' })).toBeVisible();
   expect(screen.getByText(timeout.reason)).toBeVisible();
 });

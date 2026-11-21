@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/distribution/reference"
 )
@@ -52,11 +53,30 @@ func imageCacheHosts(endpoint string, directFallback bool, caPath, certPath, key
 }
 
 func (d devContainer) prepareImage(ctx context.Context) error {
+	started := time.Now()
+	image, err := d.resolveImage(ctx)
+	d.measurePhase("image_configuration", started, err)
+	if err != nil || image == "" {
+		return err // The embedded Docker builder handles Dockerfile bases.
+	}
+	started = time.Now()
+	_, err = d.runner()(ctx, dockerExecutable, "pull", image)
+	d.measurePhase("image_prefetch", started, err)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errors.New("cannot pull the devcontainer image")
+	}
+	return nil
+}
+
+func (d devContainer) resolveImage(ctx context.Context) (string, error) {
 	image := d.literalImage()
 	if image == "" {
 		body, err := d.command(ctx, "read-configuration")
 		if err != nil {
-			return err
+			return "", err
 		}
 		var config struct {
 			Configuration *struct {
@@ -64,23 +84,14 @@ func (d devContainer) prepareImage(ctx context.Context) error {
 			} `json:"configuration"`
 		}
 		if len(body) > devContainerOutputMax || json.Unmarshal(body, &config) != nil || config.Configuration == nil {
-			return errors.New("Dev Container CLI did not return resolved configuration")
+			return "", errors.New("Dev Container CLI did not return resolved configuration")
 		}
 		image = config.Configuration.Image
 	}
-	if image == "" {
-		return nil // The embedded Docker builder handles Dockerfile bases.
-	}
 	if strings.HasPrefix(image, "-") || strings.ContainsAny(image, " \t\r\n\x00") {
-		return errors.New("invalid devcontainer image reference")
+		return "", errors.New("invalid devcontainer image reference")
 	}
-	if _, err := d.runner()(ctx, dockerExecutable, "pull", image); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return errors.New("cannot pull the devcontainer image")
-	}
-	return nil
+	return image, nil
 }
 
 // literalImage recognizes an explicit image in ordinary JSON. The reference CLI

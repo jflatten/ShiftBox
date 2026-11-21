@@ -14,6 +14,7 @@ import (
 
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/imagecache"
+	"github.com/jflatten/ShiftBox/internal/launchlog"
 	"github.com/jflatten/ShiftBox/internal/workspace"
 )
 
@@ -37,6 +38,7 @@ type workspaceView struct {
 	Version            int64              `json:"version"`
 	keepAliveOverride  *int64
 	createdAt          string
+	hasProviderVM      bool
 }
 
 type workspaceListItem struct {
@@ -61,7 +63,7 @@ const workspaceProjection = `w.id,w.owner_user_id,w.template_id,w.template_revis
 	w.desired_state,w.observed_state,w.generation,w.cpu_count,w.memory_mib,w.disk_mib,
 	w.active_operation_id,w.last_activity_at,w.retention_deadline,w.version,w.preview_ports_json,
 	COALESCE(NULLIF(w.name,''),w.id),w.keep_alive_minutes,w.created_at,
-	w.lifecycle_current,w.lifecycle_next,w.lifecycle_mode,w.workflow_operation_id`
+	w.lifecycle_current,w.lifecycle_next,w.lifecycle_mode,w.workflow_operation_id,(w.provider_instance_id IS NOT NULL)`
 
 const workspaceFrom = ` FROM workspace_lifecycle w JOIN platform_artifacts a ON a.id=w.platform_artifact_id`
 
@@ -97,11 +99,13 @@ var workspaceLifecycleQuery = `
 		   AND NOT (o.type='delete' AND w.observed_state='stopped' AND m.milestone='stopped')
 		 ORDER BY s.step_index LIMIT 1) AS target,
 		EXISTS (SELECT 1 FROM operation_steps s JOIN lifecycle_steps m ON m.step_key=s.step_key
-		 WHERE s.operation_id=o.id AND o.status<>'cancelled' AND (s.status='failed' OR (
-		   s.transition_timeout_at IS NOT NULL AND o.status IN ('pending','running','waiting') AND NOT EXISTS (
+		WHERE s.operation_id=o.id AND o.status<>'cancelled' AND s.status='failed') AS transition_failed,
+		EXISTS (SELECT 1 FROM operation_steps s JOIN lifecycle_steps m ON m.step_key=s.step_key
+		WHERE s.operation_id=o.id AND s.transition_timeout_at IS NOT NULL AND o.status IN ('pending','running','waiting')
+		   AND NOT EXISTS (
 			 SELECT 1 FROM operation_steps confirmed JOIN lifecycle_steps verified ON verified.step_key=confirmed.step_key
 			 WHERE confirmed.operation_id=o.id AND confirmed.status='succeeded' AND confirmed.step_index>=s.step_index
-			   AND verified.confirms AND verified.milestone=m.milestone)))) AS transition_failed,
+			   AND verified.confirms AND verified.milestone=m.milestone)) AS transition_timed_out,
 		EXISTS (SELECT 1 FROM operation_steps s WHERE s.operation_id=o.id AND s.step_key='maintenance_boot') AS maintenance_boot
 	FROM workflow w LEFT JOIN operations o ON o.id=w.workflow_operation_id
 ), workspace_lifecycle AS (
@@ -121,6 +125,7 @@ var workspaceLifecycleQuery = `
 		END AS lifecycle_current,
 		CASE WHEN observed_state='deleted' THEN NULL WHEN transition_failed THEN 'failed' ELSE target END AS lifecycle_next,
 		CASE WHEN observed_state='deleted' THEN 'settled' WHEN transition_failed THEN 'failed'
+			WHEN target IS NOT NULL AND transition_timed_out THEN 'timed_out'
 			WHEN target IS NOT NULL THEN 'transitioning' ELSE 'settled' END AS lifecycle_mode
 	FROM evidence w
 )
@@ -220,6 +225,14 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 			}
 			var lastFailedID *string
 			var canStartRepair, canRetryAfterRepair bool
+			var canInterruptDeployment bool
+			if view.CurrentOperationID != nil && auth.Authorize(principal, "workspace.stop", target.Resource, nil, now()).Allowed {
+				deployment, err := workspace.InterruptibleDeployment(ctx, tx, view.ID)
+				if err != nil {
+					return nil, err
+				}
+				canInterruptDeployment = deployment == *view.CurrentOperationID
+			}
 			if view.CurrentOperationID == nil {
 				// A later successful workflow supersedes an older failure.
 				err := tx.QueryRowContext(ctx, `SELECT CASE WHEN status='failed' THEN id END
@@ -246,6 +259,10 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 			if err != nil {
 				return nil, err
 			}
+			launchOperationID, err := launchlog.WorkspaceOperation(ctx, tx, view.ID)
+			if err != nil {
+				return nil, err
+			}
 			// Expose the current entry decision without issuing a grant.
 			response := struct {
 				workspaceView
@@ -263,6 +280,9 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 				InactivityMinutes        int64                           `json:"inactivityMinutes"`
 				CanStartRepair           bool                            `json:"canStartRepair"`
 				CanRetryAfterRepair      bool                            `json:"canRetryAfterRepair"`
+				CanInterruptDeployment   bool                            `json:"canInterruptDeployment"`
+				CanStart                 bool                            `json:"canStart"`
+				LaunchOperationID        *string                         `json:"launchOperationId,omitempty"`
 				LastFailedOperationID    *string                         `json:"lastFailedOperationId"`
 				Retention                *WorkspaceRetentionStatus       `json:"retention,omitempty"`
 				Maintenance              *workspace.WorkspaceMaintenance `json:"maintenance,omitempty"`
@@ -283,6 +303,9 @@ func WorkspaceReadHandlers(db *sql.DB, origin string, now func() time.Time,
 				InactivityMinutes:        inactivityMinutes,
 				CanStartRepair:           canStartRepair,
 				CanRetryAfterRepair:      canRetryAfterRepair,
+				CanInterruptDeployment:   canInterruptDeployment,
+				CanStart:                 view.hasProviderVM && auth.Authorize(principal, "workspace.start", target.Resource, nil, now()).Allowed,
+				LaunchOperationID:        launchOperationID,
 				LastFailedOperationID:    lastFailedID,
 				Maintenance:              maintenance,
 			}
@@ -412,7 +435,7 @@ func scanWorkspace(row interface{ Scan(...any) error }) (workspaceView, error) {
 		&view.Resources.CPUCount, &view.Resources.MemoryMiB, &view.Resources.DiskMiB,
 		&view.CurrentOperationID, &view.LastActivityAt, &view.RetentionDeadline, &view.Version, &previewJSON, &view.Name,
 		&view.keepAliveOverride, &view.createdAt, &view.Lifecycle.Current, &view.Lifecycle.Next, &view.Lifecycle.Mode,
-		&view.Lifecycle.WorkflowOperationID)
+		&view.Lifecycle.WorkflowOperationID, &view.hasProviderVM)
 	if err != nil {
 		return view, err
 	}

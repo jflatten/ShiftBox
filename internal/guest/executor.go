@@ -72,10 +72,18 @@ func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDisp
 		return OperationReport{}, err
 	}
 	next := *j.state.Operation
+	if runtime.logQueue != nil {
+		runtime.logOutput = func(text string) {
+			queueWorkspaceLog(runtime.logQueue, dispatch, text)
+		}
+	}
 	if runtime.timing == nil {
 		runtime.timing = func(phase string, elapsed time.Duration, outcome string) {
 			slog.InfoContext(ctx, "Dev Container phase timing", "operation_id", dispatch.ID,
 				"phase", phase, "duration_ms", elapsed.Milliseconds(), "outcome", outcome)
+			if runtime.launchTiming != nil {
+				runtime.uploadLaunchTiming(ctx, dispatch, phase, elapsed, outcome)
+			}
 		}
 	}
 	var effectErr error

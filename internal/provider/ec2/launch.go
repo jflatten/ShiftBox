@@ -58,9 +58,14 @@ func (p *Provider) create(ctx context.Context, req provider.CreateRequest, image
 	instance, err := p.findInstance(ctx, req.Ref)
 	switch {
 	case errors.Is(err, provider.ErrNotFound) && req.Ref.InstanceID == "":
+		submitted := time.Now()
 		result, err := p.client.RunInstances(ctx, p.launchInput(req, image))
 		if err != nil {
-			return provider.Inventory{}, apiError(err)
+			err = apiError(err)
+		}
+		provider.ReportLaunchTiming(ctx, "ec2_run_instances", submitted, err)
+		if err != nil {
+			return provider.Inventory{}, err
 		}
 		if len(result.Instances) != 1 || aws.ToString(result.Instances[0].InstanceId) == "" {
 			return provider.Inventory{}, provider.ErrOutcomeUnknown
@@ -71,7 +76,9 @@ func (p *Provider) create(ctx context.Context, req provider.CreateRequest, image
 	default:
 		req.Ref.InstanceID = aws.ToString(instance.InstanceId)
 	}
+	waiting := time.Now()
 	instance, err = p.waitInstance(ctx, req.Ref, provider.Running, provider.Stopping, provider.Stopped)
+	provider.ReportLaunchTiming(ctx, "vm_initial_power", waiting, err)
 	if err != nil {
 		return provider.Inventory{}, err
 	}

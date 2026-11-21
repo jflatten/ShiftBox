@@ -227,6 +227,8 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	err = app.ServeController(ctx, dexDone, browser.Serve, workspaces.Serve, func(ctx context.Context) error {
 		return app.RunHistoryRetention(ctx, state.DB, cfg, checkpoint)
 	}, func(ctx context.Context) error {
+		return app.RunLaunchLogRetention(ctx, state.DB, checkpoint)
+	}, func(ctx context.Context) error {
 		if settings.Provider == "ec2" {
 			return app.RunOperationalConditions(ctx, state.DB, cfg.InstallationDir, "", 0, nil, checkpoint)
 		}

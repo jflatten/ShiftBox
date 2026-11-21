@@ -113,6 +113,8 @@ func TestWorkspaceLifecycleReadContract(t *testing.T) {
 		"name: state, in: query", "name: lifecycleState",
 		"lifecycle: { $ref: '#/components/schemas/WorkspaceLifecycle' }",
 		"required: [current, next, mode, workflowOperationId]",
+		"enum: [settled, transitioning, timed_out, failed]",
+		"canInterruptDeployment:",
 	} {
 		if !strings.Contains(string(data), declaration) {
 			t.Errorf("workspace read contract missing %q", declaration)

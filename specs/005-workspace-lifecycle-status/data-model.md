@@ -2,7 +2,7 @@
 
 ## Workspace snapshot
 
-Derive the display from the current workspace generation, intended and observed states, and relevant committed operation steps. `current` is required. `next` is nullable. `mode` is one of `settled`, `transitioning`, `failed`. Settled requires a null next value. Transitioning requires a next milestone. Failed requires next exactly `failed`. A nullable workflow reference links the detail Stepper to the authoritative workflow, including its settled or failed record after reload. Existing active operation IDs remain available for command gating.
+Derive the display from the current workspace generation, intended and observed states, and relevant committed operation steps. `current` is required. `next` is nullable. `mode` is one of `settled`, `transitioning`, `timed_out`, and `failed`. Settled requires a null next value. Transitioning and timed out retain a next milestone. Failed requires next exactly `failed`. A nullable workflow reference links the detail Stepper to the authoritative workflow, including its settled or failed record after reload. Existing active operation IDs remain available for command gating.
 
 Use a single mapping of lifecycle milestones to journal evidence to drive projection and timeout scope. The arrows below show the proposed short labels and milestone order. The Stepper retains intermediate journal steps and their full labels.
 

@@ -91,9 +91,10 @@ type lifecycleRead struct {
 }
 
 type lifecycleWorkspaceRead struct {
-	ID         string        `json:"id"`
-	Lifecycle  lifecycleRead `json:"lifecycle"`
-	CanOpenIDE bool          `json:"canOpenIde"`
+	ID                     string        `json:"id"`
+	Lifecycle              lifecycleRead `json:"lifecycle"`
+	CanOpenIDE             bool          `json:"canOpenIde"`
+	CanInterruptDeployment bool          `json:"canInterruptDeployment"`
 }
 
 type lifecyclePage struct {
@@ -358,7 +359,7 @@ func decodeLifecycleRead(t *testing.T, response *httptest.ResponseRecorder, view
 }
 
 // TestWorkspaceLifecycleTimeoutClearsOnLateCompletion keeps a grouped
-// transition failed until its final milestone, even after an intermediate step succeeds.
+// transition timed out until its final milestone, even after an intermediate step succeeds.
 func TestWorkspaceLifecycleTimeoutClearsOnLateCompletion(t *testing.T) {
 	db := keepAliveDatabase(t)
 	_, request := lifecycleReads(t, db)
@@ -377,9 +378,39 @@ func TestWorkspaceLifecycleTimeoutClearsOnLateCompletion(t *testing.T) {
 			t.Errorf("stop lifecycle = %+v, want %+v", detail.Lifecycle, want)
 		}
 	}
-	check("vm-running", "failed", new("failed"))
+	check("vm-running", "timed_out", new("stopped"))
 	executeLifecycleFixture(t, db, `UPDATE workspaces SET observed_state='stopped';
 		UPDATE operation_steps SET status='succeeded' WHERE step_key='stop';
 		UPDATE operations SET status='succeeded' WHERE id='stop'`)
 	check("stopped", "settled", nil)
+}
+
+// TestDeploymentInterruptCapability exposes the stop action to authorized
+// callers during launch but withdraws it as soon as shutdown owns the workspace.
+func TestDeploymentInterruptCapability(t *testing.T) {
+	db := keepAliveDatabase(t)
+	principal, request := lifecycleReads(t, db)
+	executeLifecycleFixture(t, db, `UPDATE workspaces SET desired_state='running',observed_state='starting';
+		INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,created_at,version,originating_action)
+		VALUES('launch',$1,'provision',1,'user','launch','waiting','2026-11-13T23:00:00Z',1,'workspace.launch');`, lifecycleWorkspaceID)
+	check := func(want bool) {
+		t.Helper()
+		var read lifecycleWorkspaceRead
+		decodeLifecycleRead(t, request("/"+lifecycleWorkspaceID), &read)
+		if read.CanInterruptDeployment != want {
+			t.Errorf("canInterruptDeployment = %t, want %t", read.CanInterruptDeployment, want)
+		}
+	}
+	check(true)
+	principal.User.ID, principal.Session.UserID = "another-user", "another-user"
+	if got := request("/" + lifecycleWorkspaceID).Code; got != http.StatusNotFound {
+		t.Fatalf("other member read = %d, want 404", got)
+	}
+	principal.User.Role = "administrator"
+	check(true)
+	executeLifecycleFixture(t, db, `UPDATE workspaces SET desired_state='stopped';
+		UPDATE operations SET status='cancelled' WHERE id='launch';
+		INSERT INTO operations(id,workspace_id,type,generation,requested_by,request_key,status,created_at,version,originating_action)
+		VALUES('stop',$1,'stop',1,'user','stop','pending','2026-11-13T23:01:00Z',1,'workspace.stop_deployment');`, lifecycleWorkspaceID)
+	check(false)
 }

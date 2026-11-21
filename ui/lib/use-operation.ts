@@ -1,16 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { WorkflowOperation } from '../components/workflow-stepper';
+import type { components } from './api-types';
 import { subscribeOperation } from './operation-events';
 import { APIProblemError, ControllerUnavailableError, readControllerJSON } from './api-problem';
 import { controllerPollInterval, controllerReadOptions } from './query-client';
 
-type Operation = WorkflowOperation & { type: string; version: number };
+type Operation = WorkflowOperation & Pick<components['schemas']['Operation'],
+  'type' | 'version' | 'finishedAt' | 'launchPerformance'>;
 
 /** useOperation keeps workflow snapshots in memory and revalidates after SSE changes. */
-export function useOperation(operationId: string) {
+export function useOperation(operationId: string | undefined) {
   const client = useQueryClient();
   const [revokedId, setRevokedId] = useState<string | null>(null);
   const query = useQuery<Operation>({
@@ -19,9 +21,15 @@ export function useOperation(operationId: string) {
     enabled: revokedId !== operationId,
     gcTime: 0,
     retry: false,
-    refetchInterval: query => query.state.error instanceof ControllerUnavailableError ? controllerPollInterval : false,
-    queryFn: ({ signal }) => readControllerJSON(`/api/v1/operations/${encodeURIComponent(operationId)}`,
-      { signal, credentials: 'same-origin', cache: 'no-store' }),
+    refetchInterval: query => {
+      if (query.state.error instanceof ControllerUnavailableError) return controllerPollInterval;
+      const data = query.state.data;
+      if (!data?.launchPerformance || query.state.error) return false;
+      // Guest and registry measurements update independently of the Stepper.
+      return !data.finishedAt || Date.now() - Date.parse(data.finishedAt) < 15_000 ? 3_000 : false;
+    },
+    queryFn: operationId ? ({ signal }) => readControllerJSON(`/api/v1/operations/${encodeURIComponent(operationId)}`,
+      { signal, credentials: 'same-origin', cache: 'no-store' }) : skipToken,
   });
   const accessDenied = revokedId === operationId ||
     (query.error instanceof APIProblemError && [401, 403, 404].includes(query.error.problem.status));
@@ -29,7 +37,7 @@ export function useOperation(operationId: string) {
   const listening = !accessDenied && status !== undefined && !['succeeded', 'failed', 'cancelled'].includes(status);
 
   useEffect(() => {
-    if (!listening) return;
+    if (!operationId || !listening) return;
     const queryKey = ['operations', operationId];
     return subscribeOperation(operationId, () => {
       // Invalidation cancels an older in-flight read before fetching fresh state.

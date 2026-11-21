@@ -13,10 +13,11 @@
   | `container-ready` | `ready` | `transitioning` |
   | `ready` | `null` | `settled` |
 
-- Example failure while verifying the IDE shows `container-ready`, `failed`, `failed`. The Stepper shows the Verify browser IDE step and its reason. Late success can replace that live pair with Ready.
+- A terminal IDE verification failure returns `container-ready`, `failed`, `failed`. If verification is still pending after its deadline, the snapshot returns `container-ready`, `ready`, `timed_out` until verification or a terminal outcome. The Stepper shows the affected step and its reason.
 
 ## Operation and connectivity behavior
 
+- Workspace detail includes `canInterruptDeployment`. When true, the existing authorized stop action accepts shutdown and cancels the active deployment in the same transaction. Use the returned operation ID to follow shutdown.
 - The existing authorized operation read and event snapshots carry an optional timeout annotation on the blocked step containing `occurredAt` and `reason`. The Stepper labels the annotation Timed out even if the step later succeeds. Existing operation statuses, event authorization and cancellation remain in force.
 - The browser updates chips from successful workspace reads. The detail event stream serves its one selected operation and can request an early scoped refresh. Locally accepted commands never count as verified milestones.
 - On lost connectivity, retain last rendered authorized progress for display and pause the connector in place. A single titled application modal covers the existing view. Participating reads keep checking. A successful or genuine permission/domain response clears the notice while actual permission errors continue to remove access, including cached protected content.

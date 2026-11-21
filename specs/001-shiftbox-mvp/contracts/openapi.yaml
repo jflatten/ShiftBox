@@ -412,6 +412,27 @@ paths:
               schema: { $ref: '#/components/schemas/Workspace' }
         default: { $ref: '#/components/responses/Error' }
 
+  /workspaces/{workspaceId}/logs:
+    get:
+      tags: [Workspaces]
+      operationId: streamWorkspaceLogs
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string, pattern: '^[0-9]+$' }
+      responses:
+        '200':
+          description: Owner-only stream of recent and live Dev Container output. Each workspace.log event carries a JSON object with the output text.
+          content:
+            text/event-stream:
+              schema:
+                type: object
+                required: [text]
+                properties:
+                  text: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+
   /workspaces/{workspaceId}/actions/{action}:
     post:
       tags: [Workspaces]
@@ -1223,6 +1244,28 @@ paths:
               schema: { $ref: '#/components/schemas/ImageCacheActivationOperation' }
         default: { $ref: '#/components/responses/Error' }
 
+  /admin/launch-log-retention:
+    put:
+      tags: [Infrastructure]
+      operationId: updateLaunchLogRetention
+      description: Sets the retention period for completed launch diagnostic records.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [days]
+              properties:
+                days: { type: integer, minimum: 1, maximum: 3650 }
+      responses:
+        '204': { description: Launch log retention saved }
+        default: { $ref: '#/components/responses/Error' }
+
   /admin/keep-alive:
     put:
       tags: [Infrastructure]
@@ -1610,6 +1653,10 @@ components:
         generation: { type: integer, minimum: 1 }
         resources: { $ref: '#/components/schemas/Resources' }
         currentOperationId: { type: [string, 'null'], format: uuid }
+        launchOperationId:
+          type: string
+          format: uuid
+          description: Initial launch operation when available on workspace detail.
         lifecycle: { $ref: '#/components/schemas/WorkspaceLifecycle' }
         previewPorts:
           type: array
@@ -1624,6 +1671,12 @@ components:
           items: { type: string, enum: [code-server] }
         canOpenPreviews: { type: boolean }
         canEditPreviewPorts: { type: boolean }
+        canInterruptDeployment:
+          type: boolean
+          description: Included on workspace detail. The caller can use the stop action to cancel an active deployment and start shutdown.
+        canStart:
+          type: boolean
+          description: Included on workspace detail. The caller has start permission and a retained provider VM.
         imageCache: { $ref: '#/components/schemas/WorkspaceImageCache' }
         lastActivityAt: { type: [string, 'null'], format: date-time }
         retentionDeadline: { type: [string, 'null'], format: date-time }
@@ -1664,7 +1717,7 @@ components:
             - { $ref: '#/components/schemas/WorkspaceLifecycleMilestone' }
             - { type: string, const: failed }
             - { type: 'null' }
-        mode: { type: string, enum: [settled, transitioning, failed] }
+        mode: { type: string, enum: [settled, transitioning, timed_out, failed] }
         workflowOperationId: { type: [string, 'null'], format: uuid }
 
     Resources:
@@ -1850,6 +1903,52 @@ components:
         startedAt: { type: [string, 'null'], format: date-time }
         finishedAt: { type: [string, 'null'], format: date-time }
         version: { type: integer, minimum: 1 }
+        launchPerformance:
+          description: Launch-only timing details. Guest events are guest reported.
+          $ref: '#/components/schemas/LaunchPerformance'
+
+    LaunchPerformance:
+      type: object
+      required: [steps, events]
+      properties:
+        timeToIdeReadyMs: { type: integer, minimum: 0 }
+        timeToSetupCompleteMs: { type: integer, minimum: 0 }
+        vmRunningToGuestContactMs: { type: integer, minimum: 0 }
+        steps:
+          type: array
+          items:
+            type: object
+            required: [key, label, status, durationMs]
+            properties:
+              key: { type: string }
+              label: { type: string }
+              status: { type: string, enum: [pending, active, succeeded, failed, skipped] }
+              startedAt: { type: string, format: date-time }
+              durationMs: { type: integer, minimum: 0 }
+        events:
+          type: array
+          items:
+            type: object
+            required: [id, source, phase, outcome, occurredAt, durationMs]
+            properties:
+              id: { type: string }
+              source: { type: string, enum: [controller, provider, guest] }
+              phase: { type: string }
+              outcome: { type: string, enum: [succeeded, failed, observed] }
+              occurredAt: { type: string, format: date-time }
+              durationMs: { type: integer, minimum: 0 }
+              reasonCode: { type: string }
+        cache:
+          type: object
+          required: [requests, cachedRequests, failedRequests, rateLimitedRequests, cachedBytes, upstreamBytes, windowMs]
+          properties:
+            requests: { type: integer, minimum: 1 }
+            cachedRequests: { type: integer, minimum: 0 }
+            failedRequests: { type: integer, minimum: 0 }
+            rateLimitedRequests: { type: integer, minimum: 0 }
+            cachedBytes: { type: integer, minimum: 0 }
+            upstreamBytes: { type: integer, minimum: 0 }
+            windowMs: { type: integer, minimum: 0 }
 
     OperationStep:
       type: object
@@ -1988,6 +2087,12 @@ components:
         provider: { $ref: '#/components/schemas/InfrastructureProvider' }
         capacity: { $ref: '#/components/schemas/CapacityBudget' }
         keepAlivePolicy: { $ref: '#/components/schemas/KeepAlivePolicy' }
+        launchLogRetention:
+          type: object
+          required: [days, version]
+          properties:
+            days: { type: integer, minimum: 1, maximum: 3650, default: 30 }
+            version: { type: integer, minimum: 1 }
         conditions:
           type: array
           items:

@@ -131,7 +131,7 @@ func stopUTMEnrolledFixture(t *testing.T, ctx context.Context, db *sql.DB, journ
 	err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
 		now := time.Now()
 		// This fixture exercises the enrolled management agent without checkout.
-		if err := journal.CancelInTx(ctx, tx, provisionID, now); err != nil {
+		if err := journal.CancelInTx(ctx, tx, provisionID, "Cancelled by release test.", now); err != nil {
 			return err
 		}
 		var err error

@@ -39,6 +39,27 @@ const activePowerWork = `EXISTS (
 		AND status IN ('pending','running','waiting'))
 	OR EXISTS (` + dueMaintenanceTarget + ` AND c.deadline<=$2)`
 
+const deploymentStopAction = "workspace.stop_deployment"
+
+// InterruptibleDeployment identifies the sole active deployment that a
+// workspace stop can supersede. Maintenance and deletion remain independent.
+func InterruptibleDeployment(ctx context.Context, tx *sql.Tx, id string) (string, error) {
+	var deployment string
+	err := tx.QueryRowContext(ctx, `SELECT o.id FROM operations o JOIN workspaces w ON w.id=o.workspace_id
+		WHERE w.id=$1 AND w.desired_state='running' AND w.observed_state<>'deleted'
+		  AND o.generation=w.generation AND o.status IN ('pending','running','waiting')
+		  AND (o.type='provision' AND o.originating_action='workspace.launch'
+		    OR o.type='start' AND o.originating_action='workspace.start'
+		    OR o.type='rebuild' AND o.originating_action IN ('workspace.rebuild','workspace.repair'))
+		  AND NOT EXISTS (SELECT 1 FROM operations other WHERE other.workspace_id=w.id
+		    AND other.generation=w.generation AND other.id<>o.id AND other.status IN ('pending','running','waiting'))`,
+		id).Scan(&deployment)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return deployment, err
+}
+
 // ReadSSHStart applies the same competing-work check as AdmitPower and
 // identifies an already admitted start for the exact workspace generation.
 func ReadSSHStart(ctx context.Context, tx *sql.Tx, id string, generation int64, now time.Time) (SSHStart, error) {
@@ -108,7 +129,8 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		if err != nil {
 			return operation.Operation{}, err
 		}
-		if op.WorkspaceID == nil || *op.WorkspaceID != intent.WorkspaceID || op.Type != kind || op.OriginatingAction != action {
+		actionMatches := op.OriginatingAction == action || intent.Action == "stop" && op.OriginatingAction == deploymentStopAction
+		if op.WorkspaceID == nil || *op.WorkspaceID != intent.WorkspaceID || op.Type != kind || !actionMatches {
 			return operation.Operation{}, ErrPowerConflict
 		}
 		return op, nil
@@ -134,10 +156,24 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 		intent.WorkspaceID, now.UTC().Format(maintenanceTime)).Scan(&active); err != nil {
 		return operation.Operation{}, err
 	}
-	if active {
+	var deployment string
+	if active && intent.Action == "stop" {
+		deployment, err = InterruptibleDeployment(ctx, tx, intent.WorkspaceID)
+		if err != nil {
+			return operation.Operation{}, err
+		}
+	}
+	if active && deployment == "" {
 		return operation.Operation{}, ErrOperationInProgress
 	}
-	if current == "deleted" || observed == "deleted" || instance == "" {
+	var unprovisioned bool
+	if instance == "" && intent.Action == "delete" && observed == "stopped" {
+		if err := tx.QueryRowContext(ctx, `SELECT `+unprovisionedWorkspace+` FROM workspaces w WHERE w.id=$1`,
+			intent.WorkspaceID).Scan(&unprovisioned); err != nil {
+			return operation.Operation{}, err
+		}
+	}
+	if current == "deleted" || observed == "deleted" || instance == "" && deployment == "" && !unprovisioned {
 		return operation.Operation{}, provider.ErrInvalidState
 	}
 	if desired == "running" && intent.Action != "start" && (current != "running" || observed != "running") {
@@ -179,9 +215,22 @@ func AdmitPower(ctx context.Context, tx *sql.Tx, journal *operation.Journal, int
 	var steps []operation.Step
 	switch intent.Action {
 	case "stop":
-		steps = []operation.Step{{Key: "shutdown", Label: "Stop workspace workloads"}, {Key: "stop", Label: label}}
+		if deployment == "" {
+			steps = []operation.Step{{Key: "shutdown", Label: "Stop workspace workloads"}, {Key: "stop", Label: label}}
+		} else {
+			if err := journal.CancelInTx(ctx, tx, deployment, "Cancelled by a workspace shutdown request.", now); err != nil {
+				return operation.Operation{}, err
+			}
+			// The guest may be stuck in setup or may not be enrolled yet.
+			// Use the provider's normal graceful shutdown for this handoff.
+			action = deploymentStopAction
+			steps = []operation.Step{{Key: "stop", Label: label}}
+		}
 	case "delete":
 		steps = deletionSteps()
+		if unprovisioned {
+			steps = steps[len(steps)-1:]
+		}
 		if err := revokeDeletionGrants(ctx, tx, intent.WorkspaceID, now.UTC().Format(time.RFC3339Nano)); err != nil {
 			return operation.Operation{}, err
 		}
