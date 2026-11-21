@@ -26,6 +26,7 @@ type PollReport struct {
 	Operation        *OperationReport
 	Activity         *workspace.CPUActivity
 	WatchedProcesses *workspace.ProcessActivity
+	SSHActivityAt    *time.Time
 	Probes           []workspace.ProbeResult
 	IDEConnected     func(workspaceID string) bool
 	ActivityPolicy   *workspace.ActivityPolicy
@@ -90,9 +91,11 @@ func (e *Enrollment) Exchange(ctx context.Context, leaf *x509.Certificate, now t
 				return err
 			}
 		}
-		// Guest CPU and browser connections are not evidence of human use.
-		// Only an explicitly watched process can renew activity through polls.
+		// Guest CPU and open connections do not renew the activity clock.
 		if err := workspace.RecordProcessActivity(ctx, tx, contact.WorkspaceID, contact.Generation, now, report.WatchedProcesses); err != nil {
+			return err
+		}
+		if err := workspace.RecordSSHActivity(ctx, tx, contact.WorkspaceID, contact.Generation, now, report.SSHActivityAt); err != nil {
 			return err
 		}
 		dispatch, err = nextGuestOperation(ctx, tx, contact, now)

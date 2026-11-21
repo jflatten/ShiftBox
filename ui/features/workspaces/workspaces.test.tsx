@@ -256,6 +256,40 @@ test('shows the VS Code badge in Services and opens the IDE in a separate tab', 
   expect(fetch).not.toHaveBeenCalledWith(`/api/v1/workspaces/${workspace.id}`, expect.anything());
 });
 
+// A helper that can reach workspace SSH enables the keyboard-accessible icon and
+// exposes the exact locally configured command. An offline service removes it.
+test('shows the SSH service and copies the command from its dialog', async () => {
+  const user = userEvent.setup();
+  const copy = jest.spyOn(navigator.clipboard, 'writeText');
+  let helperOnline = true;
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/workspaces?excludeDeleted=true') {
+      return json({ items: [{ ...workspace, observedState: 'running', lifecycle: lifecycle('ready') }], nextCursor: null });
+    }
+    if (String(input) === 'http://127.0.0.1:48652/v1/ssh-alias?workspace=workspace-one&account=member') {
+      return helperOnline ? json({ alias: 'shiftbox-local-project-2' }) : problem(404, 'ssh.not_available', 'Unavailable');
+    }
+    throw new Error(`unexpected request: ${input}`);
+  });
+
+  render(<Providers><Workspaces workspaceId={null} /></Providers>);
+  const icon = await screen.findByRole('button', { name: 'Connect with SSH' });
+  act(() => icon.focus());
+  await user.keyboard('{Enter}');
+  const modal = await screen.findByRole('dialog', { name: 'Connect with SSH' });
+  expect(within(modal).getByText('ssh shiftbox-local-project-2')).toBeVisible();
+  await user.click(within(modal).getByRole('button', { name: 'Copy SSH command' }));
+  expect(copy).toHaveBeenCalledWith('ssh shiftbox-local-project-2');
+  expect(within(modal).getByRole('status')).toHaveTextContent('Copied');
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(icon).toHaveFocus());
+
+  helperOnline = false;
+  await user.click(screen.getByRole('button', { name: 'Refresh' }));
+  await waitFor(() => expect(icon).not.toBeInTheDocument());
+});
+
 // Workspace detail updates the read-only probe chip as the service fails and its report expires.
 test('shows the latest code-server probe on workspace detail', async () => {
   let probes = [{ id: 'code-server', status: 'healthy' }];

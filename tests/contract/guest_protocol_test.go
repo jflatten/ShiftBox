@@ -232,7 +232,7 @@ func TestGuestPollContract(t *testing.T) {
 		return contact, command, err
 	}
 	pollMux := http.NewServeMux()
-	pollMux.Handle("/internal/v1/guest/poll", web.GuestPollHandler(compatibility, exchange, clock, ""))
+	pollMux.Handle("/internal/v1/guest/poll", web.GuestPollHandler(compatibility, exchange, clock, "guest.shiftbox.test:9445"))
 	pollMux.Handle(launchlog.GuestPath, web.GuestLaunchTimingHandler(enrollment.RecordLaunchTiming, clock))
 	var logs workspacelog.Store
 	pollMux.Handle(workspacelog.GuestPath, web.GuestWorkspaceLogHandler(enrollment.AuthorizeWorkspaceLog, &logs, clock))
@@ -260,6 +260,9 @@ func TestGuestPollContract(t *testing.T) {
 			bytes.Contains(payload, []byte(`"imageCache"`)) {
 			t.Fatalf("%s poll cache contract = %d, header %q, body %s, error %v", release, response.StatusCode, response.Header.Get(guest.ImageCacheOfferHeader), payload, err)
 		}
+		if response.Header.Get(guest.TunnelSSHHeader) != "1" || response.Header.Get(guest.SSHActivityHeader) != "1" {
+			t.Errorf("%s poll did not negotiate SSH activity on its SSH tunnel", release)
+		}
 	}
 	poll("older", http.StatusConflict, "guest.release_unsupported")
 	if _, err := db.ExecContext(ctx, `UPDATE workspaces SET observed_state='running' WHERE id=$1`, workspaceID); err != nil {
@@ -278,6 +281,18 @@ func TestGuestPollContract(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT last_activity_at FROM workspaces WHERE id=$1", workspaceID).Scan(&activity); err != nil || activity.String != now.Format(time.RFC3339Nano) {
 		t.Fatalf("watched process activity=%v (%v), want controller receipt", activity, err)
 	}
+	// The same SSH observation can be delivered by several authenticated polls,
+	// but only the actual event time may renew the deadline.
+	sshAt := now.Add(time.Second)
+	for _, offset := range []time.Duration{5 * time.Second, 30 * time.Second} {
+		clockOffset.Store(int64(offset))
+		postGuestContract(t, registered, pollURL, map[string]any{"protocolVersion": "1", "guestRelease": "current",
+			"sshActivityAt": sshAt}, http.StatusOK, "")
+		if err := db.QueryRowContext(ctx, "SELECT last_activity_at FROM workspaces WHERE id=$1", workspaceID).Scan(&activity); err != nil || activity.String != sshAt.Format(time.RFC3339Nano) {
+			t.Fatalf("SSH activity after poll at %v = %v (%v), want event time %v", offset, activity, err, sshAt)
+		}
+	}
+	clockOffset.Store(0)
 	for _, index := range []int{0, 1, 2} {
 		if err := journal.StartStep(ctx, claim, index); err != nil {
 			t.Fatal(err)

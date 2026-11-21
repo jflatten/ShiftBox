@@ -1,15 +1,18 @@
 import { useRef, useState } from 'react';
-import { ActionIcon, Alert, Anchor, Button, Image, Menu, Modal, Stack, Table, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Button, Group, Image, Menu, Modal, Stack, Table, Text, Tooltip } from '@mantine/core';
 import { useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { DeleteWorkspaceDialog, WorkspaceProgress } from './workspace-detail';
 import { availableWorkspaceCommands, openWorkspaceEntry, useWorkspaceCommand, useWorkspaceDetail, type WorkspaceService } from './workspace-commands';
 import { workspaceName, type Workspace } from './workspace';
+import { WorkspaceSSHService } from './workspace-ssh-service';
 import { WorkspaceLifecycleStatus, WorkspaceTime } from './workspace-summary';
 
 const openCodeServerLabel = 'Open VS Code in a new tab';
 
-export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace; href: string; csrfToken: string }) {
+export function WorkspaceInventoryRow({ row, href, csrfToken, accountId }: {
+  row: Workspace; href: string; csrfToken: string; accountId: string;
+}) {
   const client = useQueryClient();
   const trigger = useRef<HTMLButtonElement>(null);
   const [opened, setOpened] = useState(false);
@@ -63,7 +66,7 @@ export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace
         <Text size="xs" c="dimmed">{row.resources.diskMiB.toLocaleString()} MiB disk</Text>
       </Stack></Table.Td>
       <Table.Td><Text size="sm"><WorkspaceTime value={row.lastActivityAt} fallback="Not recorded" /></Text></Table.Td>
-      <Table.Td>
+      <Table.Td><Group gap={4} wrap="nowrap">
         {row.services?.includes('code-server') ? (
           <Tooltip label={openCodeServerLabel} events={{ hover: true, focus: true, touch: false }}>
             <ActionIcon variant="subtle" size={32} aria-label={openCodeServerLabel} disabled={openingService}
@@ -72,7 +75,10 @@ export function WorkspaceInventoryRow({ row, href, csrfToken }: { row: Workspace
             </ActionIcon>
           </Tooltip>
         ) : null}
-      </Table.Td>
+        {row.desiredState === 'running' && row.observedState === 'running' ? (
+          <WorkspaceSSHService workspaceId={row.id} accountId={accountId} />
+        ) : null}
+      </Group></Table.Td>
       <Table.Td><Stack gap={4} align="flex-start">
         <Menu opened={opened} onChange={setOpened} position="bottom-end" withinPortal transitionProps={{ duration: 0 }}>
           <Menu.Target><Button ref={trigger} variant="default" size="compact-sm" aria-label={`Actions for ${name}`}>Actions</Button></Menu.Target>

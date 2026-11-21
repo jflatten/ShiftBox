@@ -45,7 +45,7 @@ func (w workspaceSSHWindow) size() *pty.Winsize {
 	return &pty.Winsize{Cols: uint16(w.Width), Rows: uint16(w.Height)}
 }
 
-func serveWorkspaceSSHSession(ctx context.Context, target workspaceSSHTarget, incoming ssh.NewChannel) {
+func serveWorkspaceSSHSession(ctx context.Context, target workspaceSSHTarget, incoming ssh.NewChannel, activity *sshActivity) {
 	channel, requests, err := incoming.Accept()
 	if err != nil {
 		return
@@ -75,7 +75,10 @@ func serveWorkspaceSSHSession(ctx context.Context, target workspaceSSHTarget, in
 		}
 		cmd := target.command(ctx, terminal.Term, args)
 		cmd.WaitDelay = 2 * time.Second
-		file, done, err := startWorkspaceSSHProgram(ctx, cmd, channel, terminal)
+		file, done, err := startWorkspaceSSHProgram(ctx, cmd, channel, terminal, activity)
+		if err == nil && request.Type == "exec" && strings.TrimSpace(args[len(args)-1]) != "" {
+			activity.record()
+		}
 		_ = request.Reply(err == nil, nil)
 		if err == nil {
 			waitWorkspaceSSHProgram(ctx, cancel, channel, requests, file, done)
@@ -104,7 +107,7 @@ func workspaceSSHSessionArgs(name string, payload []byte) []string {
 	return nil
 }
 
-func startWorkspaceSSHProgram(ctx context.Context, cmd *exec.Cmd, channel ssh.Channel, terminal workspaceSSHTerminal) (*os.File, <-chan uint32, error) {
+func startWorkspaceSSHProgram(ctx context.Context, cmd *exec.Cmd, channel ssh.Channel, terminal workspaceSSHTerminal, activity *sshActivity) (*os.File, <-chan uint32, error) {
 	manageWorkspaceSSHProcessGroup(cmd, terminal.Term != "")
 	done := make(chan uint32, 1)
 	if terminal.Term == "" {
@@ -119,7 +122,7 @@ func startWorkspaceSSHProgram(ctx context.Context, cmd *exec.Cmd, channel ssh.Ch
 		}
 		go func() {
 			defer stdin.Close()
-			_, _ = io.Copy(stdin, channel)
+			_, _ = io.Copy(sshActivityWriter{dst: stdin, activity: activity}, channel)
 		}()
 		go func() { done <- workspaceSSHExitStatus(cmd.Wait()) }()
 		return nil, done, nil
@@ -129,7 +132,7 @@ func startWorkspaceSSHProgram(ctx context.Context, cmd *exec.Cmd, channel ssh.Ch
 		return nil, nil, err
 	}
 	output := make(chan struct{})
-	go func() { _, _ = io.Copy(file, channel) }()
+	go func() { _, _ = io.Copy(sshActivityWriter{dst: file, activity: activity}, channel) }()
 	go func() {
 		defer close(output)
 		_, _ = io.Copy(channel, file)

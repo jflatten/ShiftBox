@@ -2,6 +2,8 @@ package web_test
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -23,7 +25,80 @@ import (
 	"github.com/jflatten/ShiftBox/internal/proxy"
 	"github.com/jflatten/ShiftBox/internal/web"
 	"github.com/jflatten/ShiftBox/internal/workspacessh"
+	"golang.org/x/crypto/ssh"
 )
+
+// TestWorkspaceSSHReadiness exercises a real SSH handshake and verifies that
+// unauthorized requests cannot open the tunnel and non-SSH targets fail closed.
+func TestWorkspaceSSHReadiness(t *testing.T) {
+	db, now := readySSHWorkspace(t)
+	owner := issueWorkspaceSSHFixtureCredential(t, db, now, "user", "owner")
+	admin := issueWorkspaceSSHFixtureCredential(t, db, now, "ssh-admin", "admin")
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := &ssh.ServerConfig{NoClientAuth: true}
+	config.AddHostKey(signer)
+	hostKey := string(ssh.MarshalAuthorizedKey(signer.PublicKey()))
+	mode := "ready"
+	opens := 0
+	api := web.NewWorkspaceSSHAPI(db, &proxy.Registry{}, nil, func(ctx context.Context, id string, generation int64, _ string) (net.Conn, string, error) {
+		opens++
+		if id != lifecycleWorkspaceID || generation != 1 {
+			t.Errorf("SSH readiness opened %q generation %d, want the authorized guest", id, generation)
+		}
+		if mode == "offline" {
+			return nil, "", proxy.ErrTunnelServiceUnavailable
+		}
+		listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = listener.Close() })
+		go func(nonSSH bool) {
+			guest, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer guest.Close()
+			_ = guest.SetDeadline(time.Now().Add(5 * time.Second))
+			if nonSSH {
+				_, _ = io.WriteString(guest, "HTTP/1.1 200 OK\r\n")
+				return
+			}
+			if server, _, _, err := ssh.NewServerConn(guest, config); err == nil {
+				_ = server.Close()
+			}
+		}(mode == "not SSH")
+		client, err := (&net.Dialer{}).DialContext(ctx, "tcp4", listener.Addr().String())
+		return client, hostKey, err
+	}, func() time.Time { return now }, "https://management.test", nil)
+	check := func(token string, want int) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "https://management.test/api/v1/ssh/workspaces/"+lifecycleWorkspaceID+"/readiness", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		api.ServeHTTP(response, req)
+		if response.Code != want {
+			t.Errorf("SSH readiness (%s) = HTTP %d, want %d", mode, response.Code, want)
+		}
+	}
+	check("expired-or-invalid", http.StatusUnauthorized)
+	check(admin, http.StatusForbidden)
+	if opens != 0 {
+		t.Errorf("denied readiness requests opened %d tunnels, want zero", opens)
+	}
+	check(owner, http.StatusNoContent)
+	mode = "not SSH"
+	check(owner, http.StatusServiceUnavailable)
+	mode = "offline"
+	check(owner, http.StatusServiceUnavailable)
+}
 
 // TestWorkspaceSSHDiscoveryUsesIDEAuthority checks that an administrator needs
 // a grant for the exact workspace and that a stale alias cannot bypass denial.

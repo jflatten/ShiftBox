@@ -52,7 +52,10 @@ export function WorkspaceKeepAlive({ workspace, csrfToken, disabled, refresh }: 
     </Group> : <Text size="sm">Shutdown after inactivity: {formatKeepAlive(workspace.keepAliveMinutes)}</Text>}
     {workspace.keepAliveMinutes === 0
       ? <Text size="sm" c="dimmed">Unlimited — automatic inactivity shutdown is disabled.</Text>
-      : <Text size="sm" c="dimmed">Stops after {formatKeepAlive(workspace.keepAliveMinutes)} of inactivity. Keyboard or pointer activity in the IDE keeps the workspace active. Use shiftbox watch &lt;PID&gt; to keep it active while a process runs.</Text>}
+      : <Text size="sm" c="dimmed">
+        Stops after {formatKeepAlive(workspace.keepAliveMinutes)} of inactivity. IDE input, SSH commands and client input reset the timer.
+        Idle SSH connections count toward inactivity. Use shiftbox watch &lt;PID&gt; to keep the workspace active while a process runs.
+      </Text>}
     {workspace.inactivityShutdownAt ? <Text size="sm" c="dimmed">
       Inactive for {workspace.inactivityMinutes ?? 0} minutes · Stops at <WorkspaceTime value={workspace.inactivityShutdownAt} fallback="Unavailable" /> if no further activity is observed.
     </Text> : null}

@@ -47,3 +47,9 @@ The foreground watch command renews a short-lived lease while the original PID
 exists (excluding zombies/PID reuse) in its own process namespace. Guest polls
 report `watchedProcesses: {sampledAt, active}`; only fresh active reports extend
 the clock. Help appears for no arguments, `help`, `--help`, and unknown commands.
+
+## SSH activity
+
+- [x] T013 Record SSH command starts and client data on accepted workspace SSH channels. Carry fresh activity on authenticated guest polls and renew the existing workspace clock.
+- [x] T014 Update the workspace keep-alive explanation and verify active and idle SSH behavior.
+- [x] T015 Deploy the controller and compatible guest build to `shiftbox-demo` and verify the workspace activity clock. Controller revision `61` and PostgreSQL revision `1` reached `COMPLETED`. ShiftBox validated private AMI `ami-0af8ef0881983a902` and published it in the opt-in `ssh-activity-preview` family. The disposable workspace recorded no activity during 40 seconds of OpenSSH keep-alive traffic. A subsequent SSH command updated Last activity to `2026-11-21T20:37:26.073247193Z` and set its shutdown deadline exactly 15 minutes later. The workspace was deleted, its EC2 instance terminated, and no EBS volume remained. The test project was archived, the profile disabled, and the temporary Packer runner removed.

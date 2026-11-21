@@ -51,6 +51,12 @@ Write and run the commented unit tests at the start of each coding task. Confirm
 
 - [X] T014 Run the focused suites and [quickstart](quickstart.md) against an authorized `shiftbox-demo` rollout with the paired schema and compatible guest build. On the MVP Mac, attempt the controller download and first launch with normal security settings. Record any exact policy block and the local build's first launch separately. Verify browser sign-in, Keychain retrieval, login-item startup, discovery, strict pin reuse and rejection, interactive SSH, and clean VS Code setup transfer on the app that launches. On the demo verify one start for concurrent requests, owner/admin/grant boundaries, visibility of the separately provisioned grant after reload, audit and live disconnect. Record client versions, demo revision and results in `specs/006-workspace-ssh/quickstart.md` and clean up disposable resources. **SC-001–SC-004, SC-006**
 
+## Workspace inventory SSH service
+
+- [X] T015 Probe the active workspace SSH server through the authenticated guest tunnel and expose readiness to the locally paired helper with current workspace authorization.
+- [X] T016 Show the SSH service icon when the local helper has an authorized alias and the probe passes. Open a dialog with the terminal command and a clipboard action.
+- [X] T017 Roll out the controller and helper archive to `shiftbox-demo` and verify the inventory SSH service. Controller revision `60` and PostgreSQL revision `1` reached `COMPLETED`. The signed-in demo served the verified helper archive, and the SSH icon stayed hidden while the workspace was stopping. A separate Chrome fixture covered the visible icon, exact clipboard command, and removal when the helper disconnected. The operator confirmed that the SSH link worked end to end with the updated ShiftBox Local Helper running.
+
 ## Dependencies and execution order
 
 | Tasks | Prerequisites and parallel work |

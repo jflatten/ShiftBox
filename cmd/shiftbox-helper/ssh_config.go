@@ -169,9 +169,7 @@ func renderSSHManagedBlock(paths sshConfigPaths, origin, accountID string, eligi
 		}
 		fmt.Fprintf(&block, "\nHost %s\n", host)
 		fmt.Fprintf(&block, "    HostName %s\n", host)
-		fmt.Fprintf(&block, "    ProxyCommand exec %s proxy --origin %s --account %s --workspace %s --pin-dir %s\n",
-			sshShellArgument(paths.HelperExecutable), sshShellArgument(origin), sshShellArgument(accountID),
-			sshShellArgument(workspace.ID), sshShellArgument(paths.PinDir))
+		fmt.Fprintln(&block, "    "+paths.sshProxyDirective(origin, accountID, workspace.ID))
 		fmt.Fprintf(&block, "    HostKeyAlias %s\n", hostKeyAlias)
 		fmt.Fprintf(&block, "    UserKnownHostsFile %s\n", strconv.Quote(strings.ReplaceAll(knownHosts, "%", "%%")))
 		block.WriteString("    GlobalKnownHostsFile none\n    KnownHostsCommand none\n    StrictHostKeyChecking yes\n" +
@@ -292,6 +290,12 @@ func validManagedAlias(alias string) bool {
 func sshShellArgument(value string) string {
 	value = strings.ReplaceAll(value, "%", "%%")
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func (paths sshConfigPaths) sshProxyDirective(origin, account, workspace string) string {
+	return fmt.Sprintf("ProxyCommand exec %s proxy --origin %s --account %s --workspace %s --pin-dir %s",
+		sshShellArgument(paths.HelperExecutable), sshShellArgument(origin), sshShellArgument(account),
+		sshShellArgument(workspace), sshShellArgument(paths.PinDir))
 }
 
 func readSSHUserConfig(path string) ([]byte, os.FileMode, error) {

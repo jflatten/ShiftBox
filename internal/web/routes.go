@@ -15,6 +15,7 @@ type ManagementRoute struct {
 func WorkspaceSSHRoutes() []ManagementRoute {
 	return []ManagementRoute{
 		{Method: "GET", Path: "/ssh/workspaces", OperationID: "listSSHWorkspaces", Resolver: "workspace_ssh"},
+		{Method: "GET", Path: "/ssh/workspaces/{workspaceId}/readiness", OperationID: "getWorkspaceSSHReadiness", Resolver: "workspace_ssh"},
 		{Method: "GET", Path: "/ssh/workspaces/{workspaceId}/connect", OperationID: "connectWorkspaceSSH", Resolver: "workspace_ssh"},
 		{Method: "GET", Path: "/ssh/helper/download", OperationID: "downloadWorkspaceSSHHelper", Action: "workspace.list"},
 		{Method: "POST", Path: "/ssh/helper/approve", OperationID: "approveWorkspaceSSHHelper", Resolver: "helper_pairing"},

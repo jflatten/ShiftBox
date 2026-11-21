@@ -24,17 +24,21 @@ const PreviewPortsHeader = "Shiftbox-Preview-Ports"
 // TunnelSSHHeader enables negotiation with agents that can serve private SSH.
 const TunnelSSHHeader = "Shiftbox-Tunnel-SSH"
 
+// SSHActivityHeader advertises support for SSH activity observations on polls.
+const SSHActivityHeader = "Shiftbox-SSH-Activity"
+
 type tunnelOffer struct {
-	address    string
-	generation int64
-	previews   string
-	ssh        bool
+	address     string
+	generation  int64
+	previews    string
+	ssh         bool
+	sshActivity bool
 }
 
 // sshTunnelService is advertised only when the agent has a usable server.
 type sshTunnelService struct {
 	hostKey string
-	serve   func(context.Context, net.Conn)
+	serve   func(context.Context, net.Conn, *sshActivity)
 }
 
 func readTunnelOffer(endpoint string, headers http.Header, generation int64, desired string) (tunnelOffer, error) {
@@ -68,6 +72,7 @@ func readTunnelOffer(endpoint string, headers http.Header, generation int64, des
 			return tunnelOffer{}, errors.New("invalid guest tunnel SSH offer")
 		}
 		offer.ssh = true
+		offer.sshActivity = headers.Get(SSHActivityHeader) == "1"
 	}
 	return offer, nil
 }
@@ -81,6 +86,7 @@ type agentTunnel struct {
 	retry    time.Duration
 	serve    func(context.Context, string, *tls.Config, string, int64, []proxy.TunnelService, func(context.Context, net.Conn)) error
 	ssh      *sshTunnelService
+	activity *sshActivity
 	cancel   context.CancelFunc
 	done     chan struct{}
 }
@@ -89,10 +95,18 @@ func (t *agentTunnel) update(ctx context.Context, offer tunnelOffer) {
 	if offer == t.offer {
 		return
 	}
+	generation := t.offer.generation
 	t.close()
 	if offer.address == "" {
+		t.activity = nil
 		return
 	}
+	if !offer.ssh || t.ssh == nil {
+		t.activity = nil
+	} else if t.activity == nil || generation != offer.generation {
+		t.activity = &sshActivity{}
+	}
+	activity := t.activity
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	t.offer, t.cancel, t.done = offer, cancel, done
@@ -111,8 +125,8 @@ func (t *agentTunnel) update(ctx context.Context, offer tunnelOffer) {
 			}
 		}
 		var sshHandler func(context.Context, net.Conn)
-		if offer.ssh && t.ssh != nil {
-			sshHandler = t.ssh.serve
+		if activity != nil {
+			sshHandler = func(ctx context.Context, conn net.Conn) { t.ssh.serve(ctx, conn, activity) }
 			services = append(services, proxy.TunnelService{
 				Key: proxy.SSHService, Protocols: []string{proxy.SSHService}, HostPublicKey: t.ssh.hostKey,
 			})

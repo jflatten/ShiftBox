@@ -297,6 +297,25 @@ paths:
                         name: { type: string }
         default: { $ref: '#/components/responses/Error' }
 
+  /ssh/workspaces/{workspaceId}/readiness:
+    get:
+      tags: [Workspaces]
+      security:
+        - workspaceHelper: []
+      operationId: getWorkspaceSSHReadiness
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '204':
+          description: The authorized workspace SSH server completed a handshake over its guest tunnel
+        '503':
+          description: Workspace SSH is unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default: { $ref: '#/components/responses/Error' }
+
   /ssh/workspaces/{workspaceId}/connect:
     get:
       tags: [Workspaces]

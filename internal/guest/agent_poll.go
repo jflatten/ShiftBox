@@ -55,6 +55,7 @@ type guestPollRequest struct {
 	Report               *OperationReport           `json:"operationReport,omitempty"`
 	Activity             *workspace.CPUActivity     `json:"activity,omitempty"`
 	WatchedProcesses     *workspace.ProcessActivity `json:"watchedProcesses,omitempty"`
+	SSHActivityAt        *time.Time                 `json:"sshActivityAt,omitempty"`
 	Probes               []workspace.ProbeResult    `json:"probes,omitempty"`
 }
 
@@ -82,6 +83,11 @@ func pollAgent(ctx context.Context, client *http.Client, endpoint string, input 
 	}
 	if probes != nil && probes.enabled {
 		input.Probes = []workspace.ProbeResult{{ID: workspace.ProbeCodeServer, Status: probeCodeServer(ctx, probes.socket)}}
+	}
+	if tunnel != nil && tunnel.activity != nil && tunnel.offer.sshActivity {
+		if observed := tunnel.activity.latest(); !observed.IsZero() && time.Since(observed) <= workspace.SSHActivityFreshness {
+			input.SSHActivityAt = &observed
+		}
 	}
 	body, err := json.Marshal(input)
 	if err != nil {

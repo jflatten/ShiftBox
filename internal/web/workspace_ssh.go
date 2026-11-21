@@ -79,6 +79,8 @@ func NewWorkspaceSSHAPI(db *sql.DB, registry *proxy.Registry, journal *operation
 		switch route.OperationID {
 		case "listSSHWorkspaces":
 			mux.Handle(pattern, ssh.authenticated(ssh.list))
+		case "getWorkspaceSSHReadiness":
+			mux.Handle(pattern, ssh.authenticated(ssh.readiness))
 		case "connectWorkspaceSSH":
 			mux.Handle(pattern, ssh.authenticated(ssh.connect))
 		case "downloadWorkspaceSSHHelper":

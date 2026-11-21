@@ -32,7 +32,7 @@ func workspaceSSHForwardAddress(host string, port uint32) string {
 	return netip.AddrPortFrom(addr, uint16(port)).String()
 }
 
-func serveWorkspaceSSHForward(ctx context.Context, target workspaceSSHTarget, incoming ssh.NewChannel) {
+func serveWorkspaceSSHForward(ctx context.Context, target workspaceSSHTarget, incoming ssh.NewChannel, activity *sshActivity) {
 	var request workspaceSSHDirectTCP
 	if !target.forwarding || ssh.Unmarshal(incoming.ExtraData(), &request) != nil ||
 		workspaceSSHForwardAddress(request.Host, request.Port) == "" {
@@ -92,7 +92,7 @@ func serveWorkspaceSSHForward(ctx context.Context, target workspaceSSHTarget, in
 	}()
 	go func() {
 		defer input.Close()
-		_, _ = io.Copy(input, channel)
+		_, _ = io.Copy(sshActivityWriter{dst: input, activity: activity}, channel)
 	}()
 	_, _ = io.Copy(channel, output)
 }

@@ -21,6 +21,13 @@ function view(value = workspace, refresh = jest.fn(async () => undefined)) {
   return { client, refresh };
 }
 
+// A finite timeout tells the owner which SSH actions renew the workspace clock.
+test('explains activity based SSH keep-alive', () => {
+  view();
+  expect(screen.getByText(/SSH commands and client input/)).toBeVisible();
+  expect(screen.getByText(/Idle SSH connections count toward inactivity/)).toBeVisible();
+});
+
 // A workspace owner can choose an administrator-offered Unlimited value with
 // the workspace version, without converting it into inheritance or a zero timeout.
 test('saves a workspace choice including Unlimited', async () => {

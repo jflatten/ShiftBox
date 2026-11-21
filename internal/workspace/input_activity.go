@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// SSHActivityFreshness limits how late an authenticated SSH event can arrive.
+const SSHActivityFreshness = 90 * time.Second
+
 // ProcessActivity is a fresh, advisory report of an explicit guest process watch.
 type ProcessActivity struct {
 	SampledAt time.Time `json:"sampledAt"`
@@ -18,8 +21,8 @@ type activityDatabase interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
-// RecordHumanActivity advances the controller clock after an authenticated IDE
-// input notification. The request supplies neither a workspace nor a timestamp.
+// RecordHumanActivity advances the controller clock after authenticated input
+// or an explicit guest watch, within the current workspace generation.
 func RecordHumanActivity(ctx context.Context, db activityDatabase, id string, generation int64, received time.Time) error {
 	var prior sql.NullString
 	var retention sql.NullInt64
@@ -56,4 +59,13 @@ func RecordProcessActivity(ctx context.Context, db activityDatabase, id string, 
 		return nil
 	}
 	return RecordHumanActivity(ctx, db, id, generation, received)
+}
+
+// RecordSSHActivity renews the clock at the validated event time. Repeating the
+// same observation after a poll retry does not extend the deadline.
+func RecordSSHActivity(ctx context.Context, db activityDatabase, id string, generation int64, received time.Time, observed *time.Time) error {
+	if observed == nil || observed.IsZero() || observed.After(received) || received.Sub(*observed) > SSHActivityFreshness {
+		return nil
+	}
+	return RecordHumanActivity(ctx, db, id, generation, *observed)
 }

@@ -30,12 +30,11 @@ func newWorkspaceSSH(stateDir string, runtime devContainer) (*sshTunnelService, 
 	// controller. The SSH username cannot select a VM or developer account.
 	config := &ssh.ServerConfig{NoClientAuth: true}
 	config.AddHostKey(signer)
-	return &sshTunnelService{
-		hostKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))),
-		serve: func(ctx context.Context, conn net.Conn) {
-			serveWorkspaceSSH(ctx, conn, runtime, config)
-		},
-	}, nil
+	service := &sshTunnelService{hostKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))}
+	service.serve = func(ctx context.Context, conn net.Conn, activity *sshActivity) {
+		serveWorkspaceSSH(ctx, conn, runtime, config, activity)
+	}
+	return service, nil
 }
 
 func loadWorkspaceSSHKey(path string) (ssh.Signer, error) {
@@ -145,7 +144,7 @@ func (t workspaceSSHTarget) command(ctx context.Context, terminal string, comman
 	return exec.CommandContext(ctx, devContainerCLI, args...)
 }
 
-func serveWorkspaceSSH(ctx context.Context, conn net.Conn, runtime devContainer, config *ssh.ServerConfig) {
+func serveWorkspaceSSH(ctx context.Context, conn net.Conn, runtime devContainer, config *ssh.ServerConfig, activity *sshActivity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer conn.Close()
@@ -177,9 +176,9 @@ func serveWorkspaceSSH(ctx context.Context, conn net.Conn, runtime devContainer,
 				defer func() { <-slots }()
 				switch incoming.ChannelType() {
 				case "session":
-					serveWorkspaceSSHSession(ctx, target, incoming)
+					serveWorkspaceSSHSession(ctx, target, incoming, activity)
 				case "direct-tcpip":
-					serveWorkspaceSSHForward(ctx, target, incoming)
+					serveWorkspaceSSHForward(ctx, target, incoming, activity)
 				default:
 					_ = incoming.Reject(ssh.UnknownChannelType, "unsupported workspace SSH channel")
 				}

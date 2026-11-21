@@ -7,6 +7,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -83,7 +85,25 @@ func helperCommand(ctx context.Context, args []string) error {
 	if err := registerHelperLogin(); err != nil {
 		fmt.Fprintln(os.Stderr, "ShiftBox login item:", err)
 	}
-	return runHelper(ctx, nil, paths, origin, nativeHelperStore{}, time.Now, openHelperBrowser, os.Stderr)
+	store := nativeHelperStore{}
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", helperBrowserAddress)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ShiftBox browser status:", err)
+	} else {
+		server := &http.Server{
+			Handler:           helperBrowserStatus{origin: origin, paths: paths, store: store, now: time.Now},
+			ReadHeaderTimeout: 2 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       15 * time.Second,
+		}
+		defer server.Close()
+		go func() {
+			if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintln(os.Stderr, "ShiftBox browser status:", err)
+			}
+		}()
+	}
+	return runHelper(ctx, nil, paths, origin, store, time.Now, openHelperBrowser, os.Stderr)
 }
 
 func helperProxyCommand(ctx context.Context, args []string) error {

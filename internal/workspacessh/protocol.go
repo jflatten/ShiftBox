@@ -27,3 +27,8 @@ type Control struct {
 func ConnectPath(workspaceID string) string {
 	return "/api/v1/ssh/workspaces/" + url.PathEscape(workspaceID) + "/connect"
 }
+
+// ReadinessPath returns the helper-authenticated SSH probe route.
+func ReadinessPath(workspaceID string) string {
+	return "/api/v1/ssh/workspaces/" + url.PathEscape(workspaceID) + "/readiness"
+}

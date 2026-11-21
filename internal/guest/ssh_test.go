@@ -3,6 +3,7 @@ package guest
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -16,7 +17,8 @@ import (
 )
 
 // TestWorkspaceSSHCommandLifecycle verifies an authenticated tunnel stream
-// runs the selected command, returns its exit status and closes on revocation.
+// runs commands, reports input without counting idle shells or keepalives,
+// returns exit status, and closes on revocation.
 func TestWorkspaceSSHCommandLifecycle(t *testing.T) {
 	id := strings.Repeat("9", 64)
 	runtime := devContainer{
@@ -25,11 +27,17 @@ func TestWorkspaceSSHCommandLifecycle(t *testing.T) {
 			if args[1] == "ls" {
 				return []byte(id), nil
 			}
-			return []byte("none"), nil
+			return []byte("bridge"), nil
 		},
 		sshExec: func(ctx context.Context, args ...string) *exec.Cmd {
+			if args[len(args)-1] == `exec "${SHELL:-/bin/sh}"` {
+				return exec.CommandContext(ctx, "/bin/cat")
+			}
 			if args[len(args)-1] == "long command" {
 				return exec.CommandContext(ctx, "/bin/sleep", "60")
+			}
+			if slices.Contains(args, "ssh-forward") {
+				return exec.CommandContext(ctx, "/bin/sh", "-c", "printf '\\001'; exec /bin/cat")
 			}
 			return exec.CommandContext(ctx, "/bin/sh", "-c", "printf 'result'; exit 7")
 		},
@@ -50,10 +58,11 @@ func TestWorkspaceSSHCommandLifecycle(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
+	activity := &sshActivity{}
 	go func() {
 		conn, err := listener.Accept()
 		if err == nil {
-			service.serve(ctx, conn)
+			service.serve(ctx, conn, activity)
 		}
 		done <- err
 	}()
@@ -64,6 +73,39 @@ func TestWorkspaceSSHCommandLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
+	if got := activity.latest(); !got.IsZero() {
+		t.Fatalf("SSH handshake recorded activity at %v, want none", got)
+	}
+	idle, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := idle.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idle.Shell(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := activity.latest(); !got.IsZero() {
+		t.Fatalf("idle shell and keepalive recorded activity at %v, want none", got)
+	}
+	if _, err := io.WriteString(input, "workspace input\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := input.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := idle.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	inputAt := activity.latest()
+	if inputAt.IsZero() {
+		t.Fatal("shell input did not record SSH activity")
+	}
 	session, err := client.NewSession()
 	if err != nil {
 		t.Fatal(err)
@@ -72,6 +114,9 @@ func TestWorkspaceSSHCommandLifecycle(t *testing.T) {
 	var exit *ssh.ExitError
 	if string(output) != "result" || !errors.As(err, &exit) || exit.ExitStatus() != 7 {
 		t.Fatalf("SSH exec = %q, %v, want exact output and status 7", output, err)
+	}
+	if got := activity.latest(); !got.After(inputAt) {
+		t.Errorf("SSH exec recorded activity at %v, want newer than shell input %v", got, inputAt)
 	}
 	session, err = client.NewSession()
 	if err != nil {
@@ -89,6 +134,27 @@ func TestWorkspaceSSHCommandLifecycle(t *testing.T) {
 		conn.Close()
 		t.Fatal("SSH allowed a forward outside devcontainer loopback")
 	}
+	beforeForward := activity.latest()
+	forward, err := client.Dial("tcp", "127.0.0.1:1455")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forward.Close()
+	if got := activity.latest(); !got.Equal(beforeForward) {
+		t.Errorf("idle forwarded channel changed SSH activity from %v to %v", beforeForward, got)
+	}
+	data := []byte("client application request")
+	if _, err := forward.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	echo := make([]byte, len(data))
+	if _, err := io.ReadFull(forward, echo); err != nil || !slices.Equal(echo, data) {
+		t.Fatalf("SSH forward echoed %q (%v), want %q", echo, err, data)
+	}
+	if got := activity.latest(); !got.After(beforeForward) {
+		t.Errorf("forwarded client data recorded activity at %v, want newer than %v", got, beforeForward)
+	}
+	_ = forward.Close()
 	session, err = client.NewSession()
 	if err != nil {
 		t.Fatal(err)

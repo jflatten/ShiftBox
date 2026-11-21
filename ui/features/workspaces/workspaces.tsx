@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Anchor, Button, Checkbox, Group, NativeSelect, Paper, Stack, Table, Text, Title } from '@mantine/core';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useControllerUnavailable } from '../../app/providers';
 import { ShiftBoxShell } from '../../components/app-shell';
 import { APIProblemView } from '../../components/api-problem';
@@ -43,7 +43,7 @@ export function Workspaces({ workspaceId, ownerId, launch = false }: {
           </LaunchFlow>
             : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} userId={current.user.id} csrfToken={current.csrfToken}
                 admin={current.role === 'administrator'} />
-              : <WorkspaceList key={ownerId} ownerId={ownerId} csrfToken={current.csrfToken} />}
+              : <WorkspaceList key={ownerId} ownerId={ownerId} csrfToken={current.csrfToken} accountId={current.user.id} />}
         </div>
       )}
     </ShiftBoxShell>
@@ -61,8 +61,9 @@ function WorkspaceLaunchPicker({ userID, admin, onReview }: {
   </>;
 }
 
-function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfToken: string }) {
+function WorkspaceList({ ownerId, csrfToken, accountId }: { ownerId?: string | null; csrfToken: string; accountId: string }) {
   const unavailable = useControllerUnavailable();
+  const client = useQueryClient();
   const [state, setState] = useState('');
   const [showDeleted, setShowDeleted] = useState(false);
   const [cursors, setCursors] = useState<string[]>([]);
@@ -116,7 +117,10 @@ function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfTo
                 setState(''); setShowDeleted(false); setCursors([]);
               }}>Clear filters</Button> : null}
             </Group>
-            <Button variant="default" onClick={() => void page.refetch()}>Refresh</Button>
+            <Button variant="default" onClick={() => {
+              void page.refetch();
+              void client.invalidateQueries({ queryKey: ['workspaces', 'ssh', accountId] });
+            }}>Refresh</Button>
           </Group>
           {page.isError && !readUnavailable ? <Stack align="flex-start">
             <APIProblemView error={page.error} />
@@ -138,7 +142,7 @@ function WorkspaceList({ ownerId, csrfToken }: { ownerId?: string | null; csrfTo
                 </Table.Tr></Table.Thead>
                 <Table.Tbody>
                   {data.items.map(workspace => (
-                    <WorkspaceInventoryRow key={workspace.id} row={workspace} href={workspaceURL(workspace)} csrfToken={csrfToken} />
+                    <WorkspaceInventoryRow key={workspace.id} row={workspace} href={workspaceURL(workspace)} csrfToken={csrfToken} accountId={accountId} />
                   ))}
                 </Table.Tbody>
               </Table>

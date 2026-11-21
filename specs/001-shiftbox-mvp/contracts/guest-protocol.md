@@ -53,6 +53,7 @@ Request:
     "sampledAt": "2026-11-13T20:10:00Z",
     "active": true
   },
+  "sshActivityAt": "2026-11-13T20:10:00Z",
   "probes": [
     { "id": "code-server", "status": "healthy" }
   ],
@@ -71,6 +72,15 @@ PID reuse, or the foreground command is cancelled. Local heartbeats arrive every
 5 seconds and expire after 15 seconds if the command is killed. Open IDE
 connections and background CPU activity do not renew inactivity; legacy
 `activity` payloads remain accepted for compatibility but are ignored.
+
+`sshActivityAt` is optional and is sent only after an SSH-enabled poll
+advertises `Shiftbox-SSH-Activity: 1`. The guest retains the timestamp of its
+most recent accepted SSH command or client data delivered to a session,
+subsystem, or workspace loopback forward. It records no command text or
+payload. Handshakes, transport keep-alives, idle channels, and server output
+alone do not produce observations. The controller renews the existing clock
+only for a fresh non-future event from the current authenticated generation.
+Repeated observations retain the original event time.
 
 Human IDE activity is reported on its already-authorized browser service origin
 via `POST /_shiftbox/activity` with a same-origin Origin header, the input marker

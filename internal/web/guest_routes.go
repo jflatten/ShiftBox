@@ -153,6 +153,7 @@ func GuestPollHandler(compatibility GuestCompatibility,
 			OperationReport      *guest.OperationReport     `json:"operationReport"`
 			Probes               []workspace.ProbeResult    `json:"probes"`
 			WatchedProcesses     *workspace.ProcessActivity `json:"watchedProcesses"`
+			SSHActivityAt        *time.Time                 `json:"sshActivityAt"`
 			Activity             *struct {
 				SampledAt      time.Time `json:"sampledAt"`
 				CPUPercent     float64   `json:"cpuPercent"`
@@ -181,7 +182,8 @@ func GuestPollHandler(compatibility GuestCompatibility,
 		}
 		stamp := now().UTC()
 		report := guest.PollReport{GuestRelease: input.GuestRelease, ProtocolVersion: input.ProtocolVersion,
-			Version: input.LastOperationVersion, Operation: input.OperationReport, Probes: input.Probes, WatchedProcesses: input.WatchedProcesses}
+			Version: input.LastOperationVersion, Operation: input.OperationReport, Probes: input.Probes,
+			WatchedProcesses: input.WatchedProcesses, SSHActivityAt: input.SSHActivityAt}
 		if input.Activity != nil {
 			report.Activity = &workspace.CPUActivity{SampledAt: input.Activity.SampledAt, Percent: input.Activity.CPUPercent}
 		}
@@ -210,6 +212,7 @@ func GuestPollHandler(compatibility GuestCompatibility,
 			w.Header().Set(guest.TunnelAddressHeader, tunnelAddress)
 			w.Header().Set(guest.PreviewPortsHeader, contact.PreviewPorts)
 			w.Header().Set(guest.TunnelSSHHeader, "1")
+			w.Header().Set(guest.SSHActivityHeader, "1")
 		}
 		delaySeconds := 30
 		if contact.LaunchAwaitingDispatch {
