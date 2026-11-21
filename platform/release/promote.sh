@@ -21,6 +21,8 @@ promotion_verify() {
   if ! jq -es --slurpfile payload "$manifest" --slurpfile rc "$release" --arg hash "$manifest_hash" "$manifest_filter"'
     length == 1 and ($payload | length) == 1 and ($rc | length) == 1 and
     (.[0] as $q | $payload[0] as $p | $rc[0] as $r |
+    ([$p.installer, $p.template, $p.supportAssets, {name:"distribution-manifest.json",sha256:$hash}]) as $assets |
+    ([$assets[].name] | sort) as $names |
     $q.schemaVersion == 1 and $q.cleanupVerified == true and
     ($q | shape(["schemaVersion", "candidate", "regionalLaunches", "freshInstall", "gateResults", "cleanupVerified"])) and
     ($r | .tag_name == $p.candidateTag and .target_commitish == $p.sourceCommit and
@@ -30,8 +32,6 @@ promotion_verify() {
       shape(["tag","sourceCommit","releaseId","assets","controllerDigest","templateSha256"]) and
       .tag == $p.candidateTag and .sourceCommit == $p.sourceCommit and .releaseId == $r.id and
       .controllerDigest == $p.controller.digest and .templateSha256 == $p.template.sha256) and
-    ([$p.installer, $p.template, $p.supportAssets, {name:"distribution-manifest.json",sha256:$hash}]) as $assets |
-    ([$assets[].name] | sort) as $names |
     ($q.candidate.assets | shape($names)) and ([$r.assets[].name] | sort) == $names and
     all($assets[]; . as $actual |
       $q.candidate.assets[.name] as $evidence |
