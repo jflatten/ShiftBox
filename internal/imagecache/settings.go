@@ -176,7 +176,10 @@ func DefaultPath(installationDir, volumeID string) string {
 // DecodeConfiguration expands defaults only when no configuration is stored.
 func DecodeConfiguration(raw string, version int64, defaultPath string) (Configuration, error) {
 	if raw == "" {
-		settings := Settings{StoragePath: defaultPath, VolumeHighPercent: 80, VolumeLowPercent: 70}
+		settings := Settings{
+			StoragePath: defaultPath, MaxBytes: Bytes(defaultSharedBudget),
+			VolumeHighPercent: 80, VolumeLowPercent: 70,
+		}
 		return Configuration{Version: version, Desired: settings, Effective: EffectiveSettings{Version: version, Settings: settings},
 			Activation: Activation{Phase: "disabled"}, RetiredLocations: []RetiredLocation{}}, nil
 	}
@@ -196,10 +199,11 @@ func Bytes(value int64) *string {
 
 // RuntimeStatus captures live cache measurements independently of SQL state.
 type RuntimeStatus struct {
-	CachedImages  []CachedImage  `json:"cachedImages"`
-	Health        Health         `json:"health"`
-	Usage         *Usage         `json:"usage"`
-	Effectiveness *Effectiveness `json:"effectiveness"`
+	CachedImages           []CachedImage  `json:"cachedImages"`
+	Health                 Health         `json:"health"`
+	Usage                  *Usage         `json:"usage"`
+	Effectiveness          *Effectiveness `json:"effectiveness"`
+	BuiltImageAvailability string         `json:"-"`
 }
 
 // Health is a timestamped cache capability and availability snapshot.

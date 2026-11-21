@@ -7,13 +7,15 @@ import (
 
 // Scope identifies the authority attached to a management, IDE, or preview connection.
 type Scope struct {
-	UserID      string
-	SessionID   string
-	WorkspaceID string
-	GrantID     string
-	Service     string
-	IDE         bool
-	GuestPoll   bool
+	UserID               string
+	SessionID            string
+	WorkspaceID          string
+	ProjectID            string
+	GrantID              string
+	Service              string
+	IDE                  bool
+	GuestPoll            bool
+	BuiltImageGeneration int64
 }
 
 type connection struct {

@@ -83,25 +83,18 @@ func (h githubHTTP) covers(ctx context.Context, token, repository string) error 
 		return ErrGitHubRepositoryDenied
 	}
 	name := strings.TrimSuffix(strings.Trim(repo.Path, "/"), ".git")
-	path := githubAPIURL + "/user/installations/" + strconv.FormatInt(h.installationID, 10) + "/repositories"
+	path := "/user/installations/" + strconv.FormatInt(h.installationID, 10) + "/repositories"
 
 	// GitHub's installation-scoped list proves both user and app access.
 	// Pages are fetched only from the configured installation on GitHub.com.
 	for page := 1; ; page++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, path+"?per_page=100&page="+strconv.Itoa(page), nil)
-		if err != nil {
-			return errors.New("cannot construct GitHub repository request")
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Accept", "application/vnd.github+json")
-		req.Header.Set("X-GitHub-Api-Version", "2026-03-10")
 		var listing struct {
 			Count int `json:"total_count"`
 			Repos []struct {
 				Name string `json:"full_name"`
 			} `json:"repositories"`
 		}
-		status, err := h.send(req, &listing, 8<<20)
+		status, err := h.get(ctx, token, path+"?per_page=100&page="+strconv.Itoa(page), &listing, 8<<20)
 		if err != nil {
 			return err
 		}
@@ -123,6 +116,19 @@ func (h githubHTTP) covers(ctx context.Context, token, repository string) error 
 			return ErrGitHubRepositoryDenied
 		}
 	}
+}
+
+// get sends an owner-authorized API request to GitHub's configured host. The
+// caller constructs the path from known API routes and escaped components.
+func (h githubHTTP) get(ctx context.Context, token, path string, target any, limit int64) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubAPIURL+path, nil)
+	if err != nil {
+		return 0, errors.New("cannot construct GitHub API request")
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2026-03-10")
+	return h.send(req, target, limit)
 }
 
 func (h githubHTTP) send(req *http.Request, target any, limit int64) (int, error) {

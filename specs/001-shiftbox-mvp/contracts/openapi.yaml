@@ -1205,7 +1205,7 @@ paths:
     get:
       tags: [Infrastructure]
       operationId: getImageCache
-      description: Read current configuration, runtime measurements and up to 100 retained image references.
+      description: Read public registry settings, the independent built-image policy, runtime measurements and up to 100 retained public image references.
       responses:
         '200':
           description: Registry cache snapshot
@@ -1242,6 +1242,36 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ImageCacheActivationOperation' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/image-cache/built-images:
+    put:
+      tags: [Infrastructure]
+      operationId: updateBuiltImagePolicy
+      description: Save the organization-wide built devcontainer image setting using its independent version. Saving Off immediately fences reuse and publication and schedules background removal.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: Persisted built devcontainer image policy
+          headers:
+            ETag:
+              description: Current independent built-image policy version.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuiltImagePolicy' }
         default: { $ref: '#/components/responses/Error' }
 
   /admin/launch-log-retention:
@@ -1780,9 +1810,10 @@ components:
         volumeLowPercent: { type: integer, minimum: 1, maximum: 98 }
     ImageCacheSnapshot:
       type: object
-      required: [version, desired, effective, activation, health, usage, effectiveness, retiredLocations, cachedImages]
+      required: [version, desired, effective, activation, health, usage, effectiveness, retiredLocations, cachedImages, builtImages]
       properties:
         version: { type: integer, minimum: 1 }
+        builtImages: { $ref: '#/components/schemas/BuiltImagePolicy' }
         desired: { $ref: '#/components/schemas/ImageCacheSettings' }
         effective:
           allOf:
@@ -1824,15 +1855,27 @@ components:
               retiredAt: { type: string, format: date-time }
         cachedImages:
           type: array
-          maxItems: 100
           items:
             type: object
-            required: [reference, digest, availability]
+            required: [reference, digest, availability, source, addedAt, layerBytes]
             properties:
-              reference: { type: string }
+              reference: { type: string, description: Public registry reference or the project display name for a published devcontainer image. }
               digest: { type: string }
               architecture: { type: string }
               availability: { type: string, enum: [complete, partial] }
+              source: { type: string, enum: [registry, devcontainer] }
+              addedAt: { type: string, format: date-time, description: When the manifest was retained or the devcontainer build was published. }
+              layerBytes:
+                type: array
+                description: Retained bytes in manifest layer order. Null means the layer is unavailable. Shared layers can appear in more than one row.
+                items: { type: [string, 'null'] }
+    BuiltImagePolicy:
+      type: object
+      required: [enabled, version, availability]
+      properties:
+        enabled: { type: boolean }
+        version: { type: integer, minimum: 1 }
+        availability: { type: string, enum: [available, unavailable, disabled] }
     ImageCacheUsage:
       type: object
       required: [retainedBytes, temporaryBytes, reservedBytes, retiredBytes, budgetBytes, volumeTotalBytes, volumeUsedBytes, volumeAvailableBytes, activeTransfers, lastEvictionAt, lastEvictedBytes, pressureReason, observedAt]

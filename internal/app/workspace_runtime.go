@@ -43,6 +43,9 @@ func ListenWorkspaceRuntime(state *ControllerState, listeners GuestListenerConfi
 		listeners.ImageCache = state.imageCache
 		listeners.OfferImageCache = state.imageCache.offer
 		listeners.ImageCacheContext = imageCacheContext(state.DB, listeners.Checkpoint)
+		if listeners.GitHub != nil {
+			listeners.BuiltImages = state.BuiltImageHandler(listeners.Tunnels.Registry, listeners.GitHub, enrollment.Authenticate, now)
+		}
 	}
 	if listeners.EC2Region != "" && listeners.EC2Account != "" {
 		listeners.EC2Bootstrap = guest.NewEC2Bootstrap(enrollment, listeners.EC2Region, listeners.EC2Account, now, machines.Inspect)

@@ -113,6 +113,9 @@ func (j *localJournal) ensureDevelopment(ctx context.Context, dispatch guestDisp
 		if err := j.saveOperation(next); err != nil {
 			return OperationReport{}, err
 		}
+		if runtime.builtTransport != nil {
+			runtime.builtImage = runtime.builtTransport.forDispatch(dispatch)
+		}
 		if repairRetry {
 			next.Connection, effectErr = runtime.retryAfterRepair(ctx)
 		} else if rebuild {

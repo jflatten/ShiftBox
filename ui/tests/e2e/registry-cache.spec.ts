@@ -16,10 +16,12 @@ type Snapshot = {
   desired: Settings;
   effective: Settings & { version: number };
   activation: { phase: string; operationId?: string };
+  builtImages: { enabled: boolean; version: number; availability: string };
 };
 
 const fixturePath = process.env.SHIFTBOX_REGISTRY_CACHE_FIXTURE;
 const endpoint = '/api/v1/admin/image-cache';
+const builtImagesEndpoint = endpoint + '/built-images';
 const infrastructurePath = '/infrastructure/';
 const activationTimeout = 120_000;
 
@@ -80,6 +82,61 @@ test('saves and reloads registry cache settings through the live controller', as
   }
 });
 
+// Keyboard changes stay in the draft until save, and the separate built-image
+// policy survives reload without changing public retention.
+test('saves and reloads the built devcontainer image policy through the live controller', async ({ browser }) => {
+  const fixture = await readFixture();
+  const context = await browser.newContext({ baseURL: fixture.managementURL });
+  try {
+    const page = await context.newPage();
+    const csrf = await signIn(page, fixture.administrator, 'administrator');
+    const original = await readSnapshot(page);
+    expect(original.builtImages.enabled, 'start with built-image caching On').toBe(true);
+    await page.goto(infrastructurePath);
+    const cacheTab = page.getByRole('tab', { name: 'Cache' });
+    await cacheTab.press('Enter');
+    await expect(cacheTab).toHaveAttribute('aria-selected', 'true');
+    const panel = page.getByRole('tabpanel', { name: 'Cache' });
+    const builtImages = panel.getByRole('switch', { name: 'Built devcontainer images' });
+    const save = panel.getByRole('button', { name: 'Save built image settings' });
+    await expect(builtImages).toBeChecked();
+    await expect(save).toBeDisabled();
+    await builtImages.press('Space');
+    await expect(builtImages).not.toBeChecked();
+    const warning = panel.getByText(/remov(?:e|es|ed).*stored built (?:devcontainer )?images/i);
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText(/organization/i);
+    expect((await readSnapshot(page)).builtImages).toEqual(original.builtImages);
+
+    try {
+      const put = page.waitForResponse(response => new URL(response.url()).pathname === builtImagesEndpoint
+        && response.request().method() === 'PUT');
+      await save.press('Enter');
+      expect((await put).status()).toBe(200);
+      const saved = await readSnapshot(page);
+      expect(saved.builtImages).toEqual({ enabled: false, version: original.builtImages.version + 1, availability: 'disabled' });
+      expect(saved.version).toBe(original.version);
+      expect(saved.effective).toEqual(original.effective);
+      expect(await putBuiltImagePolicy(page, fixture.managementURL, csrf, original.builtImages.version, true)).toBe(412);
+
+      await page.reload();
+      await expect(cacheTab).toHaveAttribute('aria-selected', 'true');
+      await expect(builtImages).not.toBeChecked();
+      await expect(save).toBeDisabled();
+      expect((await readSnapshot(page)).builtImages).toEqual(saved.builtImages);
+    } finally {
+      const latest = (await readSnapshot(page)).builtImages;
+      if (latest.enabled !== original.builtImages.enabled) {
+        expect(latest.version, 'verify the test still owns the saved setting').toBe(original.builtImages.version + 1);
+        expect(await putBuiltImagePolicy(page, fixture.managementURL, csrf, latest.version, original.builtImages.enabled)).toBe(200);
+        expect((await readSnapshot(page)).builtImages.enabled).toBe(original.builtImages.enabled);
+      }
+    }
+  } finally {
+    await context.close();
+  }
+});
+
 // A signed-in member uses the real controller for both the deep link and direct
 // API requests. A valid member CSRF header and version cannot grant authority.
 test('denies the registry cache to signed-in members', async ({ browser }) => {
@@ -103,6 +160,7 @@ test('denies the registry cache to signed-in members', async ({ browser }) => {
     expect(cacheReads).toEqual([]);
     expect((await member.request.get(endpoint)).status()).toBe(403);
     expect(await putSettings(member, fixture.managementURL, csrf, snapshot.version, snapshot.desired)).toBe(403);
+    expect(await putBuiltImagePolicy(member, fixture.managementURL, csrf, snapshot.builtImages.version, false)).toBe(403);
   } finally {
     await Promise.all([memberContext.close(), adminContext.close()]);
   }
@@ -166,6 +224,19 @@ async function putSettings(page: Page, origin: string, csrf: string, version: nu
   } catch {
     // Playwright request diagnostics can include the CSRF header.
     throw new Error('The registry cache settings endpoint did not respond');
+  }
+}
+
+async function putBuiltImagePolicy(page: Page, origin: string, csrf: string, version: number, enabled: boolean) {
+  try {
+    const response = await page.request.put(builtImagesEndpoint, {
+      headers: { Origin: new URL(origin).origin, 'X-CSRF-Token': csrf, 'If-Match': `"${version}"` },
+      data: { enabled },
+    });
+    return response.status();
+  } catch {
+    // Playwright request diagnostics can include the CSRF header.
+    throw new Error('The built image settings endpoint did not respond');
   }
 }
 

@@ -68,6 +68,10 @@ download devcontainer.tgz "https://registry.npmjs.org/@devcontainers/cli/-/cli-$
     b3d40fec9d274a303a29ea91a24852887cf287701bc8d340bfc1cf970542495a
 install -d -m 0755 /usr/local/lib/shiftbox/devcontainer
 tar -xzf devcontainer.tgz --no-same-owner --strip-components=1 -C /usr/local/lib/shiftbox/devcontainer
+devcontainer_bundle=/usr/local/lib/shiftbox/devcontainer/dist/spec-node/devContainersSpecCLI.js
+/usr/local/bin/node /tmp/shiftbox-extend-devcontainer-cli.cjs "$devcontainer_bundle"
+/usr/local/bin/node --check "$devcontainer_bundle"
+rm -f /tmp/shiftbox-extend-devcontainer-cli.cjs
 cat > /usr/local/bin/devcontainer <<'CLI'
 #!/bin/sh
 exec /usr/local/bin/node /usr/local/lib/shiftbox/devcontainer/devcontainer.js "$@"

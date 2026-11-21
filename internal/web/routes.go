@@ -75,6 +75,7 @@ func ManagementRoutes() []ManagementRoute {
 		{Method: "PUT", Path: "/admin/settings/session", OperationID: "updateSessionTimeout", Action: "infrastructure.manage"},
 		{Method: "GET", Path: "/admin/image-cache", OperationID: "getImageCache", Action: "infrastructure.view"},
 		{Method: "PUT", Path: "/admin/image-cache", OperationID: "updateImageCache", Action: "infrastructure.manage"},
+		{Method: "PUT", Path: builtImagePolicyPath, OperationID: "updateBuiltImagePolicy", Action: "infrastructure.manage"},
 		{Method: "PUT", Path: "/admin/certificate", OperationID: "replaceBrowserCertificate", Action: "infrastructure.manage"},
 		{Method: "GET", Path: "/admin/certificate", OperationID: "getBrowserCertificate", Action: "infrastructure.view"},
 		{Method: "POST", Path: "/admin/platform-artifacts", OperationID: "importPlatformArtifact", Action: "infrastructure.manage"},

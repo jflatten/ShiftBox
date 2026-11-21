@@ -362,11 +362,11 @@ func (r *repository) cachedManifest(id digest.Digest) (distribution.Manifest, v1
 	return decodeManifest(contentType, []byte(body), id.String())
 }
 
-func (r *repository) completeManifest(id digest.Digest, arch string, depth int, names *[]string) bool {
+func (r *repository) completeManifest(id digest.Digest, arch string, depth int, names *[]string, layers *[]*string) bool {
 	if depth == 0 || len(*names) > 256 {
 		return false
 	}
-	manifest, _, err := r.cachedManifest(id)
+	manifest, desc, err := r.cachedManifest(id)
 	if err != nil {
 		return false
 	}
@@ -380,35 +380,64 @@ func (r *repository) completeManifest(id digest.Digest, arch string, depth int, 
 		}
 	}
 	if index {
-		found := false
+		found, complete := false, true
 		for _, item := range references {
 			if item.Platform == nil || item.Platform.OS != "linux" || item.Platform.Architecture != arch {
 				continue
 			}
 			found = true
-			if !r.completeManifest(item.Digest, arch, depth-1, names) {
-				return false
+			if !r.completeManifest(item.Digest, arch, depth-1, names, layers) {
+				if layers == nil {
+					return false
+				}
+				complete = false
 			}
 		}
-		return found
+		return found && complete
 	}
-	for _, item := range references {
-		link := r.key("link", item.Digest.String())
-		if item.Digest.Validate() != nil {
+	complete := len(references) > 0
+	for i, item := range references {
+		// OCI references start with the config. Inventory can count verified
+		// inline bytes. A fallback pull needs to serve each blob by digest.
+		if r.inspect && desc.MediaType == v1.MediaTypeImageManifest && i == 0 && item.Data != nil &&
+			int64(len(item.Data)) == item.Size && item.Digest.Validate() == nil &&
+			item.Digest.Algorithm().FromBytes(item.Data) == item.Digest {
+			continue
+		}
+		retained := r.hasCachedReference(item, names)
+		if layers == nil && !retained {
 			return false
 		}
-		file := r.cache.store.blobWithAccess(link, item.Digest, !r.inspect)
-		if file == nil {
-			return false
+		complete = complete && retained
+		if layers != nil && i > 0 {
+			var size *string
+			if retained {
+				size = Bytes(item.Size)
+			}
+			*layers = append(*layers, size)
 		}
-		size := file.size
-		file.close()
-		if size != item.Size {
-			return false
-		}
+	}
+	return complete
+}
+
+func (r *repository) hasCachedReference(item v1.Descriptor, names *[]string) bool {
+	if item.Digest.Validate() != nil {
+		return false
+	}
+	link := r.key("link", item.Digest.String())
+	file := r.cache.store.blobWithAccess(link, item.Digest, !r.inspect)
+	if file == nil {
+		return false
+	}
+	size := file.size
+	file.close()
+	if size != item.Size {
+		return false
+	}
+	if !r.inspect {
 		*names = append(*names, link, blobName(item.Digest))
 	}
-	return len(references) > 0
+	return true
 }
 
 func (r *repository) staleManifest(ctx context.Context, tag string) (distribution.Manifest, v1.Descriptor, bool) {
@@ -420,7 +449,7 @@ func (r *repository) staleManifest(ctx context.Context, tag string) (distributio
 	}
 	arch, _ := ctx.Value(platformKey{}).(string)
 	var names []string
-	if !r.completeManifest(id, arch, 4, &names) || !r.cache.store.hold(names) {
+	if !r.completeManifest(id, arch, 4, &names, nil) || !r.cache.store.hold(names) {
 		return nil, v1.Descriptor{}, false
 	}
 	manifest, desc, err := r.cachedManifest(id)

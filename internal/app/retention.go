@@ -39,6 +39,18 @@ func RunLaunchLogRetention(ctx context.Context, db *sql.DB, fence *backup.WriteF
 	})
 }
 
+// RunBuiltImageRetention retries disabled-generation and expired upload
+// cleanup at startup and periodically while the controller serves workspaces.
+func (s *ControllerState) RunBuiltImageRetention(ctx context.Context, fence *backup.WriteFence) error {
+	return runHistoryRetention(ctx, time.Minute, func(ctx context.Context) error {
+		return withCheckpointActivity(ctx, fence, func() error {
+			return s.imageCache.reconcileBuiltImagePurge(ctx)
+		})
+	}, func(err error) {
+		slog.WarnContext(ctx, "Built image cache cleanup will retry", "error", err)
+	})
+}
+
 func runHistoryRetention(ctx context.Context, interval time.Duration, prune func(context.Context) error, report func(error)) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

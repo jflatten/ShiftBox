@@ -142,6 +142,9 @@ func pollAgent(ctx context.Context, client *http.Client, endpoint string, input 
 		}
 		runtime.imageCache = mode != ""
 	}
+	if response.Header.Get(BuiltImageOfferHeader) != "1" {
+		runtime.builtTransport = nil
+	}
 	if response.Header.Get(LaunchTimingOfferHeader) != "1" {
 		runtime.launchTiming = nil
 	}
@@ -241,6 +244,9 @@ func applyGuestPoll(ctx context.Context, journal *localJournal, runtime devConta
 	}
 	if dispatch.Type != "provision" {
 		runtime.launchTiming = nil
+	}
+	if dispatch.Type != "provision" && dispatch.Command != rebuildDevelopmentCommand {
+		runtime.builtTransport = nil
 	}
 	runtime.config = dispatch.Arguments.Devcontainer
 	_, err := journal.ensureDevelopment(ctx, guestDispatch{
@@ -343,6 +349,19 @@ func serveAgentIdentity(ctx context.Context, identity AgentIdentity, stateDir, p
 				return guestGitAccessToken(ctx, client, identity.PollEndpoint)
 			},
 		}}
+	if built := newBuiltImageGuestTransport(stateDir, identity.PollEndpoint, client); built != nil {
+		uploadCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		defer func() {
+			cancel()
+			<-done
+		}()
+		runtime.builtTransport = built
+		go func() {
+			defer close(done)
+			built.runUploads(uploadCtx)
+		}()
+	}
 	if runtime.credentials {
 		ssh, err := newWorkspaceSSH(stateDir, runtime)
 		if err != nil {

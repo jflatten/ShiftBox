@@ -35,7 +35,7 @@ All responses use no-store, current session authority and stable safe codes such
 
 ### Cached images
 
-The existing authorized GET includes up to 100 recent retained references in `cachedImages`. Each row has `reference`, `digest`, optional `architecture` and `availability` (`complete` or `partial`). Coverage is for the recorded platform when platform selection applies. The controller checks retained manifests and repository links without contacting upstream or changing eviction order. No per-image byte totals, writes or additional endpoints are exposed.
+The authorized GET includes retained public registry references and published project devcontainer images in `cachedImages`, newest first by `addedAt`. The date comes from the retained public manifest or the build's publication time. Each row includes the source, image reference or project name, digest, recorded architecture when known, and `complete` or `partial` availability. The controller checks retained manifests and storage links without contacting upstream or changing eviction order. Valid embedded OCI config data counts toward inventory completeness. `layerBytes` lists the retained bytes for each layer in manifest order, with null for an unavailable layer. Rows can reference the same stored layer, so their sizes cannot be summed to calculate cache usage. The administration table displays 20 images per page.
 
 ### Usage/effectiveness fields
 

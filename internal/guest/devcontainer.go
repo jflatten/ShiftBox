@@ -33,6 +33,8 @@ type devContainer struct {
 	credentials             bool
 	imageCache              bool
 	applyImageCache         func(string) error
+	builtTransport          *builtImageGuestTransport
+	builtImage              *builtImageGuest
 	ide                     bool
 	codeServerSource        string
 	retainHome              bool
@@ -56,8 +58,9 @@ type containerConnection struct {
 }
 
 type devContainerResult struct {
-	Outcome string `json:"outcome"`
-	ID      string `json:"containerId"`
+	Outcome string                 `json:"outcome"`
+	ID      string                 `json:"containerId"`
+	Image   devContainerBuiltImage `json:"shiftboxImage"`
 	Merged  *struct {
 		WaitFor    string `json:"waitFor"`
 		RemoteUser string `json:"remoteUser"`
@@ -73,7 +76,14 @@ func (d devContainer) ensure(ctx context.Context) (containerConnection, error) {
 }
 
 func (d devContainer) configure(ctx context.Context, previous rebuildSource) (containerConnection, error) {
-	if d.imageCache {
+	if previous.id == "" {
+		ctx = d.selectBuiltImage(ctx)
+		if err := ctx.Err(); err != nil {
+			return containerConnection{}, err
+		}
+	}
+	selected, _ := builtImageSelectionFromContext(ctx)
+	if d.imageCache && selected == "" {
 		started := time.Now()
 		err := d.prepareImage(ctx)
 		d.measurePhase("image_prepare", started, err)
@@ -116,6 +126,7 @@ func (d devContainer) configure(ctx context.Context, previous rebuildSource) (co
 	if !validWaitFor(waitFor) {
 		return containerConnection{}, errors.New("invalid Dev Container waitFor stage")
 	}
+	d.queueBuiltImage(ctx, result.Image)
 	connection := containerConnection{ID: result.ID, WaitFor: waitFor}
 	if d.repository != nil {
 		started := time.Now()
@@ -282,6 +293,11 @@ func runDevContainerCLI(ctx context.Context, executable string, args ...string) 
 
 func runDevContainerCommand(ctx context.Context, executable string, stderr io.Writer, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, executable, args...)
+	if executable == devContainerCLI && len(args) != 0 && args[0] == "up" {
+		image, hash := builtImageSelectionFromContext(ctx)
+		cmd.Env = append(os.Environ(), "SHIFTBOX_DEVCONTAINER_CACHE_IMAGE="+image,
+			"SHIFTBOX_DEVCONTAINER_CACHE_CONFIG_SHA256="+hash)
+	}
 	cmd.Stderr = stderr
 	var stdout devContainerOutput
 	cmd.Stdout = &stdout

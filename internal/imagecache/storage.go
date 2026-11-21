@@ -17,8 +17,10 @@ import (
 )
 
 type contentEntry struct {
-	size     int64
-	lastUsed time.Time
+	size      int64
+	lastUsed  time.Time
+	target    digest.Digest
+	mediaType string
 }
 
 type contentStore struct {
@@ -32,6 +34,7 @@ type contentStore struct {
 	mu                       sync.Mutex
 	used, pending, temporary int64
 	entries                  map[string]contentEntry
+	references               map[digest.Digest]int
 	readers                  map[string]int
 	writing                  map[string]bool
 	lastEviction             time.Time
@@ -39,11 +42,8 @@ type contentStore struct {
 }
 
 func openContentStore(path string, budget int64) (*contentStore, error) {
-	store := &contentStore{path: path, budget: budget, high: 80, low: 70,
-		holdUntil: make(map[string]time.Time), writing: make(map[string]bool), readers: make(map[string]int), entries: make(map[string]contentEntry)}
-	store.volume = store.filesystem
 	if path == "" && budget == 0 {
-		return store, nil
+		return indexContentStore(nil, path, budget, false)
 	}
 	if !filepath.IsAbs(path) || budget < 0 {
 		return nil, errors.New("invalid cache storage settings")
@@ -55,10 +55,25 @@ func openContentStore(path string, budget int64) (*contentStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	store.root = root
+	store, err := indexContentStore(root, path, budget, true)
+	if err != nil {
+		return nil, errors.Join(err, root.Close())
+	}
+	return store, nil
+}
+
+// indexContentStore reconstructs the shared object references from an already
+// opened root. Only ordinary cache startup reclaims abandoned incoming files.
+func indexContentStore(root *os.Root, path string, budget int64, cleanupIncoming bool) (*contentStore, error) {
+	store := &contentStore{root: root, path: path, budget: budget, high: 80, low: 70,
+		holdUntil: make(map[string]time.Time), writing: make(map[string]bool), readers: make(map[string]int),
+		entries: make(map[string]contentEntry), references: make(map[digest.Digest]int)}
+	store.volume = store.filesystem
+	if root == nil {
+		return store, nil
+	}
 	dir, err := root.Open(".")
 	if err != nil {
-		root.Close()
 		return nil, err
 	}
 	defer dir.Close()
@@ -66,9 +81,8 @@ func openContentStore(path string, budget int64) (*contentStore, error) {
 		items, readErr := dir.ReadDir(128)
 		for _, item := range items {
 			name := item.Name()
-			if strings.HasPrefix(name, "incoming-") && item.Type().IsRegular() {
+			if cleanupIncoming && strings.HasPrefix(name, "incoming-") && item.Type().IsRegular() {
 				if err := root.Remove(name); err != nil {
-					root.Close()
 					return nil, err
 				}
 				continue
@@ -78,17 +92,22 @@ func openContentStore(path string, budget int64) (*contentStore, error) {
 			}
 			info, err := item.Info()
 			if err != nil {
-				root.Close()
 				return nil, err
 			}
-			store.used += info.Size()
-			store.entries[name] = contentEntry{info.Size(), info.ModTime()}
+			entry := contentEntry{size: info.Size(), lastUsed: info.ModTime()}
+			if managedLink(name) && info.Size() > 0 && info.Size() <= linkLimit {
+				data, err := readContentLink(root, name)
+				if err != nil {
+					return nil, err
+				}
+				entry.target, entry.mediaType = parseContentLink(data)
+			}
+			store.setEntry(name, entry)
 		}
 		if readErr == io.EOF {
 			break
 		}
 		if readErr != nil {
-			root.Close()
 			return nil, readErr
 		}
 	}
@@ -97,7 +116,31 @@ func openContentStore(path string, budget int64) (*contentStore, error) {
 
 func managedContent(name string) bool {
 	return strings.HasPrefix(name, "blob-") || strings.HasPrefix(name, "manifest-") ||
-		strings.HasPrefix(name, "link-") || strings.HasPrefix(name, "tag-")
+		managedLink(name) || strings.HasPrefix(name, "tag-")
+}
+
+const linkLimit = 256
+
+func managedLink(name string) bool {
+	return strings.HasPrefix(name, "link-") || strings.HasPrefix(name, builtLinkPrefix)
+}
+
+func parseContentLink(data []byte) (digest.Digest, string) {
+	value, mediaType, _ := strings.Cut(string(data), "\n")
+	id, err := digest.Parse(value)
+	if err != nil {
+		return "", ""
+	}
+	return id, mediaType
+}
+
+func readContentLink(root *os.Root, name string) ([]byte, error) {
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(io.LimitReader(file, linkLimit))
 }
 
 func (s *contentStore) close() error {
@@ -147,6 +190,10 @@ func (s *contentStore) acquire(name string) *localBlob {
 func (s *contentStore) acquireWithAccess(name string, touch bool) *localBlob {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.acquireLocked(name, touch)
+}
+
+func (s *contentStore) acquireLocked(name string, touch bool) *localBlob {
 	info, ok := s.entries[name]
 	if !ok || s.root == nil {
 		return nil
@@ -160,19 +207,28 @@ func (s *contentStore) acquireWithAccess(name string, touch bool) *localBlob {
 		f.Close()
 		return nil
 	}
+	s.pin(name, touch)
+	return &localBlob{file: f, size: stat.Size(), release: func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.unpin(name)
+	}}
+}
+
+func (s *contentStore) pin(name string, touch bool) {
 	if touch {
+		info := s.entries[name]
 		info.lastUsed = time.Now()
 		s.entries[name] = info
 	}
 	s.readers[name]++
-	return &localBlob{file: f, size: stat.Size(), release: func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.readers[name]--
-		if s.readers[name] == 0 {
-			delete(s.readers, name)
-		}
-	}}
+}
+
+func (s *contentStore) unpin(name string) {
+	s.readers[name]--
+	if s.readers[name] == 0 {
+		delete(s.readers, name)
+	}
 }
 
 func (s *contentStore) blob(link string, id digest.Digest) *localBlob {
@@ -187,25 +243,35 @@ func (s *contentStore) blobWithAccess(link string, id digest.Digest, touch bool)
 }
 
 type contentWrite struct {
-	store *contentStore
-	file  *os.File
-	key   string
-	temp  string
-	size  int64
-	wrote int64
+	store     *contentStore
+	file      *os.File
+	key       string
+	temp      string
+	size      int64
+	wrote     int64
+	target    digest.Digest
+	mediaType string
 }
 
 func (s *contentStore) reserve(key string, size int64) *contentWrite {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reserveLocked(key, size)
+}
+
+func (s *contentStore) reserveLocked(key string, size int64) *contentWrite {
 	if s.root == nil || size <= 0 {
 		return nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if size > s.budget || s.writing[key] || s.readers[key] != 0 {
 		return nil
 	}
-	if _, err := s.root.Lstat(key); !errors.Is(err, os.ErrNotExist) &&
-		!(err == nil && strings.HasPrefix(key, "tag-") && s.entries[key].size > 0) {
+	_, err := s.root.Lstat(key)
+	if errors.Is(err, os.ErrNotExist) {
+		// A restore or operator cleanup may leave stale in-memory accounting.
+		s.forgetEntry(key)
+		delete(s.holdUntil, key)
+	} else if err != nil || !strings.HasPrefix(key, "tag-") || s.entries[key].size <= 0 {
 		return nil
 	}
 	// After crossing the high watermark, make room down to low before
@@ -258,7 +324,7 @@ func (s *contentStore) evictOldest(except string) bool {
 	var oldest string
 	var candidate contentEntry
 	for name, entry := range s.entries {
-		if name == except || s.readers[name] != 0 || s.writing[name] || time.Now().Before(s.holdUntil[name]) {
+		if name == except || s.entryBusy(name) || s.builtLinkBusy(name, entry) {
 			continue
 		}
 		if oldest == "" || entry.lastUsed.Before(candidate.lastUsed) {
@@ -268,15 +334,64 @@ func (s *contentStore) evictOldest(except string) bool {
 	if oldest == "" {
 		return false
 	}
-	if err := s.root.Remove(oldest); err != nil && !errors.Is(err, os.ErrNotExist) {
+	before := s.used
+	if err := s.removeWithBuiltObject(oldest); err != nil {
 		return false
 	}
-	delete(s.entries, oldest)
-	delete(s.holdUntil, oldest)
-	s.used -= candidate.size
-	s.evicted += candidate.size
+	s.evicted += before - s.used
 	s.lastEviction = time.Now()
 	return true
+}
+
+func (s *contentStore) entryBusy(name string) bool {
+	return s.readers[name] != 0 || s.writing[name] || time.Now().Before(s.holdUntil[name])
+}
+
+func (s *contentStore) builtLinkBusy(name string, entry contentEntry) bool {
+	return strings.HasPrefix(name, builtLinkPrefix) && s.references[entry.target] == 1 && s.entryBusy(blobName(entry.target))
+}
+
+// Removing the last built link also removes its exclusive object. Preserve the
+// link until removal succeeds so restart and the next purge can retry it.
+func (s *contentStore) removeWithBuiltObject(name string) error {
+	entry := s.entries[name]
+	if strings.HasPrefix(name, builtLinkPrefix) && s.references[entry.target] == 1 {
+		if err := s.removeEntry(blobName(entry.target)); err != nil {
+			return err
+		}
+	}
+	return s.removeEntry(name)
+}
+
+// setEntry accounts for immutable objects and the namespace links to them.
+func (s *contentStore) setEntry(name string, entry contentEntry) {
+	s.forgetEntry(name)
+	s.entries[name] = entry
+	s.used += entry.size
+	if entry.target != "" {
+		s.references[entry.target]++
+	}
+}
+
+func (s *contentStore) forgetEntry(name string) {
+	entry := s.entries[name]
+	if entry.target != "" {
+		s.references[entry.target]--
+		if s.references[entry.target] == 0 {
+			delete(s.references, entry.target)
+		}
+	}
+	delete(s.entries, name)
+	s.used -= entry.size
+}
+
+func (s *contentStore) removeEntry(name string) error {
+	if err := s.root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	s.forgetEntry(name)
+	delete(s.holdUntil, name)
+	return nil
 }
 
 func (w *contentWrite) write(data []byte) bool {
@@ -296,13 +411,17 @@ func (w *contentWrite) finish(commit bool) bool {
 	s := w.store
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return w.finishLocked(commit)
+}
+
+func (w *contentWrite) finishLocked(commit bool) bool {
+	s := w.store
 	if err := w.file.Close(); err != nil {
 		commit = false
 	}
 	committed := commit && w.wrote == w.size && s.root.Rename(w.temp, w.key) == nil
 	if committed {
-		s.used += w.wrote - s.entries[w.key].size
-		s.entries[w.key] = contentEntry{w.wrote, time.Now()}
+		s.setEntry(w.key, contentEntry{size: w.wrote, lastUsed: time.Now(), target: w.target, mediaType: w.mediaType})
 	} else {
 		if err := s.root.Remove(w.temp); err != nil && !errors.Is(err, os.ErrNotExist) {
 			// Count any abandoned bytes until startup reconciliation.
@@ -319,6 +438,9 @@ func (s *contentStore) put(key string, data []byte) bool {
 	w := s.reserve(key, int64(len(data)))
 	if w == nil {
 		return false
+	}
+	if managedLink(key) {
+		w.target, w.mediaType = parseContentLink(data)
 	}
 	return w.finish(w.write(data))
 }

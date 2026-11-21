@@ -141,6 +141,11 @@ build {
   }
 
   provisioner "file" {
+    source      = "${path.root}/extend-devcontainer-cli.cjs"
+    destination = "/tmp/shiftbox-extend-devcontainer-cli.cjs"
+  }
+
+  provisioner "file" {
     source      = "${path.root}/code-server.env"
     destination = "/tmp/shiftbox-code-server.env"
   }

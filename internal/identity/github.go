@@ -99,8 +99,16 @@ func (g *GitHub) AuthorizationViewInTx(ctx context.Context, tx *sql.Tx, owner st
 }
 
 func (g *githubService) accessToken(ctx context.Context, owner, repository string) (string, error) {
+	auth, err := g.repositoryAuthorization(ctx, owner, repository)
+	if err != nil {
+		return "", err
+	}
+	return auth.Tokens.Access, nil
+}
+
+func (g *githubService) repositoryAuthorization(ctx context.Context, owner, repository string) (githubAuthorization, error) {
 	if !template.ValidSource(repository, "devcontainer.json") {
-		return "", ErrGitHubRepositoryDenied
+		return githubAuthorization{}, ErrGitHubRepositoryDenied
 	}
 	result := g.refresh.DoChan(owner, func() (any, error) {
 		// The other waiters still need an answer if the first request disconnects.
@@ -111,28 +119,35 @@ func (g *githubService) accessToken(ctx context.Context, owner, repository strin
 	var auth githubAuthorization
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return githubAuthorization{}, ctx.Err()
 	case got := <-result:
 		if got.Err != nil {
-			return "", got.Err
+			return githubAuthorization{}, got.Err
 		}
 		auth = got.Val.(githubAuthorization)
 	}
 
 	if err := g.provider.covers(ctx, auth.Tokens.Access, repository); err != nil {
 		if errors.Is(err, ErrGitHubReconnect) {
-			return "", errors.Join(err, g.store.requireReconnect(ctx, owner, auth.Version, g.now()))
+			return githubAuthorization{}, errors.Join(err, g.store.requireReconnect(ctx, owner, auth.Version, g.now()))
 		}
-		return "", err
+		return githubAuthorization{}, err
 	}
+	if err := g.checkCurrentAuthorization(ctx, owner, auth); err != nil {
+		return githubAuthorization{}, err
+	}
+	return auth, nil
+}
+
+func (g *githubService) checkCurrentAuthorization(ctx context.Context, owner string, auth githubAuthorization) error {
 	active, err := g.store.activeVersion(ctx, owner, auth.Version)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if !active || !auth.Tokens.currentAt(g.now()) {
-		return "", ErrGitHubReconnect
+		return ErrGitHubReconnect
 	}
-	return auth.Tokens.Access, nil
+	return nil
 }
 
 func (g *githubService) current(ctx context.Context, owner string) (githubAuthorization, error) {

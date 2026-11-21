@@ -113,6 +113,28 @@ func TestPackerGuestToolchain(t *testing.T) {
 	}
 }
 
+// TestPackerDevContainerImageCacheExtension checks that both guest recipes
+// install the same extension before sealing and include it in EC2 provenance.
+func TestPackerDevContainerImageCacheExtension(t *testing.T) {
+	root := filepath.Join("..", "..", "platform", "packer")
+	for file, markers := range map[string][]string{
+		"shiftbox.pkr.hcl":     {`source      = "${path.root}/extend-devcontainer-cli.cjs"`, `/tmp/shiftbox-extend-devcontainer-cli.cjs`},
+		"aws/shiftbox.pkr.hcl": {`source      = "${path.root}/../extend-devcontainer-cli.cjs"`, `sha256(file("${path.root}/../extend-devcontainer-cli.cjs"))`},
+		"install-toolchain.sh": {`node /tmp/shiftbox-extend-devcontainer-cli.cjs`, `node --check`, `rm -f /tmp/shiftbox-extend-devcontainer-cli.cjs`},
+	} {
+		data, err := os.ReadFile(filepath.Join(root, file))
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		for _, marker := range markers {
+			if !strings.Contains(string(data), marker) {
+				t.Errorf("%s is missing the devcontainer extension marker %q", file, marker)
+			}
+		}
+	}
+}
+
 // TestPackerBrowserIDE requires a checksum-pinned IDE, preserved notices,
 // and a sealed export whose manifest identifies the packaged component.
 func TestPackerBrowserIDE(t *testing.T) {

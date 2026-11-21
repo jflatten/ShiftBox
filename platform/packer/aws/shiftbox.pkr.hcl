@@ -200,6 +200,11 @@ build {
   }
 
   provisioner "file" {
+    source      = "${path.root}/../extend-devcontainer-cli.cjs"
+    destination = "/tmp/shiftbox-extend-devcontainer-cli.cjs"
+  }
+
+  provisioner "file" {
     source      = "${path.root}/../code-server.env"
     destination = "/tmp/shiftbox-code-server.env"
   }
@@ -232,20 +237,23 @@ build {
   post-processor "manifest" {
     output = var.manifest_path
     custom_data = {
-      provider               = "ec2"
-      releaseId              = var.release_id
-      region                 = var.region
-      sourceAmiId            = var.source_ami
-      sourceAmiOwnerId       = local.canonical_account
-      sourceRevision         = var.source_revision
-      architecture           = "amd64"
-      platformVersion        = "24.04"
-      protocolVersion        = "1"
-      minimumRootDiskGiB     = format("%d", local.root_disk_gib)
-      guestAgentRelease      = coalesce(var.guest_agent_release, var.release_id)
-      guestAgentSHA256       = var.agent_sha256
-      guestUpdateKeySHA256   = var.guest_update_key_sha256
-      toolchainRecipeSHA256  = sha256(file("${path.root}/../install-toolchain.sh"))
+      provider             = "ec2"
+      releaseId            = var.release_id
+      region               = var.region
+      sourceAmiId          = var.source_ami
+      sourceAmiOwnerId     = local.canonical_account
+      sourceRevision       = var.source_revision
+      architecture         = "amd64"
+      platformVersion      = "24.04"
+      protocolVersion      = "1"
+      minimumRootDiskGiB   = format("%d", local.root_disk_gib)
+      guestAgentRelease    = coalesce(var.guest_agent_release, var.release_id)
+      guestAgentSHA256     = var.agent_sha256
+      guestUpdateKeySHA256 = var.guest_update_key_sha256
+      toolchainRecipeSHA256 = sha256(join(":", [
+        sha256(file("${path.root}/../install-toolchain.sh")),
+        sha256(file("${path.root}/../extend-devcontainer-cli.cjs")),
+      ]))
       codeServerRecipeSHA256 = sha256(file("${path.root}/../code-server.env"))
     }
   }

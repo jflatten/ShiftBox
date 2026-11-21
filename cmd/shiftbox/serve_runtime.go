@@ -243,6 +243,8 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	}, func(ctx context.Context) error {
 		return state.RunImageCacheVerification(ctx, checkpoint)
 	}, func(ctx context.Context) error {
+		return state.RunBuiltImageRetention(ctx, checkpoint)
+	}, func(ctx context.Context) error {
 		return web.RunBackupJobs(ctx, backupJobs, backups, captureBackup)
 	}, localBackup.Serve, func(ctx context.Context) error {
 		return web.RunRestoreValidations(ctx, state.DB, journal, restoreJobs, func(ctx context.Context, job web.RestoreValidationJob) (string, error) {

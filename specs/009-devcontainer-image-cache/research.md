@@ -10,6 +10,16 @@
 
 Sources — [pinned Dockerfile launch](https://github.com/devcontainers/cli/blob/v0.90.0/src/spec-node/singleContainer.ts#L16-L49), [config and initialization](https://github.com/devcontainers/cli/blob/v0.90.0/src/spec-node/configContainer.ts#L41-L91), [image metadata](https://github.com/devcontainers/cli/blob/v0.90.0/src/spec-node/imageMetadata.ts#L273-L295), [published CLI installation](../../platform/packer/install-toolchain.sh), [retained-home launch](../../internal/guest/home.go), [Docker build secrets](https://docs.docker.com/build/building/secrets/).
 
+### Pinned CLI proof on shiftbox-demo
+
+The disposable Linux amd64 runner used Dev Container CLI 0.90.0, Node 24.22.3, Docker 29.9.3, containerd 2.4.2, Buildx 0.39.0 and code-server 4.145.2. The test instrumented a temporary copy of the verified npm bundle. Its `up` result reported a `shiftboxImage` receipt containing `configSHA256`, `builtImageID` for a project build, and `imageCacheHit`.
+
+- Capture the digest from the same raw buffer the CLI parses. The default config finder uses the CLI host URI scheme, and explicit config selection can use a file URI. Observe both through the corresponding stock file reader. An initializer that rewrote the config after parsing left the receipt tied to the original JSONC bytes.
+- Take the built image ID at the single-container resolver before UID adaptation. The Dockerfile fixture showed a different running image ID when adaptation was enabled. Supplying a verified local image ID and its expected config digest at that resolver preserved the cached image metadata with the normal workspace substitutions.
+- Both the Dockerfile and image-plus-Features fixtures reused the selected image without a project build or pull. The CLI still rejected a denied Feature before running the initializer. A missing local image or changed config followed the ordinary build path. The eligible hit retained the developer home on recreation, ran project and Feature hooks, and served a code-server workbench over the fixture’s Unix socket.
+
+Evidence — [pinned CLI proof](../../tests/release/devcontainer_image_cache_test.go).
+
 ## Use project-scoped OCI transfer in the controller registry
 
 **Decision** — Use the existing guest HTTPS endpoint and a reserved private OCI namespace. Plan for the pinned platform’s Docker push and digest pull, with a controller-issued publication attempt and a separate atomic promotion. Implement only the transfer operations used by the supported client. Confirm the protocol and certificate handling with the actual pinned containerd image-store path before committing to the adapter.
@@ -19,6 +29,20 @@ Sources — [pinned Dockerfile launch](https://github.com/devcontainers/cli/blob
 **Alternatives considered** — Opening the existing proxy for pushes would couple private authority to public registry resolution. Archive export and load would add a separate transfer format and large staging overhead, and would lose existing layer-level reuse.
 
 Sources — [Moby push path](https://github.com/moby/moby/blob/docker-v29.9.3/daemon/containerd/image_push.go), [containerd pusher](https://github.com/containerd/containerd/blob/v2.4.2/core/remotes/docker/pusher.go), [OCI transfer contract](https://github.com/opencontainers/distribution-spec/blob/main/spec.md), [Docker image push](https://docs.docker.com/reference/cli/docker/image/push/), [current public handler](../../internal/imagecache/cache.go), [guest transport](../../internal/app/guest_server.go), [guest mirror configuration](../../internal/guest/image_cache.go).
+
+### Pinned transport proof on shiftbox-demo
+
+The disposable Ubuntu 24.04 Minimal amd64 runner used the repository installer and Docker client and engine 29.9.3 with the containerd 2.4.2 image store and Buildx 0.39.0. The native Docker client addressed the fixture through its explicit HTTPS host and private repository path. The private requests carried no upstream namespace parameter.
+
+| Operation | Observed request sequence |
+| --- | --- |
+| Push `--platform linux/amd64` | `HEAD` each blob digest (404), `POST` the upload collection with an empty body (202 and upload location), then `PUT` each upload location with a digest query and positive Content-Length (201). After both blob uploads, the client sent `HEAD` on the candidate tag (404) and a sized `PUT` of the OCI image manifest (201). |
+| Cold pull by digest | `HEAD` and `GET` the manifest, then `GET` its config and layer blobs. Each successful response carried the matching digest and size. The fixture transferred 401 manifest bytes, 291 config bytes and 117 layer bytes and recovered the pushed image ID. |
+| Pull an absent digest | Manifest `HEAD` returned 404, followed by a blob `HEAD` for the same digest (404). Docker reported the pull failure. |
+
+The fixture used the guest listener’s TLS configuration. A client without a leaf failed TLS. Replacing the Docker host configuration with paths to a new signed leaf changed the certificate used on the next pull without restarting Docker. The existing public handler returned 405 with `Allow: GET, HEAD` for POST, PUT, PATCH and DELETE. Reserve staging bytes at the sized blob PUT, then verify length and digest before linking. Keep authorization checks on both manifest and blob routes, including the missing-digest fallback.
+
+Evidence — [pinned native transport proof](../../tests/release/built_image_registry_test.go).
 
 ## Verify source and grant authority separately from content
 

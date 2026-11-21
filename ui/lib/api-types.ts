@@ -800,10 +800,27 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Read current configuration, runtime measurements and up to 100 retained image references. */
+        /** @description Read public registry settings, the independent built-image policy, runtime measurements and up to 100 retained public image references. */
         get: operations["getImageCache"];
         /** @description Stage cache settings activation using the current version. */
         put: operations["updateImageCache"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/image-cache/built-images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Save the organization-wide built devcontainer image setting using its independent version. Saving Off immediately fences reuse and publication and schedules background removal. */
+        put: operations["updateBuiltImagePolicy"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1180,6 +1197,7 @@ export interface components {
         };
         ImageCacheSnapshot: {
             version: number;
+            builtImages: components["schemas"]["BuiltImagePolicy"];
             desired: components["schemas"]["ImageCacheSettings"];
             effective: {
                 version: number;
@@ -1210,12 +1228,28 @@ export interface components {
                 retiredAt: string;
             }[];
             cachedImages: {
+                /** @description Public registry reference or the project display name for a published devcontainer image. */
                 reference: string;
                 digest: string;
                 architecture?: string;
                 /** @enum {string} */
                 availability: "complete" | "partial";
+                /** @enum {string} */
+                source: "registry" | "devcontainer";
+                /**
+                 * Format: date-time
+                 * @description When the manifest was retained or the devcontainer build was published.
+                 */
+                addedAt: string;
+                /** @description Retained bytes in manifest layer order. Null means the layer is unavailable. Shared layers can appear in more than one row. */
+                layerBytes: (string | null)[];
             }[];
+        };
+        BuiltImagePolicy: {
+            enabled: boolean;
+            version: number;
+            /** @enum {string} */
+            availability: "available" | "unavailable" | "disabled";
         };
         ImageCacheUsage: {
             retainedBytes: string | null;
@@ -3346,6 +3380,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImageCacheActivationOperation"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateBuiltImagePolicy: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Persisted built devcontainer image policy */
+            200: {
+                headers: {
+                    /** @description Current independent built-image policy version. */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuiltImagePolicy"];
                 };
             };
             default: components["responses"]["Error"];

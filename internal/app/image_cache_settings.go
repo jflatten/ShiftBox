@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/guest"
 	"github.com/jflatten/ShiftBox/internal/imagecache"
 	"github.com/jflatten/ShiftBox/internal/operation"
+	"github.com/jflatten/ShiftBox/internal/proxy"
 )
 
 type imageCacheRuntime struct {
@@ -29,12 +31,13 @@ type imageCacheRuntime struct {
 
 	// The active cache and its storage stay open while transfers hold a
 	// read lease. A separate streaming instance handles new pulls during drain.
-	mu          sync.RWMutex
-	draining    atomic.Bool
-	active      *imagecache.Cache
-	stream      *imagecache.Cache
-	unavailable bool
-	retaining   bool
+	mu           sync.RWMutex
+	draining     atomic.Bool
+	builtPolicy  atomic.Pointer[imagecache.BuiltPolicy]
+	active       *imagecache.Cache
+	stream       *imagecache.Cache
+	unavailable  bool
+	retainPublic bool
 }
 
 func newImageCacheRuntime(ctx context.Context, db *sql.DB, installationDir, volumeID, endpoint string, now func() time.Time) (*imageCacheRuntime, error) {
@@ -47,22 +50,29 @@ func newImageCacheRuntime(ctx context.Context, db *sql.DB, installationDir, volu
 	if err != nil {
 		return nil, err
 	}
+	built, err := imagecache.ReadBuiltPolicy(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	cache.builtPolicy.Store(&built)
 	cache.stream, err = imagecache.New("", 0)
 	if err != nil {
 		return nil, err
 	}
 	cache.active = cache.stream
 	cache.draining.Store(config.Activation.Phase == "draining")
-	if config.Effective.Enabled {
-		active, err := imagecache.OpenSettings(ctx, installationDir, volumeID, config.Effective.Settings, retiredTotal(config))
+	shared := built.SharedSettings(config.Effective.Settings)
+	if shared.Enabled {
+		active, err := imagecache.OpenSettings(ctx, installationDir, volumeID, shared, retiredTotal(config))
 		if err == nil {
 			cache.active = active
-			cache.retaining = true
+			cache.retainPublic = config.Effective.Enabled
 		} else {
 			cache.unavailable = true
 			slog.Warn("registry retention unavailable; continuing with image streaming", "reason", err)
 		}
 	}
+	cache.unavailable = cache.unavailable || built.Enabled && !shared.Enabled
 	return cache, nil
 }
 
@@ -77,7 +87,7 @@ func (c *imageCacheRuntime) configuration(ctx context.Context) (imagecache.Confi
 
 func (c *imageCacheRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !c.draining.Load() && c.mu.TryRLock() {
-		if !c.draining.Load() {
+		if !c.draining.Load() && c.retainPublic {
 			defer c.mu.RUnlock()
 			c.active.ServeHTTP(w, r)
 			return
@@ -104,21 +114,165 @@ func (c *imageCacheRuntime) offer(ctx context.Context, contact guest.Contact) st
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return guest.ImageCacheMode(policy, c.retaining)
+	return guest.ImageCacheMode(policy, c.retainPublic)
 }
 
-func (c *imageCacheRuntime) status() imagecache.RuntimeStatus {
+func (c *imageCacheRuntime) status(ctx context.Context) (imagecache.RuntimeStatus, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	status := c.active.Status(c.now().UTC())
 	status.Health.GuestEndpoint = &c.guestEndpoint
-	status.CachedImages = c.active.Inventory()
+	status.BuiltImageAvailability = c.builtImageAvailabilityLocked()
+	if c.retainPublic {
+		status.CachedImages = c.active.Inventory()
+	} else if c.active != c.stream {
+		status.Effectiveness = c.stream.Status(c.now().UTC()).Effectiveness
+	}
+	if status.BuiltImageAvailability == "available" {
+		images, err := c.publishedImages(ctx)
+		if err != nil {
+			return imagecache.RuntimeStatus{}, err
+		}
+		status.CachedImages = append(status.CachedImages, c.active.BuiltInventory(images)...)
+	}
+	sort.Slice(status.CachedImages, func(i, j int) bool {
+		a, b := status.CachedImages[i], status.CachedImages[j]
+		if !a.AddedAt.Equal(b.AddedAt) {
+			return a.AddedAt.After(b.AddedAt)
+		}
+		if a.Reference != b.Reference {
+			return a.Reference < b.Reference
+		}
+		return a.Digest < b.Digest
+	})
 	if c.unavailable {
 		reason := "The effective storage path is unavailable. Restricted workspaces can still stream public images."
 		status.Health.State = "degraded"
 		status.Health.Detail = &reason
 	}
-	return status
+	return status, nil
+}
+
+func (c *imageCacheRuntime) publishedImages(ctx context.Context) ([]imagecache.PublishedImage, error) {
+	config, err := c.configuration(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := c.db.QueryContext(ctx, `SELECT p.name,s.target_os,s.target_arch,s.manifest_digest,
+		s.policy_generation,s.storage_scope,s.promoted_at
+		FROM built_image_slots s JOIN project_templates p ON p.id=s.project_id
+		JOIN installations i ON i.id=s.installation_id AND i.built_image_generation=s.policy_generation
+		WHERE i.singleton=1 AND i.built_image_enabled=1 AND s.storage_generation=$1 AND s.storage_path=$2`,
+		config.Effective.Version, config.Effective.StoragePath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var images []imagecache.PublishedImage
+	for rows.Next() {
+		var image imagecache.PublishedImage
+		var addedAt string
+		if err := rows.Scan(&image.Project, &image.Platform.OS, &image.Platform.Architecture, &image.Digest,
+			&image.Scope.Generation, &image.Scope.ID, &addedAt); err != nil {
+			return nil, err
+		}
+		image.AddedAt, err = time.Parse(time.RFC3339Nano, addedAt)
+		if err != nil {
+			return nil, err
+		}
+		images = append(images, image)
+	}
+	return images, rows.Err()
+}
+
+func (c *imageCacheRuntime) builtImageAvailability() string {
+	if policy := c.builtPolicy.Load(); policy == nil || !policy.Enabled {
+		return "disabled"
+	}
+	if !c.mu.TryRLock() {
+		return "unavailable"
+	}
+	defer c.mu.RUnlock()
+	return c.builtImageAvailabilityLocked()
+}
+
+func (c *imageCacheRuntime) builtImageAvailabilityLocked() string {
+	if policy := c.builtPolicy.Load(); policy == nil || !policy.Enabled {
+		return "disabled"
+	}
+	if c.draining.Load() || c.active == c.stream {
+		return "unavailable"
+	}
+	return "available"
+}
+
+// applyBuiltImagePolicy runs after the SQL policy change commits. Close only
+// retired generations so an older callback cannot cancel a newer grant.
+func (c *imageCacheRuntime) applyBuiltImagePolicy(policy imagecache.BuiltPolicy, registry *proxy.Registry) {
+	c.rememberBuiltImagePolicy(policy)
+	if !policy.Enabled {
+		if err := registry.CloseMatching(func(scope proxy.Scope) bool {
+			return scope.BuiltImageGeneration > 0 && scope.BuiltImageGeneration < policy.Generation
+		}); err != nil {
+			slog.Warn("could not close a retired built image transfer", "error", err)
+		}
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := c.recoverBuiltImageStorage(ctx); err != nil {
+		slog.Warn("built image storage remains unavailable after enabling cache", "error", err)
+	}
+}
+
+func (c *imageCacheRuntime) rememberBuiltImagePolicy(policy imagecache.BuiltPolicy) {
+	for {
+		current := c.builtPolicy.Load()
+		if current != nil && current.Version >= policy.Version {
+			return
+		}
+		if c.builtPolicy.CompareAndSwap(current, &policy) {
+			return
+		}
+	}
+}
+
+// recoverBuiltImageStorage opens a usable shared store when policy is enabled
+// after startup. Existing public transfers and configuration activation keep
+// their lock and can defer reopening until the maintenance worker retries.
+func (c *imageCacheRuntime) recoverBuiltImageStorage(ctx context.Context) error {
+	policy := c.builtPolicy.Load()
+	if policy == nil || !policy.Enabled || c.draining.Load() || !c.mu.TryLock() {
+		return nil
+	}
+	defer c.mu.Unlock()
+	if c.active != c.stream || c.draining.Load() {
+		return nil
+	}
+	built, err := imagecache.ReadBuiltPolicy(ctx, c.db)
+	if err != nil {
+		return err
+	}
+	c.rememberBuiltImagePolicy(built)
+	if !built.Enabled {
+		return nil
+	}
+	config, err := c.configuration(ctx)
+	if err != nil {
+		return err
+	}
+	shared := built.SharedSettings(config.Effective.Settings)
+	if !shared.Enabled {
+		c.unavailable = true
+		return nil
+	}
+	active, err := imagecache.OpenSettings(ctx, c.installationDir, c.volumeID, shared, retiredTotal(config))
+	if err != nil {
+		c.unavailable = true
+		return err
+	}
+	c.active, c.retainPublic, c.unavailable = active, config.Effective.Enabled, false
+	return nil
 }
 
 func (c *imageCacheRuntime) Observe(ctx context.Context, op operation.Operation, _ operation.Step) (string, bool, error) {
@@ -148,9 +302,14 @@ func (c *imageCacheRuntime) Apply(ctx context.Context, op operation.Operation, s
 	}
 	switch step.Key {
 	case "validate":
-		if config.Desired.Enabled {
+		built, err := imagecache.ReadBuiltPolicy(ctx, c.db)
+		if err != nil {
+			return "", err
+		}
+		desired := built.SharedSettings(config.Desired)
+		if desired.Enabled {
 			desiredPath := config.Desired.StoragePath
-			if config.Effective.Enabled && desiredPath != config.Effective.StoragePath &&
+			if built.SharedSettings(config.Effective.Settings).Enabled && desiredPath != config.Effective.StoragePath &&
 				imagecache.StoragePathsOverlap(desiredPath, config.Effective.StoragePath) {
 				return "", c.activationFailure(ctx, config, "Choose a location outside the effective cache directory")
 			}
@@ -164,7 +323,7 @@ func (c *imageCacheRuntime) Apply(ctx context.Context, op operation.Operation, s
 					}
 				}
 			}
-			if err := imagecache.CheckStoragePath(c.installationDir, c.volumeID, config.Desired); err != nil {
+			if err := imagecache.CheckStoragePath(c.installationDir, c.volumeID, desired); err != nil {
 				return "", c.activationFailure(ctx, config, err.Error())
 			}
 		}
@@ -195,21 +354,27 @@ func (c *imageCacheRuntime) Apply(ctx context.Context, op operation.Operation, s
 }
 
 func (c *imageCacheRuntime) activate(ctx context.Context, config imagecache.Configuration) (string, error) {
+	built, err := imagecache.ReadBuiltPolicy(ctx, c.db)
+	if err != nil {
+		return "", err
+	}
+	desired := built.SharedSettings(config.Desired)
+	effective := built.SharedSettings(config.Effective.Settings)
 	var retired []imagecache.RetiredLocation
 	for _, location := range config.RetiredLocations {
-		if location.StoragePath != config.Desired.StoragePath || !config.Desired.Enabled {
+		if location.StoragePath != desired.StoragePath || !desired.Enabled {
 			if bytes, err := imagecache.RetiredBytes(location.StoragePath); err == nil {
 				location.Bytes = *imagecache.Bytes(bytes)
 			}
 			retired = append(retired, location)
 		}
 	}
-	if config.Effective.Enabled && (!config.Desired.Enabled || config.Desired.StoragePath != config.Effective.StoragePath) {
-		bytes, err := imagecache.RetiredBytes(config.Effective.StoragePath)
+	if (effective.Enabled || c.active != c.stream) && (!desired.Enabled || desired.StoragePath != effective.StoragePath) {
+		bytes, err := imagecache.RetiredBytes(effective.StoragePath)
 		if err != nil {
 			return "", c.activationFailure(ctx, config, "The previous cache storage could not be measured safely")
 		}
-		retired = append(retired, imagecache.RetiredLocation{StoragePath: config.Effective.StoragePath, Bytes: *imagecache.Bytes(bytes), RetiredAt: c.now().UTC()})
+		retired = append(retired, imagecache.RetiredLocation{StoragePath: effective.StoragePath, Bytes: *imagecache.Bytes(bytes), RetiredAt: c.now().UTC()})
 	}
 	if retired == nil {
 		retired = []imagecache.RetiredLocation{}
@@ -220,11 +385,11 @@ func (c *imageCacheRuntime) activate(ctx context.Context, config imagecache.Conf
 	next.Activation.Phase = "disabled"
 	active := c.stream
 	retiredBytes := retiredTotal(next)
-	reuseStorage := c.retaining && next.Desired.Enabled && config.Effective.StoragePath == next.Desired.StoragePath
-	if next.Desired.Enabled {
+	reuseStorage := c.active != c.stream && desired.Enabled && effective.StoragePath == desired.StoragePath
+	if desired.Enabled {
 		if reuseStorage {
 			active = c.active
-			if err := active.FitBudget(ctx, next.Desired.Budget(), retiredBytes); err != nil {
+			if err := active.FitBudget(ctx, desired.Budget(), retiredBytes); err != nil {
 				if ctx.Err() != nil {
 					return "", ctx.Err()
 				}
@@ -232,7 +397,7 @@ func (c *imageCacheRuntime) activate(ctx context.Context, config imagecache.Conf
 			}
 		} else {
 			var err error
-			active, err = imagecache.OpenSettings(ctx, c.installationDir, c.volumeID, next.Desired, retiredBytes)
+			active, err = imagecache.OpenSettings(ctx, c.installationDir, c.volumeID, desired, retiredBytes)
 			if err != nil {
 				if ctx.Err() != nil {
 					return "", ctx.Err()
@@ -240,7 +405,9 @@ func (c *imageCacheRuntime) activate(ctx context.Context, config imagecache.Conf
 				return "", c.activationFailure(ctx, config, "Could not open the requested registry cache storage within the settings limits")
 			}
 		}
-		next.Activation.Phase = "ready"
+		if next.Desired.Enabled {
+			next.Activation.Phase = "ready"
+		}
 	}
 	if err := c.save(ctx, next); err != nil {
 		if active != c.stream && active != c.active {
@@ -250,9 +417,9 @@ func (c *imageCacheRuntime) activate(ctx context.Context, config imagecache.Conf
 	}
 	previous := c.active
 	if reuseStorage {
-		active.SetLimits(next.Desired, retiredBytes)
+		active.SetLimits(desired, retiredBytes)
 	}
-	c.active, c.retaining, c.unavailable = active, next.Effective.Enabled, false
+	c.active, c.retainPublic, c.unavailable = active, next.Effective.Enabled, built.Enabled && !desired.Enabled
 	c.draining.Store(false)
 	if previous != c.stream && previous != c.active {
 		_ = previous.Close()
@@ -370,6 +537,11 @@ func (s *ControllerState) RunImageCacheVerification(ctx context.Context, fence *
 				return s.imageCache.refreshRetiredLocations(ctx)
 			}); err != nil && !errors.Is(err, operation.ErrConflict) && ctx.Err() == nil {
 				slog.Warn("could not refresh retired image cache usage")
+			}
+			if err := withCheckpointActivity(ctx, fence, func() error {
+				return s.imageCache.recoverBuiltImageStorage(ctx)
+			}); err != nil && ctx.Err() == nil {
+				slog.Warn("could not reopen built image cache storage", "error", err)
 			}
 			// Reference verification has no retention side effects, so only
 			// guard its authoritative observations with the checkpoint fence.

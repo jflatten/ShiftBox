@@ -24,11 +24,16 @@ import (
 const ImageCacheOfferHeader = "ShiftBox-Image-Cache"
 
 const (
-	dockerExecutable = "/usr/bin/docker"
-	managedHostsMark = "# Managed by ShiftBox image cache\n"
+	dockerExecutable    = "/usr/bin/docker"
+	dockerRegistryHosts = "/etc/docker/certs.d"
+	managedHostsMark    = "# Managed by ShiftBox image cache\n"
 )
 
 func imageCacheHosts(endpoint string, directFallback bool, caPath, certPath, keyPath string) ([]byte, error) {
+	return registryHosts(endpoint, directFallback, false, caPath, certPath, keyPath)
+}
+
+func registryHosts(endpoint string, directFallback, private bool, caPath, certPath, keyPath string) ([]byte, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
 		u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
@@ -47,9 +52,13 @@ func imageCacheHosts(endpoint string, directFallback bool, caPath, certPath, key
 		// the resolver's parent fallback behavior.
 		section = "server = " + strconv.Quote(endpoint) + "\n"
 	}
+	capabilities := `"pull", "resolve"`
+	if private {
+		capabilities += `, "push"`
+	}
 	return fmt.Appendf([]byte(managedHostsMark+section),
-		"capabilities = [\"pull\", \"resolve\"]\nca = %q\nclient = [[%q, %q]]\n",
-		caPath, certPath, keyPath), nil
+		"capabilities = [%s]\nca = %q\nclient = [[%q, %q]]\n",
+		capabilities, caPath, certPath, keyPath), nil
 }
 
 func (d devContainer) prepareImage(ctx context.Context) error {
@@ -137,7 +146,18 @@ func (d devContainer) literalImage() string {
 // updateImageCache atomically switches Docker to the current guest key pair.
 // New certificate paths keep the previous pair complete during renewal.
 func updateImageCache(stateDir, pollEndpoint, mode string) error {
-	const hostsDirectory = "/etc/docker/certs.d/_default"
+	return updateImageCacheHost(stateDir, pollEndpoint, filepath.Join(dockerRegistryHosts, "_default"), mode, false)
+}
+
+func updateBuiltImageRegistry(stateDir, pollEndpoint string) error {
+	origin, err := url.Parse(pollEndpoint)
+	if err != nil || !validPollEndpoint(pollEndpoint) || filepath.Base(origin.Host) != origin.Host {
+		return errors.New("invalid private image registry endpoint")
+	}
+	return updateImageCacheHost(stateDir, pollEndpoint, filepath.Join(dockerRegistryHosts, origin.Host), "mirror", true)
+}
+
+func updateImageCacheHost(stateDir, pollEndpoint, hostsDirectory, mode string, private bool) error {
 	path := filepath.Join(hostsDirectory, "hosts.toml")
 	old, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -169,7 +189,7 @@ func updateImageCache(stateDir, pollEndpoint, mode string) error {
 	credentials := filepath.Join(stateDir, "image-cache", fmt.Sprintf("%x", recordHash))
 	caPath, certPath, keyPath := filepath.Join(credentials, "ca.pem"),
 		filepath.Join(credentials, "client.pem"), filepath.Join(credentials, "client.key")
-	hosts, err := imageCacheHosts(origin.String(), mode == "mirror-and-direct", caPath, certPath, keyPath)
+	hosts, err := registryHosts(origin.String(), mode == "mirror-and-direct", private, caPath, certPath, keyPath)
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -138,6 +140,141 @@ func TestGuestRebuild(t *testing.T) {
 				t.Errorf("unsafe rebuild = %+v and %d hook invocations, want no readiness or hooks", report, later)
 			}
 		})
+	}
+}
+
+// TestGuestRebuildPublishesWithoutLookup exercises the explicit poll dispatch
+// with a dirty checkout. The worker offers the CLI's actual immutable result,
+// and a controller decline leaves the replacement and retained data usable.
+func TestGuestRebuildPublishesWithoutLookup(t *testing.T) {
+	const configPath = ".devcontainer/devcontainer.json"
+	const repo = "https://github.com/example/project.git"
+	const ref = "main"
+	const opID = "0555292b-088e-4f5b-8ac6-8be6045ae630"
+	const dirty = "uncommitted project changes\n"
+	const retained = "existing developer settings\n"
+	const homeTarget = "/home/developer"
+	project, digest := builtImageWorkspaceFixture(t, configPath)
+	state := filepath.Dir(project)
+	home := filepath.Join(state, "retained-home", "data")
+	receiptPath := repositoryReceipt(project)
+	for _, path := range []string{home, filepath.Dir(receiptPath)} {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	receipt, err := json.Marshal(repositoryEvidence{repositorySource: repositorySource{URL: repo, Ref: ref, Config: configPath},
+		Path: project, Commit: strings.Repeat("c", 40)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, value := range map[string]string{
+		receiptPath: string(receipt), filepath.Join(project, "unfinished.txt"): dirty, filepath.Join(home, ".profile"): retained,
+		filepath.Join(state, "retained-home", "target"): homeTarget,
+		filepath.Join(state, "retained-home", "owner"):  homeOwner(os.Getuid(), os.Getgid()),
+	} {
+		if err := os.WriteFile(path, []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldID, newID := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	build := "sha256:" + strings.Repeat("d", 64)
+	wantRequest := builtImageNegotiation{OperationID: opID, DispatchVersion: 7, ConfigSHA256: digest}
+	var requests []string
+	client := &http.Client{Transport: proofRoundTripper(func(r *http.Request) (*http.Response, error) {
+		requests = append(requests, r.URL.Path)
+		if r.Method != http.MethodPost || r.URL.Path != builtImageAPIPath+"/publications" {
+			t.Errorf("cache request = %s %s, want only a publication request", r.Method, r.URL.Path)
+		} else {
+			var got builtImageNegotiation
+			if err := decodeAgentJSON(r.Body, &got); err != nil || got != wantRequest {
+				t.Errorf("publication request = %+v, %v, want %+v", got, err, wantRequest)
+			}
+		}
+		return &http.Response{StatusCode: http.StatusNoContent, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})}
+	transport := newBuiltImageGuestTransport(state, "https://controller.example.test"+pollPath, client)
+	workspace := devContainer{workspace: project, retainHome: true, builtTransport: transport,
+		repository: &repositoryPreparation{project: project, run: func(context.Context, string, string, ...string) ([]byte, error) {
+			t.Error("rebuild attempted Git commands in a retained worktree")
+			return nil, fmt.Errorf("unexpected Git command")
+		}}, setProjectOwner: func(context.Context, string, int, int) error { return nil },
+	}
+	var up, hooks int
+	configAfterInit := builtImageConfigFixture + "\r\n// initializer changed the working copy after CLI parsing\r\n"
+	workspace.run = func(ctx context.Context, program string, args ...string) ([]byte, error) {
+		switch {
+		case program == "/usr/bin/docker" && args[1] == "ls":
+			return []byte(oldID + "\n"), nil
+		case program == "/usr/bin/docker" && args[1] == "inspect":
+			if slices.Contains(args, "{{json .HostConfig.Mounts}}") {
+				return json.Marshal([]namedVolume{{Type: "volume", Source: "app-data", Target: "/app/data"}})
+			}
+			return json.Marshal([]dockerMount{
+				{Type: "bind", Source: project, Destination: "/workspaces/project", RW: true},
+				{Type: "bind", Source: home, Destination: homeTarget, RW: true},
+				{Type: "volume", Name: "app-data", Destination: "/app/data", RW: true},
+			})
+		case program == "/usr/bin/docker" && args[1] == "exec":
+			identity := fmt.Sprintf("%d %d\n", os.Getuid(), os.Getgid())
+			if strings.Contains(args[len(args)-1], "getent") {
+				identity += homeTarget + "\n"
+			}
+			return []byte(identity), nil
+		case program == devContainerCLI && args[0] == "up":
+			up++
+			if image, _ := builtImageSelectionFromContext(ctx); image != "" || !slices.Contains(args, "--remove-existing-container") ||
+				!slices.Contains(args, "type=bind,source="+home+",target="+homeTarget) {
+				t.Errorf("rebuild up = image %q, arguments %q, want ordinary replacement with retained home", image, args)
+			}
+			if err := os.WriteFile(filepath.Join(project, configPath), []byte(configAfterInit), 0600); err != nil {
+				return nil, err
+			}
+			return builtImageUpFixture(newID, digest, build, false), nil
+		case program == devContainerCLI && args[0] == "run-user-commands" && slices.Contains(args, newID):
+			hooks++
+			return []byte(`{"outcome":"success"}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected rebuild command %q %q", program, args)
+		}
+	}
+	dispatch := fmt.Appendf(nil, `{"id":%q,"version":7,"type":"rebuild","command":"rebuild-development-container",`+
+		`"arguments":{"repositoryUrl":%q,"repositoryRef":%q,"devcontainerPath":%q}}`, opID, repo, ref, configPath)
+	journal, err := loadLocalJournal(filepath.Join(state, "operation.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyGuestPoll(t.Context(), journal, workspace, 4, "running", dispatch); err != nil {
+		t.Fatal(err)
+	}
+	if report := journal.report(); !report.Evidence.WaitForReached || report.Evidence.ContainerID != newID {
+		t.Fatalf("local rebuild = %+v, want ready replacement %s before publication", report, newID)
+	}
+	select {
+	case candidate := <-transport.queue:
+		if candidate.imageID != build || candidate.request != wantRequest {
+			t.Errorf("queued rebuild image = %+v, want %s and %+v from the CLI receipt", candidate, build, wantRequest)
+		}
+		transport.publish(t.Context(), candidate)
+	default:
+		t.Fatal("explicit rebuild produced a valid image without queuing its publication")
+	}
+	for range 2 {
+		if err := applyGuestPoll(t.Context(), journal, workspace, 4, "running", dispatch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := journal.report(); got.Status != "succeeded" || up != 1 || hooks != 2 || len(transport.queue) != 0 {
+		t.Errorf("rebuild after publication decline = %+v, up=%d, hooks=%d, queued=%d, want one successful replacement with both hook stages", got, up, hooks, len(transport.queue))
+	}
+	if want := []string{builtImageAPIPath + "/publications"}; !slices.Equal(requests, want) {
+		t.Errorf("built image requests = %q, want %q", requests, want)
+	}
+	for path, expected := range map[string]string{filepath.Join(project, "unfinished.txt"): dirty,
+		filepath.Join(home, ".profile"): retained, filepath.Join(project, configPath): configAfterInit} {
+		if content, err := os.ReadFile(path); err != nil || string(content) != expected {
+			t.Errorf("retained file %s = %q, %v, want %q", filepath.Base(path), content, err, expected)
+		}
 	}
 }
 

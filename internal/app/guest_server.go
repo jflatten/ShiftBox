@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,7 @@ type GuestListenerConfig struct {
 	Tunnels               *proxy.Tunnels
 	Checkpoint            *backup.WriteFence
 	ImageCache            http.Handler
+	BuiltImages           http.Handler
 	OfferImageCache       func(context.Context, guest.Contact) string
 	ImageCacheContext     func(context.Context, guest.Contact) context.Context
 	GuestUpdates          func(context.Context, string) (release.GuestUpdate, error)
@@ -120,13 +122,31 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 			}, now))
 	}
 	var pollHandler http.Handler = checkpointRequest(config.Checkpoint, internal)
-	if config.ImageCache != nil {
+	if config.BuiltImages != nil {
+		internal.Handle(web.BuiltImageAPIPath+"/", config.BuiltImages)
+	}
+	if config.ImageCache != nil || config.BuiltImages != nil {
 		cacheRoutes := http.NewServeMux()
 		var registry *proxy.Registry
 		if config.Tunnels != nil {
 			registry = config.Tunnels.Registry
 		}
-		cacheRoutes.Handle("/v2/", guestImageCache(config.ImageCache, enrollment, registry, config.Checkpoint, now, config.ImageCacheContext))
+		publicCache := http.NotFoundHandler()
+		if config.ImageCache != nil {
+			publicCache = guestImageCache(config.ImageCache, enrollment, registry, config.Checkpoint, now, config.ImageCacheContext)
+		}
+		privateCache := http.NotFoundHandler()
+		if config.BuiltImages != nil {
+			privateCache = checkpointRequest(config.Checkpoint, config.BuiltImages)
+		}
+		cacheRoutes.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == strings.TrimSuffix(web.BuiltImageRegistryPath, "/") ||
+				strings.HasPrefix(r.URL.Path, web.BuiltImageRegistryPath) {
+				privateCache.ServeHTTP(w, r)
+				return
+			}
+			publicCache.ServeHTTP(w, r)
+		})
 		cacheRoutes.Handle("/", pollHandler)
 		pollHandler = cacheRoutes
 	}
@@ -191,9 +211,42 @@ func ListenGuests(config GuestListenerConfig, enrollment *guest.Enrollment, auth
 		if config.WorkspaceLogs != nil {
 			w.Header().Set(guest.WorkspaceLogOfferHeader, workspacelog.Format)
 		}
+		if config.BuiltImages != nil {
+			w.Header().Set(guest.BuiltImageOfferHeader, "1")
+		}
 		pollRoute.ServeHTTP(w, r)
 	})
 	return listeners, nil
+}
+
+// BuiltImageHandler binds negotiation and private OCI transfers to the same
+// enrollment, connection registry, and storage as the workspace runtime.
+func (s *ControllerState) BuiltImageHandler(registry *proxy.Registry, source builtImageSource,
+	authenticate func(context.Context, *x509.Certificate, time.Time) (guest.Contact, error), now func() time.Time,
+) http.Handler {
+	if s == nil || s.imageCache == nil || source == nil || registry == nil || authenticate == nil || now == nil {
+		return http.NotFoundHandler()
+	}
+	service := newBuiltImageService(s.imageCache, source, registry, now)
+	return web.GuestBuiltImageCacheHandler(web.GuestBuiltImageOperations{
+		Authenticate: authenticate,
+		Lookup:       service.lookup,
+		Begin: func(ctx context.Context, contact guest.Contact, id string, version int64, sha string) (web.BuiltImagePublication, error) {
+			publication, err := service.begin(ctx, contact, id, version, sha)
+			return web.BuiltImagePublication(publication), err
+		},
+		Finish: service.finish,
+		Transfer: func(ctx context.Context, contact guest.Contact, id string) (context.Context, web.BuiltImageTransfer, error) {
+			transferCtx, transfer, err := service.transfer(ctx, contact, id)
+			if err != nil {
+				return nil, web.BuiltImageTransfer{}, err
+			}
+			return transferCtx, web.BuiltImageTransfer{
+				Cache: transfer.cache, Scope: transfer.scope, Lease: transfer.lease,
+				Manifest: transfer.manifest, Close: transfer.close,
+			}, nil
+		},
+	}, now)
 }
 
 func listenGuest(address string, config *tls.Config, handler http.Handler, certificates *internalServerCertificate) (guestListener, error) {

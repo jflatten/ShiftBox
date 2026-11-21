@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 // TestLowerBudgetEvictsOnlyUnleasedContent verifies that a settings reduction
@@ -388,6 +390,79 @@ func TestCacheRevalidatesTagsAndReusesDigests(t *testing.T) {
 	}
 	if got := pull(first); got != first || calls != 2 {
 		t.Errorf("immutable pull = %q / %d upstream calls, want %q / 2", got, calls, first)
+	}
+}
+
+// TestInventoryChecksEmbeddedOCIConfig verifies that a retained attestation is
+// complete when its embedded config is valid and its provenance blob is cached.
+func TestInventoryChecksEmbeddedOCIConfig(t *testing.T) {
+	const media = "application/vnd.oci.image.manifest.v1+json"
+	const provenance = `{"predicateType":"https://slsa.dev/provenance/v1"}`
+	provenanceDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(provenance)))
+	missingLayerDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("unretained provenance")))
+	configDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("{}")))
+	for _, test := range []struct {
+		name       string
+		configData string
+		configSize int
+		layer      string
+		want       string
+	}{
+		{name: "verified inline config", configData: `"e30="`, configSize: 2, layer: provenanceDigest, want: "complete"},
+		{name: "missing inline config", configData: `null`, configSize: 2, layer: provenanceDigest, want: "partial"},
+		{name: "wrong inline digest", configData: `"W10="`, configSize: 2, layer: provenanceDigest, want: "partial"},
+		{name: "wrong inline size", configData: `"e30="`, configSize: 3, layer: provenanceDigest, want: "partial"},
+		{name: "missing provenance blob", configData: `"e30="`, configSize: 2, layer: missingLayerDigest, want: "partial"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"schemaVersion":2,"mediaType":%q,
+				"artifactType":"application/vnd.docker.attestation.manifest.v1+json",
+				"config":{"mediaType":"application/vnd.oci.empty.v1+json","digest":%q,"size":%d,"data":%s},
+				"layers":[{"mediaType":"application/vnd.in-toto+json","digest":%q,"size":%d}]}`,
+				media, configDigest, test.configSize, test.configData, test.layer, len(provenance))
+			manifestDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(body)))
+			cache, err := newCache(t.TempDir(), 1<<20, &http.Client{Transport: cacheRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+				switch request.URL.Path {
+				case "/v2/repo/manifests/" + manifestDigest:
+					response := cacheResponse(request, http.StatusOK, body)
+					response.Header.Set("Content-Type", media)
+					return response, nil
+				case "/v2/repo/blobs/" + provenanceDigest:
+					return cacheResponse(request, http.StatusOK, provenance), nil
+				default:
+					return nil, fmt.Errorf("unexpected upstream request for %s", request.URL.Path)
+				}
+			})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { cache.Close() })
+			cache.store.volume = func() (int64, int64) { return 1 << 30, 1 << 30 }
+			for _, path := range []string{"manifests/" + manifestDigest, "blobs/" + provenanceDigest} {
+				request := httptest.NewRequest(http.MethodGet, "/v2/repo/"+path+"?ns=registry.example.com", nil)
+				request.Header.Set("Accept", media)
+				response := httptest.NewRecorder()
+				cache.ServeHTTP(response, request.WithContext(WithPlatform(request.Context(), "amd64")))
+				if response.Code != http.StatusOK {
+					t.Fatalf("GET %s = %d, want 200", path, response.Code)
+				}
+			}
+			if items := cache.Inventory(); len(items) != 1 || items[0].Availability != test.want {
+				t.Errorf("Inventory(%s) = %+v, want one %s reference", manifestDigest, items, test.want)
+			} else {
+				item := items[0]
+				if item.Source != "registry" || item.AddedAt.IsZero() {
+					t.Errorf("Inventory(%s) source and date added = %q and %v, want registry and a retained date", manifestDigest, item.Source, item.AddedAt)
+				}
+				var wantSize *string
+				if test.layer == provenanceDigest {
+					wantSize = Bytes(int64(len(provenance)))
+				}
+				if diff := cmp.Diff([]*string{wantSize}, item.LayerBytes); diff != "" {
+					t.Errorf("Inventory(%s) layer sizes mismatch (-want +got):\n%s", manifestDigest, diff)
+				}
+			}
+		})
 	}
 }
 

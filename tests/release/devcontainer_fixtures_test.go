@@ -44,9 +44,7 @@ func TestDevContainerReleaseFixtures(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 			defer cancel()
 			root := t.TempDir()
-			if err := os.CopyFS(root, os.DirFS(filepath.Join("fixtures", distro))); err != nil {
-				t.Fatal(err)
-			}
+			copyDevContainerReleaseFixture(t, root, distro)
 			// The volume name is shared by both builds of this disposable
 			// workspace but unique across test runs.
 			t.Setenv("SHIFTBOX_FIXTURE_VOLUME", "shiftbox-release-"+distro+"-"+filepath.Base(filepath.Dir(root)))
@@ -109,5 +107,12 @@ func TestDevContainerReleaseFixtures(t *testing.T) {
 			run(t, ctx, cli, append([]string{"run-user-commands", "--skip-post-attach"}, args...)...)
 			check("cat later", "later")
 		})
+	}
+}
+
+func copyDevContainerReleaseFixture(t *testing.T, root, distro string) {
+	t.Helper()
+	if err := os.CopyFS(root, os.DirFS(filepath.Join("fixtures", distro))); err != nil {
+		t.Fatal(err)
 	}
 }

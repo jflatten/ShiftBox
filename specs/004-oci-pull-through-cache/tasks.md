@@ -55,6 +55,9 @@
 - [x] T023 Follow complete root `AGENTS.md` backup/migration/build/Terraform rollout to shiftbox-demo, default profile/account 524941137496/us-east-2; review intended plan, confirm ECS stability/digest and live UI. Run the small direct/cold/warm comparison from `quickstart.md` using fresh VMs, same architecture/digest and no preload/guest-cache confounder; record actual bytes/IDE timing, review URL and ECS revision in `validation-report.md`. No fabricated speed target (depends: T025).
 - [x] T026 Bind-mount the bundled code-server read-only in new and rebuilt development containers. Build the named platform AMI and record a warm-first and cold-second m6i.xlarge comparison against the original copy-based launch (depends: T023).
 - [x] T027 Shorten fresh workspace launches with a literal-image pull, the project's effective user ID policy, a lightweight IDE socket probe, and 300 MiB/s EC2 root initialization. Verify one combined warm-cache launch on the demo (depends: T026).
+- [x] T028 Count verified embedded OCI image config bytes in cached-image inventory and confirm the Python attestation displays Complete on `shiftbox-demo`.
+- [x] T029 List retained public and published project devcontainer images in the protected cache API. Show date added, retained layer sizes in MB, and 20 images per page in the admin table. Verify the list in the demo.
+- [x] T030 Show total retained layer size in MB for each cached image, with layer details collapsed. Verify on `shiftbox-demo`.
 - [ ] T024 Clean only disposable test workspaces/profiles/storage/tags/cloud resources; preserve existing resources, operator backups and local state. In `specs/004-oci-pull-through-cache/validation-report.md` link G1–G7 and every matrix row to the few actual checks, report limitations and sign off only when UI plus eviction and all accepted behavior work (depends: T023).
 
 ## Dependencies and parallel work

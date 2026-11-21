@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -45,17 +46,25 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 	getOperation, streamEvents := web.OperationHandlers(db, origin, now, journal, registry)
 	listTemplates, createTemplate, reviseTemplate := web.TemplateHandlers(db, origin, now, uuid.NewString)
 	grantTemplate, revokeTemplate := web.TemplateGrantHandlers(db, origin, now)
+	revokeTemplate = fenceBuiltImageRevocation(revokeTemplate, registry)
+	updateTemplate := fenceBuiltImageRevocation(web.TemplateUpdateHandler(db, origin, now), registry)
 	budget, resourceProfile := web.CapacityHandlers(db, origin, now, uuid.NewString, launchPolicy)
 	publishNotice, listNotices, noticeReceipt := web.NoticeHandlers(db, origin, now, uuid.NewString)
 	listMaintenance, createMaintenance := web.MaintenanceHandlers(db, origin, now, journal)
 	defaultCachePath := filepath.Join(string(filepath.Separator), "var", "lib", "shiftbox", "cache", "registry")
-	var cacheStatus func() imagecache.RuntimeStatus
+	var cacheStatus func(context.Context) (imagecache.RuntimeStatus, error)
+	var applyBuiltImagePolicy func(imagecache.BuiltPolicy)
+	var builtImageAvailability func() string
 	if state.imageCache != nil {
 		defaultCachePath, cacheStatus = state.imageCache.defaultPath, state.imageCache.status
+		applyBuiltImagePolicy = func(policy imagecache.BuiltPolicy) { state.imageCache.applyBuiltImagePolicy(policy, registry) }
+		builtImageAvailability = state.imageCache.builtImageAvailability
 	}
 	getImageCache, updateImageCache := web.ImageCacheHandlers(db, origin, now, journal, defaultCachePath, cacheStatus)
+	updateBuiltImagePolicy := web.BuiltImagePolicyHandler(db, origin, now, applyBuiltImagePolicy, builtImageAvailability)
 	getSessionTimeout, updateSessionTimeout := web.SessionTimeoutHandlers(db, origin, now)
 	handlers := web.GitAuthorizationHandlers(db, origin, now, github)
+	handlers["revokeGitAuthorization"] = fenceBuiltImageRevocation(handlers["revokeGitAuthorization"], registry)
 	for id, handler := range web.SecretHandlers(db, origin, state.Secrets, now) {
 		handlers[id] = handler
 	}
@@ -71,7 +80,7 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 		web.TemplateCatalogHandler(db, origin, now, launchPolicy),
 		web.RetireAMIHandler(db, origin, now),
 		web.InfrastructureStatusHandler(db, origin, now, launchPolicy.Capabilities),
-		getImageCache, updateImageCache, getSessionTimeout, updateSessionTimeout,
+		getImageCache, updateImageCache, updateBuiltImagePolicy, getSessionTimeout, updateSessionTimeout,
 		web.KeepAlivePolicyHandler(db, origin, now),
 		web.LaunchLogRetentionHandler(db, origin, now),
 		web.NetworkPolicyHandler(db, origin, now, uuid.NewString, launchPolicy.Capabilities),
@@ -84,7 +93,7 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 		web.ListAuditEventsHandler(db, origin, now),
 		publishNotice, listNotices, noticeReceipt, listMaintenance, createMaintenance,
 		web.UpdateMembershipHandler(db, origin, now, registry, journal),
-		web.TemplateUpdateHandler(db, origin, now), grantTemplate, revokeTemplate,
+		updateTemplate, grantTemplate, revokeTemplate,
 		web.WorkspaceLaunchHandler(db, origin, now, journal, launchPolicy),
 		web.WorkspacePowerHandler(db, origin, now, journal, registry),
 		web.WorkspacePolicyHandler(db, origin, now, launchPolicy, registry),
