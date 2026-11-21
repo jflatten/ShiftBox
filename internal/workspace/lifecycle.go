@@ -26,12 +26,13 @@ type PowerIntent struct {
 	Version                                  int64
 }
 
-// SSHStart identifies an ordinary start that may be joined or admitted for a
-// retained workspace. Capacity is reserved only by AdmitPower.
+// SSHStart identifies a start that may be joined or admitted for a retained
+// workspace, or a terminal status for an already-admitted wait.
 type SSHStart struct {
-	OperationID string
-	Version     int64
-	CanStart    bool
+	OperationID    string
+	TerminalStatus string
+	Version        int64
+	CanStart       bool
 }
 
 const activePowerWork = `EXISTS (
@@ -61,19 +62,24 @@ func InterruptibleDeployment(ctx context.Context, tx *sql.Tx, id string) (string
 }
 
 // ReadSSHStart applies the same competing-work check as AdmitPower and
-// identifies an already admitted start for the exact workspace generation.
-func ReadSSHStart(ctx context.Context, tx *sql.Tx, id string, generation int64, now time.Time) (SSHStart, error) {
+// reads a bound wait's terminal status in the same snapshot as joinability.
+func ReadSSHStart(ctx context.Context, tx *sql.Tx, id string, generation int64, waitingStartID string, now time.Time) (SSHStart, error) {
 	var start SSHStart
 	err := tx.QueryRowContext(ctx, `SELECT w.version,
-		(w.desired_state='stopped' AND w.observed_state='stopped' AND NOT (`+activePowerWork+`)),
+		(w.provider_instance_id IS NOT NULL AND w.desired_state='stopped' AND w.observed_state='stopped' AND NOT (`+activePowerWork+`)),
 		COALESCE((SELECT o.id FROM operations o WHERE o.workspace_id=w.id AND o.generation=w.generation
 			AND o.type='start' AND o.originating_action='workspace.start' AND o.status IN ('pending','running','waiting')
-			AND w.desired_state='running' AND w.observed_state IN ('stopped','starting','running','unreachable')
-			ORDER BY o.created_at DESC,o.id DESC LIMIT 1),'')
+			AND w.provider_instance_id IS NOT NULL AND w.desired_state='running'
+			AND w.observed_state IN ('stopped','starting','running','unreachable')
+			ORDER BY o.created_at DESC,o.id DESC LIMIT 1),''),
+		COALESCE((SELECT o.status FROM operations o WHERE $4<>'' AND o.id=$4 AND o.workspace_id=w.id AND o.generation=w.generation
+			AND o.type='start' AND o.originating_action='workspace.start' AND o.status IN ('failed','cancelled')
+			AND w.desired_state<>'deleted' AND w.observed_state<>'deleted'),'')
 		FROM workspaces w JOIN installations i ON i.id=w.installation_id JOIN users owner ON owner.id=w.owner_user_id
 		WHERE w.id=$1 AND w.generation=$3 AND i.state='active' AND owner.membership_state='active'
-			AND w.provider_instance_id IS NOT NULL AND w.deletion_commit_at IS NULL`,
-		id, now.UTC().Format(maintenanceTime), generation).Scan(&start.Version, &start.CanStart, &start.OperationID)
+			AND w.deletion_commit_at IS NULL AND (w.provider_instance_id IS NOT NULL OR $4<>'')`,
+		id, now.UTC().Format(maintenanceTime), generation, waitingStartID).
+		Scan(&start.Version, &start.CanStart, &start.OperationID, &start.TerminalStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SSHStart{}, nil
 	}

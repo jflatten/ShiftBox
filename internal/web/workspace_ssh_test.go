@@ -324,32 +324,59 @@ func TestWorkspaceSSHStartFailureAndAuthorityChange(t *testing.T) {
 		name, change, message string
 	}{
 		{"failed start", `UPDATE operations SET status='failed'; UPDATE operation_steps SET status='failed' WHERE step_key='configure'`, "retry"},
+		{"cancelled start", `UPDATE operations SET status='cancelled'`, "was cancelled"},
 		{"changed grant", `UPDATE workspaces SET observed_state='running'; UPDATE operation_steps SET status='succeeded' WHERE step_key='verify_ide';
+			UPDATE resource_grants SET revoked_at='2026-11-13T23:59:59Z' WHERE id='ssh-grant'`, "not permitted"},
+		{"failed start and revoked grant", `UPDATE operations SET status='failed';
 			UPDATE resource_grants SET revoked_at='2026-11-13T23:59:59Z' WHERE id='ssh-grant'`, "not permitted"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, now, journal := stoppedSSHWorkspace(t)
 			token := issueWorkspaceSSHFixtureCredential(t, db, now, "ssh-admin", "admin")
 			grantWorkspaceSSHFixture(t, db)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+
+			// Let the fixture writer commit while the first readiness check is
+			// beginning. This clock call comes after initial admission, registry
+			// reauthorization, the deadline, start admission, and the progress frame.
+			db.SetMaxOpenConns(2)
+			transition := make(chan error, 1)
+			var clockCalls atomic.Int32
+			clock := func() time.Time {
+				if clockCalls.Add(1) == 5 {
+					transition <- database.Transaction(ctx, db, func(tx *sql.Tx) error {
+						_, err := tx.ExecContext(ctx, tc.change)
+						return err
+					})
+				}
+				return now
+			}
 			api := web.NewWorkspaceSSHAPI(db, &proxy.Registry{}, journal, func(_ context.Context, _ string, _ int64, _ string) (net.Conn, string, error) {
 				t.Error("SSH tried to open a guest stream after the start failed or authority changed")
 				return nil, "", proxy.ErrTunnelServiceUnavailable
-			}, func() time.Time { return now }, "https://management.test", nil)
+			}, clock, "https://management.test", nil)
 			server := httptest.NewTLSServer(api)
 			defer server.Close()
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
 			socket, _, err := dialWorkspaceSSHFixture(ctx, server, token)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer socket.CloseNow()
 			expectSSHControl(t, ctx, socket, workspacessh.Progress)
-			executeLifecycleFixture(t, db, tc.change)
+			select {
+			case err := <-transition:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-ctx.Done():
+				t.Fatal("SSH waiter did not reach its first readiness check")
+			}
 			control := expectSSHControl(t, ctx, socket, workspacessh.Error)
 			if !strings.Contains(control.Message, tc.message) {
 				t.Errorf("SSH control = %+v, want guidance containing %q", control, tc.message)
 			}
+			checkStoppedSSHDiscovery(t, api, token, 0)
 			assertSSHStartCount(t, db, 1)
 			var audits int
 			if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE action='workspace.connect_admin'`).Scan(&audits); err != nil || audits != 0 {

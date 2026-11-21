@@ -130,7 +130,7 @@ func (s workspaceSSH) list(w http.ResponseWriter, r *http.Request, token string)
 			return err
 		}
 		for _, alias := range aliases {
-			target, err := workspaceSSHAuthority(ctx, tx, store, principal, alias.ID, now, s.journal != nil)
+			target, err := workspaceSSHAuthority(ctx, tx, store, principal, alias.ID, now, s.journal != nil, "")
 			if err != nil {
 				return err
 			}
@@ -174,19 +174,22 @@ func sshAliasCandidates(ctx context.Context, tx *sql.Tx, principal auth.Principa
 }
 
 func workspaceSSHAuthority(ctx context.Context, tx *sql.Tx, store *auth.Store, principal auth.Principal,
-	id string, now time.Time, allowStart bool,
+	id string, now time.Time, allowStart bool, waitingStartID string,
 ) (sshWorkspaceTarget, error) {
 	resource, generation, err := serviceWorkspace(ctx, tx, id, "ide")
 	if err != nil {
 		return sshWorkspaceTarget{}, err
 	}
 	access := sshWorkspaceTarget{generation: generation, ready: resource.Eligible}
-	if allowStart && !access.ready && auth.Authorize(principal, "workspace.start", resource, nil, now).Allowed {
-		access.start, err = workspace.ReadSSHStart(ctx, tx, id, generation, now)
+	if allowStart && (!access.ready || waitingStartID != "") && auth.Authorize(principal, "workspace.start", resource, nil, now).Allowed {
+		access.start, err = workspace.ReadSSHStart(ctx, tx, id, generation, waitingStartID, now)
 		if err != nil {
 			return sshWorkspaceTarget{}, err
 		}
-		resource.Eligible = access.start.CanStart || access.start.OperationID != ""
+		// An already-admitted waiter can receive its own terminal outcome
+		// after the current connection grant and scope are rechecked.
+		resource.Eligible = access.ready || access.start.CanStart || access.start.OperationID != "" ||
+			access.start.TerminalStatus != ""
 	}
 	access.AuthorizationTarget, err = serviceEntryTarget(ctx, tx, store, principal, resource)
 	return access, err
@@ -206,7 +209,11 @@ func (s workspaceSSH) admit(ctx context.Context, id, token string, expected *ssh
 		if err != nil {
 			return err
 		}
-		target, err := workspaceSSHAuthority(ctx, tx, store, principal, id, now, s.journal != nil)
+		waitingStartID := ""
+		if stage == sshCheckReady && expected != nil {
+			waitingStartID = expected.startID
+		}
+		target, err := workspaceSSHAuthority(ctx, tx, store, principal, id, now, s.journal != nil, waitingStartID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return sshDenied
 		}
@@ -231,6 +238,12 @@ func (s workspaceSSH) admit(ctx context.Context, id, token string, expected *ssh
 		if expected != nil && (admission.scope != expected.scope || admission.installationID != expected.installationID ||
 			admission.generation != expected.generation) {
 			return sshDenied
+		}
+		switch target.start.TerminalStatus {
+		case "failed":
+			return Problem{Title: "Workspace start failed. Open Workspaces to review and retry."}
+		case "cancelled":
+			return Problem{Title: "Workspace start was cancelled. Open Workspaces to review its state."}
 		}
 		if stage >= sshCheckReady && !admission.ready {
 			return errSSHNotReady
@@ -361,10 +374,9 @@ func (s workspaceSSH) awaitSSHGuest(ctx context.Context, socket *websocket.Conn,
 			return nil, "", err
 		}
 		switch op.Status {
-		case "failed":
-			return nil, "", Problem{Title: "Workspace start failed. Open Workspaces to review and retry."}
-		case "cancelled":
-			return nil, "", Problem{Title: "Workspace start was cancelled. Open Workspaces to review its state."}
+		case "failed", "cancelled":
+			// Reauthorize the waiter before reporting the terminal outcome.
+			return open(ctx)
 		}
 		message := sshStartProgress(op)
 		if message != lastMessage {
