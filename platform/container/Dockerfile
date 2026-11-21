@@ -10,6 +10,7 @@ RUN npm run build
 FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS controller
 ARG TARGETOS
 ARG TARGETARCH
+ARG RELEASE_CANDIDATE=""
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -20,9 +21,25 @@ COPY LICENSE ./
 COPY scripts/stage-controller-licenses.sh ./scripts/
 COPY ui/export.go ./ui/
 COPY --from=browser /src/ui/out/ ./ui/out/
-RUN CGO_ENABLED=0 go test -tags shiftbox_ui ./cmd/shiftbox -run '^TestEmbeddedBrowserAssets$' -count=1 \
-    && CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -trimpath -tags shiftbox_ui -o /release/shiftbox ./cmd/shiftbox \
-    && sh scripts/stage-controller-licenses.sh /release/shiftbox /release/licenses
+# Go test links this package under its import path while go build links main.
+RUN set -eu; \
+    if [ -n "$RELEASE_CANDIDATE" ]; then \
+        case "$RELEASE_CANDIDATE" in \
+            *[!a-zA-Z0-9.-]*) echo 'RELEASE_CANDIDATE must be a canonical RC tag.' >&2; exit 2 ;; \
+        esac; \
+        if [ "${#RELEASE_CANDIDATE}" -gt 96 ] || ! printf '%s\n' "$RELEASE_CANDIDATE" \
+            | LC_ALL=C grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.[1-9][0-9]*$'; then \
+            echo 'RELEASE_CANDIDATE must be a canonical RC tag of at most 96 characters.' >&2; exit 2; \
+        fi; \
+    fi; \
+    controller_release=${RELEASE_CANDIDATE:-development}; \
+    test_ldflags="-X github.com/jflatten/ShiftBox/cmd/shiftbox.controllerRelease=$controller_release"; \
+    SHIFTBOX_EXPECT_CONTROLLER_RELEASE="$controller_release" CGO_ENABLED=0 \
+        go test -tags shiftbox_ui -ldflags "$test_ldflags" ./cmd/shiftbox \
+        -run '^Test(EmbeddedBrowserAssets|ControllerReleaseMatchesBuild)$' -count=1; \
+    CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+        go build -trimpath -tags shiftbox_ui -ldflags "-X main.controllerRelease=$controller_release" -o /release/shiftbox ./cmd/shiftbox; \
+    sh scripts/stage-controller-licenses.sh /release/shiftbox /release/licenses
 
 FROM ghcr.io/dexidp/dex:v2.46.1 AS dex
 

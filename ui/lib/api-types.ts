@@ -1541,17 +1541,25 @@ export interface components {
             }[];
             minimumDiskGiB?: number;
             maximumDiskGiB?: number;
+            /** @description The official release image configured for this deployment. */
+            officialImage?: {
+                releaseId: string;
+                region: string;
+                amiId: string;
+            };
         };
         PlatformArtifactInput: {
             /** @description Absolute path on the controller containing the UTM bundle and manifest.json. */
             folder?: string;
             /** @description The Packer AMI manifest for a cloud EC2 controller. */
             manifest?: Record<string, never>;
+            /** @description The exact regional catalog JSON text from the configured ShiftBox release's support archive. */
+            officialManifest?: string;
             /** @default false */
             makeDefault?: boolean;
             /** @description Publish the validated EC2 image to this family without changing the default. */
             amiFamily?: string;
-        } & (unknown | unknown);
+        } & (unknown | unknown | unknown);
         ResourceProfileInput: {
             name: string;
             /** @description CPU count for manually sized providers. */

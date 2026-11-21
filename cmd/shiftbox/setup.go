@@ -27,8 +27,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Set at build time to the release shipped with the pinned guest agent.
+// controllerRelease seeds setup's guest compatibility window. Release builds
+// set it to the guest's RC identity, which persists through stable promotion.
 var controllerRelease = "development"
+
+const postgresActivatedStatus = "PostgreSQL installation activated. Start the controller and sign in again."
 
 func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	flags := flag.NewFlagSet("setup", flag.ContinueOnError)
@@ -111,8 +114,15 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 		return err
 	}
 	if resumed {
-		_, err := fmt.Fprintln(status, "PostgreSQL installation activated. Start the controller and sign in again.")
+		_, err := fmt.Fprintln(status, postgresActivatedStatus)
 		return err
+	}
+	if cloud != nil {
+		cloud.OnActivated = func() {
+			// A closed status stream cannot undo a committed database cutover.
+			// Restarting the setup task can verify its durable receipt again.
+			_, _ = fmt.Fprintln(status, postgresActivatedStatus)
+		}
 	}
 	var setup app.SetupHTTP
 	var dexDone <-chan struct{}

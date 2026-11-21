@@ -24,8 +24,8 @@ type WorkspaceLaunchPolicy struct {
 	Protocols        []string
 	RetentionMaximum *int64
 	// EC2VerifiedAMIs are the deployment-approved images for guest enrollment.
-	EC2VerifiedAMIs  []string
-	EC2SingleBootAMI string
+	EC2VerifiedAMIs   []string
+	EC2SingleBootAMIs []string
 	// VerifyNetwork observes the provider's supported stopped-VM network mode.
 	VerifyNetwork func(context.Context, provider.NetworkRequest) (provider.Inventory, error)
 	// AvailableDisk measures the provider volume before a new allocation.

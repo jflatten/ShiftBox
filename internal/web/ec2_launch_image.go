@@ -52,7 +52,7 @@ func verifyEC2LaunchImage(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunc
 	if !slices.Contains(policy.Protocols, protocol) || !ec2ImageVerified(policy.EC2VerifiedAMIs, image) {
 		return false, sql.ErrNoRows
 	}
-	return ec2ImageVerified([]string{policy.EC2SingleBootAMI}, image), nil
+	return ec2ImageVerified(policy.EC2SingleBootAMIs, image), nil
 }
 
 func selectCurrentEC2FamilyImage(ctx context.Context, tx *sql.Tx, policy WorkspaceLaunchPolicy, family, architecture string, diskMiB int64) (string, error) {

@@ -46,6 +46,13 @@ func (c Config) Validate() error {
 	default:
 		return errors.New("data profile must be sqlite or postgres")
 	}
+	if c.Runtime != nil && c.Runtime.EC2 != nil && c.Runtime.EC2.OfficialImage != nil {
+		ec2 := c.Runtime.EC2
+		if c.Runtime.Provider != "ec2" || ec2.OfficialImage.Validate(ec2.Region, ec2.AccountID) != nil ||
+			ec2.OfficialImage.AMIID == ec2.VerifiedEnrollmentAMI || ec2.OfficialImage.AMIID == ec2.VerifiedSingleBootAMI {
+			return errors.New("invalid official EC2 image configuration")
+		}
+	}
 	return nil
 }
 

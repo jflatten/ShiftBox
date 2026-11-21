@@ -1,6 +1,57 @@
 #!/bin/sh
 set -eu
 
+verify_public_root() {
+    root=$1
+    for path in /root/.aws /root/.ssh /root/.docker/config.json /root/.config/gh/hosts.yml \
+        /root/.git-credentials /root/.netrc /root/.bash_history \
+        /home/ubuntu/.aws /home/ubuntu/.ssh /home/ubuntu/.docker/config.json /home/ubuntu/.config/gh/hosts.yml \
+        /home/ubuntu/.git-credentials /home/ubuntu/.netrc /home/ubuntu/.bash_history \
+        /var/lib/cloud/instance /var/lib/shiftbox-agent /var/lib/amazon/ssm; do
+        if [ -e "$root$path" ] || [ -L "$root$path" ]; then
+            echo "Unexpected builder state at $path. Stop and investigate before image capture." >&2
+            return 1
+        fi
+    done
+    for path in "$root"/etc/ssh/ssh_host_*; do
+        if [ -e "$path" ] || [ -L "$path" ]; then
+            echo 'Builder SSH host keys are still present.' >&2
+            return 1
+        fi
+    done
+    for directory in /var/lib/cloud/instances /var/lib/cloud/seed; do
+        if [ -d "$root$directory" ]; then
+            contents=$(find "$root$directory" -mindepth 1 -print -quit) || return
+            if [ -n "$contents" ]; then
+                echo 'Cloud-init builder state remains on the image.' >&2
+                return 1
+            fi
+        fi
+    done
+    if [ -s "$root/etc/machine-id" ] && [ "$(cat "$root/etc/machine-id")" != uninitialized ]; then
+        echo 'Builder machine identity remains on the image.' >&2
+        return 1
+    fi
+    if ! awk -F: '$1 == "root" && $2 ~ /^[!*]/ { root = 1 }
+        $1 == "ubuntu" && $2 ~ /^[!*]/ { ubuntu = 1 }
+        END { exit !(root && ubuntu) }' "$root/etc/shadow"; then
+        echo 'The builder accounts must be locked before public capture.' >&2
+        return 1
+    fi
+}
+
+mode=${1:-private}
+case "$mode" in
+    verify-public)
+        [ "$#" -eq 2 ] || exit 2
+        case "$2" in /*) ;; *) exit 2 ;; esac
+        verify_public_root "$2"
+        exit
+        ;;
+    private|public) [ "$#" -le 1 ] || exit 2 ;;
+    *) echo 'Choose private, public, or verify-public sealing mode.' >&2; exit 2 ;;
+esac
+
 # Canonical's temporary SSH login is only used while Packer provisions the image.
 rm -f /home/ubuntu/.ssh/authorized_keys /root/.ssh/authorized_keys
 usermod -L ubuntu
@@ -55,6 +106,17 @@ DOCKER
 
 rm -f /tmp/shiftbox-agent /tmp/shiftbox-agent.service /tmp/shiftbox-start-agent
 rm -f /tmp/shiftbox-install-tools /tmp/shiftbox-code-server.env /tmp/shiftbox-guest-update.pub /tmp/shiftbox-seal-aws-image
+
+if [ "$mode" = public ]; then
+    # The ephemeral builder writes only its public authorization key here.
+    for directory in /home/ubuntu/.ssh /root/.ssh; do
+        if [ -d "$directory" ]; then
+            rmdir "$directory"
+        fi
+    done
+    usermod -L root
+    verify_public_root ''
+fi
 
 # Packer stops the instance before taking the AMI snapshots.
 sync

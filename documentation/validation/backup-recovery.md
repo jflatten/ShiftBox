@@ -139,3 +139,11 @@ management records and recorded provider observations.
   schemas. They verify damaged dump refusal, refusal to retry a partial load,
   and successful restore after preparing an empty replacement.
 - Management archives exclude workspace VM disks.
+
+## Public AWS recovery evidence still required
+
+The native PostgreSQL replacement results above demonstrate the recovery contract. A historical [private AWS migration](ui-bundle.md#upgrade-and-rollout) also verified a management archive and the retained-workspaces-current check before updating PostgreSQL, with the existing database and storage preserved during the controller rollout. These runs cover different release artifacts and deployment paths.
+
+On the exact public RC, use a disposable customer stack with a ready workspace. Record the verified coordinated archive, installed release identity, stack ID and installation EBS identity before the reviewed change set. Restore the app and Dex schemas to an empty, scoped PostgreSQL target with verified TLS. Exercise wrong archive/key and foreign or nonempty target failures. Verify the restricted administrator review, matching EC2 instance and retained disk, revocation of copied origin grants and sessions, explicit activation, and fresh sign-in and IDE access. Normal workspace and identity mutations remain fenced until activation.
+
+The qualification operator owns the disposable stack, replacement database and recovery artifacts. Verify stack deletion preserves protected EBS and secrets, then verify removal of the identified disposable resources after approval. Keep archive material and account/resource receipts in the approved private evidence location. Record these V10 results alongside the [public release validation quickstart](../../specs/010-public-aws-distribution/quickstart.md#5-reuse-the-applicable-product-gates). The first stable requires this recovery rehearsal. Rehearse a public-stable upgrade after a prior public stable exists.

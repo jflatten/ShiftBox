@@ -88,6 +88,9 @@ func (s SetupHTTP) activatePostgres(ctx context.Context, target *sql.DB, actor, 
 			}
 			return nil
 		}}
+	if s.Cloud != nil {
+		c.onActivated = s.Cloud.OnActivated
+	}
 	c.validate = func(ctx context.Context, tx *sql.Tx) error {
 		var snapshot string
 		err := tx.QueryRowContext(ctx, `SELECT a.settings_json FROM installations i
@@ -126,6 +129,7 @@ type postgresCutover struct {
 	now            time.Time
 	validate       func(context.Context, *sql.Tx) error
 	verifySource   func(context.Context, *sql.Tx) error
+	onActivated    func()
 }
 
 func (c postgresCutover) run(ctx context.Context, source, target *sql.DB) (operation.Operation, error) {
@@ -172,6 +176,9 @@ func (c postgresCutover) run(ctx context.Context, source, target *sql.DB) (opera
 	})
 	if err != nil {
 		return operation.Operation{}, err
+	}
+	if c.onActivated != nil {
+		c.onActivated()
 	}
 	return activated, nil
 }

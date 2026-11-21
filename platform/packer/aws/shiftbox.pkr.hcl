@@ -20,6 +20,20 @@ variable "source_ami" {
   }
 }
 
+variable "public_build" {
+  type    = bool
+  default = false
+}
+
+variable "publisher_account_id" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.publisher_account_id == "" || can(regex("^[0-9]{12}$", var.publisher_account_id))
+    error_message = "The publisher_account_id must be an approved 12-digit AWS account ID."
+  }
+}
+
 variable "build_subnet_id" {
   type = string
   validation {
@@ -161,7 +175,7 @@ source "amazon-ebs" "shiftbox" {
     device_name           = "/dev/sda1"
     volume_size           = local.root_disk_gib
     volume_type           = "gp3"
-    encrypted             = true
+    encrypted             = !var.public_build
     delete_on_termination = true
   }
 
@@ -230,7 +244,7 @@ build {
       "sudo install -D -m 0755 /tmp/shiftbox-start-agent /usr/local/libexec/shiftbox-start-agent",
       "sudo install -m 0644 /tmp/shiftbox-agent.service /etc/systemd/system/shiftbox-agent.service",
       "sudo systemctl enable shiftbox-agent.service",
-      "sudo /bin/sh /tmp/shiftbox-seal-aws-image",
+      "sudo /bin/sh /tmp/shiftbox-seal-aws-image ${var.public_build ? "public" : "private"}",
     ]
   }
 
@@ -240,6 +254,9 @@ build {
       provider             = "ec2"
       releaseId            = var.release_id
       region               = var.region
+      sourceRegion         = var.region
+      publicBuild          = var.public_build ? "true" : "false"
+      publisherAccountId   = var.publisher_account_id
       sourceAmiId          = var.source_ami
       sourceAmiOwnerId     = local.canonical_account
       sourceRevision       = var.source_revision

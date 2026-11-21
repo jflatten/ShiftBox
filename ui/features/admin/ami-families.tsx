@@ -1,47 +1,120 @@
 import { useEffect, useState } from 'react';
-import { Button, Chip, Group, Modal, Paper, Stack, Table, Text, Textarea, TextInput, Title } from '@mantine/core';
+import { Button, Chip, FileInput, Group, Modal, Paper, Stack, Table, Text, Textarea, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { WorkflowStepper } from '../../components/workflow-stepper';
 import { readProblem } from '../../lib/api-problem';
+import type { InfrastructureProvider } from '../../lib/use-infrastructure';
 import { useOperation } from '../../lib/use-operation';
 import { useProfileImageCatalog } from './resource-profiles';
 
-export function AMIFamilies({ userID, csrfToken }: { userID: string; csrfToken?: string }) {
+type OfficialRelease = NonNullable<InfrastructureProvider['officialImage']>;
+
+export function AMIFamilies({ userID, csrfToken, officialImage }: {
+  userID: string;
+  csrfToken?: string;
+  officialImage?: OfficialRelease;
+}) {
   const catalog = useProfileImageCatalog(userID, true);
   const [retiring, setRetiring] = useState<{ id: string; name: string }>();
-  const members = (catalog.isSuccess ? catalog.data.platformImages : [])
+  const images = catalog.isSuccess ? catalog.data.platformImages : [];
+  const members = images
     .filter(image => image.amiFamily)
     .toSorted((a, b) => a.amiFamily!.localeCompare(b.amiFamily!) ||
       (b.imageCreatedAtUnixMillis ?? 0) - (a.imageCreatedAtUnixMillis ?? 0) || a.name.localeCompare(b.name));
-  return <Paper component="section" aria-labelledby="ami-families-heading" withBorder radius="md" p="lg">
+  return <>
+    {officialImage ? <OfficialAMI image={officialImage} csrfToken={csrfToken} userID={userID}
+      validated={images.some(image => image.amiId === officialImage.amiId && image.name === officialImage.releaseId && !image.amiFamily)} /> : null}
+    <Paper component="section" aria-labelledby="ami-families-heading" withBorder radius="md" p="lg">
+      <Stack gap="md">
+        <Title order={2} size="h3" id="ami-families-heading">AMI families</Title>
+        <Text size="sm" c="dimmed">Resource profiles that follow a family use its newest compatible validated image for new workspaces.</Text>
+        {catalog.isPending ? <Text role="status">Loading AMI families…</Text> : null}
+        {catalog.isError ? <>
+          <APIProblemView error={catalog.error} />
+          <Button variant="default" onClick={() => void catalog.refetch()}>Retry loading AMI families</Button>
+        </> : null}
+        {catalog.isSuccess && members.length === 0 ? <Text size="sm" c="dimmed">No validated AMI family images are available.</Text> : null}
+        {members.length ? <Table.ScrollContainer minWidth={500} type="native" tabIndex={0} role="region" aria-label="Validated AMI family images">
+          <Table>
+            <Table.Thead><Table.Tr><Table.Th scope="col">Family</Table.Th><Table.Th scope="col">Release</Table.Th>
+              <Table.Th scope="col">Status</Table.Th>{csrfToken ? <Table.Th scope="col">Actions</Table.Th> : null}
+            </Table.Tr></Table.Thead>
+            <Table.Tbody>{members.map(image => <Table.Tr key={image.id}>
+              <Table.Th scope="row">{image.amiFamily}</Table.Th><Table.Td>{image.name}</Table.Td>
+              <Table.Td><Chip checked readOnly hidden icon={false} color="green" size="xs">Validated</Chip></Table.Td>
+              {csrfToken ? <Table.Td><Button variant="subtle" size="xs" aria-label={`Retire ${image.name}`}
+                onClick={() => setRetiring(image)}>Retire</Button></Table.Td> : null}
+            </Table.Tr>)}</Table.Tbody>
+          </Table>
+        </Table.ScrollContainer> : null}
+        {csrfToken ? <PublishAMI userID={userID} csrfToken={csrfToken} /> : null}
+        {csrfToken && retiring ? <RetireAMI image={retiring} userID={userID} csrfToken={csrfToken} close={() => setRetiring(undefined)} /> : null}
+      </Stack>
+    </Paper>
+  </>;
+}
+
+function OfficialAMI({ image, userID, csrfToken, validated }: {
+  image: OfficialRelease;
+  userID: string;
+  csrfToken?: string;
+  validated: boolean;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [operationID, record] = usePublicationOperation(`shiftbox:official-ami-publish:${userID}:${image.releaseId}`);
+  const publication = useMutation({
+    mutationFn: async ({ selected, token }: { selected: File; token: string }) => {
+      // Keep the released JSON bytes intact for the controller's checksum check.
+      const raw = await selected.text();
+      const response = await fetch('/api/v1/admin/platform-artifacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token, 'Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({ officialManifest: raw }),
+      });
+      if (!response.ok) throw await readProblem(response);
+      return response.json() as Promise<{ id: string }>;
+    },
+    onSuccess: ({ id }) => {
+      record(id);
+      setFile(null);
+    },
+  });
+  return <Paper component="section" aria-labelledby="official-ami-heading" withBorder radius="md" p="lg">
     <Stack gap="md">
-      <Title order={2} size="h3" id="ami-families-heading">AMI families</Title>
-      <Text size="sm" c="dimmed">Resource profiles that follow a family use its newest compatible validated image for new workspaces.</Text>
-      {catalog.isPending ? <Text role="status">Loading AMI families…</Text> : null}
-      {catalog.isError ? <>
-        <APIProblemView error={catalog.error} />
-        <Button variant="default" onClick={() => void catalog.refetch()}>Retry loading AMI families</Button>
-      </> : null}
-      {catalog.isSuccess && members.length === 0 ? <Text size="sm" c="dimmed">No validated AMI family images are available.</Text> : null}
-      {members.length ? <Table.ScrollContainer minWidth={500} type="native" tabIndex={0} role="region" aria-label="Validated AMI family images">
-        <Table>
-          <Table.Thead><Table.Tr><Table.Th scope="col">Family</Table.Th><Table.Th scope="col">Release</Table.Th>
-            <Table.Th scope="col">Status</Table.Th>{csrfToken ? <Table.Th scope="col">Actions</Table.Th> : null}
-          </Table.Tr></Table.Thead>
-          <Table.Tbody>{members.map(image => <Table.Tr key={image.id}>
-            <Table.Th scope="row">{image.amiFamily}</Table.Th><Table.Td>{image.name}</Table.Td>
-            <Table.Td><Chip checked readOnly hidden icon={false} color="green" size="xs">Validated</Chip></Table.Td>
-            {csrfToken ? <Table.Td><Button variant="subtle" size="xs" aria-label={`Retire ${image.name}`}
-              onClick={() => setRetiring(image)}>Retire</Button></Table.Td> : null}
-          </Table.Tr>)}</Table.Tbody>
-        </Table>
-      </Table.ScrollContainer> : null}
-      {csrfToken ? <PublishAMI userID={userID} csrfToken={csrfToken} /> : null}
-      {csrfToken && retiring ? <RetireAMI image={retiring} userID={userID} csrfToken={csrfToken} close={() => setRetiring(undefined)} /> : null}
+      <Title order={2} size="h3" id="official-ami-heading">Official AWS release</Title>
+      <Group>
+        <Text size="sm">{image.releaseId} · {image.region}</Text>
+        {validated ? <Chip checked readOnly hidden icon={false} color="green" size="xs">Validated</Chip> : null}
+      </Group>
+      {validated ? <Text size="sm">Select this release under AMI image when creating a resource profile.</Text> : null}
+      {!validated && csrfToken ? <form onSubmit={event => {
+        event.preventDefault();
+        if (file) publication.mutate({ selected: file, token: csrfToken });
+      }}>
+        <Stack gap="sm">
+          <FileInput label="Official AMI catalog manifest" description="Choose the regional JSON file from this release’s support archive."
+            accept=".json,application/json" value={file} disabled={publication.isPending} onChange={value => {
+              setFile(value);
+              publication.reset();
+            }} />
+          {publication.isError ? <APIProblemView error={publication.error} /> : null}
+          <Group><Button type="submit" disabled={!file} loading={publication.isPending}>Validate official AMI</Button></Group>
+        </Stack>
+      </form> : null}
+      {operationID ? <PublicationProgress key={operationID} id={operationID} userID={userID} /> : null}
     </Stack>
   </Paper>;
+}
+
+function usePublicationOperation(storageKey: string) {
+  const [operationID, setOperationID] = useState<string | null>(null);
+  useEffect(() => setOperationID(window.sessionStorage.getItem(storageKey)), [storageKey]);
+  return [operationID, (id: string) => {
+    window.sessionStorage.setItem(storageKey, id);
+    setOperationID(id);
+  }] as const;
 }
 
 function RetireAMI({ image, userID, csrfToken, close }: {
@@ -86,9 +159,7 @@ function parseManifest(value: string): object | undefined {
 }
 
 function PublishAMI({ userID, csrfToken }: { userID: string; csrfToken: string }) {
-  const storageKey = `shiftbox:ami-family-publish:${userID}`;
-  const [operationID, setOperationID] = useState<string | null>(null);
-  useEffect(() => setOperationID(window.sessionStorage.getItem(storageKey)), [storageKey]);
+  const [operationID, record] = usePublicationOperation(`shiftbox:ami-family-publish:${userID}`);
   const form = useForm({
     mode: 'uncontrolled',
     initialValues: { amiFamily: '', manifest: '' },
@@ -109,8 +180,7 @@ function PublishAMI({ userID, csrfToken }: { userID: string; csrfToken: string }
       return response.json() as Promise<{ id: string }>;
     },
     onSuccess: ({ id }) => {
-      window.sessionStorage.setItem(storageKey, id);
-      setOperationID(id);
+      record(id);
       form.reset();
     },
   });

@@ -43,6 +43,8 @@ type SetupHTTP struct {
 type CloudSetup struct {
 	ApplicationURI                                       string
 	ManagementOrigin, IDEHostPattern, PreviewHostPattern string
+	// OnActivated reports the committed PostgreSQL cutover to the local launcher.
+	OnActivated func()
 }
 
 // NewSetupHandler exposes only currently implemented local bootstrap routes.

@@ -32,5 +32,38 @@ jobs:
       - run: go test -tags openapi ./tests/contract -run '^TestOpenAPITypesMatchContract$' -count=1
       - run: make ui-test build
       - run: go test -tags shiftbox_ui ./cmd/shiftbox -run '^TestEmbeddedBrowserAssets$'
+  aws-release-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install local CloudFormation verification tools
+        shell: bash
+        run: |
+          tools="$RUNNER_TEMP/shiftbox-cloudformation-tools"
+          mkdir -p "$tools/bin"
+          python3 -m venv "$tools/python"
+          "$tools/python/bin/pip" install cfn-lint==1.61.0 PyYAML==6.0.3
+          curl --fail --silent --show-error --location --proto '=https' \
+            https://github.com/aws-cloudformation/cloudformation-guard/releases/download/3.3.0/cfn-guard-v3-x86_64-ubuntu-latest.tar.gz \
+            --output "$tools/guard.tar.gz"
+          printf 'cd7559616dc114565da1326c2ad7463a3c91cd1499f335406fff04747218c8ed  %s\n' "$tools/guard.tar.gz" | sha256sum --check
+          tar -xzf "$tools/guard.tar.gz" -C "$tools"
+          guard=$(find "$tools" -type f -name cfn-guard -print -quit)
+          test -x "$guard"
+          install "$guard" "$tools/bin/cfn-guard"
+          printf '%s\n' "$tools/python/bin" "$tools/bin" >> "$GITHUB_PATH"
+      - name: Verify CloudFormation and release fixtures
+        shell: bash
+        run: |
+          cfn-guard test --rules-file platform/cloudformation/aws/shiftbox.guard \
+            --test-data platform/cloudformation/aws/tests/guard/template-tests.yaml
+          bash platform/release/workflows.test.sh --workflows --aws-tooling
+          bash platform/release/release.test.sh
+          bash platform/release/promotion-live.test.sh
+          bash platform/release/registry.test.sh
+          bash platform/release/amis.test.sh
+          bash platform/release/templates.test.sh
+          bash platform/cloudformation/aws/setup.test.sh
+          bash scripts/install-aws.test.sh
   # Browser, database and UTM journeys need configured fixtures. Their Make
   # targets remain explicit release gates, not claimed by these unit jobs.

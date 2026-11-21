@@ -16,6 +16,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/auth"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/operation"
+	"github.com/jflatten/ShiftBox/internal/release"
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
@@ -59,7 +60,7 @@ func TestPlatformImportAdmission(t *testing.T) {
 		}
 		return nil
 	}
-	proc := NewPlatformImport(db, journal, "https://management.test", org, func() time.Time { return now }, importImage, "utm")
+	proc := NewPlatformImport(db, journal, "https://management.test", org, func() time.Time { return now }, importImage, "utm", nil)
 	restart := func() {
 		t.Helper()
 		if err := db.Close(); err != nil {
@@ -67,7 +68,7 @@ func TestPlatformImportAdmission(t *testing.T) {
 		}
 		db = open()
 		journal = operation.NewJournal(db, func() time.Time { return now }, uuid.NewString)
-		proc = NewPlatformImport(db, journal, "https://management.test", org, func() time.Time { return now }, importImage, "utm")
+		proc = NewPlatformImport(db, journal, "https://management.test", org, func() time.Time { return now }, importImage, "utm", nil)
 	}
 	actor := auth.Principal{User: auth.User{ID: "admin", Role: "administrator"}}
 	submit := func(key, body string) (int, string, error) {
@@ -161,7 +162,7 @@ func TestPlatformImportAdmission(t *testing.T) {
 
 // TestEC2PlatformImportRejectsLocalFolder keeps cloud imports confined to image manifests.
 func TestEC2PlatformImportRejectsLocalFolder(t *testing.T) {
-	proc := NewPlatformImport(nil, nil, "", "", time.Now, nil, "ec2")
+	proc := NewPlatformImport(nil, nil, "", "", time.Now, nil, "ec2", nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/platform-artifacts", strings.NewReader(`{"folder":"/controller/image"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "cloud-import-test")
@@ -169,5 +170,136 @@ func TestEC2PlatformImportRejectsLocalFolder(t *testing.T) {
 	var problem web.Problem
 	if !errors.As(err, &problem) || problem.Code != "infrastructure.invalid_import_manifest" {
 		t.Fatalf("cloud import error = %v; want an invalid manifest", err)
+	}
+}
+
+// TestOfficialPlatformImportPreservesBytes saves the authorized source and restores it for canary work.
+func TestOfficialPlatformImportPreservesBytes(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(t.TempDir(), "official.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	org := uuid.NewString()
+	const origin = "https://management.test"
+	if _, err := db.ExecContext(ctx, `INSERT INTO installations(id,state,organization_name,data_profile,management_origin,
+		ide_host_pattern,preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version)
+		VALUES($1,'active','Fixture','sqlite',$2,'{workspace}.ide.test',
+			'{service}--{workspace}.preview.test','v1.4.2-rc.1','v1.4.2-rc.1','now','now',1)`, org, origin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,primary_email,role,membership_state,credential_mode,created_by,created_at,updated_at,version)
+		VALUES('admin','admin@example.test','administrator','active','local','setup','now','now',1)`); err != nil {
+		t.Fatal(err)
+	}
+	raw, pin := officialImportFixture(t)
+	clock := func() time.Time { return time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC) }
+	journal := operation.NewJournal(db, clock, uuid.NewString)
+	operationCalls := 0
+	canary := func(_ context.Context, _, actor, catalog string, options PlatformImportOptions) error {
+		operationCalls++
+		if actor != "admin" || !options.Official || options.AMIFamily != "" || catalog != raw {
+			t.Errorf("restored import = %q, %+v, exact bytes %t; want original official catalog", actor, options, catalog == raw)
+		}
+		return release.ErrInvalidArtifact
+	}
+	newImport := func() *PlatformImport {
+		return NewPlatformImport(db, journal, origin, org, clock, canary, "ec2", pin)
+	}
+	handler := newImport().Handler()
+	session, token, err := auth.NewSession("fixture-session", "admin", "normal", clock(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	role := "member"
+	handler.Lookup = func(context.Context, *sql.Tx, string) (auth.Principal, error) {
+		return auth.Principal{
+			User:              auth.User{ID: "admin", Role: role, MembershipState: "active", CredentialMode: "local"},
+			Session:           session,
+			InstallationState: "active", InstallationID: org,
+		}, nil
+	}
+	submit := func(key string, fields map[string]any, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, origin+"/api/v1/admin/platform-artifacts", strings.NewReader(string(body)))
+		req.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: token})
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", origin)
+		req.Header.Set("X-CSRF-Token", auth.CSRFToken(token))
+		req.Header.Set("Idempotency-Key", key)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != want {
+			t.Fatalf("official import %q = %d %s, want %d", key, w.Code, w.Body.String(), want)
+		}
+		return w
+	}
+	request := map[string]any{"officialManifest": raw}
+	submit("member-official-import", request, http.StatusForbidden)
+	role = "administrator"
+	for _, invalid := range []struct {
+		key    string
+		fields map[string]any
+	}{
+		{key: "changed-official-catalog", fields: map[string]any{"officialManifest": strings.TrimSpace(raw)}},
+		{key: "mixed-official-import", fields: map[string]any{"officialManifest": raw, "manifest": json.RawMessage(raw)}},
+		{key: "family-official-import", fields: map[string]any{"officialManifest": raw, "amiFamily": "other"}},
+	} {
+		w := submit(invalid.key, invalid.fields, http.StatusBadRequest)
+		if !strings.Contains(w.Body.String(), `"code":"infrastructure.invalid_official_manifest"`) {
+			t.Errorf("invalid official catalog %q = %s, want official manifest rejection", invalid.key, w.Body)
+		}
+	}
+	var accepted operation.Operation
+	w := submit("valid-official-import", request, http.StatusAccepted)
+	if err := json.Unmarshal(w.Body.Bytes(), &accepted); err != nil || accepted.ID == "" || operationCalls != 0 {
+		t.Fatalf("accepted official import = %+v, %v; canary calls = %d, want new durable pending operation", accepted, err, operationCalls)
+	}
+	if err := newImport().worker().RunOnce(ctx, accepted.ID); err != nil {
+		t.Fatal(err)
+	}
+	op, err := journal.Get(ctx, accepted.ID)
+	if err != nil || op.Status != "failed" || operationCalls != 1 {
+		t.Fatalf("failed canary = %+v, %v; attempts = %d, want durable failed status and one call", op, err, operationCalls)
+	}
+}
+
+func officialImportFixture(t *testing.T) (string, *release.OfficialEC2Image) {
+	t.Helper()
+	raw := strings.ReplaceAll(`{
+	  "builds": [{
+	    "builder_type": "amazon-ebs", "artifact_id": "us-east-2:ami-0123456789abcdef0",
+	    "packer_run_uuid": "6e005968-cfd0-4f74-b290-361c25f5ac71",
+	    "custom_data": {
+	      "provider": "ec2", "region": "us-east-2", "sourceRegion": "us-east-2",
+	      "sourceAmiId": "ami-0123456789abcdef1", "sourceAmiOwnerId": "099720109477",
+	      "sourceRevision": "aabbccddeeff00112233445566778899aabbccdd", "releaseId": "v1.4.2-rc.1",
+	      "architecture": "amd64", "platformVersion": "24.04", "protocolVersion": "1", "minimumRootDiskGiB": "32",
+	      "guestAgentRelease": "v1.4.2-rc.1", "guestAgentSHA256": "DIGEST", "guestUpdateKeySHA256": "DIGEST",
+	      "toolchainRecipeSHA256": "DIGEST", "codeServerRecipeSHA256": "DIGEST"
+	    }
+	  }],
+	  "last_run_uuid": "6e005968-cfd0-4f74-b290-361c25f5ac71"
+	}
+	`, "DIGEST", strings.Repeat("a", 64))
+	artifact, err := release.ReadEC2Manifest(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw, &release.OfficialEC2Image{
+		AMIID: artifact.EC2.AMIID, PublisherAccountID: "222233334444",
+		RootDeviceName: "/dev/sda1", RootSnapshotID: "snap-0123456789abcdef0",
+		SourceAMI: artifact.EC2.SourceAMI, SourceRegion: artifact.EC2.SourceRegion,
+		SourceCommit: artifact.EC2.SourceRevision, ReleaseID: artifact.Manifest.ReleaseID,
+		GuestRelease: artifact.Manifest.Guest.Version, Architecture: artifact.Manifest.Architecture,
+		MinimumDiskGiB: artifact.EC2.MinimumRootDiskGiB, CatalogSHA256: artifact.ManifestSHA256,
 	}
 }

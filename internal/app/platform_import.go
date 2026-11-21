@@ -19,27 +19,38 @@ import (
 
 const platformImportAction = "infrastructure.import_platform"
 
+// Unlike a local path or a Packer JSON object, this durable source begins with the official selector.
+const officialManifestPrefix = "official-ami:"
+
 // PlatformImport binds management admission to the durable catalog worker.
 type PlatformImport struct {
-	db           *sql.DB
-	journal      *operation.Journal
-	origin       string
-	installation string
-	now          func() time.Time
-	providerKind string
-	run          func(ctx context.Context, operationID, actor, input string, options PlatformImportOptions) error
+	db            *sql.DB
+	journal       *operation.Journal
+	origin        string
+	installation  string
+	now           func() time.Time
+	providerKind  string
+	officialImage *release.OfficialEC2Image
+	run           func(ctx context.Context, operationID, actor, input string, options PlatformImportOptions) error
 }
 
 // PlatformImportOptions records the administrator's publication choices.
 type PlatformImportOptions struct {
 	AMIFamily   string
 	MakeDefault bool
+	Official    bool
 }
 
 // NewPlatformImport builds the active import handler and its worker.
 func NewPlatformImport(db *sql.DB, journal *operation.Journal, origin, installation string, now func() time.Time,
-	run func(context.Context, string, string, string, PlatformImportOptions) error, providerKind string) *PlatformImport {
-	return &PlatformImport{db: db, journal: journal, origin: origin, installation: installation, now: now, run: run, providerKind: providerKind}
+	run func(context.Context, string, string, string, PlatformImportOptions) error, providerKind string,
+	officialImage *release.OfficialEC2Image) *PlatformImport {
+	if officialImage != nil {
+		pin := *officialImage
+		officialImage = &pin
+	}
+	return &PlatformImport{db: db, journal: journal, origin: origin, installation: installation,
+		now: now, run: run, providerKind: providerKind, officialImage: officialImage}
 }
 
 // Handler authorizes administrators and commits the import before booting anything.
@@ -56,10 +67,11 @@ func (p *PlatformImport) Handler() web.AuthorizedHandler {
 
 func (p *PlatformImport) admit(ctx context.Context, tx *sql.Tx, r *http.Request, actor auth.Principal, _ web.AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
 	var input struct {
-		Folder      string          `json:"folder"`
-		Manifest    json.RawMessage `json:"manifest"`
-		MakeDefault bool            `json:"makeDefault"`
-		AMIFamily   string          `json:"amiFamily"`
+		Folder           string          `json:"folder"`
+		Manifest         json.RawMessage `json:"manifest"`
+		OfficialManifest *string         `json:"officialManifest"`
+		MakeDefault      bool            `json:"makeDefault"`
+		AMIFamily        string          `json:"amiFamily"`
 	}
 	key, err := web.IdempotencyKey(r)
 	if err != nil {
@@ -69,7 +81,17 @@ func (p *PlatformImport) admit(ctx context.Context, tx *sql.Tx, r *http.Request,
 		return nil, err
 	}
 	source := input.Folder
-	if p.providerKind == "ec2" {
+	switch {
+	case p.providerKind == "ec2" && input.OfficialManifest != nil:
+		catalog, err := release.ReadEC2Manifest(strings.NewReader(*input.OfficialManifest))
+		if input.Folder != "" || len(input.Manifest) != 0 || input.AMIFamily != "" || err != nil ||
+			p.officialImage == nil || !p.officialImage.MatchesManifest(catalog) {
+			return nil, web.Problem{Status: 400, Code: "infrastructure.invalid_official_manifest",
+				Title:  "The official AMI catalog does not match this installation",
+				Detail: "Upload the unmodified regional catalog JSON from this ShiftBox release's support archive."}
+		}
+		source = officialManifestPrefix + *input.OfficialManifest
+	case p.providerKind == "ec2":
 		source = string(input.Manifest)
 		if _, err := release.ReadEC2Manifest(strings.NewReader(source)); input.Folder != "" || err != nil {
 			return nil, web.Problem{Status: 400, Code: "infrastructure.invalid_import_manifest", Title: "Provide the Packer AMI manifest"}
@@ -77,7 +99,8 @@ func (p *PlatformImport) admit(ctx context.Context, tx *sql.Tx, r *http.Request,
 		if input.AMIFamily != "" && (!release.ValidEC2FamilyName(input.AMIFamily) || input.MakeDefault) {
 			return nil, web.Problem{Status: 400, Code: "infrastructure.invalid_ami_family", Title: "Choose a valid AMI family without changing the default image"}
 		}
-	} else if len(input.Manifest) != 0 || input.AMIFamily != "" || !filepath.IsAbs(source) || len(source) > 4096 || strings.ContainsRune(source, 0) {
+	case len(input.Manifest) != 0 || input.OfficialManifest != nil || input.AMIFamily != "" ||
+		!filepath.IsAbs(source) || len(source) > 4096 || strings.ContainsRune(source, 0):
 		return nil, web.Problem{Status: 400, Code: "infrastructure.invalid_import_folder", Title: "Enter an absolute folder on the controller"}
 	}
 	// Serialize actor-scoped keys with other installation admissions.
@@ -165,6 +188,9 @@ func (e platformImportExecutor) Apply(ctx context.Context, op operation.Operatio
 		return "", err
 	}
 	options.MakeDefault = makeDefault != 0
+	if e.providerKind == "ec2" {
+		folder, options.Official = strings.CutPrefix(folder, officialManifestPrefix)
+	}
 	if err := e.run(ctx, op.ID, op.Actor, folder, options); err != nil {
 		if e.providerKind == "ec2" {
 			if errors.Is(err, release.ErrInvalidArtifact) || errors.Is(err, release.ErrCatalogConflict) ||

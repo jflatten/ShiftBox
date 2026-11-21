@@ -1,0 +1,103 @@
+# Protects an existing installation when a stack is updated or deleted.
+- name: The encrypted installation volume with retention is accepted
+  input:
+    Resources:
+      InstallationVolume:
+        Type: AWS::EC2::Volume
+        DeletionPolicy: Retain
+        UpdateReplacePolicy: Retain
+        Properties:
+          Encrypted: true
+  expectations:
+    rules:
+      retained_volume: PASS
+
+# A replacement must never implicitly delete the old installation.
+- name: Missing update replacement retention fails
+  input:
+    Resources:
+      InstallationVolume:
+        Type: AWS::EC2::Volume
+        DeletionPolicy: Retain
+        Properties:
+          Encrypted: true
+  expectations:
+    rules:
+      retained_volume: FAIL
+
+# Encryption is mandatory even when other data protections are configured.
+- name: An unencrypted installation volume is rejected
+  input:
+    Resources:
+      InstallationVolume:
+        Type: AWS::EC2::Volume
+        DeletionPolicy: Retain
+        UpdateReplacePolicy: Retain
+        Properties:
+          Encrypted: false
+  expectations:
+    rules:
+      retained_volume: FAIL
+
+# Password and TLS material remain retrievable after a reviewed stack deletion.
+- name: Managed secrets must be retained
+  input:
+    Resources:
+      PostgresTlsSecret:
+        Type: AWS::SecretsManager::Secret
+        DeletionPolicy: Retain
+  expectations:
+    rules:
+      retained_secrets: FAIL
+
+# Initial quick-create may only reach the infrastructure foundation.
+- name: A default that bypasses protected staging is rejected
+  input:
+    Parameters:
+      Phase:
+        Default: active
+  expectations:
+    rules:
+      staged_startup: FAIL
+
+# Browser ingress rejects the universal IPv4 prefix.
+- name: Public ingress into the private browser port fails
+  input:
+    Resources:
+      OperatorIngress:
+        Type: AWS::EC2::SecurityGroupIngress
+        Properties:
+          CidrIp: 0.0.0.0/0
+          FromPort: 8443
+          ToPort: 8443
+  expectations:
+    rules:
+      no_public_ingress: FAIL
+
+# OperatorCidr is the one source reference validated by the template's own parameter rules.
+- name: An approved private operator reference is accepted
+  input:
+    Resources:
+      OperatorIngress:
+        Type: AWS::EC2::SecurityGroupIngress
+        Properties:
+          CidrIp: {Ref: OperatorCidr}
+          FromPort: 8443
+          ToPort: 8443
+  expectations:
+    rules:
+      no_public_ingress: PASS
+
+# An arbitrary dynamic reference has no validated private CIDR source.
+- name: An unvalidated ingress reference fails
+  input:
+    Resources:
+      OperatorIngress:
+        Type: AWS::EC2::SecurityGroupIngress
+        Properties:
+          CidrIp: {Ref: ArbitraryCidr}
+          FromPort: 8443
+          ToPort: 8443
+  expectations:
+    rules:
+      no_public_ingress: FAIL

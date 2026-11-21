@@ -1,0 +1,38 @@
+let volumes = Resources.*[ Type == 'AWS::EC2::Volume' ]
+let secrets = Resources.*[ Type == 'AWS::SecretsManager::Secret' ]
+let ingress = Resources.*[ Type == 'AWS::EC2::SecurityGroupIngress' ]
+
+rule retained_volume when %volumes !empty {
+    %volumes {
+        DeletionPolicy == 'Retain'
+        UpdateReplacePolicy == 'Retain'
+        Properties.Encrypted == true
+    }
+}
+
+rule retained_secrets when %secrets !empty {
+    %secrets {
+        DeletionPolicy == 'Retain'
+        UpdateReplacePolicy == 'Retain'
+        Properties.SecretString !exists
+    }
+}
+
+rule staged_startup when Parameters.Phase exists {
+    Parameters.Phase.Default == 'foundation'
+}
+
+rule no_public_ingress when %ingress !empty {
+    %ingress.Properties {
+        when CidrIp is_string {
+            CidrIp != '0.0.0.0/0'
+        }
+        when CidrIp is_struct {
+            CidrIp.Ref == 'OperatorCidr'
+        }
+        when CidrIpv6 exists {
+            CidrIpv6 is_string
+            CidrIpv6 != '::/0'
+        }
+    }
+}

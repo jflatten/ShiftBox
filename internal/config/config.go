@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"time"
+
+	"github.com/jflatten/ShiftBox/internal/release"
 )
 
 // UTMSharedHost is the default Mac address on UTM's private shared network.
@@ -47,15 +49,16 @@ type ControllerRuntime struct {
 
 // EC2Runtime pins account, storage, network placement and the verified image.
 type EC2Runtime struct {
-	AccountID             string `json:"accountId"`
-	Region                string `json:"region"`
-	DataVolumeID          string `json:"dataVolumeId"`
-	SubnetID              string `json:"subnetId"`
-	SecurityGroupID       string `json:"securityGroupId"`
-	Deployment            string `json:"deployment"`
-	Environment           string `json:"environment"`
-	VerifiedEnrollmentAMI string `json:"verifiedEnrollmentAmi,omitempty"`
-	VerifiedSingleBootAMI string `json:"verifiedSingleBootAmi,omitempty"`
+	AccountID             string                    `json:"accountId"`
+	Region                string                    `json:"region"`
+	DataVolumeID          string                    `json:"dataVolumeId"`
+	SubnetID              string                    `json:"subnetId"`
+	SecurityGroupID       string                    `json:"securityGroupId"`
+	Deployment            string                    `json:"deployment"`
+	Environment           string                    `json:"environment"`
+	VerifiedEnrollmentAMI string                    `json:"verifiedEnrollmentAmi,omitempty"`
+	VerifiedSingleBootAMI string                    `json:"verifiedSingleBootAmi,omitempty"`
+	OfficialImage         *release.OfficialEC2Image `json:"officialImage,omitempty"`
 }
 
 // VMResources records the validated allocation bounds for the local UTM host.

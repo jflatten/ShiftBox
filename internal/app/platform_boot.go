@@ -84,7 +84,7 @@ func ValidatePlatformBoot(ctx context.Context, root string, machines PlatformBoo
 		return err
 	}
 	enrollment := guest.NewEnrollment(db, ca)
-	singleBoot := artifact.EC2 != nil && artifact.EC2.Family != ""
+	singleBoot := artifact.EC2 != nil && artifact.EC2.UsesSingleBoot()
 	if singleBoot {
 		if config.EC2Account == "" || config.EC2Region == "" {
 			return provider.ErrInvalidState

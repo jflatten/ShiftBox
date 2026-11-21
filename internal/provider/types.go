@@ -57,6 +57,14 @@ type Capabilities struct {
 	NetworkStoppedOnly               bool
 	Minimum, Maximum                 Resources
 	InstanceTypes                    []InstanceType
+	OfficialImage                    *OfficialAMI
+}
+
+// OfficialAMI identifies the available release catalog for an EC2 deployment.
+type OfficialAMI struct {
+	ReleaseID string `json:"releaseId"`
+	Region    string `json:"region"`
+	AMIID     string `json:"amiId"`
 }
 
 // LookupInstanceType retrieves the compute configuration offered to new launches.

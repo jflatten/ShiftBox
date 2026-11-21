@@ -650,3 +650,65 @@ test('saves launch log retention and reads the saved value on reload', async () 
   render(<Providers><Infrastructure /></Providers>);
   expect(await screen.findByRole('textbox', { name: 'Retention days' })).toHaveValue('14');
 });
+
+const officialImage = { releaseId: 'v1.4.2-rc.1', region: 'us-east-2', amiId: 'ami-official' };
+
+// The uploaded official manifest must reach the controller byte for byte,
+// and the existing canary workflow must show a durable validation failure.
+test('submits the authorized official catalog and shows canary failure', async () => {
+  const raw = '{\n  "builds": [{ "artifact_id": "us-east-2:ami-fixture" }]\n}\n';
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json({ ...status, provider: { name: 'ec2', officialImage } });
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
+    if (input === '/api/v1/templates/catalog') return json({ platformImages: [] });
+    if (input === '/api/v1/admin/platform-artifacts' && init?.method === 'POST') return json({ id: 'official-operation' });
+    if (input === '/api/v1/operations/official-operation') return json({
+      id: 'official-operation', status: 'failed',
+      steps: [{ key: 'import', index: 0, label: 'Import and verify the platform image', status: 'failed',
+        detail: 'The disposable image boot did not authenticate.' }],
+    });
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  const page = () => <Providers><MantineProvider env="test"><Infrastructure /></MantineProvider></Providers>;
+  const mounted = render(page());
+  const panel = await screen.findByRole('region', { name: 'Official AWS release' });
+  expect(within(panel).getByText('v1.4.2-rc.1 · us-east-2')).toBeVisible();
+  const input = panel.querySelector<HTMLInputElement>('input[type=file]');
+  if (!input) throw new Error('Expected the official catalog file picker');
+  const file = new File([raw], 'us-east-2.json', { type: 'application/json' });
+  Object.defineProperty(file, 'text', { value: async () => raw });
+  await user.upload(input, file);
+  await user.click(within(panel).getByRole('button', { name: 'Validate official AMI' }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/admin/platform-artifacts', expect.objectContaining({
+    method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'fixture' }),
+    body: JSON.stringify({ officialManifest: raw }),
+  })));
+  expect(await within(panel).findByText('AMI validation failed')).toBeVisible();
+  expect(within(panel).getByText('The disposable image boot did not authenticate.')).toBeVisible();
+  mounted.unmount();
+  render(page());
+  expect(await screen.findByText('AMI validation failed')).toBeVisible();
+  window.sessionStorage.clear();
+});
+
+// A read-only administrator sees a validated catalog entry after loading
+// from the server, with no controls that can submit another import.
+test('shows a previously validated official release without import permission', async () => {
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json({ ...session, permissions: ['infrastructure.view'] });
+    if (input === '/api/v1/admin/infrastructure') return json({ ...status, provider: { name: 'ec2', officialImage } });
+    if (input === '/api/v1/admin/resource-profiles') return json([]);
+    if (input === '/api/v1/templates/catalog') return json({ platformImages: [
+      { id: 'official-image', name: officialImage.releaseId, providerKind: 'ec2', architecture: 'amd64', amiId: officialImage.amiId },
+    ] });
+    throw new Error('unexpected request');
+  });
+  render(<Providers><MantineProvider env="test"><Infrastructure /></MantineProvider></Providers>);
+  const panel = within(await screen.findByRole('region', { name: 'Official AWS release' }));
+  expect(await panel.findByText('Validated')).toBeVisible();
+  expect(panel.queryByText('Official AMI catalog manifest')).not.toBeInTheDocument();
+  expect(panel.queryByRole('button', { name: 'Validate official AMI' })).not.toBeInTheDocument();
+});

@@ -40,6 +40,7 @@ var (
 // Config fixes the AWS identity, network placement, and deployment tag for the provider.
 type Config struct {
 	Region, AccountID, SubnetID, SecurityGroupID, Deployment, Environment string
+	OfficialImage                                                         *release.OfficialEC2Image
 }
 
 // Image identifies the immutable AMI and its verified root disk mapping.
@@ -88,6 +89,13 @@ func New(ctx context.Context, cfg Config, resolve ImageResolver) (*Provider, err
 		!subnetPattern.MatchString(cfg.SubnetID) || !groupPattern.MatchString(cfg.SecurityGroupID) ||
 		cfg.Deployment == "" || len(cfg.Deployment) > 256 || len(cfg.Environment) > 256 || resolve == nil {
 		return nil, provider.ErrInvalidState
+	}
+	if cfg.OfficialImage != nil {
+		pin := *cfg.OfficialImage
+		if err := pin.Validate(cfg.Region, cfg.AccountID); err != nil {
+			return nil, provider.ErrInvalidState
+		}
+		cfg.OfficialImage = &pin
 	}
 	path := os.Getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")
 	if !taskPathPattern.MatchString(path) {
@@ -171,12 +179,28 @@ func (p *Provider) Capabilities(context.Context) (provider.Capabilities, error) 
 		Create:   true, Start: true, Stop: true, Delete: true, NetworkModes: []string{NetworkMode},
 		NetworkStoppedOnly: true, RecoveryMechanisms: []string{"ec2-user-data"}}
 	caps.InstanceTypes = offeredInstanceTypes(p.offeredTypes, caps)
+	if pin := p.cfg.OfficialImage; pin != nil {
+		caps.OfficialImage = &provider.OfficialAMI{ReleaseID: pin.ReleaseID, Region: p.cfg.Region, AMIID: pin.AMIID}
+	}
 	return caps, nil
 }
 
-// InspectImage verifies exact launchable image metadata against AWS.
+// InspectImage verifies an encrypted private AMI owned by the deployment account.
 func (p *Provider) InspectImage(ctx context.Context, imageID string) (Image, error) {
-	result, err := p.client.DescribeImages(ctx, &api.DescribeImagesInput{ImageIds: []string{imageID}, Owners: []string{p.cfg.AccountID}})
+	return p.inspectImage(ctx, imageID, p.cfg.AccountID, nil)
+}
+
+// InspectOfficialImage verifies the configured public AMI without relying on publisher tags.
+func (p *Provider) InspectOfficialImage(ctx context.Context) (Image, error) {
+	pin := p.cfg.OfficialImage
+	if pin == nil {
+		return Image{}, provider.ErrCapabilityUnsupported
+	}
+	return p.inspectImage(ctx, pin.AMIID, pin.PublisherAccountID, pin)
+}
+
+func (p *Provider) inspectImage(ctx context.Context, imageID, owner string, official *release.OfficialEC2Image) (Image, error) {
+	result, err := p.client.DescribeImages(ctx, &api.DescribeImagesInput{ImageIds: []string{imageID}, Owners: []string{owner}})
 	if err != nil {
 		return Image{}, apiError(err)
 	}
@@ -184,12 +208,28 @@ func (p *Provider) InspectImage(ctx context.Context, imageID string) (Image, err
 		return Image{}, provider.ErrNotFound
 	}
 	image := result.Images[0]
-	if aws.ToString(image.ImageId) != imageID || aws.ToString(image.OwnerId) != p.cfg.AccountID || aws.ToBool(image.Public) ||
-		!release.SupportsEC2PlatformArchitecture(platformArchitecture(string(image.Architecture))) || image.RootDeviceType != types.DeviceTypeEbs ||
+	architecture := platformArchitecture(string(image.Architecture))
+	public := official != nil
+	if aws.ToString(image.ImageId) != imageID || aws.ToString(image.OwnerId) != owner || aws.ToBool(image.Public) != public ||
+		!release.SupportsEC2PlatformArchitecture(architecture) || image.RootDeviceType != types.DeviceTypeEbs ||
 		image.VirtualizationType != types.VirtualizationTypeHvm || image.State != types.ImageStateAvailable {
 		return Image{}, provider.ErrOwnershipMismatch
 	}
 	root := aws.ToString(image.RootDeviceName)
+	if public {
+		if root != official.RootDeviceName || architecture != official.Architecture || len(image.ProductCodes) != 0 || image.Platform != "" {
+			return Image{}, provider.ErrOwnershipMismatch
+		}
+		if at := aws.ToString(image.DeprecationTime); at != "" {
+			expiry, err := time.Parse(time.RFC3339, at)
+			if err != nil {
+				return Image{}, provider.ErrInvalidState
+			}
+			if !expiry.After(p.now()) {
+				return Image{}, provider.ErrNotFound
+			}
+		}
+	}
 	var rootDisk *types.EbsBlockDevice
 	for _, device := range image.BlockDeviceMappings {
 		if aws.ToString(device.DeviceName) == root && device.Ebs != nil && rootDisk == nil {
@@ -203,14 +243,26 @@ func (p *Provider) InspectImage(ctx context.Context, imageID string) (Image, err
 			return Image{}, provider.ErrOwnershipMismatch
 		}
 	}
-	if root == "" || rootDisk == nil || !aws.ToBool(rootDisk.Encrypted) ||
-		aws.ToString(rootDisk.SnapshotId) == "" || aws.ToInt32(rootDisk.VolumeSize) < 1 || aws.ToInt32(rootDisk.VolumeSize) > 32 {
+	// Private AMIs remain encrypted. A public AMI uses an unencrypted source snapshot;
+	// RunInstances still requests an encrypted workspace root volume for either path.
+	encryptedSnapshot := !public
+	if root == "" || rootDisk == nil || aws.ToBool(rootDisk.Encrypted) != encryptedSnapshot ||
+		aws.ToString(rootDisk.SnapshotId) == "" || aws.ToInt32(rootDisk.VolumeSize) < 1 || aws.ToInt32(rootDisk.VolumeSize) > minimumRootDiskGiB {
 		return Image{}, provider.ErrInvalidState
 	}
+	observed := Image{ID: imageID, Architecture: architecture, RootDeviceName: root, SnapshotID: aws.ToString(rootDisk.SnapshotId),
+		CreationDate: aws.ToString(image.CreationDate)}
+	if public {
+		if observed.SnapshotID != official.RootSnapshotID || aws.ToInt32(rootDisk.VolumeSize) > official.MinimumDiskGiB {
+			return Image{}, provider.ErrOwnershipMismatch
+		}
+		observed.SingleBoot = true
+		return observed, nil
+	}
 	tags := tagValues(image.Tags)
-	return Image{ID: imageID, Architecture: platformArchitecture(string(image.Architecture)), RootDeviceName: root, SnapshotID: aws.ToString(rootDisk.SnapshotId),
-		Artifact: tags[tagArtifact], ReleaseID: tags[tagRelease], SourceAMI: tags["ShiftBoxSourceAMI"],
-		SourceRevision: tags["ShiftBoxSourceCommit"], CreationDate: aws.ToString(image.CreationDate)}, nil
+	observed.Artifact, observed.ReleaseID = tags[tagArtifact], tags[tagRelease]
+	observed.SourceAMI, observed.SourceRevision = tags["ShiftBoxSourceAMI"], tags["ShiftBoxSourceCommit"]
+	return observed, nil
 }
 
 func apiError(err error) error {

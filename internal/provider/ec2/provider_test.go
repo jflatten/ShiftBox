@@ -10,6 +10,7 @@ import (
 	api "github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/jflatten/ShiftBox/internal/provider"
+	"github.com/jflatten/ShiftBox/internal/release"
 )
 
 // TestCreateReconcilesLostResponse verifies that a timed-out launch is found,
@@ -72,6 +73,9 @@ type lostLaunchAPI struct {
 	image types.Image
 	client
 	cfg                     Config
+	lastImageQuery          *api.DescribeImagesInput
+	lastLaunch              *api.RunInstancesInput
+	imageAbsent             bool
 	instance                *types.Instance
 	volume                  types.Volume
 	network                 types.NetworkInterface
@@ -89,6 +93,7 @@ func (m *lostLaunchAPI) DescribeInstances(context.Context, *api.DescribeInstance
 
 func (m *lostLaunchAPI) RunInstances(_ context.Context, input *api.RunInstancesInput, _ ...func(*api.Options)) (*api.RunInstancesOutput, error) {
 	m.launches++
+	m.lastLaunch = input
 	m.token = aws.ToString(input.ClientToken)
 	m.userData = aws.ToString(input.UserData)
 	tags := input.TagSpecifications[0].Tags
@@ -243,7 +248,11 @@ func TestInspectImageAllowsCanonicalVirtualMappings(t *testing.T) {
 	}
 }
 
-func (m *lostLaunchAPI) DescribeImages(context.Context, *api.DescribeImagesInput, ...func(*api.Options)) (*api.DescribeImagesOutput, error) {
+func (m *lostLaunchAPI) DescribeImages(_ context.Context, input *api.DescribeImagesInput, _ ...func(*api.Options)) (*api.DescribeImagesOutput, error) {
+	m.lastImageQuery = input
+	if m.imageAbsent {
+		return &api.DescribeImagesOutput{}, nil
+	}
 	return &api.DescribeImagesOutput{Images: []types.Image{m.image}}, nil
 }
 
@@ -254,5 +263,132 @@ func TestWorkspaceRootInitialization(t *testing.T) {
 	input := p.launchInput(provider.CreateRequest{}, Image{RootDeviceName: "/dev/sda1"})
 	if got := aws.ToInt32(input.BlockDeviceMappings[0].Ebs.VolumeInitializationRate); got != 300 {
 		t.Errorf("launchInput(root).VolumeInitializationRate = %d, want 300 MiB/s", got)
+	}
+}
+
+func officialProviderFixture() (Config, *lostLaunchAPI) {
+	pin := &release.OfficialEC2Image{
+		AMIID: "ami-11112222333344445", PublisherAccountID: "222233334444",
+		RootDeviceName: "/dev/sda1", RootSnapshotID: "snap-12345678901234567",
+		SourceAMI: "ami-11112222333344446", SourceRegion: "us-east-2",
+		SourceCommit: "aabbccddeeff00112233445566778899aabbccdd",
+		ReleaseID:    "v1.4.2-rc.1", GuestRelease: "v1.4.2-rc.1", Architecture: "amd64",
+		MinimumDiskGiB: 32, CatalogSHA256: "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
+	}
+	cfg := Config{Region: "us-west-2", AccountID: "123456789012", SubnetID: "subnet-test",
+		SecurityGroupID: "sg-test", Deployment: "demo", OfficialImage: pin}
+	return cfg, &lostLaunchAPI{cfg: cfg, image: types.Image{
+		ImageId: aws.String(pin.AMIID), OwnerId: aws.String(pin.PublisherAccountID),
+		Public: aws.Bool(true), Architecture: types.ArchitectureValuesX8664,
+		RootDeviceType: types.DeviceTypeEbs, RootDeviceName: aws.String(pin.RootDeviceName),
+		VirtualizationType: types.VirtualizationTypeHvm, State: types.ImageStateAvailable,
+		BlockDeviceMappings: []types.BlockDeviceMapping{
+			{DeviceName: aws.String(pin.RootDeviceName), Ebs: &types.EbsBlockDevice{
+				SnapshotId: aws.String(pin.RootSnapshotID), VolumeSize: aws.Int32(12), Encrypted: aws.Bool(false),
+			}},
+			{DeviceName: aws.String("/dev/sdb"), VirtualName: aws.String("ephemeral0")},
+		},
+	}}
+}
+
+// TestInspectOfficialImage verifies observable publisher identity without relying on cross-account AMI tags.
+func TestInspectOfficialImage(t *testing.T) {
+	cfg, mock := officialProviderFixture()
+	p := &Provider{cfg: cfg, client: mock, now: time.Now}
+	got, err := p.InspectOfficialImage(t.Context())
+	pin := cfg.OfficialImage
+	if err != nil || got.ID != pin.AMIID || got.SnapshotID != pin.RootSnapshotID ||
+		got.Architecture != pin.Architecture || !got.SingleBoot {
+		t.Fatalf("InspectOfficialImage(%s) = %+v, %v, want the pinned image and single-boot enrollment", pin.AMIID, got, err)
+	}
+	query := mock.lastImageQuery
+	if query == nil || len(query.ImageIds) != 1 || query.ImageIds[0] != pin.AMIID ||
+		len(query.Owners) != 1 || query.Owners[0] != pin.PublisherAccountID {
+		t.Fatalf("DescribeImages request = %+v, want exact image and publisher filters", query)
+	}
+	if _, err := p.InspectImage(t.Context(), pin.AMIID); !errors.Is(err, provider.ErrOwnershipMismatch) {
+		t.Fatalf("private InspectImage(%s) = %v, want rejection of cross-account public image", pin.AMIID, err)
+	}
+}
+
+// TestInspectOfficialImageRejectsObservedDrift verifies stale and incompatible AMIs fail closed.
+func TestInspectOfficialImageRejectsObservedDrift(t *testing.T) {
+	now := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name   string
+		change func(*lostLaunchAPI)
+		want   error
+	}{
+		{name: "missing", change: func(m *lostLaunchAPI) { m.imageAbsent = true }, want: provider.ErrNotFound},
+		{name: "wrong ID", change: func(m *lostLaunchAPI) { m.image.ImageId = aws.String("ami-11112222333344446") }, want: provider.ErrOwnershipMismatch},
+		{name: "wrong owner", change: func(m *lostLaunchAPI) { m.image.OwnerId = aws.String(m.cfg.AccountID) }, want: provider.ErrOwnershipMismatch},
+		{name: "no longer public", change: func(m *lostLaunchAPI) { m.image.Public = aws.Bool(false) }, want: provider.ErrOwnershipMismatch},
+		{name: "architecture drift", change: func(m *lostLaunchAPI) { m.image.Architecture = types.ArchitectureValuesArm64 }, want: provider.ErrOwnershipMismatch},
+		{name: "not available", change: func(m *lostLaunchAPI) { m.image.State = types.ImageStatePending }, want: provider.ErrOwnershipMismatch},
+		{name: "expired", change: func(m *lostLaunchAPI) { m.image.DeprecationTime = aws.String(now.Format(time.RFC3339)) }, want: provider.ErrNotFound},
+		{name: "different root", change: func(m *lostLaunchAPI) { m.image.RootDeviceName = aws.String("/dev/sdb") }, want: provider.ErrOwnershipMismatch},
+		{name: "different snapshot", change: func(m *lostLaunchAPI) {
+			m.image.BlockDeviceMappings[0].Ebs.SnapshotId = aws.String("snap-01234567890123456")
+		}, want: provider.ErrOwnershipMismatch},
+		{name: "encrypted public snapshot", change: func(m *lostLaunchAPI) {
+			m.image.BlockDeviceMappings[0].Ebs.Encrypted = aws.Bool(true)
+		}, want: provider.ErrInvalidState},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, mock := officialProviderFixture()
+			tc.change(mock)
+			p := &Provider{cfg: cfg, client: mock, now: func() time.Time { return now }}
+			if _, err := p.InspectOfficialImage(t.Context()); !errors.Is(err, tc.want) {
+				t.Fatalf("InspectOfficialImage(%s) = %v, want %v", tc.name, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestOfficialBootChecksLiveImageBeforeLaunch verifies both fresh launches retain exact identity and storage encryption.
+func TestOfficialBootChecksLiveImageBeforeLaunch(t *testing.T) {
+	for _, kind := range []string{"catalog canary", "workspace"} {
+		t.Run(kind, func(t *testing.T) {
+			cfg, mock := officialProviderFixture()
+			pin := cfg.OfficialImage
+			image := Image{ID: pin.AMIID, Architecture: pin.Architecture, RootDeviceName: pin.RootDeviceName,
+				SnapshotID: pin.RootSnapshotID, SingleBoot: true}
+			p := &Provider{cfg: cfg, client: mock, poll: time.Millisecond, now: time.Now,
+				resolve: func(context.Context, string, string) (Image, error) { return image, nil }}
+			req := provider.CreateRequest{
+				Ref:         provider.WorkspaceRef{InstallationID: "install", WorkspaceID: "workspace", Generation: 1, OwnershipMarker: "marker"},
+				OperationID: "operation", ArtifactID: "artifact", Release: pin.ReleaseID,
+				NetworkMode: NetworkMode, Resources: ReferenceResources(), BootstrapData: "fixture",
+			}
+			create := p.Create
+			if kind == "catalog canary" {
+				create = func(ctx context.Context, req provider.CreateRequest) (provider.Inventory, error) {
+					return p.CreateCandidate(ctx, req, image)
+				}
+			}
+			wrongMode := req
+			wrongMode.BootstrapData = ""
+			if _, err := create(t.Context(), wrongMode); !errors.Is(err, provider.ErrCapabilityUnsupported) || mock.launches != 0 {
+				t.Fatalf("%s without single-boot enrollment = %v, AWS launches = %d, want capability refusal and no launch", kind, err, mock.launches)
+			}
+			mock.imageAbsent = true
+			if _, err := create(t.Context(), req); !errors.Is(err, provider.ErrNotFound) || mock.launches != 0 {
+				t.Fatalf("%s after AMI withdrawal = %v, AWS launches = %d, want not found and no launch", kind, err, mock.launches)
+			}
+			mock.imageAbsent = false
+			if _, err := create(t.Context(), req); !errors.Is(err, provider.ErrOutcomeUnknown) || mock.launches != 1 {
+				t.Fatalf("%s with valid AMI = %v, AWS launches = %d, want one simulated lost response", kind, err, mock.launches)
+			}
+			input := mock.lastLaunch
+			if aws.ToString(input.ImageId) != pin.AMIID || !aws.ToBool(input.BlockDeviceMappings[0].Ebs.Encrypted) ||
+				aws.ToBool(input.NetworkInterfaces[0].AssociatePublicIpAddress) {
+				t.Fatalf("%s RunInstances = %+v, want exact public AMI with private network and encrypted root", kind, input)
+			}
+			mock.imageAbsent = true
+			got, err := create(t.Context(), req)
+			if err != nil || got.Power != provider.Running || mock.launches != 1 {
+				t.Fatalf("%s retry = %+v, %v, AWS launches = %d, want existing single-boot instance", kind, got, err, mock.launches)
+			}
+		})
 	}
 }

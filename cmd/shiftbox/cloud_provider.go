@@ -20,17 +20,18 @@ type cloudEC2 struct {
 
 func newCloudEC2(ctx context.Context, settings config.EC2Runtime, store *release.Store) (*cloudEC2, error) {
 	machines, err := ec2.New(ctx, ec2.Config{Region: settings.Region, AccountID: settings.AccountID, SubnetID: settings.SubnetID,
-		SecurityGroupID: settings.SecurityGroupID, Deployment: settings.Deployment, Environment: settings.Environment},
+		SecurityGroupID: settings.SecurityGroupID, Deployment: settings.Deployment, Environment: settings.Environment,
+		OfficialImage: settings.OfficialImage},
 		func(ctx context.Context, id, releaseID string) (ec2.Image, error) {
 			image, err := store.EC2Image(ctx, id, settings.Region, settings.AccountID)
 			if err != nil {
 				return ec2.Image{}, err
 			}
-			if image.ReleaseID != releaseID || (image.Family == "" && !verifiedCloudAMI(settings, image.AMIID)) {
+			if image.ReleaseID != releaseID || !verifiedCloudCatalog(settings, image, image.CatalogSHA256) {
 				return ec2.Image{}, provider.ErrCapabilityUnsupported
 			}
 			resolved := launchImage(image)
-			resolved.SingleBoot = image.Family != "" || image.AMIID == settings.VerifiedSingleBootAMI
+			resolved.SingleBoot = image.UsesSingleBoot() || image.AMIID == settings.VerifiedSingleBootAMI
 			return resolved, nil
 		})
 	if err != nil {
@@ -43,42 +44,75 @@ func verifiedCloudAMI(settings config.EC2Runtime, image string) bool {
 	return image != "" && (image == settings.VerifiedEnrollmentAMI || image == settings.VerifiedSingleBootAMI)
 }
 
+func verifiedCloudCatalog(settings config.EC2Runtime, image release.EC2Image, checksum string) bool {
+	if pin := settings.OfficialImage; pin != nil && pin.AMIID == image.AMIID {
+		return pin.MatchesCatalog(image, checksum)
+	}
+	return image.PublisherAccountID == "" && (image.Family != "" || verifiedCloudAMI(settings, image.AMIID))
+}
+
 func launchImage(image release.EC2Image) ec2.Image {
 	return ec2.Image{ID: image.AMIID, RootDeviceName: image.RootDeviceName, SnapshotID: image.RootSnapshotID, Architecture: image.Architecture}
 }
 
 func (p *cloudEC2) ImportCandidate(ctx context.Context, req provider.CreateRequest, artifact release.Artifact) (provider.Inventory, error) {
 	if artifact.EC2 == nil || artifact.EC2.Region != p.settings.Region || artifact.EC2.AccountID != p.settings.AccountID ||
-		(artifact.EC2.Family == "" && !verifiedCloudAMI(p.settings, artifact.EC2.AMIID)) {
+		!verifiedCloudCatalog(p.settings, *artifact.EC2, artifact.ManifestSHA256) {
 		return provider.Inventory{}, provider.ErrCapabilityUnsupported
 	}
 	image := launchImage(*artifact.EC2)
-	image.SingleBoot = artifact.EC2.Family != ""
+	image.SingleBoot = artifact.EC2.UsesSingleBoot()
 	image.Architecture = artifact.Manifest.Architecture
 	return p.CreateCandidate(ctx, req, image)
 }
 
+func (p *cloudEC2) readCandidate(raw, current, previous string, options app.PlatformImportOptions) (release.Artifact, error) {
+	artifact, err := release.ReadEC2Manifest(strings.NewReader(raw))
+	if err != nil {
+		return release.Artifact{}, err
+	}
+	image, manifest := artifact.EC2, artifact.Manifest
+	if image.Region != p.settings.Region ||
+		manifest.ProtocolVersion != guestProtocol || (manifest.Guest.Version != current && manifest.Guest.Version != previous) {
+		return release.Artifact{}, release.ErrCatalogConflict
+	}
+	pin := p.settings.OfficialImage
+	if options.Official {
+		if pin == nil || options.AMIFamily != "" {
+			return release.Artifact{}, release.ErrCatalogConflict
+		}
+		if !pin.MatchesManifest(artifact) {
+			return release.Artifact{}, release.ErrInvalidArtifact
+		}
+		image.PublisherAccountID = pin.PublisherAccountID
+	} else if (pin != nil && image.AMIID == pin.AMIID) || (options.AMIFamily == "" && !verifiedCloudAMI(p.settings, image.AMIID)) {
+		return release.Artifact{}, release.ErrCatalogConflict
+	}
+	return artifact, nil
+}
+
 func (p *cloudEC2) importPlatform(ctx context.Context, dir, guestHost string, store *release.Store, catalog *release.Catalog,
 	ref provider.WorkspaceRef, actor, raw, current, previous string, options app.PlatformImportOptions) error {
-	artifact, err := release.ReadEC2Manifest(strings.NewReader(raw))
+	artifact, err := p.readCandidate(raw, current, previous, options)
 	if err != nil {
 		return err
 	}
 	image, manifest := artifact.EC2, artifact.Manifest
-	if image.Region != p.settings.Region ||
-		(options.AMIFamily == "" && !verifiedCloudAMI(p.settings, image.AMIID)) ||
-		manifest.ProtocolVersion != guestProtocol || (manifest.Guest.Version != current && manifest.Guest.Version != previous) {
-		return release.ErrCatalogConflict
+	var observed ec2.Image
+	if options.Official {
+		observed, err = p.InspectOfficialImage(ctx)
+	} else {
+		observed, err = p.InspectImage(ctx, image.AMIID)
 	}
-	observed, err := p.InspectImage(ctx, image.AMIID)
-	if errors.Is(err, provider.ErrNotFound) || errors.Is(err, provider.ErrOwnershipMismatch) {
+	if errors.Is(err, provider.ErrNotFound) || errors.Is(err, provider.ErrOwnershipMismatch) ||
+		(options.Official && errors.Is(err, provider.ErrInvalidState)) {
 		return release.ErrInvalidArtifact
 	}
 	if err != nil {
 		return err
 	}
-	if observed.Architecture != manifest.Architecture || observed.Artifact != "workspace-ami" || observed.ReleaseID != image.ReleaseID ||
-		observed.SourceAMI != image.SourceAMI || observed.SourceRevision != image.SourceRevision {
+	if !options.Official && (observed.Architecture != manifest.Architecture || observed.Artifact != "workspace-ami" ||
+		observed.ReleaseID != image.ReleaseID || observed.SourceAMI != image.SourceAMI || observed.SourceRevision != image.SourceRevision) {
 		return release.ErrInvalidArtifact
 	}
 	image.AccountID, image.RootDeviceName, image.RootSnapshotID = p.settings.AccountID, observed.RootDeviceName, observed.SnapshotID

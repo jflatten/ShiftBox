@@ -35,6 +35,7 @@ type infrastructureProvider struct {
 	InstanceTypes  []provider.InstanceType `json:"instanceTypes,omitempty"`
 	MinimumDiskGiB int64                   `json:"minimumDiskGiB,omitempty"`
 	MaximumDiskGiB int64                   `json:"maximumDiskGiB,omitempty"`
+	OfficialImage  *provider.OfficialAMI   `json:"officialImage,omitempty"`
 }
 
 type infrastructureCondition struct {
@@ -58,6 +59,7 @@ func InfrastructureStatusHandler(db *sql.DB, origin string, now func() time.Time
 		providerView.InstanceTypes = slices.Clone(caps.InstanceTypes)
 		providerView.MinimumDiskGiB = caps.Minimum.DiskBytes >> 30
 		providerView.MaximumDiskGiB = caps.Maximum.DiskBytes >> 30
+		providerView.OfficialImage = caps.OfficialImage
 	}
 
 	return AuthorizedHandler{

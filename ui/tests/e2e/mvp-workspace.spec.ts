@@ -30,6 +30,7 @@ type WorkspaceFixture = {
 };
 
 const fixturePath = process.env.SHIFTBOX_MVP_FIXTURE;
+const publicAWSFixturePath = process.env.SHIFTBOX_PUBLIC_AWS_FIXTURE;
 const resumeActive = process.env.SHIFTBOX_MVP_RESUME_ACTIVE === '1';
 const resumeWorkspaceID = process.env.SHIFTBOX_MVP_RESUME_WORKSPACE;
 const startupTimeout = 4 * 60_000;
@@ -40,7 +41,6 @@ const githubConsentTimeout = 9 * 60_000;
 // This fixture contains disposable passwords. Keep reproductions and
 // recordings on the fixture host, with browser capture disabled.
 test.use({ channel: 'chrome', trace: 'off', screenshot: 'off', video: 'off' });
-test.skip(!fixturePath, 'Set SHIFTBOX_MVP_FIXTURE for the disposable UTM journey');
 test.skip(({ browserName }) => browserName !== 'chromium', 'The exact-stack MVP journey uses Chrome');
 
 // Start setup with a fresh installation and locally trusted bootstrap TLS.
@@ -50,6 +50,7 @@ test.skip(({ browserName }) => browserName !== 'chromium', 'The exact-stack MVP 
 // The runner starts the controller on the same installation after activation
 // and writes workspaceFixturePath when the artifact and profile are ready.
 test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => {
+  test.skip(!fixturePath, 'Set SHIFTBOX_MVP_FIXTURE for the disposable UTM journey');
   test.setTimeout(25 * 60_000);
   if (!fixturePath || !isAbsolute(fixturePath)) throw new Error('SHIFTBOX_MVP_FIXTURE must be an absolute path');
   const installation: InstallationFixture = JSON.parse(await readFile(fixturePath, 'utf8'));
@@ -263,9 +264,79 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
   });
 });
 
+// A disposable public AWS stack verifies that the admin can validate the exact
+// official image, reload the pinned profile and template, and open its private IDE.
+test('validates and launches the official AWS release image', async ({ page }) => {
+  test.skip(!publicAWSFixturePath, 'Set SHIFTBOX_PUBLIC_AWS_FIXTURE for a disposable activated public AWS stack');
+  if (!publicAWSFixturePath || !isAbsolute(publicAWSFixturePath)) throw new Error('SHIFTBOX_PUBLIC_AWS_FIXTURE must be an absolute path');
+  test.setTimeout(25 * 60_000);
+  const fixture: {
+    managementURL: string;
+    administratorEmail: string;
+    password: string;
+    catalogPath: string;
+    releaseId: string;
+    region: string;
+    repositoryURL: string;
+    devcontainerPath: string;
+  } = JSON.parse(await readFile(publicAWSFixturePath, 'utf8'));
+  const origin = new URL(fixture.managementURL).origin;
+  if (!origin.startsWith('https:') || !isAbsolute(fixture.catalogPath)) {
+    throw new Error('Use the private HTTPS installation and an absolute path to its regional catalog manifest');
+  }
+  const name = `Official AWS fixture ${Date.now()}`;
+
+  await page.goto(new URL('/auth/login', origin).href);
+  await passwordLogin(page, fixture.administratorEmail, fixture.password);
+  await page.goto(new URL('/infrastructure/', origin).href);
+  const official = page.getByRole('region', { name: 'Official AWS release' });
+  await expect(official.getByText(`${fixture.releaseId} · ${fixture.region}`, { exact: true })).toBeVisible();
+  await official.locator('input[type=file]').setInputFiles(fixture.catalogPath);
+  await activate(official.getByRole('button', { name: 'Validate official AMI' }));
+  await expect(official.getByText('Validated', { exact: true })).toBeVisible({ timeout: firstLaunchTimeout });
+  await page.reload();
+  await expect(official.getByText('Validated', { exact: true })).toBeVisible();
+
+  await activate(page.getByRole('button', { name: 'New resource profile' }));
+  const profile = page.getByRole('dialog', { name: 'New resource profile' });
+  await enter(profile.getByRole('textbox', { name: 'Profile name' }), name);
+  await profile.getByRole('combobox', { name: 'AMI image' }).click();
+  await page.getByRole('option', { name: fixture.releaseId, exact: true }).click();
+  await profile.getByRole('combobox', { name: 'EC2 instance type' }).click();
+  await page.getByRole('option', { name: 't3.medium', exact: true }).click();
+  await enter(profile.getByRole('textbox', { name: 'EBS disk (GiB)' }), '32');
+  await activate(profile.getByRole('button', { name: 'Create resource profile' }));
+  await expect(page.getByText('Resource profile created.')).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('table', { name: 'Resource profiles' }).getByRole('rowheader', { name })).toBeVisible();
+
+  await page.goto(new URL('/templates/', origin).href);
+  await activate(page.getByRole('button', { name: 'New project' }));
+  const project = page.getByRole('dialog', { name: 'New project' });
+  await enter(project.getByRole('textbox', { name: /^Name(?:\s*\*)?$/ }), name);
+  await enter(project.getByLabel('Repository URL'), fixture.repositoryURL);
+  await enter(project.getByLabel('Dev Container configuration'), fixture.devcontainerPath);
+  await project.getByRole('combobox', { name: 'Resource profile' }).selectOption({ label: name });
+  await project.getByRole('combobox', { name: 'Platform image' }).selectOption({ label: fixture.releaseId });
+  await activate(project.getByRole('button', { name: 'Create project' }));
+  await expect(project).toBeHidden({ timeout: 15_000 });
+  await page.reload();
+  await expect(page.getByText(name, { exact: true })).toBeVisible();
+
+  await page.goto(new URL('/workspaces/', origin).href);
+  await activate(page.getByRole('link', { name: 'Launch Project' }));
+  await activate(page.getByRole('button', { name: `Launch workspace for ${name}` }), 'Space');
+  await enter(page.getByRole('textbox', { name: /workspace name/i }), name);
+  await activate(page.getByRole('dialog', { name: 'Review launch' }).getByRole('button', { name: 'Launch workspace', exact: true }));
+  await activate(page.getByRole('link', { name: 'View workspace' }));
+  await expect(page.getByRole('button', { name: 'Open IDE', exact: true })).toBeVisible({ timeout: firstLaunchTimeout });
+  await openIDE(page, 'Open IDE', origin);
+});
+
 // The live Dev Container must preserve the developer's actual home and the
 // named application volume when a workload is stopped or replaced.
 test('retains the developer home and named volume on UTM', async ({ page }) => {
+  test.skip(!fixturePath, 'Set SHIFTBOX_MVP_FIXTURE for the disposable UTM journey');
   test.skip(process.env.SHIFTBOX_TEST_MVP_PERSISTENCE !== '1', 'Enable only for the retained disposable MVP workspace');
   test.setTimeout(16 * 60_000);
   page.setDefaultTimeout(30_000);

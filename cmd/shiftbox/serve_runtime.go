@@ -112,7 +112,11 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	var ec2Region, ec2Account string
 	if cloud != nil {
 		policy.EC2VerifiedAMIs = []string{cloud.settings.VerifiedEnrollmentAMI, cloud.settings.VerifiedSingleBootAMI}
-		policy.EC2SingleBootAMI = cloud.settings.VerifiedSingleBootAMI
+		policy.EC2SingleBootAMIs = []string{cloud.settings.VerifiedSingleBootAMI}
+		if pin := cloud.settings.OfficialImage; pin != nil {
+			policy.EC2VerifiedAMIs = append(policy.EC2VerifiedAMIs, pin.AMIID)
+			policy.EC2SingleBootAMIs = append(policy.EC2SingleBootAMIs, pin.AMIID)
+		}
 		// Preserve the verifier for launches already admitted under this AMI.
 		ec2Region, ec2Account = cloud.settings.Region, cloud.settings.AccountID
 	}
@@ -138,6 +142,10 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	services.Handlers[configureExternal.Route.OperationID] = configureExternal
 	catalog := release.NewCatalog(artifactStore, filepath.Join(cfg.InstallationDir, "platform-artifacts"))
 	platform := setupPlatform{installation: cfg.InstallationDir, runtime: settings}
+	var officialImage *release.OfficialEC2Image
+	if cloud != nil {
+		officialImage = cloud.settings.OfficialImage
+	}
 	imports := app.NewPlatformImport(state.DB, journal, origin, active.InstallationID, time.Now,
 		func(ctx context.Context, id, actor, folder string, options app.PlatformImportOptions) error {
 			// Stable operation identity lets a retry reconcile its validation VM.
@@ -153,7 +161,7 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 			}
 			return platform.importPlatform(ctx, artifactStore, catalog, machines, caps, ref,
 				actor, folder, active.ActiveRelease, active.MinimumGuestRelease, options.MakeDefault)
-		}, settings.Provider)
+		}, settings.Provider, officialImage)
 	importRoute := imports.Handler()
 	services.Handlers[importRoute.Route.OperationID] = importRoute
 	preflightRoute, preflightWorker := web.MigrationPreflightRoute(state.DB, journal, origin, active.InstallationID, time.Now,

@@ -36,6 +36,12 @@ func (p *Provider) CreateCandidate(ctx context.Context, req provider.CreateReque
 
 func (p *Provider) create(ctx context.Context, req provider.CreateRequest, image Image) (provider.Inventory, error) {
 	bootOnce := req.BootstrapData != ""
+	pin := p.cfg.OfficialImage
+	official := pin != nil && image.ID == pin.AMIID
+	if official && (!bootOnce || image.RootDeviceName != pin.RootDeviceName || image.SnapshotID != pin.RootSnapshotID ||
+		image.Architecture != pin.Architecture || req.Release != pin.ReleaseID) {
+		return provider.Inventory{}, provider.ErrCapabilityUnsupported
+	}
 	if bootOnce && (!image.SingleBoot || len(req.BootstrapData) > enrollmentSeedLimit) {
 		return provider.Inventory{}, provider.ErrCapabilityUnsupported
 	}
@@ -58,6 +64,11 @@ func (p *Provider) create(ctx context.Context, req provider.CreateRequest, image
 	instance, err := p.findInstance(ctx, req.Ref)
 	switch {
 	case errors.Is(err, provider.ErrNotFound) && req.Ref.InstanceID == "":
+		if official {
+			if _, err := p.InspectOfficialImage(ctx); err != nil {
+				return provider.Inventory{}, err
+			}
+		}
 		submitted := time.Now()
 		result, err := p.client.RunInstances(ctx, p.launchInput(req, image))
 		if err != nil {

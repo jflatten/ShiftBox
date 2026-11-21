@@ -15,7 +15,7 @@ import (
 )
 
 // TestPostgresCutoverResumesAfterSourceRetirement checks ordering, session
-// retirement, and replay after a failed target activation commit.
+// retirement, durable activation receipts, and replay after a failed target commit.
 func TestPostgresCutoverResumesAfterSourceRetirement(t *testing.T) {
 	ctx := t.Context()
 	now := time.Now().UTC()
@@ -67,11 +67,17 @@ func TestPostgresCutoverResumesAfterSourceRetirement(t *testing.T) {
 			t.Fatalf("installation state = %s, %v, want %s", actual, err, want)
 		}
 	}
+	receipts := 0
 	input := postgresCutover{
 		source: operation.NewJournal(source, clock, uuid.NewString),
 		target: operation.NewJournal(target, clock, uuid.NewString),
 		id:     id, actor: actor, key: key, now: now,
 		validate: func(context.Context, *sql.Tx) error { return nil },
+		onActivated: func() {
+			state(source, "blocked")
+			state(target, "active")
+			receipts++
+		},
 	}
 	refused := errors.New("fixture validation failure")
 	invalid := input
@@ -88,6 +94,9 @@ func TestPostgresCutoverResumesAfterSourceRetirement(t *testing.T) {
 	}
 	state(source, "blocked")
 	state(target, "configuring")
+	if receipts != 0 {
+		t.Fatalf("failed activation emitted %d durable receipts, want none", receipts)
+	}
 	var reason string
 	if err := source.QueryRowContext(ctx, "SELECT revocation_reason FROM sessions WHERE revoked_at IS NOT NULL").Scan(&reason); err != nil || reason != "setup_activated" {
 		t.Fatalf("source session retirement = %s, %v, want setup_activated", reason, err)
@@ -122,6 +131,9 @@ func TestPostgresCutoverResumesAfterSourceRetirement(t *testing.T) {
 	first, err := input.run(ctx, source, target)
 	if err != nil || first.Status != "succeeded" || first.ID == "" {
 		t.Fatalf("resumed activation status = %s, %v, want succeeded", first.Status, err)
+	}
+	if receipts != 1 {
+		t.Errorf("verified activation emitted %d durable receipts, want 1", receipts)
 	}
 	replayed, err := input.run(ctx, source, target)
 	if err != nil || replayed.ID != first.ID {

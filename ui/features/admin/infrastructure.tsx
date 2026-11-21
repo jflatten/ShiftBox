@@ -93,7 +93,7 @@ export function Infrastructure() {
               {data?.launchLogRetention ? <LaunchLogRetention settings={data.launchLogRetention}
                 csrfToken={canManage ? current.csrfToken : undefined} refresh={status.refetch} /> : null}
               {data?.provider.name === 'ec2' ? <AMIFamilies key={`ami-families:${current.user.id}`} userID={current.user.id}
-                csrfToken={canManage ? current.csrfToken : undefined} /> : null}
+                csrfToken={canManage ? current.csrfToken : undefined} officialImage={data.provider.officialImage} /> : null}
               <ResourceProfiles key={current.user.id} userId={current.user.id} provider={data?.provider} csrfToken={canManage ? current.csrfToken : undefined} />
             </Stack>
           </Tabs.Panel>

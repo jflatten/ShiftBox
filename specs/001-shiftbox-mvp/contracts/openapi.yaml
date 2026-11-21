@@ -2193,6 +2193,14 @@ components:
               memoryMiB: { type: integer, minimum: 1 }
         minimumDiskGiB: { type: integer, minimum: 1 }
         maximumDiskGiB: { type: integer, minimum: 1 }
+        officialImage:
+          type: object
+          description: The official release image configured for this deployment.
+          required: [releaseId, region, amiId]
+          properties:
+            releaseId: { type: string }
+            region: { type: string }
+            amiId: { type: string }
 
     PlatformArtifactInput:
       type: object
@@ -2200,6 +2208,7 @@ components:
       oneOf:
         - required: [folder]
         - required: [manifest]
+        - required: [officialManifest]
       properties:
         folder:
           type: string
@@ -2209,6 +2218,10 @@ components:
         manifest:
           type: object
           description: The Packer AMI manifest for a cloud EC2 controller.
+        officialManifest:
+          type: string
+          minLength: 1
+          description: The exact regional catalog JSON text from the configured ShiftBox release's support archive.
         makeDefault: { type: boolean, default: false }
         amiFamily:
           type: string

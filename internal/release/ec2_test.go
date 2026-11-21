@@ -112,4 +112,40 @@ func TestEC2CatalogPinsValidatedRegionalAMI(t *testing.T) {
 	if _, err := db.ExecContext(ctx, "UPDATE platform_artifacts SET ec2_image_json='{}' WHERE id=$1", entry.ID); err == nil {
 		t.Fatal("changed the immutable AMI binding")
 	}
+
+	// The official publisher is image provenance, never the account that owns workspaces.
+	t.Run("cross-account publisher", func(t *testing.T) {
+		publicRaw := strings.NewReplacer(
+			`"development"`, `"v1.4.2-rc.1"`,
+			`"sourceRevision":`, `"sourceRegion": "us-east-1", "sourceRevision":`,
+		).Replace(raw)
+		candidate, err := ReadEC2Manifest(strings.NewReader(publicRaw))
+		if err != nil {
+			t.Fatalf("ReadEC2Manifest(official) = %v, want valid source lineage", err)
+		}
+		candidate.EC2.AccountID = image.AccountID
+		candidate.EC2.PublisherAccountID = "222233334444"
+		candidate.EC2.RootSnapshotID = image.RootSnapshotID
+		candidate.EC2.RootDeviceName = image.RootDeviceName
+		entry, err := store.ImportEC2(ctx, candidate, "operator", now)
+		if err != nil {
+			t.Fatalf("ImportEC2(official) = %v, want validation pending", err)
+		}
+		if err := catalog.ValidateImport(ctx, entry.ID, func(_ context.Context, artifact Artifact) error {
+			if !artifact.EC2.UsesSingleBoot() {
+				t.Fatal("official catalog canary did not select single-boot enrollment")
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("ValidateImport(official) = %v, want success", err)
+		}
+		bound, err := store.EC2Image(ctx, entry.ID, candidate.EC2.Region, image.AccountID)
+		if err != nil || bound.PublisherAccountID != candidate.EC2.PublisherAccountID || bound.SourceRegion != "us-east-1" ||
+			bound.CatalogSHA256 != candidate.ManifestSHA256 || !bound.UsesSingleBoot() {
+			t.Fatalf("EC2Image(installation account) = %+v, %v, want persisted publisher and manifest digest", bound, err)
+		}
+		if _, err := store.EC2Image(ctx, entry.ID, candidate.EC2.Region, candidate.EC2.PublisherAccountID); !errors.Is(err, ErrCatalogConflict) {
+			t.Fatalf("EC2Image(publisher account) = %v, want catalog conflict", err)
+		}
+	})
 }

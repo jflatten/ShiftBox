@@ -18,9 +18,9 @@ When an agent edits a file or runs a test, you can pick up the work in the same 
 
 ## Start small, stay self-hosted
 
-The first planned deployment runs on a Mac alongside UTM. ShiftBox manages workspace setup, access, and cleanup, and UTM runs the virtual machines. AWS EC2 is planned as a second provider.
+AWS is the first public distribution target. Deploy the prebuilt controller and private workspace infrastructure inside your AWS account with the versioned CloudFormation template. Use the AWS Console link for your region or the guided CLI installer. Open an announced version from [GitHub Releases](https://github.com/jflatten/ShiftBox/releases) and follow the [public installation guide](https://jflatten.github.io/ShiftBox/install/).
 
-ShiftBox is being implemented and is not yet a runnable product. Explore the [architecture readback](documentation/architecture/design-readback.md) for the first release scope and the [implementation tasks](specs/001-shiftbox-mvp/tasks.md) for current progress.
+Prebuilt packages accompany official RC and stable tags. Contributors build reviewed main from source. Native UTM development and validation remain available through their existing path.
 
 ## Development prerequisites
 
@@ -36,11 +36,9 @@ certificates/service names. The [platform image recipe](platform/packer/README.m
 covers hardware-virtualized ARM64 and emulated AMD64 on Apple Silicon. Release versions and artifact digests must be recorded
 before claiming support.
 
-Build/test entry points are `make fmt-check vet test race`, `make ui-test ui-build`,
-`make integration`, and `make browser`. These commands become usable as their
-corresponding implementation and test tasks land; the current skeleton does not
-provide application routes or end-to-end fixtures. UI tests deliberately fail
-when no tests exist. Integration/browser tests require configured services.
+Build reviewed main with `npm --prefix ui ci` followed by `make build`.
+Run `make fmt-check vet test race` and `make ui-test` for local regression checks.
+`make integration` and `make browser` require configured services and fixtures.
 
 `make release SHIFTBOX_UTM_RELEASE=1` is reserved for a controlled Mac with
 disposable UTM fixtures. It must not be run against personal workspaces. No

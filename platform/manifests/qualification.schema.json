@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ShiftBox public AWS release qualification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "candidate", "regionalLaunches", "freshInstall", "gateResults", "cleanupVerified"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "sourceCommit", "releaseId", "assets", "controllerDigest", "templateSha256"],
+      "properties": {
+        "tag": { "$ref": "distribution.schema.json#/$defs/candidateTag" },
+        "sourceCommit": { "$ref": "distribution.schema.json#/$defs/commit" },
+        "releaseId": { "type": "integer", "minimum": 1 },
+        "assets": {
+          "type": "object",
+          "required": ["install.sh", "distribution-manifest.json", "shiftbox-aws-cloudformation.yaml", "shiftbox-aws-support.tar.gz"],
+          "minProperties": 4,
+          "maxProperties": 4,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["id", "sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "integer", "minimum": 1 },
+              "sha256": { "$ref": "distribution.schema.json#/$defs/sha256" }
+            }
+          }
+        },
+        "controllerDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "templateSha256": { "$ref": "distribution.schema.json#/$defs/sha256" }
+      }
+    },
+    "regionalLaunches": {
+      "type": "object",
+      "required": ["us-east-1", "us-east-2", "us-west-1", "us-west-2"],
+      "minProperties": 4,
+      "maxProperties": 4,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "amiId", "publisherAccountId", "versionId", "templateSha256", "publicBoot",
+          "encryptedRoot", "hostedTemplateValidated", "cleanupVerified"
+        ],
+        "properties": {
+          "amiId": { "$ref": "distribution.schema.json#/$defs/ami" },
+          "publisherAccountId": { "type": "string", "pattern": "^[0-9]{12}$" },
+          "versionId": { "type": "string", "minLength": 1, "maxLength": 1024 },
+          "templateSha256": { "$ref": "distribution.schema.json#/$defs/sha256" },
+          "publicBoot": { "const": true },
+          "encryptedRoot": { "const": true },
+          "hostedTemplateValidated": { "const": true },
+          "cleanupVerified": { "const": true }
+        }
+      }
+    },
+    "freshInstall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["region", "consoleIde", "privateHttps", "protectedSetup", "anonymousPull", "cliResume"],
+      "properties": {
+        "region": { "const": "us-east-2" },
+        "consoleIde": { "const": true },
+        "privateHttps": { "const": true },
+        "protectedSetup": { "const": true },
+        "anonymousPull": { "const": true },
+        "cliResume": { "const": true }
+      }
+    },
+    "gateResults": {
+      "type": "object",
+      "required": ["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12", "V13", "V14"],
+      "minProperties": 14,
+      "maxProperties": 14,
+      "additionalProperties": { "const": "pass" }
+    },
+    "cleanupVerified": { "const": true }
+  }
+}
