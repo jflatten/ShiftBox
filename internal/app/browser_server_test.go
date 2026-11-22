@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -70,12 +71,18 @@ func TestBrowserServerSeparatesManagementAndServices(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		res.Body.Close()
+		_, readErr := io.Copy(io.Discard, res.Body)
+		closeErr := res.Body.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			t.Fatalf("finish HTTPS response for %s: %v", tc.host, err)
+		}
 		if res.StatusCode != tc.status || res.Header.Get("X-Management") != tc.marker || res.TLS.Version != tls.VersionTLS13 {
 			t.Errorf("HTTPS for %s returned %d with management %q, want %d %q and TLS 1.3", tc.host,
 				res.StatusCode, res.Header.Get("X-Management"), tc.status, tc.marker)
 		}
 	}
+	// Release the test client's connections before checking graceful shutdown.
+	transport.CloseIdleConnections()
 	cancel()
 	select {
 	case err := <-done:
