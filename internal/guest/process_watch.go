@@ -29,12 +29,17 @@ const (
 // The guest cooperatively reports activity; the VM is not a trust boundary.
 type processWatches struct {
 	mu     sync.Mutex
-	leases map[string]time.Time
+	leases map[string]processWatchEntry
 	now    func() time.Time
 }
 
+type processWatchEntry struct {
+	expiresAt time.Time
+	released  bool
+}
+
 func newProcessWatches(now func() time.Time) *processWatches {
-	return &processWatches{leases: make(map[string]time.Time), now: now}
+	return &processWatches{leases: make(map[string]processWatchEntry), now: now}
 }
 
 // WatchProcess keeps a foreground lease alive while the original Linux process
@@ -145,18 +150,25 @@ func (w *processWatches) renew(token string) {
 	defer w.mu.Unlock()
 	now := w.now()
 	w.expire(now)
-	w.leases[token] = now.Add(processWatchLease)
+	if w.leases[token].released {
+		return
+	}
+	w.leases[token] = processWatchEntry{expiresAt: now.Add(processWatchLease)}
 }
 
 func (w *processWatches) remove(token string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	delete(w.leases, token)
+	now := w.now()
+	w.expire(now)
+	// A canceled PUT can reach the Unix socket handler after its DELETE. Keep
+	// the release for one lease interval so late heartbeats cannot revive it.
+	w.leases[token] = processWatchEntry{expiresAt: now.Add(processWatchLease), released: true}
 }
 
 func (w *processWatches) expire(now time.Time) {
-	for token, until := range w.leases {
-		if !now.Before(until) {
+	for token, lease := range w.leases {
+		if !now.Before(lease.expiresAt) {
 			delete(w.leases, token)
 		}
 	}
@@ -166,7 +178,14 @@ func (w *processWatches) sample(now time.Time) *workspace.ProcessActivity {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.expire(now)
-	return &workspace.ProcessActivity{SampledAt: now.UTC(), Active: len(w.leases) > 0}
+	activity := &workspace.ProcessActivity{SampledAt: now.UTC()}
+	for _, lease := range w.leases {
+		if !lease.released {
+			activity.Active = true
+			break
+		}
+	}
+	return activity
 }
 
 func (w *processWatches) ServeHTTP(response http.ResponseWriter, request *http.Request) {

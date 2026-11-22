@@ -65,6 +65,25 @@ func TestProcessWatchLeaseExpiry(t *testing.T) {
 	}
 }
 
+// TestProcessWatchReleaseRejectsLateHeartbeat covers a canceled HTTP heartbeat
+// that reaches the registry after the watch client releases its token.
+func TestProcessWatchReleaseRejectsLateHeartbeat(t *testing.T) {
+	now := time.Now()
+	registry := newProcessWatches(func() time.Time { return now })
+	const token = "0123456789abcdef0123456789abcdef"
+	registry.renew(token)
+	registry.remove(token)
+	registry.renew(token)
+	if registry.sample(now).Active {
+		t.Error("process watch sample after a late heartbeat = active, want idle")
+	}
+	now = now.Add(processWatchLease)
+	registry.sample(now)
+	if got := len(registry.leases); got != 0 {
+		t.Errorf("process watch entries after release expires = %d, want 0", got)
+	}
+}
+
 // TestWatchProcessCancellationAndExit drives the real local Unix transport and
 // ensures a sleeping original process keeps alive until exit, reuse, or cancellation.
 func TestWatchProcessCancellationAndExit(t *testing.T) {
