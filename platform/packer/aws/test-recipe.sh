@@ -108,6 +108,11 @@ VARS
     -var public_build=true -var publisher_account_id=111111111111 -var publisher_attempt=recipe-test \
     -var build_ssh_proxy_host=127.0.0.1 -var build_ssh_proxy_port=4125 "$recipe"
 
+# The private rehearsal exercises the same release-compatible recipe with its own attempt name.
+"$packer" validate -evaluate-datasources=false -var-file="$test_dir/release.pkrvars.hcl" \
+    -var public_build=true -var publisher_account_id=111111111111 -var publisher_attempt=rehearsal-fixture \
+    -var build_ssh_proxy_host=127.0.0.1 -var build_ssh_proxy_port=4125 "$recipe"
+
 # Reject an image alias so the builder always starts from an immutable AMI ID.
 if "$packer" validate -evaluate-datasources=false -var-file="$test_dir/release.pkrvars.hcl" \
     -var 'source_ami=latest' "$recipe" > "$test_dir/invalid.out" 2>&1; then

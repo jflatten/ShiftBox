@@ -74,6 +74,13 @@ public_preflight() {
         *) echo 'Choose a supported public image Region.' >&2; return 2 ;;
     esac
     source_ami=$(jq -er '.source_ami | select(type == "string" and test("\\Aami-([a-f0-9]{8}|[a-f0-9]{17})\\z"))' "$deployment_vars")
+    artifact=workspace-ami
+    artifact_release=$release_id
+    rehearsal=$(jq -r '.publisher_attempt // "" | select(startswith("rehearsal-") or . == "")' "$deployment_vars")
+    if [ -n "$rehearsal" ]; then
+        artifact=packer-rehearsal
+        artifact_release=$rehearsal
+    fi
     identity=$(aws sts get-caller-identity --region "$region" --query Account --output text)
     if [ "$identity" != "$publisher_account" ]; then
         echo 'The AWS session must belong to the approved publisher account.' >&2
@@ -93,14 +100,15 @@ public_preflight() {
 image_snapshot() {
     images=$(aws ec2 describe-images --region "$region" --owners "$2" --image-ids "$1" --output json) || return
     printf '%s\n' "$images" | jq -er --arg ami "$1" --arg owner "$2" --argjson public "$3" \
-        --arg release "$release_id" --arg source "$source_ami" --arg revision "$revision" '
+        --arg release "$artifact_release" --arg artifact "$artifact" --arg source "$source_ami" --arg revision "$revision" '
         .Images | select(length == 1) | .[0] |
         select(.ImageId == $ami and .OwnerId == $owner and .Public == $public and .State == "available" and
                .Architecture == "x86_64" and .RootDeviceName == "/dev/sda1" and .RootDeviceType == "ebs" and
                .VirtualizationType == "hvm" and ((.ProductCodes // []) | length == 0)) |
         select(if $public then .Name | startswith("ubuntu-minimal/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-minimal-")
           else (.Tags | map({key:.Key,value:.Value}) | from_entries) as $tags |
-               $tags.ShiftBoxArtifact == "workspace-ami" and $tags.ShiftBoxRelease == $release and
+               $tags.ShiftBoxArtifact == $artifact and $tags.ShiftBoxRelease == $release and
+               ($artifact != "packer-rehearsal" or .Name == ("shiftbox-" + $release + "-amd64")) and
                $tags.ShiftBoxSourceAMI == $source and $tags.ShiftBoxSourceCommit == $revision end) |
         [.BlockDeviceMappings[] | select(.Ebs != null)] | select(length == 1) | .[0] |
         select(.DeviceName == "/dev/sda1" and .Ebs.Encrypted == false and ($public or .Ebs.VolumeSize == 32)) |

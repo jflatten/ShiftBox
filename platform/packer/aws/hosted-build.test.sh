@@ -30,7 +30,7 @@ import sys
 import time
 
 assert "SHIFTBOX_RELEASE_BUILD_SSH_KEY" not in os.environ
-assert sys.argv[sys.argv.index("--attempt-id") + 1] == "fixture"
+assert sys.argv[sys.argv.index("--attempt-id") + 1] == os.environ.get("REHEARSAL_ATTEMPT", "fixture")
 assert sys.argv[sys.argv.index("--subnet-cidr") + 1] == "10.42.0.64/26"
 port_file = pathlib.Path(sys.argv[sys.argv.index("--port-file") + 1])
 assert port_file.parent.stat().st_mode & 0o777 == 0o700
@@ -45,11 +45,12 @@ test "$RELEASE_CANDIDATE" = "$1"
 test -z "${SHIFTBOX_RELEASE_BUILD_SSH_KEY+x}"
 test "$(wc -c < "$2" | tr -d ' ')" = 32
 jq -e '
-  .publisher_attempt=="fixture" and .environment=="release-v1.0.0-rc.1" and .build_ssh_proxy_host=="127.0.0.1" and
+  .publisher_attempt==(env.REHEARSAL_ATTEMPT // "fixture") and .environment=="release-v1.0.0-rc.1" and .build_ssh_proxy_host=="127.0.0.1" and
   .build_ssh_proxy_port==4125 and .build_subnet_id=="subnet-00000000000000002"
 ' "$3" >/dev/null
 test -s "$(jq -er .build_private_key_file "$3")"
 touch "$FIXTURE_DIR/packer-called"
+printf '{"builds":[{}]}\n' > "$FIXTURE_DIR/manifest.json"
 printf 'AMI provenance manifest: %s\n' "$FIXTURE_DIR/manifest.json"
 PACKER
 cat > "$fixture/platform/release/amis.sh" <<'AMI'
@@ -89,4 +90,22 @@ hosted_build
 jq -e '.sanitized == true' "$RUNNER_TEMP/handoff.json" >/dev/null
 test -f "$fixture/packer-called"
 test "$(ls -A "$RUNNER_TEMP")" = handoff.json
+
+# The normal release rejects a rehearsal network and the rehearsal produces only a private result receipt.
+export REHEARSAL_ATTEMPT=rehearsal-fixture
+SHIFTBOX_RELEASE_BUILD_NETWORK=$(jq -c --arg attempt "$REHEARSAL_ATTEMPT" '
+    .attempt_id = $attempt | .packer_key_pair = ("shiftbox-publisher-" + $attempt + "-packer")
+' <<< "$approved_network")
+rm "$fixture/packer-called"
+if hosted_build >"$fixture/error" 2>&1; then exit 1; fi
+grep -Fq 'the release cannot consume a rehearsal attempt' "$fixture/error"
+test ! -e "$fixture/packer-called"
+git -C "$fixture" init -q
+git -C "$fixture" -c user.name=Fixture -c user.email=fixture@example.test -c commit.gpgsign=false \
+    commit --allow-empty -qm fixture
+sha=$(git -C "$fixture" rev-parse HEAD)
+bash "$fixture/platform/packer/aws/hosted-build.sh" v1.0.0-rc.1 "$sha" 111122223333 \
+    "$RUNNER_TEMP/rehearsal.json" --rehearsal
+jq -e '. == {result:"private-rehearsal-built",count:1}' "$RUNNER_TEMP/rehearsal.json" >/dev/null
+test -f "$fixture/packer-called"
 printf 'Hosted Packer input and handoff fixtures passed.\n'

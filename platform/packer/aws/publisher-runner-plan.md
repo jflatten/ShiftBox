@@ -106,8 +106,9 @@ state and verifies complete removal of the attempt resources and GitHub
 secret after success, failure or cancellation.
 
 Before using the protected tag, separately approve a disposable,
-nonpublishing rehearsal for the exact hosted runner image, CLI, key and
-Packer inputs. Verify private SSH, blocked alternate endpoints/ports and
+[nonpublishing rehearsal](../../terraform/publisher/packer-rehearsal/README.md)
+for the exact hosted runner image, CLI, key and Packer inputs. Verify private
+SSH, blocked alternate endpoints/ports and
 cross-attempt targets, guest package egress, session and job cancellation,
 guest tagging, and full teardown after runner loss. Test effective IAM against
 actual resource IDs. Inventory any existing private candidate image instead
