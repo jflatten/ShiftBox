@@ -55,7 +55,10 @@ endpoint, subnet, source-image pins, attempt tags, and expiry.
 The role can read Ohio build inventory, open the exact private TCP 22 tunnel,
 launch the reviewed `t3.medium` with a tagged 32 GiB gp3 root, create the
 private image, set its description and IMDSv2, and stop or remove the
-attempt's own resources. A full binding allows no AMI copy, AMI launch
+attempt's own resources. The pinned Packer Amazon plugin uses
+`ec2:DescribeRegions` before launching. That request must use the Ohio
+endpoint and occur before expiry, like the other inventory reads.
+A full binding allows no AMI copy, AMI launch
 permission change, snapshot sharing, bucket access, IAM delegation, or
 network creation. Inventory calls that require a wildcard stay bounded by
 region and time. After the deadline, the identity policy no longer allows

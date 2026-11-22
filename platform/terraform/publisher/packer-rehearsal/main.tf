@@ -102,7 +102,7 @@ locals {
       Action = [
         "ec2:DescribeAvailabilityZones", "ec2:DescribeImageAttribute", "ec2:DescribeImages", "ec2:DescribeInstanceConnectEndpoints",
         "ec2:DescribeInstances", "ec2:DescribeInstanceStatus", "ec2:DescribeInstanceTypeOfferings",
-        "ec2:DescribeKeyPairs", "ec2:DescribeSecurityGroups", "ec2:DescribeSnapshotAttribute", "ec2:DescribeSnapshots",
+        "ec2:DescribeKeyPairs", "ec2:DescribeRegions", "ec2:DescribeSecurityGroups", "ec2:DescribeSnapshotAttribute", "ec2:DescribeSnapshots",
         "ec2:DescribeSubnets", "ec2:DescribeVolumes", "ec2:DescribeVpcs", "ec2:GetEbsEncryptionByDefault",
       ]
       Resource  = ["*"]
