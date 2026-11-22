@@ -18,6 +18,10 @@ and the [exact-artifact qualification procedure](../../specs/010-public-aws-dist
 
 ## Cross-account public AMI probe
 
+For a bounded test-account run and independently scheduled cleanup, use the
+[on-demand qualification workflow](../qualification/README.md). Review its
+aggregate AWS budget and exact candidate gates before any paid dispatch.
+
 Use the isolated Terraform fixture in
 [public-ami-launch](../terraform/publisher/tests/public-ami-launch) with a separate
 approved customer account and its normal AWS credentials. Confirm the customer

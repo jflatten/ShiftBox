@@ -36,13 +36,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+          terraform_wrapper: false
       - name: Install local CloudFormation verification tools
         shell: bash
         run: |
           tools="$RUNNER_TEMP/shiftbox-cloudformation-tools"
           mkdir -p "$tools/bin"
           python3 -m venv "$tools/python"
-          "$tools/python/bin/pip" install cfn-lint==1.61.0 PyYAML==6.0.3
+          "$tools/python/bin/pip" install cfn-lint==1.61.0 PyYAML==6.0.3 pytest==9.1.1
           curl --fail --silent --show-error --location --proto '=https' \
             https://github.com/aws-cloudformation/cloudformation-guard/releases/download/3.3.0/cfn-guard-v3-x86_64-ubuntu-latest.tar.gz \
             --output "$tools/guard.tar.gz"
@@ -65,5 +69,17 @@ jobs:
           bash platform/release/templates.test.sh
           bash platform/cloudformation/aws/setup.test.sh
           bash scripts/install-aws.test.sh
+      - name: Exercise AWS qualification offline
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          bash platform/qualification/preflight.test.sh
+          bash platform/qualification/deploy.test.sh
+          bash platform/qualification/cleanup.test.sh
+          python platform/qualification/workflow.test.py
+          python platform/qualification/test_tailnet.py
+          python -m pytest -q -p no:cacheprovider platform/qualification/test_cost.py
+          terraform -chdir=platform/terraform/qualification init -backend=false -lockfile=readonly
+          terraform -chdir=platform/terraform/qualification test
   # Browser, database and UTM journeys need configured fixtures. Their Make
   # targets remain explicit release gates, not claimed by these unit jobs.

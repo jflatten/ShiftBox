@@ -1,0 +1,245 @@
+name: AWS RC qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Estimate one run, qualify a public RC, or sweep expired runs
+        type: choice
+        options: [estimate, qualify, cleanup]
+        default: estimate
+      candidate:
+        description: Exact public prerelease tag for qualification
+        type: string
+      headroom_usd:
+        description: Verified remaining aggregate AWS budget in USD for this month
+        type: string
+      staffed:
+        description: Reserve a 60-minute window for a fresh Ohio console launch
+        type: boolean
+        default: false
+  schedule:
+    - cron: '23,53 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shiftbox-aws-qualification
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+  AWS_PAGER: ''
+  AWS_CLI_AUTO_PROMPT: 'off'
+  AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: 'true'
+  SHIFTBOX_QUALIFICATION_ACCOUNT_ID: ${{ vars.SHIFTBOX_QUALIFICATION_ACCOUNT_ID }}
+  SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+
+jobs:
+  admission:
+    if: >-
+      github.repository == 'jflatten/ShiftBox' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' && inputs.operation != 'cleanup'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Estimate and verify budget admission
+        env:
+          MODE: ${{ inputs.operation }}
+          STAFFED: ${{ inputs.staffed }}
+          VERIFIED_HEADROOM: ${{ inputs.headroom_usd }}
+          SHIFTBOX_QUALIFICATION_ENABLED: ${{ vars.SHIFTBOX_QUALIFICATION_ENABLED }}
+          SHIFTBOX_QUALIFICATION_SWEEP_ENABLED: ${{ vars.SHIFTBOX_QUALIFICATION_SWEEP_ENABLED }}
+          TAILNET_READY: ${{ vars.SHIFTBOX_QUALIFICATION_TAILNET_ENABLED }}
+        run: |
+          umask 077
+          bash platform/qualification/preflight.sh guard qualify >/dev/null
+          if [ "$MODE" = estimate ]; then
+            python3 platform/qualification/cost.py
+          else
+            test "$MODE" = qualify
+            test "$SHIFTBOX_QUALIFICATION_ENABLED" = true
+            test "$SHIFTBOX_QUALIFICATION_SWEEP_ENABLED" = true
+            scenario=automated
+            if [[ $STAFFED == true ]]; then
+              test "$TAILNET_READY" = true
+              scenario=staffed
+            fi
+            python3 platform/qualification/cost.py --mode "$scenario" --headroom-usd "$VERIFIED_HEADROOM" > "$RUNNER_TEMP/qualification-budget.json"
+            jq 'del(.budget.headroom_usd)' "$RUNNER_TEMP/qualification-budget.json"
+          fi
+
+  sweep:
+    if: >-
+      github.repository == 'jflatten/ShiftBox' && github.ref == 'refs/heads/main' &&
+      vars.SHIFTBOX_QUALIFICATION_SWEEP_ENABLED == 'true' &&
+      (github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.actor == 'jflatten' &&
+      (inputs.operation == 'cleanup' || inputs.operation == 'qualify')))
+    runs-on: ubuntu-latest
+    environment: aws-qualification-cleanup
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify cleanup event and configuration
+        run: |
+          bash platform/qualification/preflight.sh guard cleanup >/dev/null
+          test -n "$SHIFTBOX_QUALIFICATION_ACCOUNT_ID"
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          aws-region: us-east-2
+          role-to-assume: ${{ vars.SHIFTBOX_QUALIFICATION_CLEANUP_ROLE_ARN }}
+          role-session-name: shiftbox-sweep-${{ github.run_id }}
+          allowed-account-ids: ${{ vars.SHIFTBOX_QUALIFICATION_ACCOUNT_ID }}
+          role-duration-seconds: 1200
+          unset-current-credentials: true
+      - name: Sweep completed expired runs
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.operation }}
+        run: |
+          bash platform/qualification/preflight.sh account
+          bash platform/qualification/cleanup.sh sweep
+          if [[ $GITHUB_EVENT_NAME == workflow_dispatch && $MODE == qualify ]]; then
+            bash platform/qualification/cleanup.sh empty
+          fi
+      - name: Sweep expired router identities in the fixture tailnet
+        if: always() && vars.SHIFTBOX_QUALIFICATION_TAILNET_ENABLED == 'true'
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.operation }}
+          SHIFTBOX_QUALIFICATION_TAILNET_ID: ${{ vars.SHIFTBOX_QUALIFICATION_TAILNET_ID }}
+          SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_ID: ${{ secrets.SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_ID }}
+          SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_SECRET: ${{ secrets.SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_SECRET }}
+        run: |
+          python3 platform/qualification/tailnet.py sweep
+          if [[ $GITHUB_EVENT_NAME == workflow_dispatch && $MODE == qualify ]]; then
+            python3 platform/qualification/tailnet.py empty
+          fi
+
+  qualify:
+    if: >-
+      github.repository == 'jflatten/ShiftBox' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' && inputs.operation == 'qualify'
+    needs: [admission, sweep]
+    runs-on: ubuntu-latest
+    environment: aws-qualification
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify the immutable public RC before requesting AWS access
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ inputs.candidate }}
+        run: |
+          bash platform/qualification/preflight.sh guard qualify >/dev/null
+          bash platform/qualification/preflight.sh fetch "$CANDIDATE" "$RUNNER_TEMP/qualification-assets"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          aws-region: us-east-2
+          role-to-assume: ${{ vars.SHIFTBOX_QUALIFICATION_DEPLOY_ROLE_ARN }}
+          role-session-name: shiftbox-qualify-${{ github.run_id }}
+          allowed-account-ids: ${{ vars.SHIFTBOX_QUALIFICATION_ACCOUNT_ID }}
+          role-duration-seconds: 7200
+          unset-current-credentials: true
+      - name: Validate regional change sets, boot probes, and deploy Ohio foundation
+        timeout-minutes: 45
+        env:
+          SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN: ${{ vars.SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN }}
+          SHIFTBOX_QUALIFICATION_STAFFED: ${{ inputs.staffed }}
+          CANDIDATE: ${{ inputs.candidate }}
+        run: |
+          mode=automated
+          if [[ $SHIFTBOX_QUALIFICATION_STAFFED == true ]]; then mode=staffed; fi
+          bash platform/qualification/preflight.sh capacity "$mode"
+          run=$(bash platform/qualification/preflight.sh guard qualify)
+          assets="$RUNNER_TEMP/qualification-assets"
+          mkdir -- "$RUNNER_TEMP/qualification-evidence"
+          bash platform/qualification/deploy.sh "$assets/distribution-manifest.json" "$assets" "$run" "$RUNNER_TEMP/qualification-evidence"
+          {
+            printf '## AWS RC evidence\n\n'
+            printf 'Ohio stack and deployment name %s.\n\n' "$run"
+            if [[ $mode == staffed ]]; then
+              printf 'All review stacks were removed. The 60-minute operator window starts now.\n\n'
+              printf 'Use the verified Ohio Console link for %s and the approved run-scoped tags.\n' "$CANDIDATE"
+            fi
+            printf 'Browser, Git authorization, private-route and recovery checks require an operator.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Reserve the staffed operator window
+        if: inputs.staffed
+        timeout-minutes: 61
+        run: sleep 3600
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: aws-qualification-automation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qualification-evidence/automated.json
+          retention-days: 3
+          if-no-files-found: error
+
+  cleanup:
+    if: >-
+      always() && github.repository == 'jflatten/ShiftBox' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' && inputs.operation == 'qualify' &&
+      needs.admission.result == 'success' && needs.sweep.result == 'success' &&
+      needs.qualify.result != 'skipped'
+    needs: [admission, sweep, qualify]
+    runs-on: ubuntu-latest
+    environment: aws-qualification-cleanup
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify the current run identity
+        run: bash platform/qualification/preflight.sh guard cleanup >/dev/null
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          aws-region: us-east-2
+          role-to-assume: ${{ vars.SHIFTBOX_QUALIFICATION_CLEANUP_ROLE_ARN }}
+          role-session-name: shiftbox-cleanup-${{ github.run_id }}
+          allowed-account-ids: ${{ vars.SHIFTBOX_QUALIFICATION_ACCOUNT_ID }}
+          role-duration-seconds: 1200
+          unset-current-credentials: true
+      - name: Destroy this run's disposable AWS resources and verify teardown
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash platform/qualification/preflight.sh account
+          bash platform/qualification/cleanup.sh run
+      - name: Remove this run's fixture tailnet router and verify absence
+        if: always() && vars.SHIFTBOX_QUALIFICATION_TAILNET_ENABLED == 'true'
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHIFTBOX_QUALIFICATION_TAILNET_ID: ${{ vars.SHIFTBOX_QUALIFICATION_TAILNET_ID }}
+          SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_ID: ${{ secrets.SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_ID }}
+          SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_SECRET: ${{ secrets.SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_SECRET }}
+        run: python3 platform/qualification/tailnet.py run

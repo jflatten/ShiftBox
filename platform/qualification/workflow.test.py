@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Check workflow authority and teardown wiring without contacting AWS."""
+from pathlib import Path
+import unittest
+
+import yaml
+
+
+class QualificationWorkflow(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = Path(__file__).resolve().parents[2] / ".github/workflows/qualify-aws.yml"
+        cls.workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+
+    def test_events_and_single_lock(self):
+        """A PR or branch push must never acquire AWS credentials."""
+        self.assertEqual({"workflow_dispatch", "schedule"}, self.workflow["on"].keys())
+        self.assertEqual("shiftbox-aws-qualification", self.workflow["concurrency"]["group"])
+        self.assertEqual("false", self.workflow["concurrency"]["cancel-in-progress"])
+
+    def test_admission_runs_before_any_deployment_credentials(self):
+        """Explicit cost acceptance and artifact checks must precede deploy access."""
+        jobs = self.workflow["jobs"]
+        self.assertNotIn("id-token", jobs["admission"]["permissions"])
+        admission = str(jobs["admission"]["steps"])
+        self.assertIn("--headroom-usd", admission)
+        self.assertIn("SHIFTBOX_QUALIFICATION_ENABLED", admission)
+        self.assertIn("admission", jobs["qualify"]["needs"])
+        steps = jobs["qualify"]["steps"]
+        fetch = next(index for index, step in enumerate(steps) if "preflight.sh fetch" in step.get("run", ""))
+        token = next(index for index, step in enumerate(steps) if "configure-aws-credentials" in step.get("uses", ""))
+        self.assertLess(fetch, token)
+        self.assertIn("allowed-account-ids", steps[token]["with"])
+
+    def test_cleanup_independent_of_qualification_runner(self):
+        """Sweeps and immediate cleanup use cleanup-only credentials and named bounds."""
+        jobs = self.workflow["jobs"]
+        self.assertIn("schedule", jobs["sweep"]["if"])
+        self.assertIn("github.ref == 'refs/heads/main'", jobs["sweep"]["if"])
+        self.assertNotIn("needs", jobs["sweep"]["if"].split("github.event_name == 'schedule'")[0])
+        for job in (jobs["sweep"], jobs["cleanup"]):
+            self.assertEqual("aws-qualification-cleanup", job["environment"])
+            self.assertIn("SHIFTBOX_QUALIFICATION_CLEANUP_ROLE_ARN", str(job["steps"]))
+            self.assertNotIn("SHIFTBOX_QUALIFICATION_DEPLOY_ROLE_ARN", str(job["steps"]))
+        self.assertIn("always()", jobs["cleanup"]["if"])
+        self.assertIn("cleanup.sh run", str(jobs["cleanup"]["steps"]))
+        self.assertIn("cleanup.sh sweep", str(jobs["sweep"]["steps"]))
+        self.assertIn("cleanup.sh empty", str(jobs["sweep"]["steps"]))
+
+    def test_tailnet_credentials_are_only_available_to_cleanup_steps(self):
+        """The dedicated fixture tailnet is swept even if AWS teardown failed."""
+        jobs = self.workflow["jobs"]
+        for key, mode in (("sweep", "sweep"), ("cleanup", "run")):
+            step = next(s for s in jobs[key]["steps"] if f"tailnet.py {mode}" in s.get("run", ""))
+            self.assertIn("always()", step["if"])
+            self.assertIn("secrets.SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_SECRET", str(step))
+        self.assertNotIn("secrets.SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_SECRET", str(jobs["qualify"]))
+
+    def test_no_privileged_default_tokens(self):
+        """The qualification workflow has no repository or package publishing authority."""
+        self.assertEqual({"contents": "read"}, self.workflow["permissions"])
+        for job in self.workflow["jobs"].values():
+            for permission, access in job["permissions"].items():
+                self.assertTrue(access == "read" or (permission, access) == ("id-token", "write"))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -65,6 +65,12 @@ Verify approved owner, ID, snapshot, architecture, visibility, encrypted volume,
 
 ## 4. Run a fresh Ohio console install and exercise the guided CLI
 
+The [on-demand qualification workflow](../../platform/qualification/README.md)
+prices the run, verifies the public RC and regional probes, and provides
+an independently cleaned Ohio window in the dedicated testing account.
+Its automation evidence keeps the manual browser, CLI and recovery gates
+pending. Confirm actual aggregate budget and Ohio capacity before dispatch.
+
 Use an authenticated Ohio customer-like account with capacity, a tailnet, no domain/certificate, and an operator-owned GitHub App and known-good repository for the later checkout. Start at the candidate's Ohio Console link with no existing stack or GitHub artifact credentials.
 
 1. Verify account, region, template/version, required parameters and IAM acknowledgement. Launch the foundation with retained encrypted EBS and scoped secrets. Use the shipped stack policy and termination protection. Check that the normal controller has not started. Populate DB TLS via the scoped secret, verify outputs contain public trust and references only, then review and execute the database/setup change set.
