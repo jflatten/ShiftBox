@@ -13,6 +13,8 @@ the private build subnet. The supplied build security group should
 permit SSH only from that runner and allow the installer to reach its
 package and image sources. The workspace security group serves
 workspaces and does not need a build SSH rule.
+The public candidate workflow uses the [on-demand Ohio runner plan](publisher-runner-plan.md).
+Its regional copy and share jobs use independent approval gates and hosted runners.
 
 Resolve the Canonical Ubuntu Minimal image ID for the target region
 and record the exact ID in the release variables. The Public Parameter

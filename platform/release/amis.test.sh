@@ -31,14 +31,17 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$AMI_TEST_TRACE"
 service=$1 action=$2
 shift 2
-region='' id='' snapshot='' launch='' token='' owner='' source_id='' source_region='' name=''
+region='' id='' snapshot='' attribute='' operation='' group='' dry_run=false token='' owner='' source_id='' source_region='' name=''
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --region) region=$2; shift ;;
         --image-id|--image-ids) id=$2; shift ;;
         --snapshot-id|--snapshot-ids) snapshot=$2; shift ;;
         --owners|--owner-ids) owner=$2; shift ;;
-        --launch-permission) launch=$2; shift ;;
+        --attribute) attribute=$2; shift ;;
+        --operation-type) operation=$2; shift ;;
+        --user-groups) group=$2; shift ;;
+        --dry-run) dry_run=true ;;
         --client-token) token=$2; shift ;;
         --source-image-id) source_id=$2; shift ;;
         --source-region) source_region=$2; shift ;;
@@ -122,8 +125,15 @@ case "$service $action" in
     'ec2 wait')
         ;;
     'ec2 modify-image-attribute')
-        [[ "$id" == "$expected" ]] || exit 4
-        printf '%s\n' "$launch" | jq -e '. == {Add:[{Group:"all"}]}' >/dev/null || exit 4
+        [[ "$id" == "$expected" && "$attribute:$operation:$group" == launchPermission:add:all ]] || exit 4
+        if [[ "$dry_run" == true ]]; then
+            if [[ "$AMI_TEST_CASE:$region" == denied-share:us-west-2 ]]; then
+                echo 'An error occurred (UnauthorizedOperation)' >&2
+            else
+                echo 'An error occurred (DryRunOperation)' >&2
+            fi
+            exit 254
+        fi
         touch "$AMI_TEST_STATE/public-$region"
         if [[ "$AMI_TEST_CASE:$region" == lost-share:us-west-1 ]]; then exit 255; fi
         ;;
@@ -146,11 +156,21 @@ reject() {
 }
 
 reject_writes() {
-    if grep -Eq '^ec2 (copy-image|modify-image-attribute|modify-snapshot-attribute|deregister-image|delete-snapshot) ' "$AMI_TEST_TRACE"; then
+    if grep -E '^ec2 (copy-image|modify-image-attribute|modify-snapshot-attribute|deregister-image|delete-snapshot) ' "$AMI_TEST_TRACE" |
+        grep -qv ' --dry-run$'; then
         printf 'Unexpected AWS write during %s.\n' "$AMI_TEST_CASE" >&2
         exit 1
     fi
 }
+
+# The build handoff is locally validated and excludes non-allowlisted Packer data.
+: > "$AMI_TEST_TRACE"
+jq '.builds[0].files = ["/local/path/only"]' "$manifest" > "$test_dir/private-manifest.json"
+"$here/amis.sh" packer-handoff "$AMI_TEST_TAG" "$AMI_TEST_COMMIT" "$AMI_TEST_PUBLISHER" \
+    "$test_dir/private-manifest.json" > "$test_dir/build-handoff.json"
+jq -e --arg ami "$AMI_TEST_BUILD" '.builds[0] | .artifact_id == ("us-east-2:"+$ami) and (has("files") | not)' \
+    "$test_dir/build-handoff.json" >/dev/null
+test ! -s "$AMI_TEST_TRACE"
 
 # Publisher and account encryption checks prevent any regional copy on preflight failure.
 for case_name in wrong-account encrypted-default; do
@@ -207,7 +227,7 @@ reject_writes
 cp "$test_dir/workspace-images.json" "$stage/workspace-images.json"
 
 # All regions must verify before a single public permission can be changed.
-for case_name in duplicate bad-lineage encrypted-copy blocked-share private-grant; do
+for case_name in duplicate bad-lineage encrypted-copy blocked-share private-grant denied-share; do
     export AMI_TEST_CASE=$case_name
     if [[ "$case_name" == duplicate ]]; then
         reject prepare
@@ -220,7 +240,8 @@ done
 # Share only the four frozen AMIs, and tolerate a lost response already applied by AWS.
 export AMI_TEST_CASE=lost-share
 run share > /dev/null
-test "$(grep -c '^ec2 modify-image-attribute ' "$AMI_TEST_TRACE")" -eq 4
+test "$(grep '^ec2 modify-image-attribute ' "$AMI_TEST_TRACE" | grep -c ' --dry-run$')" -eq 4
+test "$(grep '^ec2 modify-image-attribute ' "$AMI_TEST_TRACE" | grep -cv ' --dry-run$')" -eq 4
 for mapping in us-east-1:1 us-east-2:2 us-west-1:3 us-west-2:4; do
     grep -Eq "^ec2 modify-image-attribute .*--region ${mapping%:*} .*--image-id ami-0123456789abcdef${mapping#*:} " "$AMI_TEST_TRACE"
 done

@@ -12,14 +12,13 @@ fail() {
   manifest_fail "$@" || exit 1
 }
 case "${1:-}:$#" in
-  prepare:6|share:6) ;;
-  *) fail 'usage: amis.sh {prepare|share} <rc-tag> <source-commit> <publisher-account> <packer-manifest> <ami-stage>' ;;
+  packer-handoff:5|prepare:6|share:6) ;;
+  *) fail 'usage: amis.sh {packer-handoff|prepare|share} <rc-tag> <source-commit> <publisher-account> <packer-manifest> [<ami-stage>]' ;;
 esac
-operation=$1 tag=$2 commit=$3 publisher=$4 packer_manifest=$5 stage=${6%/}
+operation=$1 tag=$2 commit=$3 publisher=$4 packer_manifest=$5
 regions=(us-east-1 us-east-2 us-west-1 us-west-2)
 canonical=099720109477
-[[ -n "$stage" && -f "$packer_manifest" && ! -L "$packer_manifest" ]] ||
-  fail 'expected a regular Packer build manifest and a stage directory'
+[[ -f "$packer_manifest" && ! -L "$packer_manifest" ]] || fail 'expected a regular Packer build manifest'
 name="shiftbox-$tag-amd64"
 
 raw=$(jq -ces --arg tag "$tag" --arg commit "$commit" --arg owner "$publisher" --arg canonical "$canonical" "$manifest_filter"'
@@ -42,6 +41,12 @@ raw=$(jq -ces --arg tag "$tag" --arg commit "$commit" --arg owner "$publisher" -
   select(.artifact_id | startswith($region + ":") and (ltrimstr($region + ":") | ami)) |
   {last_run_uuid:$uuid, builds:[{builder_type,artifact_id,packer_run_uuid,custom_data}]}
 ' "$packer_manifest") || fail 'Packer manifest lacks exact public-build identity'
+if [[ "$operation" == packer-handoff ]]; then
+  printf '%s\n' "$raw"
+  exit 0
+fi
+stage=${6%/}
+[[ -n "$stage" ]] || fail 'expected a stage directory'
 source_region=$(jq -r '.builds[0].custom_data.region' <<<"$raw")
 base_ami=$(jq -r '.builds[0].custom_data.sourceAmiId' <<<"$raw")
 build_ami=$(jq -r '.builds[0].artifact_id | split(":")[1]' <<<"$raw")
@@ -233,6 +238,14 @@ if [[ "$operation" == share ]]; then
       block=$(aws ec2 get-image-block-public-access-state --region "$region" \
         --query ImageBlockPublicAccessState --output text)
       [[ "$block" == unblocked ]] || fail "$region: publisher AMI public access is blocked"
+      id=$(cat "$scratch/ami-$region")
+      # EC2 reports successful DryRun authorization as an error. Check every
+      # remaining private AMI before allowing the first real share request.
+      if dry_run=$(aws ec2 modify-image-attribute --region "$region" --image-id "$id" \
+        --attribute launchPermission --operation-type add --user-groups all --dry-run 2>&1) ||
+        [[ "$dry_run" != *'(DryRunOperation)'* ]]; then
+        fail "$region: the scoped public launch permission did not pass EC2 DryRun"
+      fi
     fi
   done
   for region in "${regions[@]}"; do
@@ -240,7 +253,7 @@ if [[ "$operation" == share ]]; then
     if [[ "$(cat "$scratch/permission-$region")" == private ]]; then
       # Re-read after a lost response as well as a reported success. Never undo partial sharing.
       aws ec2 modify-image-attribute --region "$region" --image-id "$id" \
-        --launch-permission '{"Add":[{"Group":"all"}]}' >/dev/null || true
+        --attribute launchPermission --operation-type add --user-groups all >/dev/null || true
     fi
     for attempt in 1 2 3 4 5; do
       if [[ "$(image_permission "$region" "$id")" == public ]] &&

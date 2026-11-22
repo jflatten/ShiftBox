@@ -163,6 +163,24 @@ if [ "${1:-}" = --packaging-only ]; then
   exit 0
 fi
 
+# Same-run handoffs are addressed by ID and ambiguity or missing provenance must fail closed.
+handoffs="$here/candidate-handoffs.jq"
+jq -n --arg tag "$tag" '[
+  {artifacts:[{id:7,name:("ami-build-"+$tag),expired:false}]},
+  {artifacts:[{id:8,name:("ami-copy-"+$tag),expired:false},{id:9,name:"unrelated",expired:false}]}
+]' >"$scratch/handoff-pages.json"
+printf 'build=7\ncopy=8\nshare=\nassets=\n' >"$scratch/expected-handoffs"
+jq -er --arg tag "$tag" -f "$handoffs" "$scratch/handoff-pages.json" >"$scratch/actual-handoffs"
+cmp "$scratch/expected-handoffs" "$scratch/actual-handoffs"
+for bad in '.[0].artifacts = []' '.[0].artifacts += .[0].artifacts' '.[0].artifacts[0].expired = true' '.[1] = {}'; do
+  jq "$bad" "$scratch/handoff-pages.json" >"$scratch/bad-handoffs"
+  expect_rejected 'ambiguous or missing handoff' jq -er --arg tag "$tag" -f "$handoffs" "$scratch/bad-handoffs"
+done
+
+# A complete frozen candidate still restores after intermediate artifacts age out.
+jq -n --arg tag "$tag" '[{artifacts:[{id:10,name:("release-assets-"+$tag),expired:false}]}]' |
+  jq -er --arg tag "$tag" -f "$handoffs" | grep -Fx 'assets=10' >/dev/null
+
 python3 - "$root" <<'PY'
 from pathlib import Path
 import sys
@@ -211,6 +229,33 @@ for name, job in release["jobs"].items():
             assert job.get("needs"), name
             aws_jobs.append((name, step["with"]["role-to-assume"]))
 assert len({role for _, role in aws_jobs}) >= 2, aws_jobs
+
+# Each phase needs its own approved candidate job and a fresh AMI role session.
+# Retry inputs come from immutable same-run artifacts rather than re-running Packer.
+jobs = release["jobs"]
+phases = {"candidate-ami-build": "build-image.sh", "candidate-ami-copy": "amis.sh prepare",
+          "candidate-ami-share": "amis.sh share"}
+for name, operation in phases.items():
+    job = jobs[name]
+    commands = "\n".join(step.get("run", "") for step in job["steps"])
+    assert job["environment"] == "aws-release-candidate"
+    assert job["permissions"] == {"contents": "read", "actions": "read", "id-token": "write"}
+    assert "candidate-setup" in job["needs"] and operation in commands
+    assert all(other not in commands for other in phases.values() if other != operation)
+    assert (name, "${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}") in aws_jobs
+    upload, = [step["with"] for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
+    assert upload.get("overwrite", "false") == "false"
+    if name != "candidate-ami-build":
+        assert job["runs-on"] == "ubuntu-latest"
+        assert all(step["with"].get("artifact-ids") for step in job["steps"]
+                   if step.get("uses", "").startswith("actions/download-artifact@"))
+assert jobs["candidate-ami-build"]["runs-on"] == ["self-hosted", "${{ vars.SHIFTBOX_RELEASE_CANDIDATE_RUNNER }}"]
+assert "outputs.build == ''" in jobs["candidate-ami-build"]["if"]
+assert "candidate-ami-build" in jobs["candidate-ami-copy"]["needs"]
+assert "candidate-ami-copy" in jobs["candidate-ami-share"]["needs"]
+assert "candidate-ami-share" in jobs["candidate"]["needs"]
+assert ("candidate", "${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}") not in aws_jobs
+assert jobs["candidate"]["runs-on"] == "ubuntu-latest"
 
 # A first GHCR push can require a separate visibility approval. Freeze the
 # exact candidate before testing anonymous layers so its protected rerun can resume.

@@ -62,18 +62,19 @@ jobs:
           echo 'The exact source commit has no successful baseline CI run.' >&2
           exit 1
 
-  candidate:
+  candidate-setup:
     if: needs.preflight.outputs.channel == 'rc'
     needs: preflight
-    # The approved runner must be able to reach the private Packer build network.
-    runs-on: ${{ vars.SHIFTBOX_RELEASE_CANDIDATE_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     environment: aws-release-candidate
-    timeout-minutes: 120
     permissions:
       contents: write
       actions: read
-      packages: write
-      id-token: write
+    outputs:
+      build: ${{ steps.handoffs.outputs.build }}
+      copy: ${{ steps.handoffs.outputs.copy }}
+      share: ${{ steps.handoffs.outputs.share }}
+      assets: ${{ steps.handoffs.outputs.assets }}
     env:
       RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
       SOURCE_COMMIT: ${{ needs.preflight.outputs.source }}
@@ -83,8 +84,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Check repository policy and restore prior candidate stage
-        id: stage
+      - name: Verify release settings and locate immutable same-run handoffs
+        id: handoffs
         env:
           SHIFTBOX_RELEASE_SETTINGS_TOKEN: ${{ secrets.SHIFTBOX_RELEASE_SETTINGS_TOKEN }}
         run: |
@@ -93,73 +94,287 @@ jobs:
           test "$(platform/release/publish.sh check-source "$RELEASE_TAG" "$GITHUB_SHA")" = "$SOURCE_COMMIT"
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
           platform/release/publish.sh verify-settings
-          mkdir -p "$RUNNER_TEMP/candidate/assets"
-          if gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "release-assets-$RELEASE_TAG" \
-            --dir "$RUNNER_TEMP/candidate/assets"; then
-            manifest="$RUNNER_TEMP/candidate/assets/distribution-manifest.json"
-            platform/release/manifest.sh validate "$manifest" "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID"
-            platform/release/manifest.sh verify-assets "$manifest" "$RUNNER_TEMP/candidate/assets"
-            printf 'restored=true\n' >> "$GITHUB_OUTPUT"
-          else
-            printf 'restored=false\n' >> "$GITHUB_OUTPUT"
-          fi
-      - name: Validate configured and scoped publisher inputs
-        if: steps.stage.outputs.restored == 'false'
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" |
+            jq -er --arg tag "$RELEASE_TAG" -f platform/release/candidate-handoffs.jq >> "$GITHUB_OUTPUT"
+      - name: Check the release inputs before reserving the candidate
+        if: steps.handoffs.outputs.assets == ''
         env:
           APPROVED_RUNNER: ${{ vars.SHIFTBOX_RELEASE_CANDIDATE_RUNNER }}
-          PACKER_INPUTS: ${{ vars.SHIFTBOX_RELEASE_PACKER_INPUTS_PATH }}
-          GUEST_SIGNING_PUBLIC_KEY: ${{ vars.SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY_PATH }}
+          BUILD_HANDOFF: ${{ steps.handoffs.outputs.build }}
+          SHARE_HANDOFF: ${{ steps.handoffs.outputs.share }}
           HOST_AMIS: ${{ vars.SHIFTBOX_RELEASE_HOST_AMIS }}
           TEMPLATE_BUCKETS: ${{ vars.SHIFTBOX_RELEASE_TEMPLATE_BUCKETS }}
           POSTGRES_IMAGE: ${{ vars.SHIFTBOX_RELEASE_POSTGRES_IMAGE }}
           AMI_ROLE: ${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}
           TEMPLATE_ROLE: ${{ vars.SHIFTBOX_RELEASE_TEMPLATE_ROLE_ARN }}
         run: |
-          test -n "$APPROVED_RUNNER" && test -f "$PACKER_INPUTS" && test -f "$GUEST_SIGNING_PUBLIC_KEY"
-          test -n "$AMI_ROLE" && test -n "$TEMPLATE_ROLE" && test "$AMI_ROLE" != "$TEMPLATE_ROLE"
+          if [[ -z "$BUILD_HANDOFF" ]]; then
+            [[ "$APPROVED_RUNNER" =~ ^shiftbox-ami-[a-zA-Z0-9-]+$ ]]
+          fi
           [[ "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
+          role_prefix="arn:aws:iam::$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID:role/"
+          if [[ -z "$SHARE_HANDOFF" ]]; then
+            [[ "$AMI_ROLE" == "${role_prefix}shiftbox-publisher-ami-candidate" ]]
+          fi
+          [[ "$TEMPLATE_ROLE" == "${role_prefix}shiftbox-publisher-templates-candidate" ]]
           [[ "$POSTGRES_IMAGE" =~ ^docker\.io/library/postgres:17(-bookworm|-trixie|-bullseye)?@sha256:[0-9a-f]{64}$ ]]
           jq -e 'keys == ["us-east-1","us-east-2","us-west-1","us-west-2"] and
             all(.[]; test("^ami-([0-9a-f]{8}|[0-9a-f]{17})$"))' <<< "$HOST_AMIS" >/dev/null
           jq -e 'keys == ["us-east-1","us-east-2","us-west-1","us-west-2"] and
             all(.[]; test("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")) and ([.[]] | unique | length) == 4' \
-            <<< "$TEMPLATE_BUCKETS" > "$RUNNER_TEMP/candidate/buckets.json"
-          for tool in aws docker go packer cfn-lint cfn-guard; do
-            command -v "$tool" >/dev/null
-          done
+            <<< "$TEMPLATE_BUCKETS" >/dev/null
+          if [[ -n "$BUILD_HANDOFF" ]]; then
+            platform/release/publish.sh resume-candidate "$RELEASE_TAG" "$SOURCE_COMMIT"
+          else
+            platform/release/publish.sh reserve-candidate "$RELEASE_TAG" "$SOURCE_COMMIT"
+          fi
+
+  candidate-ami-build:
+    name: Build the private Ohio AMI
+    needs: [preflight, candidate-setup]
+    if: needs.candidate-setup.outputs.assets == '' && needs.candidate-setup.outputs.build == ''
+    runs-on: [self-hosted, '${{ vars.SHIFTBOX_RELEASE_CANDIDATE_RUNNER }}']
+    environment: aws-release-candidate
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.source }}
+      PACKER_INPUTS: ${{ vars.SHIFTBOX_RELEASE_PACKER_INPUTS_PATH }}
+      GUEST_SIGNING_PUBLIC_KEY: ${{ vars.SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY_PATH }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.source }}
+          persist-credentials: false
+      - name: Validate the private runner inputs
+        run: |
+          test -f "$PACKER_INPUTS" && test -f "$GUEST_SIGNING_PUBLIC_KEY"
+          jq -e --arg tag "$RELEASE_TAG" '
+            .region == "us-east-2" and .cluster_name == "shiftbox-publisher" and
+            .environment == ("release-" + $tag)
+          ' "$PACKER_INPUTS" >/dev/null
           packer init platform/packer/aws
-          platform/release/publish.sh reserve-candidate "$RELEASE_TAG" "$SOURCE_COMMIT"
       - uses: aws-actions/configure-aws-credentials@v6.3.0
-        if: steps.stage.outputs.restored == 'false'
         with:
           role-to-assume: ${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}
+          role-session-name: shiftbox-ami-build-${{ github.run_id }}-${{ github.run_attempt }}
           aws-region: us-east-2
           allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
           unset-current-credentials: true
-      - name: Build and verify the official AMIs in all four regions
-        if: steps.stage.outputs.restored == 'false'
-        env:
-          PACKER_INPUTS: ${{ vars.SHIFTBOX_RELEASE_PACKER_INPUTS_PATH }}
-          GUEST_SIGNING_PUBLIC_KEY: ${{ vars.SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY_PATH }}
+      - name: Build and freeze the Packer manifest
         run: |
           export PUBLIC_AMI_BUILD=1 RELEASE_CANDIDATE="$RELEASE_TAG"
           export RELEASE_PUBLISHER_ACCOUNT_ID="$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID"
           umask 077
-          output="$RUNNER_TEMP/candidate/packer-output.log"
+          output="$RUNNER_TEMP/packer-output.log"
           if ! platform/packer/aws/build-image.sh "$RELEASE_TAG" "$GUEST_SIGNING_PUBLIC_KEY" "$PACKER_INPUTS" > "$output" 2>&1; then
             echo 'Packer failed. Review the protected runner log before retrying this candidate.' >&2
             exit 1
           fi
-          packer_manifest=$(sed -n 's/^AMI provenance manifest: //p' "$output")
+          manifest=$(sed -n 's/^AMI provenance manifest: //p' "$output")
+          platform/release/amis.sh packer-handoff "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" \
+            "$manifest" > "$RUNNER_TEMP/packer.json"
           rm -f -- "$output"
-          test -f "$packer_manifest"
-          stage="$RUNNER_TEMP/candidate/amis"
+          jq -r '"Review the private Ohio build before granting copy: " + .builds[0].artifact_id' \
+            "$RUNNER_TEMP/packer.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.2
+        id: upload
+        with:
+          name: ami-build-${{ needs.preflight.outputs.tag }}
+          path: ${{ runner.temp }}/packer.json
+          if-no-files-found: error
+
+  candidate-ami-copy:
+    name: Copy the approved Ohio AMI
+    needs: [preflight, candidate-setup, candidate-ami-build]
+    if: >-
+      !cancelled() && needs.candidate-setup.result == 'success' &&
+      needs.candidate-setup.outputs.assets == '' && needs.candidate-setup.outputs.copy == '' &&
+      (needs.candidate-setup.outputs.build != '' || needs.candidate-ami-build.result == 'success')
+    runs-on: ubuntu-latest
+    environment: aws-release-candidate
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.source }}
+      BUILD_ARTIFACT: ${{ needs.candidate-setup.outputs.build || needs.candidate-ami-build.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.source }}
+          persist-credentials: false
+      - name: Require the immutable Ohio build handoff
+        run: '[[ "$BUILD_ARTIFACT" =~ ^[1-9][0-9]*$ ]]'
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          artifact-ids: ${{ needs.candidate-setup.outputs.build || needs.candidate-ami-build.outputs.artifact }}
+          path: ${{ runner.temp }}/ami-build
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}
+          role-session-name: shiftbox-ami-copy-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Freeze the verified four-region AMI set
+        run: |
+          stage="$RUNNER_TEMP/ami-copy"
           platform/release/amis.sh prepare "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" \
-            "$packer_manifest" "$stage"
+            "$RUNNER_TEMP/ami-build/packer.json" "$stage" >/dev/null
+          jq -r 'to_entries[] | "- " + .key + ": " + .value.amiId + " (" + .value.rootSnapshotId + ")"' \
+            "$stage/workspace-images.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.2
+        id: upload
+        with:
+          name: ami-copy-${{ needs.preflight.outputs.tag }}
+          path: |
+            ${{ runner.temp }}/ami-copy/.ami-source.json
+            ${{ runner.temp }}/ami-copy/workspace-images.json
+            ${{ runner.temp }}/ami-copy/catalog/*.json
+          include-hidden-files: true
+          if-no-files-found: error
+
+  candidate-ami-share:
+    name: Share the four approved AMIs
+    needs: [preflight, candidate-setup, candidate-ami-build, candidate-ami-copy]
+    if: >-
+      !cancelled() && needs.candidate-setup.result == 'success' &&
+      needs.candidate-setup.outputs.assets == '' && needs.candidate-setup.outputs.share == '' &&
+      (needs.candidate-setup.outputs.copy != '' || needs.candidate-ami-copy.result == 'success')
+    runs-on: ubuntu-latest
+    environment: aws-release-candidate
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.source }}
+      BUILD_ARTIFACT: ${{ needs.candidate-setup.outputs.build || needs.candidate-ami-build.outputs.artifact }}
+      COPY_ARTIFACT: ${{ needs.candidate-setup.outputs.copy || needs.candidate-ami-copy.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.source }}
+          persist-credentials: false
+      - name: Require both immutable AMI handoffs
+        run: '[[ "$BUILD_ARTIFACT" =~ ^[1-9][0-9]*$ && "$COPY_ARTIFACT" =~ ^[1-9][0-9]*$ ]]'
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          artifact-ids: ${{ needs.candidate-setup.outputs.build || needs.candidate-ami-build.outputs.artifact }}
+          path: ${{ runner.temp }}/ami-build
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          artifact-ids: ${{ needs.candidate-setup.outputs.copy || needs.candidate-ami-copy.outputs.artifact }}
+          path: ${{ runner.temp }}/ami-copy
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}
+          role-session-name: shiftbox-ami-share-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Share only the frozen AMIs and verify public launch permissions
+        run: |
           platform/release/amis.sh share "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" \
-            "$packer_manifest" "$stage"
+            "$RUNNER_TEMP/ami-build/packer.json" "$RUNNER_TEMP/ami-copy" >/dev/null
+      - uses: actions/upload-artifact@v7.0.2
+        id: upload
+        with:
+          name: ami-share-${{ needs.preflight.outputs.tag }}
+          path: |
+            ${{ runner.temp }}/ami-copy/workspace-images.json
+            ${{ runner.temp }}/ami-copy/catalog/*.json
+          if-no-files-found: error
+
+  candidate:
+    needs: [preflight, candidate-setup, candidate-ami-share]
+    if: >-
+      !cancelled() && needs.candidate-setup.result == 'success' &&
+      (needs.candidate-setup.outputs.assets != '' || needs.candidate-setup.outputs.share != '' ||
+       needs.candidate-ami-share.result == 'success')
+    runs-on: ubuntu-latest
+    environment: aws-release-candidate
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.source }}
+      GH_TOKEN: ${{ github.token }}
+      SHARE_ARTIFACT: ${{ needs.candidate-setup.outputs.share || needs.candidate-ami-share.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.source }}
+          persist-credentials: false
+      - name: Locate the frozen payload for this attempt
+        id: restore
+        run: |
+          # Recheck on a failed-job rerun, including after a GHCR visibility approval.
+          handoffs=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" |
+            jq -er --arg tag "$RELEASE_TAG" -f platform/release/candidate-handoffs.jq)
+          assets=$(sed -n 's/^assets=//p' <<< "$handoffs")
+          if [[ -z "$assets" ]]; then
+            [[ "$SHARE_ARTIFACT" =~ ^[1-9][0-9]*$ ]]
+          fi
+          printf 'assets=%s\n' "$assets" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v8.0.2
+        if: steps.restore.outputs.assets != ''
+        with:
+          artifact-ids: ${{ steps.restore.outputs.assets }}
+          path: ${{ runner.temp }}/candidate/assets
+      - name: Validate recovered candidate payload
+        if: steps.restore.outputs.assets != ''
+        run: |
+          stage="$RUNNER_TEMP/candidate/assets"
+          platform/release/manifest.sh validate "$stage/distribution-manifest.json" "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID"
+          platform/release/manifest.sh verify-assets "$stage/distribution-manifest.json" "$stage"
+      - uses: actions/download-artifact@v8.0.2
+        if: steps.restore.outputs.assets == ''
+        with:
+          artifact-ids: ${{ needs.candidate-setup.outputs.share || needs.candidate-ami-share.outputs.artifact }}
+          path: ${{ runner.temp }}/candidate/amis
+      - name: Prepare CloudFormation validation tools and bucket pins
+        if: steps.restore.outputs.assets == ''
+        env:
+          TEMPLATE_BUCKETS: ${{ vars.SHIFTBOX_RELEASE_TEMPLATE_BUCKETS }}
+        run: |
+          stage="$RUNNER_TEMP/candidate"
+          jq -e . <<< "$TEMPLATE_BUCKETS" > "$stage/buckets.json"
+          tools="$(mktemp -d)"
+          mkdir -p "$tools/bin"
+          python3 -m venv "$tools/python"
+          "$tools/python/bin/pip" install cfn-lint==1.61.0
+          curl --fail --silent --show-error --location --proto '=https' \
+            https://github.com/aws-cloudformation/cloudformation-guard/releases/download/3.3.0/cfn-guard-v3-x86_64-ubuntu-latest.tar.gz \
+            --output "$tools/guard.tar.gz"
+          printf 'cd7559616dc114565da1326c2ad7463a3c91cd1499f335406fff04747218c8ed  %s\n' "$tools/guard.tar.gz" | sha256sum --check
+          tar -xzf "$tools/guard.tar.gz" -C "$tools"
+          guard=$(find "$tools" -type f -name cfn-guard -print -quit)
+          test -x "$guard"
+          install "$guard" "$tools/bin/cfn-guard"
+          printf '%s\n' "$tools/python/bin" "$tools/bin" >> "$GITHUB_PATH"
       - name: Build the full controller and record its registry digest
-        if: steps.stage.outputs.restored == 'false'
+        if: steps.restore.outputs.assets == ''
         env:
           HOST_AMIS: ${{ vars.SHIFTBOX_RELEASE_HOST_AMIS }}
           POSTGRES_IMAGE: ${{ vars.SHIFTBOX_RELEASE_POSTGRES_IMAGE }}
@@ -183,14 +398,14 @@ jobs:
               regions:($hosts | with_entries(.key as $region | .value = {hostAmiId:.value,workspaceImage:$workspace[0][$region]}))}
           ' > "$RUNNER_TEMP/candidate/pins.json"
       - uses: aws-actions/configure-aws-credentials@v6.3.0
-        if: steps.stage.outputs.restored == 'false'
+        if: steps.restore.outputs.assets == ''
         with:
           role-to-assume: ${{ vars.SHIFTBOX_RELEASE_TEMPLATE_ROLE_ARN }}
           aws-region: us-east-2
           allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
           unset-current-credentials: true
       - name: Validate the exact template and stage the candidate
-        if: steps.stage.outputs.restored == 'false'
+        if: steps.restore.outputs.assets == ''
         run: |
           stage="$RUNNER_TEMP/candidate"
           platform/release/build-candidate.sh prepare "$stage/pins.json" "$stage/amis/catalog" docs/site "$stage/assets"
@@ -201,7 +416,7 @@ jobs:
           platform/release/build-candidate.sh finalize "$stage/pins.json" "$stage/locations.json" "$stage/assets"
       # Preserve the exact candidate across an initial GHCR visibility approval.
       - uses: actions/upload-artifact@v7.0.2
-        if: steps.stage.outputs.restored == 'false'
+        if: steps.restore.outputs.assets == ''
         with:
           name: release-assets-${{ needs.preflight.outputs.tag }}
           path: ${{ runner.temp }}/candidate/assets/

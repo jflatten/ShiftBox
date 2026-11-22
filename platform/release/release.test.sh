@@ -334,10 +334,26 @@ printf 'Fixture release notes\n' >"$scratch/notes.md"
 publication_fixture() {
   env PATH="$fake_bin:$PATH" GITHUB_REPOSITORY=jflatten/ShiftBox GITHUB_EVENT_NAME=push GITHUB_REF_TYPE=tag \
     GITHUB_REF="refs/tags/$tag" GITHUB_REF_PROTECTED=true GITHUB_ACTOR=maintainer GITHUB_TRIGGERING_ACTOR=maintainer \
-    GITHUB_SHA="$source_commit" SHIFTBOX_RELEASE_MAINTAINERS=maintainer SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID="$publisher" \
+    GITHUB_SHA="$source_commit" GITHUB_RUN_ID=12345 SHIFTBOX_RELEASE_MAINTAINERS=maintainer SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID="$publisher" \
     RELEASE_FIXTURE_SOURCE="$source_commit" RELEASE_FIXTURE_STATE="$fixture_state" RELEASE_FIXTURE_WRITES="$fixture_writes" \
     "$publisher_tool" "$@"
 }
+# A frozen AMI handoff may resume only its own untouched build reservation.
+body="<!-- shiftbox-candidate source=$source_commit run=12345 -->"
+jq --arg body "$body" '.body=$body | .assets=[]' "$partial_json" >"$scratch/reservation.json"
+cp "$scratch/reservation.json" "$fixture_state"
+expect_ok 'resume the exact same-run draft reservation without writes' \
+  publication_fixture resume-candidate "$tag" "$source_commit"
+expect_rejected 'never restart a build against an existing reservation' \
+  publication_fixture reserve-candidate "$tag" "$source_commit"
+jq '.body |= sub("12345"; "45678")' "$scratch/reservation.json" >"$fixture_state"
+expect_rejected 'reject a draft reservation from another run' \
+  publication_fixture resume-candidate "$tag" "$source_commit"
+cp "$partial_json" "$fixture_state"
+expect_rejected 'reject a reservation with modified draft assets' \
+  publication_fixture resume-candidate "$tag" "$source_commit"
+expect_ok 'reservation validation leaves the draft unchanged' test ! -s "$fixture_writes"
+
 expect_rejected 'refuse to expose the draft before missing assets are uploaded' \
   publication_fixture finalize "$tag" "$source_commit" "$release_assets"
 expect_ok 'upload only the missing assets to the preserved draft' \
