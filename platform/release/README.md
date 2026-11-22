@@ -74,8 +74,11 @@ environment.
   Packer/copy/share role. Set `SHIFTBOX_RELEASE_TEMPLATE_ROLE_ARN` and
   `SHIFTBOX_RELEASE_VERIFY_ROLE_ARN` to the publisher module's candidate/stable
   role outputs. Use exact environment OIDC subjects and tag restrictions.
-- Set `SHIFTBOX_RELEASE_CANDIDATE_RUNNER` to the approved runner label. The
-  runner needs AWS CLI, Docker Buildx, Go, Packer, cfn-lint and cfn-guard. Set
+- Set `SHIFTBOX_RELEASE_CANDIDATE_RUNNER` to the approved
+  `shiftbox-ami-...` label for the single-job Packer runner from the
+  [Ohio publisher runner plan](../packer/aws/publisher-runner-plan.md).
+  Only the AMI build job uses this runner. The hosted packaging job builds
+  the controller with Docker Buildx and installs the pinned CloudFormation tools. Set
   `SHIFTBOX_RELEASE_PACKER_INPUTS_PATH` to the runner-local `.pkrvars.json` path
   and `SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY_PATH` to the runner-local
   32-byte Ed25519 public key path. Set
@@ -95,16 +98,44 @@ annotated tag on that same commit. Include one `candidate: <tag>` and one
 evidence private and use the minimal reviewed qualification record from the
 [publication contract](../../specs/010-public-aws-distribution/contracts/release-publication.md).
 
-The workflow reserves a private GitHub draft before candidate builds. A rerun
-with the same workflow run ID can restore its exact staged Actions artifact and
-upload missing assets to the draft. On the first GHCR push, GitHub can create a
+The workflow reserves a private GitHub draft before candidate builds. Each AMI
+job requires approval through the exact-tag candidate environment and obtains
+a fresh session with the AMI role. Before approving a job, review and verify
+the current phase of the publisher IAM policy. IAM sees the same protected
+environment in each job's OIDC subject. Before granting the next phase, wait
+for the previous phase's AWS session to expire. Stopping the runner alone
+does not invalidate credentials that were already issued. [AWS role sessions](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_revoke-sessions.html)
+
+1. For **Build the private Ohio AMI**, require the build policy scoped to the
+   approved subnet, key pair and Canonical image. Review the build job's private
+   Ohio AMI ID and its sanitized Packer handoff. Tear down the build runner
+   and network after checking that Packer temporary resources are gone.
+2. Before **Copy the approved Ohio AMI**, review the exact build output and
+   the policy granting copy from only that Ohio AMI. The hosted job verifies
+   ownership and root snapshots and freezes the four-region set in the copy
+   handoff.
+3. Before **Share the four approved AMIs**, match the policy's four image
+   ARNs to that frozen copy handoff. Confirm separate approval for changing the
+   publisher's regional AMI sharing gate. The hosted job validates the frozen
+   set and requires EC2 DryRun success for every still-private AMI before
+   sharing any. Verify the resulting launch grants and restore the publisher
+   AMI block and read-only role phase when sharing is done.
+
+Retries use explicit Actions artifact IDs from the same workflow run. Rerun
+all jobs of that run to rediscover completed handoffs after an interrupted
+phase. A recovered build handoff skips Packer and the private runner. A
+recovered copy handoff skips copying. A successful share handoff unlocks
+packaging. If Packer created an AMI but its handoff never uploaded, reconcile
+the existing image and operator evidence before retrying. Never recreate a
+conflicting image or replace a completed artifact.
+
+On the first GHCR push, GitHub can create a
 private package. The workflow freezes the payload before checking anonymous
 pulls. After a maintainer separately approves package visibility, rerun the
 same workflow so the existing digest and assets can pass the anonymous checks.
-If the staged artifact is unavailable and an
-existing reservation or draft remains, the workflow stops so a maintainer can
-reconcile the assets already created. If it cannot recover the exact staged
-payload, use a new RC and preserve the existing release record. Complete the
+If a required frozen handoff is missing or ambiguous, reconcile the existing
+stage and reservation. If the exact payload cannot be recovered, use a new RC
+and preserve the existing release record. Complete the
 approved maintainer and publisher rehearsal before using these environments.
 
 Before authorizing Docs deployment, set the GitHub Pages publishing source to

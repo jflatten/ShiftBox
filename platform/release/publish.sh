@@ -210,11 +210,18 @@ build_reservation() {
 }
 
 reserve_candidate() {
-  local tag=$1 source=$2 current reservation
+  local tag=$1 source=$2 mode=${3:-new} current reservation
   check_context "$tag" "$source" || return 1
   [ "$(channel "$tag")" = rc ] || { fail 'a build reservation requires an RC tag'; return 1; }
   reservation=$(build_reservation "$source") || return 1
   current=$(read_releases | jq -cer --arg tag "$tag" 'map(select(.tag_name == $tag))') || return 1
+  if [ "$mode" = resume ]; then
+    jq -e --arg body "$reservation" '
+      length == 1 and all(.[];
+        .draft == true and .prerelease == true and .immutable != true and .assets == [] and .body == $body)
+    ' <<<"$current" >/dev/null || fail 'the frozen handoff has no matching same-run build reservation'
+    return
+  fi
   if [ "$current" != '[]' ]; then
     fail 'a candidate already exists and this run has no reusable staged payload; inspect the reservation before proceeding'
     return 1
@@ -260,7 +267,8 @@ case "${1-}:$#" in
   verify-settings:1) verify_settings ;;
   verify-draft:5) verify_draft "$2" "$3" "$4" "$5" ;;
   reserve-candidate:3) reserve_candidate "$2" "$3" ;;
+  resume-candidate:3) reserve_candidate "$2" "$3" resume ;;
   prepare-draft:5) prepare_draft "$2" "$3" "$4" "$5" ;;
   finalize:4) finalize "$2" "$3" "$4" ;;
-  *) fail 'usage: publish.sh {check-event|check-source|check-stable-latest|verify-settings|verify-draft|reserve-candidate|prepare-draft|finalize}' ;;
+  *) fail 'usage: publish.sh {check-event|check-source|check-stable-latest|verify-settings|verify-draft|reserve-candidate|resume-candidate|prepare-draft|finalize}' ;;
 esac
