@@ -42,6 +42,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 import re
+import runpy
 import sys
 import tarfile
 
@@ -132,7 +133,9 @@ def render_template():
         "POSTGRES_START_SCRIPT": read_regular(terraform / "postgres/start.sh").decode(),
         "TAILSCALE_USER_DATA": read_regular(terraform / "tailscale/user-data.sh.tftpl").decode(),
     }
-    template = read_regular(cloudformation / "template.yaml").decode()
+    source = read_regular(cloudformation / "template.yaml").decode()
+    boundary_renderer = runpy.run_path(str(cloudformation / "render_boundaries.py"))["render_task_boundaries"]
+    template = boundary_renderer(source)
     matches = re.findall(r"@@([A-Z_]+)@@", template)
     if set(matches) != set(values) or matches.count("CONTROLLER_IMAGE") != 2:
         raise ValueError("CloudFormation source markers do not match the renderer")

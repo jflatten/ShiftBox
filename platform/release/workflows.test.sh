@@ -102,6 +102,7 @@ if [ "${2:-}" = --aws-tooling ]; then
   cfn-lint --regions "${regions[@]}" -- "$stage/shiftbox-aws-cloudformation.yaml"
   cfn-guard validate --rules "$root/platform/cloudformation/aws/shiftbox.guard" \
     --data "$stage/shiftbox-aws-cloudformation.yaml"
+  python3 "$root/platform/qualification/policy-template.test.py" "$stage/shiftbox-aws-cloudformation.yaml"
 fi
 
 # The exact template checksum and original object versions persist through stable promotion.

@@ -134,7 +134,9 @@ jobs:
   qualify:
     if: >-
       github.repository == 'jflatten/ShiftBox' && github.ref == 'refs/heads/main' &&
-      github.event_name == 'workflow_dispatch' && inputs.operation == 'qualify'
+      github.event_name == 'workflow_dispatch' && inputs.operation == 'qualify' &&
+      vars.SHIFTBOX_QUALIFICATION_ENABLED == 'true' &&
+      vars.SHIFTBOX_QUALIFICATION_SWEEP_ENABLED == 'true'
     needs: [admission, sweep]
     runs-on: ubuntu-latest
     environment: aws-qualification
@@ -165,10 +167,11 @@ jobs:
           allowed-account-ids: ${{ vars.SHIFTBOX_QUALIFICATION_ACCOUNT_ID }}
           role-duration-seconds: 7200
           unset-current-credentials: true
-      - name: Validate regional change sets, boot probes, and deploy Ohio foundation
+      - name: Review named-role change sets, boot probes, and check staged Ohio DNS
         timeout-minutes: 45
         env:
           SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN: ${{ vars.SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN }}
+          SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN: ${{ vars.SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN }}
           SHIFTBOX_QUALIFICATION_STAFFED: ${{ inputs.staffed }}
           CANDIDATE: ${{ inputs.candidate }}
         run: |
@@ -184,7 +187,11 @@ jobs:
             printf 'Ohio stack and deployment name %s.\n\n' "$run"
             if [[ $mode == staffed ]]; then
               printf 'All review stacks were removed. The 60-minute operator window starts now.\n\n'
-              printf 'Use the verified Ohio Console link for %s and the approved run-scoped tags.\n' "$CANDIDATE"
+              printf 'Use the verified Ohio Console link for %s, the separately reviewed staffed service role, and the approved run tags.\n' "$CANDIDATE"
+              printf 'Review foundation → dns-zones → dns-services → database → active. Verify the VPC, private zones, and Cloud Map IDs between stages.\n'
+            else
+              jq -e '.dnsZoneChangeSetReviewed and (.dnsBootstrapExecuted | not)' "$RUNNER_TEMP/qualification-evidence/automated.json" >/dev/null
+              printf 'Reviewed and discarded the Ohio dns-zones change set. DNS resources require the staffed path.\n'
             fi
             printf 'Browser, Git authorization, private-route and recovery checks require an operator.\n'
           } >> "$GITHUB_STEP_SUMMARY"
@@ -192,6 +199,18 @@ jobs:
         if: inputs.staffed
         timeout-minutes: 61
         run: sleep 3600
+      - name: Verify the staffed stack's staged DNS inventory
+        if: inputs.staffed
+        timeout-minutes: 3
+        env:
+          SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN: ${{ vars.SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN }}
+          SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN: ${{ vars.SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN }}
+          SHIFTBOX_QUALIFICATION_STAFFED: ${{ inputs.staffed }}
+        run: |
+          run=$(bash platform/qualification/preflight.sh guard qualify)
+          assets="$RUNNER_TEMP/qualification-assets"
+          bash platform/qualification/deploy.sh --verify-staffed-dns \
+            "$assets/distribution-manifest.json" "$assets" "$run" "$RUNNER_TEMP/qualification-evidence"
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: aws-qualification-automation-${{ github.run_id }}-${{ github.run_attempt }}

@@ -54,15 +54,33 @@ install_preview() {
     install_fail "CloudFormation validation failed for the $phase change set"
     return 1
   fi
-  if ! jq -e '
+  if ! jq -e --arg phase "$phase" '
+    def dns_resource: .ResourceType | startswith("AWS::Route53::") or startswith("AWS::ServiceDiscovery::");
+    def only_adds($expected):
+      length == ($expected | length) and
+      all(.[]; .Action == "Add") and
+      (map({key:.LogicalResourceId,value:.ResourceType}) | from_entries) == $expected;
     .Status == "CREATE_COMPLETE" and .ExecutionStatus == "AVAILABLE" and
-    (.Changes | type == "array") and
+    .Capabilities == ["CAPABILITY_NAMED_IAM"] and (.Changes | type == "array" and length > 0) and
     all(.Changes[];
       .Type == "Resource" and (.ResourceChange |
         .Action == "Add" or (.Action == "Modify" and
-          (.Replacement == "False" or .ResourceType == "AWS::ECS::TaskDefinition"))))
+          (.Replacement == "False" or .ResourceType == "AWS::ECS::TaskDefinition")))) and
+    ([.Changes[].ResourceChange] |
+      if $phase == "foundation" then
+        all(.[]; .Action == "Add" and (dns_resource | not) and
+          .ResourceType != "AWS::ECS::Service" and .ResourceType != "AWS::ECS::TaskDefinition")
+      elif $phase == "dns-zones" then
+        only_adds({PrivateZone:"AWS::Route53::HostedZone",DiscoveryNamespace:"AWS::ServiceDiscovery::PrivateDnsNamespace"})
+      elif $phase == "dns-services" then
+        only_adds({PostgresDiscovery:"AWS::ServiceDiscovery::Service",ControllerDiscovery:"AWS::ServiceDiscovery::Service"})
+      elif $phase == "database" then
+        map(select(dns_resource)) | only_adds({PrivateRecords:"AWS::Route53::RecordSetGroup"})
+      elif $phase == "active" then
+        all(.[]; dns_resource | not)
+      else false end)
   ' <"$changes" >/dev/null; then
-    install_fail "the $phase change set is unavailable or contains a resource removal or replacement"
+    install_fail "the $phase change set is unavailable, lacks named IAM acknowledgement, or contains unexpected changes"
     return 1
   fi
   jq -r '.OperationEvents[]? | select(.ValidationFailureMode == "WARN") |
@@ -252,16 +270,16 @@ install_change() {
       install_fail "the existing review stack has no matching recorded change set"
       return 1
     fi
-    printf 'This change set previews %s in account %s, region %s. CloudFormation IAM resources are required.\n' "$phase" "$account" "$region"
-    install_prompt 'Type CAPABILITY_IAM to acknowledge this change set:' || return 1
-    if [ "$REPLY" != CAPABILITY_IAM ]; then
+    printf 'This change set previews %s in account %s, region %s. Review the named IAM resources and their permissions boundaries.\n' "$phase" "$account" "$region"
+    install_prompt 'Type CAPABILITY_NAMED_IAM to acknowledge this change set:' || return 1
+    if [ "$REPLY" != CAPABILITY_NAMED_IAM ]; then
       install_fail "IAM capability acknowledgement was declined"
       return 1
     fi
     install_current_account "$account" "$region" || return 1
     aws --region "$region" cloudformation create-change-set \
       --stack-name "${stack:-$name}" --change-set-name "$change_name" --change-set-type "$type" \
-      --description "$phase_record" --client-token "$change_name" --capabilities CAPABILITY_IAM \
+      --description "$phase_record" --client-token "$change_name" --capabilities CAPABILITY_NAMED_IAM \
       --template-url "$(jq -er '.templateUrl' <"$state")" --parameters "file://$desired" \
       --tags "Key=project,Value=shiftbox" "Key=cluster_name,Value=$name" --output json >"$scratch/change-result" || return 1
     stack_id=$(jq -er '.StackId' <"$scratch/change-result") || return 1
@@ -437,8 +455,59 @@ install_prompt_parameters() {
   install_store "$state" --arg name "$name" --arg zone "$zone" --arg vpc "$vpc" --arg suffix "$suffix" \
     --arg mode "$mode" --arg cidr "$cidr" --arg github "$github" '
     .stackName = $name | .parameters = {DeploymentName:$name,AvailabilityZone:$zone,VpcCidr:$vpc,
-      DnsSuffix:$suffix,AccessMode:$mode,GitHubAppSecretArn:$github} |
+      DnsSuffix:$suffix,AccessMode:$mode,GitHubAppSecretArn:$github,RoleBoundaryMode:"managed"} |
     if $mode == "private-link" then .parameters.OperatorCidr = $cidr else . end'
+}
+
+install_record_stage() {
+  local state=$1 stack_file=$2 expected=${3:-} stack record
+  stack=$(jq -er '.stack' <"$state") || return 1
+  record=$(jq -ce --arg stack "$stack" --arg expected "$expected" '
+    def output($outputs; $key; $pattern):
+      [$outputs[] | select(.OutputKey == $key) | .OutputValue] |
+      if length == 1 and (.[0] | type == "string" and test($pattern)) then .[0]
+      else error("missing or invalid CloudFormation output \\($key)") end;
+    select((.Stacks | length) == 1) | .Stacks[0] |
+    select(.StackId == $stack and
+      (.StackStatus | IN("CREATE_COMPLETE","UPDATE_COMPLETE","UPDATE_ROLLBACK_COMPLETE")) and
+      ([.Parameters[] | select(.ParameterKey == "RoleBoundaryMode") | .ParameterValue] == ["managed"])) |
+    .Outputs as $outputs |
+    output($outputs; "Phase"; "^(foundation|dns-zones|dns-services|database|active)\\z") as $phase |
+    select($expected == "" or $phase == $expected) |
+    "([0-9a-f]{8}|[0-9a-f]{17})\\z" as $ec2_id |
+    {phase:$phase, vpc:output($outputs; "VpcId"; "^vpc-" + $ec2_id),
+      volume:output($outputs; "InstallationVolumeId"; "^vol-" + $ec2_id),
+      dns:(
+        (if $phase == "foundation" then {} else
+          "^(/hostedzone/)?Z[A-Z0-9]{1,31}\\z" as $zone |
+          {PrivateZoneId:(output($outputs; "PrivateZoneId"; $zone) | ltrimstr("/hostedzone/")),
+           DiscoveryHostedZoneId:(output($outputs; "DiscoveryHostedZoneId"; $zone) | ltrimstr("/hostedzone/")),
+           DiscoveryNamespaceId:output($outputs; "DiscoveryNamespaceId"; "^ns-[a-z0-9]+\\z")} |
+          select(.PrivateZoneId != .DiscoveryHostedZoneId)
+        end) +
+        (if ($phase | IN("foundation","dns-zones")) then {} else
+          "^srv-[a-z0-9]+\\z" as $service |
+          {PostgresDiscoveryServiceId:output($outputs; "PostgresDiscoveryServiceId"; $service),
+           ControllerDiscoveryServiceId:output($outputs; "ControllerDiscoveryServiceId"; $service)} |
+          select(.PostgresDiscoveryServiceId != .ControllerDiscoveryServiceId)
+        end)
+      )}
+  ' <"$stack_file") || { install_fail "could not verify the completed stack phase and its resource IDs"; return 1; }
+  install_store "$state" --argjson observed "$record" '
+    if (.volume // $observed.volume) != $observed.volume then error("the installation volume changed")
+    elif (.vpc // $observed.vpc) != $observed.vpc then error("the installation VPC changed")
+    elif ((.dnsIdentity // {}) | to_entries | any(.[]; $observed.dns[.key] != .value)) then
+      error("a recorded private DNS resource changed or disappeared")
+    else .volume = $observed.volume | .vpc = $observed.vpc | .dnsIdentity = $observed.dns end
+  ' || return 1
+  jq -er '.phase' <<<"$record"
+}
+
+install_advance() {
+  local state=$1 phase=$2 region=$3 stack=$4 stack_file=$5 scratch=$6
+  install_change "$state" "$phase" UPDATE "$scratch" || return 1
+  install_describe_stack "$region" "$stack" "$stack_file" || return 1
+  install_record_stage "$state" "$stack_file" "$phase"
 }
 
 install_run_stages() (
@@ -486,21 +555,17 @@ install_run_stages() (
     *) install_fail "stack is $status. Inspect CloudFormation events before resuming."; return 1 ;;
   esac
   install_describe_stack "$region" "$stack" "$stack_file"
+  phase=$(install_record_stage "$state" "$stack_file")
   install_protect_stack "$account" "$region" "$stack" "$stack_file" "$protection"
-  phase=$(install_output "$stack_file" Phase)
-
-  local volume expected_volume
-  volume=$(install_output "$stack_file" InstallationVolumeId)
-  expected_volume=$(jq -er '.volume // ""' <"$state")
-  if [ -n "$expected_volume" ] && [ "$volume" != "$expected_volume" ]; then
-    install_fail "the installation volume changed"; return 1
-  fi
-  install_store "$state" --arg volume "$volume" '.volume = $volume'
   if [ "$phase" = foundation ]; then
+    phase=$(install_advance "$state" dns-zones "$region" "$stack" "$stack_file" "$scratch")
+  fi
+  if [ "$phase" = dns-zones ]; then
+    phase=$(install_advance "$state" dns-services "$region" "$stack" "$stack_file" "$scratch")
+  fi
+  if [ "$phase" = dns-services ]; then
     install_database_tls "$state" "$stack_file" "$work/database-tls" "$scratch"
-    install_change "$state" database UPDATE "$scratch"
-    install_describe_stack "$region" "$stack" "$stack_file"
-    phase=$(install_output "$stack_file" Phase)
+    phase=$(install_advance "$state" database "$region" "$stack" "$stack_file" "$scratch")
   fi
   if [ "$phase" = database ]; then
     dns=$(jq -er '.parameters.DnsSuffix' <"$state")
@@ -525,9 +590,7 @@ install_run_stages() (
       "$(install_output "$stack_file" SetupOperatorPolicyArn)"
     install_current_account "$account" "$region"
     sh "$scratch/support/setup.sh" "$stack" "$region" "$account" </dev/tty >/dev/tty 2>/dev/tty
-    install_change "$state" active UPDATE "$scratch"
-    install_describe_stack "$region" "$stack" "$stack_file"
-    phase=$(install_output "$stack_file" Phase)
+    phase=$(install_advance "$state" active "$region" "$stack" "$stack_file" "$scratch")
   fi
   [ "$phase" = active ] || return 1
   printf 'Open your private management origin: %s\n' "$(install_output "$stack_file" ManagementOrigin)"

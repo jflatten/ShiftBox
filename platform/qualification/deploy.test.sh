@@ -50,7 +50,7 @@ printf '%s %s %s %s\n' "$region" "$service" "$operation" "$*" >>"$FIXTURE/aws.lo
 account=111122223333
 run=sbq-123-1
 stack="arn:aws:cloudformation:$region:$account:stack/$run/abcd1234-abcd-abcd-abcd-abcdef123456"
-change="arn:aws:cloudformation:$region:$account:changeSet/$run-foundation/abcd1234-abcd-abcd-abcd-abcdef123456"
+change_prefix="arn:aws:cloudformation:$region:$account:changeSet/$run"
 flags() {
   local key=$1 current=0
   for value in "${args[@]}"; do
@@ -96,18 +96,40 @@ case "$service:$operation" in
   cloudformation:create-change-set)
     [[ $(flags --template-url) == "https://fixture-templates-$region.s3.$region.amazonaws.com/"*'?versionId=2026%2Brc%2Fone%3D' ]]
     [[ $(flags --role-arn) == "$SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN" ]]
-    [[ $(flags --stack-name) == "$run" ]]
+    [[ $(flags --capabilities) == CAPABILITY_NAMED_IAM ]]
+    name=$(flags --change-set-name)
+    change="$change_prefix-${name#"$run-"}/abcd1234-abcd-abcd-abcd-abcdef123456"
+    if [[ $name == "$run-dns-zones" ]]; then
+      [[ $region == us-east-2 && $(flags --stack-name) == "$stack" && $(flags --change-set-type) == UPDATE ]]
+    else
+      [[ $name == "$run-foundation" && $(flags --stack-name) == "$run" && $(flags --change-set-type) == CREATE ]]
+    fi
     parameters=$(flags --parameters)
-    cp "${parameters#file://}" "$FIXTURE/parameters-$region.json"
+    file="$FIXTURE/parameters-$region-$name.json"
+    cp "${parameters#file://}" "$file"
+    jq -e --arg phase "${name#"$run-"}" '
+      any(.[]; .ParameterKey == "RoleBoundaryMode" and .ParameterValue == "external") and
+      any(.[]; .ParameterKey == "Phase" and .ParameterValue == $phase)' "$file" >/dev/null
     jq -n --arg stack "$stack" --arg change "$change" '{StackId:$stack,Id:$change}'
     ;;
   cloudformation:describe-change-set)
-    jq -n --arg change "$change" --arg stack "$stack" --arg run "$run" \
-      --arg action "${MOCK_ACTION:-Add}" --slurpfile parameters "$FIXTURE/parameters-$region.json" '
+    change=$(flags --change-set-name)
+    name=${change%/*}
+    name=${name##*/}
+    jq -n --arg change "$change" --arg stack "$stack" --arg run "$run" --arg name "$name" \
+      --arg capability "${MOCK_CAPABILITY:-CAPABILITY_NAMED_IAM}" \
+      --arg action "${MOCK_ACTION:-Add}" --arg unexpected "${MOCK_DNS_STAGE:-}" \
+      --slurpfile parameters "$FIXTURE/parameters-$region-$name.json" '
+      def resource($id; $type): {Type:"Resource",ResourceChange:{Action:$action,LogicalResourceId:$id,ResourceType:$type}};
       {ChangeSetId:$change,StackId:$stack,Status:"CREATE_COMPLETE",ExecutionStatus:"AVAILABLE",
-        ChangeSetName:($run+"-foundation"),Capabilities:["CAPABILITY_IAM"],Parameters:$parameters[0],
+        ChangeSetName:$name,Capabilities:[$capability],Parameters:$parameters[0],
         Tags:[{Key:"project",Value:"shiftbox"},{Key:"cluster_name",Value:$run},{Key:"shiftbox_qualification_run",Value:$run}],
-        Changes:[{Type:"Resource",ResourceChange:{Action:$action,LogicalResourceId:"InstallationVolume",ResourceType:"AWS::EC2::Volume"}}]}'
+        Changes:(if $name == ($run+"-dns-zones") then
+          [resource("PrivateZone";"AWS::Route53::HostedZone"), resource("DiscoveryNamespace";"AWS::ServiceDiscovery::PrivateDnsNamespace")]
+          + (if $unexpected == "early-record" then [resource("PrivateRecords";"AWS::Route53::RecordSetGroup")] else [] end)
+        else [resource("InstallationVolume";"AWS::EC2::Volume"), resource("HostRole";"AWS::IAM::Role")]
+          + (if $unexpected == "foundation-zone" then [resource("PrivateZone";"AWS::Route53::HostedZone")] else [] end)
+        end)}'
     ;;
   cloudformation:get-template)
     if [[ ${MOCK_CHANGED:-false} = true ]]; then printf '{"TemplateBody":"foreign"}\n'
@@ -118,17 +140,42 @@ case "$service:$operation" in
     else printf '{"OperationEvents":[]}\n'; fi
     ;;
   cloudformation:describe-stacks)
-    if [[ $(flags --stack-name) == "$run" ]]; then
+    if [[ ${MOCK_STAFFED_STACK:-false} == true ]]; then
+      jq -n --arg stack "$stack" --arg run "$run" --arg role "$SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN" '
+        {Stacks:[{StackId:$stack,StackName:$run,StackStatus:"UPDATE_COMPLETE",EnableTerminationProtection:true,RoleARN:$role,
+          Capabilities:["CAPABILITY_NAMED_IAM"],
+          Tags:[{Key:"project",Value:"shiftbox"},{Key:"cluster_name",Value:$run},{Key:"shiftbox_qualification_run",Value:$run}],
+          Parameters:[{ParameterKey:"RoleBoundaryMode",ParameterValue:"managed"},{ParameterKey:"DnsSuffix",ParameterValue:($run+".internal")}],
+          Outputs:({Phase:"active",VpcId:"vpc-00000000000000001",PrivateZoneId:"Z0PRIVATE",
+            DiscoveryNamespaceId:"ns-abcdefghijklmnop",DiscoveryHostedZoneId:"Z0DISCOVERY",
+            PostgresDiscoveryServiceId:"srv-abcdefghijklmnop",ControllerDiscoveryServiceId:"srv-0123456789abcdef"}
+            | to_entries | map({OutputKey:.key,OutputValue:.value}))}]}'
+      exit
+    elif [[ $(flags --stack-name) == "$run" ]]; then
       printf 'An error occurred (ValidationError): Stack with id %s does not exist\n' "$run" >&2
       exit 1
     fi
     jq -n --arg stack "$stack" --arg run "$run" --arg role "$SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN" '
       {Stacks:[{StackId:$stack,StackName:$run,StackStatus:"CREATE_COMPLETE",EnableTerminationProtection:true,RoleARN:$role,
         Tags:[{Key:"project",Value:"shiftbox"},{Key:"cluster_name",Value:$run},{Key:"shiftbox_qualification_run",Value:$run}],
-        Outputs:[{OutputKey:"Phase",OutputValue:"foundation"},{OutputKey:"InstallationVolumeId",OutputValue:"vol-00000000000000001"}]}]}'
+        Outputs:[{OutputKey:"Phase",OutputValue:"foundation"},{OutputKey:"InstallationVolumeId",OutputValue:"vol-00000000000000001"},
+          {OutputKey:"VpcId",OutputValue:"vpc-00000000000000001"}]}]}'
     ;;
   cloudformation:list-stack-resources)
-    printf '{"StackResourceSummaries":[{"LogicalResourceId":"InstallationVolume","PhysicalResourceId":"vol-00000000000000001"}]}\n'
+    if [[ ${MOCK_STAFFED_STACK:-false} == true ]]; then
+      jq -n --arg service "${MOCK_DISCOVERY_SERVICE:-srv-0123456789abcdef}" '
+        def r($type; $id): {ResourceType:$type,PhysicalResourceId:$id,ResourceStatus:"CREATE_COMPLETE"};
+        {StackResourceSummaries:({
+          Vpc:r("AWS::EC2::VPC";"vpc-00000000000000001"),
+          PrivateZone:r("AWS::Route53::HostedZone";"Z0PRIVATE"),
+          PrivateRecords:r("AWS::Route53::RecordSetGroup";"Z0PRIVATE"),
+          DiscoveryNamespace:r("AWS::ServiceDiscovery::PrivateDnsNamespace";"ns-abcdefghijklmnop"),
+          PostgresDiscovery:r("AWS::ServiceDiscovery::Service";"srv-abcdefghijklmnop"),
+          ControllerDiscovery:r("AWS::ServiceDiscovery::Service";$service)
+        } | to_entries | map(.value + {LogicalResourceId:.key}))}'
+      exit
+    fi
+    printf '{"StackResourceSummaries":[{"LogicalResourceId":"InstallationVolume","PhysicalResourceId":"vol-00000000000000001"},{"LogicalResourceId":"Vpc","PhysicalResourceId":"vpc-00000000000000001","ResourceType":"AWS::EC2::VPC"}]}\n'
     ;;
   cloudformation:set-stack-policy)
     policy=$(flags --stack-policy-body)
@@ -180,6 +227,10 @@ reject deploy production
 for reason in 'MOCK_OWNER=199900000001' 'MOCK_CHANGED=true' 'MOCK_INVALID=true' 'MOCK_ACTION=Remove'; do
   reject env "$reason" bash "$here/deploy.sh" "$fixture/manifest.json" "$fixture/assets" sbq-123-1 "$fixture/evidence"
 done
+# The draft role must see the named capability and no DNS resources during foundation.
+for reason in 'MOCK_CAPABILITY=CAPABILITY_IAM' 'MOCK_DNS_STAGE=foundation-zone'; do
+  reject env "$reason" bash "$here/deploy.sh" "$fixture/manifest.json" "$fixture/assets" sbq-123-1 "$fixture/evidence"
+done
 if grep -q 'execute-change-set' "$fixture/aws.log"; then exit 1; fi
 [[ ! -e "$fixture/terraform.log" ]]
 # If a billable probe was launched and did not boot, its own destroy plan still runs.
@@ -190,21 +241,50 @@ grep -q 'apply .* destroy.tfplan' "$fixture/terraform.log"
 : >"$fixture/aws.log"
 : >"$fixture/terraform.log"
 deploy
-[[ $(grep -c 'create-change-set' "$fixture/aws.log") = 4 ]]
+[[ $(grep -c 'create-change-set' "$fixture/aws.log") = 5 ]]
 [[ $(grep -c 'delete-stack' "$fixture/aws.log") = 3 ]]
 [[ $(grep -c '^us-east-2 cloudformation execute-change-set' "$fixture/aws.log") = 1 ]]
+grep -q '^us-east-2 cloudformation delete-change-set .*sbq-123-1-dns-zones/' "$fixture/aws.log"
+if grep -q 'execute-change-set .*dns-zones' "$fixture/aws.log"; then exit 1; fi
 [[ $(grep -c 'plan .* -destroy\|plan -destroy' "$fixture/terraform.log") = 4 ]]
 jq -e '.status == "automated-foundation-only" and (.regions | length == 4) and
   all(.regions[]; .amiBooted and .hostedChangeSetValidated and .terraformDestroyCompleted) and
+  .dnsZoneChangeSetReviewed == true and .dnsBootstrapExecuted == false and
   .manualGatesPending == true' "$fixture/evidence/automated.json" >/dev/null
+
+# DNS records arriving before the zone and service ownership handoff cannot execute.
+rm -- "$fixture/evidence/automated.json"
+: >"$fixture/aws.log"
+reject env MOCK_DNS_STAGE=early-record bash "$here/deploy.sh" "$fixture/manifest.json" "$fixture/assets" sbq-123-1 "$fixture/evidence"
+grep -q 'change set' "$fixture/rejected.log"
+if grep -q 'execute-change-set .*dns-zones' "$fixture/aws.log"; then exit 1; fi
+[[ ! -e "$fixture/evidence/automated.json" ]]
 
 # Staffed qualification needs a fresh Ohio console launch, so delete the Ohio
 # review stack instead of executing it under the automation identity.
-rm -- "$fixture/evidence/automated.json"
 : >"$fixture/aws.log"
-SHIFTBOX_QUALIFICATION_STAFFED=true deploy
+reject env SHIFTBOX_QUALIFICATION_STAFFED=true bash "$here/deploy.sh" "$fixture/manifest.json" "$fixture/assets" sbq-123-1 "$fixture/evidence"
+[[ ! -s "$fixture/aws.log" ]]
+SHIFTBOX_QUALIFICATION_STAFFED=true \
+  SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN=arn:aws:iam::111122223333:role/shiftbox-qualification-staffed-cloudformation deploy
 [[ $(grep -c 'delete-stack' "$fixture/aws.log") = 4 ]]
 if grep -q 'execute-change-set' "$fixture/aws.log"; then exit 1; fi
 jq -e '.status == "ohio-console-launch-pending" and
-  .ohioFoundationDeployed == false and .manualGatesPending == true' "$fixture/evidence/automated.json" >/dev/null
+  .ohioFoundationDeployed == false and .dnsZoneChangeSetReviewed == false and
+  .dnsBootstrapExecuted == false and .manualGatesPending == true' "$fixture/evidence/automated.json" >/dev/null
+
+# The staffed readback must reject a foreign discovery ID and cannot report
+# full browser qualification even when the exact candidate's DNS is present.
+export SHIFTBOX_QUALIFICATION_STAFFED=true
+export SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN=arn:aws:iam::111122223333:role/shiftbox-qualification-staffed-cloudformation
+export MOCK_STAFFED_STACK=true
+check_staffed() {
+  bash "$here/deploy.sh" --verify-staffed-dns "$fixture/manifest.json" "$fixture/assets" sbq-123-1 "$fixture/evidence"
+}
+: >"$fixture/aws.log"
+MOCK_DISCOVERY_SERVICE=srv-0000000000000000 reject check_staffed
+jq -e 'has("staffedDnsInventoryVerified") | not' "$fixture/evidence/automated.json" >/dev/null
+check_staffed
+jq -e '.staffedDnsInventoryVerified and .manualGatesPending and (.dnsBootstrapExecuted | not)' "$fixture/evidence/automated.json" >/dev/null
+if grep -E 'create-change-set|execute-change-set|delete-stack|delete-change-set' "$fixture/aws.log"; then exit 1; fi
 printf 'Qualification deployment fixtures passed.\n'

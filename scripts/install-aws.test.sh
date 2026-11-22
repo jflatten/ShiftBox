@@ -63,7 +63,7 @@ reject install_release '' "$test_dir/release.json"
 
 preview_fixture() {
     jq -n --arg action "$1" --arg replacement "$2" '
-      {Status:"CREATE_COMPLETE",ExecutionStatus:"AVAILABLE",
+      {Status:"CREATE_COMPLETE",ExecutionStatus:"AVAILABLE",Capabilities:["CAPABILITY_NAMED_IAM"],
        Changes:[{Type:"Resource",ResourceChange:{Action:$action,Replacement:$replacement,
              LogicalResourceId:"InstallationVolume",ResourceType:"AWS::EC2::Volume"}}]}' > "$test_dir/change.json"
 }
@@ -93,12 +93,77 @@ reject install_identity "$state" 111111111111 us-east-2 "${stack%1}2" v1.2.3
 reject install_identity "$state" 111111111111 us-east-2 "$stack" v1.2.3-rc.4
 test ! -s "$AWS_TEST_TRACE"
 
-# New change sets reject unexpected workspace data replacement and allow a task revision.
-jq -n '{Status:"CREATE_COMPLETE",ExecutionStatus:"AVAILABLE",Changes:[{
+# A change set with named-role acknowledgement can register a replacement task revision.
+jq -n '{Status:"CREATE_COMPLETE",ExecutionStatus:"AVAILABLE",Capabilities:["CAPABILITY_NAMED_IAM"],Changes:[{
   Type:"Resource",ResourceChange:{Action:"Modify",Replacement:"True",
   LogicalResourceId:"SetupTask",ResourceType:"AWS::ECS::TaskDefinition"}}]}' > "$test_dir/change.json"
 printf '{"OperationEvents":[]}\n' > "$test_dir/events.json"
-install_preview "$test_dir/change.json" "$test_dir/events.json" database >/dev/null
+install_preview "$test_dir/change.json" "$test_dir/events.json" active >/dev/null
+
+# The DNS updates accept only their two expected additions and reject a skipped phase,
+# a live resource modification, and an old generic IAM capability.
+jq -n '
+  {Status:"CREATE_COMPLETE",ExecutionStatus:"AVAILABLE",Capabilities:["CAPABILITY_NAMED_IAM"],
+   Changes:({PrivateZone:"AWS::Route53::HostedZone",DiscoveryNamespace:"AWS::ServiceDiscovery::PrivateDnsNamespace"} |
+     to_entries | map({Type:"Resource",ResourceChange:{Action:"Add",LogicalResourceId:.key,ResourceType:.value}}))}
+' >"$test_dir/zones.json"
+install_preview "$test_dir/zones.json" "$test_dir/events.json" dns-zones >/dev/null
+reject install_preview "$test_dir/zones.json" "$test_dir/events.json" dns-services
+reject install_preview "$test_dir/zones.json" "$test_dir/events.json" foundation
+jq '.Changes[0].ResourceChange.Action = "Modify" | .Changes[0].ResourceChange.Replacement = "False"' \
+    <"$test_dir/zones.json" >"$test_dir/changed-zones.json"
+reject install_preview "$test_dir/changed-zones.json" "$test_dir/events.json" dns-zones
+jq '.Capabilities = ["CAPABILITY_IAM"]' <"$test_dir/zones.json" >"$test_dir/wrong-capability.json"
+reject install_preview "$test_dir/wrong-capability.json" "$test_dir/events.json" dns-zones
+jq '
+  .Changes = ({PostgresDiscovery:"AWS::ServiceDiscovery::Service",ControllerDiscovery:"AWS::ServiceDiscovery::Service"} |
+    to_entries | map({Type:"Resource",ResourceChange:{Action:"Add",LogicalResourceId:.key,ResourceType:.value}}))
+' <"$test_dir/zones.json" >"$test_dir/services.json"
+install_preview "$test_dir/services.json" "$test_dir/events.json" dns-services >/dev/null
+reject install_preview "$test_dir/services.json" "$test_dir/events.json" database
+jq '.Changes = [{Type:"Resource", ResourceChange:{
+  Action:"Add",LogicalResourceId:"PrivateRecords",ResourceType:"AWS::Route53::RecordSetGroup"}}]' \
+    <"$test_dir/zones.json" >"$test_dir/records.json"
+install_preview "$test_dir/records.json" "$test_dir/events.json" database >/dev/null
+reject install_preview "$test_dir/records.json" "$test_dir/events.json" active
+
+# A resumed DNS stage records the reviewed outputs exactly once and refuses a wrong
+# phase, missing or duplicate outputs, foreign stack, changed DNS IDs, and changed storage.
+stage_state="$test_dir/stage-state.json"
+stage_stack="$test_dir/stage-stack.json"
+jq -n --arg stack "$stack" '{stack:$stack}' >"$stage_state"
+jq -n --arg stack "$stack" '
+  {Stacks:[{StackId:$stack,StackStatus:"UPDATE_COMPLETE",
+    Parameters:[{ParameterKey:"RoleBoundaryMode",ParameterValue:"managed"}],
+    Outputs:({Phase:"dns-zones",VpcId:"vpc-00000000000000001",InstallationVolumeId:"vol-00000000000000001",
+          PrivateZoneId:"Z123456789",DiscoveryHostedZoneId:"Z987654321",DiscoveryNamespaceId:"ns-0123456789abcdef"} |
+      to_entries | map({OutputKey:.key,OutputValue:.value}))}]}
+' >"$stage_stack"
+test "$(install_record_stage "$stage_state" "$stage_stack" dns-zones)" = dns-zones
+test "$(install_record_stage "$stage_state" "$stage_stack")" = dns-zones
+jq -e '.dnsIdentity.PrivateZoneId == "Z123456789" and .volume == "vol-00000000000000001" and .vpc == "vpc-00000000000000001"' \
+    <"$stage_state" >/dev/null
+reject install_record_stage "$stage_state" "$stage_stack" dns-services
+for stage_edit in \
+    '.Stacks[0].StackStatus = "UPDATE_IN_PROGRESS"' \
+    '.Stacks[0].Parameters[0].ParameterValue = "external"' \
+    '.Stacks[0].StackId += "foreign"' \
+    '.Stacks[0].Outputs += [ .Stacks[0].Outputs[0] ]' \
+    '.Stacks[0].Outputs |= map(select(.OutputKey != "DiscoveryNamespaceId"))' \
+    '(.Stacks[0].Outputs[] | select(.OutputKey == "PrivateZoneId") | .OutputValue) = "Z999999999"' \
+    '(.Stacks[0].Outputs[] | select(.OutputKey == "VpcId") | .OutputValue) = "vpc-00000000000000002"' \
+    '(.Stacks[0].Outputs[] | select(.OutputKey == "InstallationVolumeId") | .OutputValue) = "vol-00000000000000002"'; do
+    jq "$stage_edit" <"$stage_stack" >"$test_dir/edited-stage.json"
+    reject install_record_stage "$stage_state" "$test_dir/edited-stage.json"
+done
+jq '
+  (.Stacks[0].Outputs[] | select(.OutputKey == "Phase") | .OutputValue) = "dns-services" |
+  .Stacks[0].Outputs += [
+    {OutputKey:"PostgresDiscoveryServiceId",OutputValue:"srv-0123456789abcdef"},
+    {OutputKey:"ControllerDiscoveryServiceId",OutputValue:"srv-fedcba9876543210"}]
+' <"$stage_stack" >"$test_dir/services-stage.json"
+test "$(install_record_stage "$stage_state" "$test_dir/services-stage.json" dns-services)" = dns-services
+reject install_record_stage "$stage_state" "$stage_stack"
 
 # A deployment fingerprint binds a concrete stack name and immutable payload.
 state="$test_dir/started.json"
@@ -119,7 +184,7 @@ assert result.returncode != 0 and "interactive terminal is required" in result.s
 PY
 test ! -s "$AWS_TEST_TRACE"
 
-# A proposed change set is submitted only after explicit IAM acknowledgement and
+# A DNS change set is submitted only after explicit named-IAM acknowledgement and
 # executed only after its original template and completed preview are approved.
 (
     # shellcheck source=platform/release/manifest.sh
@@ -128,7 +193,7 @@ test ! -s "$AWS_TEST_TRACE"
     mkdir "$transaction"
     printf 'Resources: {}\n' >"$transaction/template.yaml"
     jq --arg stack "$stack" '
-      .stack = $stack | .parameters = {DeploymentName:"fresh"} |
+      .stack = $stack | .parameters = {DeploymentName:"fresh",RoleBoundaryMode:"managed"} |
       .templateUrl = "https://fixture.invalid/versioned"
     ' <"$state" >"$transaction/state.json"
 
@@ -148,14 +213,14 @@ test ! -s "$AWS_TEST_TRACE"
                 preview_digest=$({ cat "$transaction/parameters.json"; jq -r .manifestSha256 <"$transaction/state.json"; } |
                     openssl dgst -sha256 -r)
                 preview_digest=${preview_digest%% *}
-                requested_name="shiftbox-database-${preview_digest:0:24}"
-                description="ShiftBox reviewed database parameters sha256:$preview_digest"
+                requested_name="shiftbox-dns-zones-${preview_digest:0:24}"
+                description="ShiftBox reviewed dns-zones parameters sha256:$preview_digest"
                 jq -n --arg name "$requested_name" --arg stack "$stack" --arg description "$description" \
                     --arg changeset "arn:aws:cloudformation:us-east-2:111111111111:changeSet/$requested_name/preview" \
-                    --slurpfile parameters "$transaction/parameters.json" '
+                    --slurpfile parameters "$transaction/parameters.json" --slurpfile preview "$test_dir/zones.json" '
                     {Status:"CREATE_COMPLETE",ExecutionStatus:"AVAILABLE",
                      Description:$description,ChangeSetName:$name,ChangeSetId:$changeset,StackId:$stack,
-                     Parameters:$parameters[0],Changes:[]}'
+                     Parameters:$parameters[0],Capabilities:$preview[0].Capabilities,Changes:$preview[0].Changes}'
                 ;;
             cloudformation:wait) ;;
             cloudformation:get-template)
@@ -164,7 +229,11 @@ test ! -s "$AWS_TEST_TRACE"
                 fi
                 ;;
             cloudformation:describe-events) printf '{"OperationEvents":[]}\n' ;;
-            cloudformation:create-change-set) printf '%s\n' "$*" >>"$transaction/creation" ;;
+            cloudformation:create-change-set)
+                printf '%s\n' "$*" >>"$transaction/creation"
+                missing_preview=false
+                jq -n --arg stack "$stack" '{StackId:$stack}'
+                ;;
             cloudformation:execute-change-set) printf '%s\n' "$*" >>"$transaction/execution" ;;
             *) printf 'Unexpected AWS call %s\n' "$*" >&2; return 97 ;;
         esac
@@ -172,20 +241,26 @@ test ! -s "$AWS_TEST_TRACE"
     # Invoked by install_change through the sourced installer.
     # shellcheck disable=SC2329
     install_prompt() {
-        REPLY=$operator_reply
+        case "$1" in
+            'Type CAPABILITY_NAMED_IAM to acknowledge this change set:') REPLY=$iam_reply ;;
+            *) REPLY=$operator_reply ;;
+        esac
     }
 
-    missing_preview=true mismatch=no operator_reply='decline'
-    reject install_change "$transaction/state.json" database UPDATE "$transaction"
+    missing_preview=true mismatch=no operator_reply=decline iam_reply=CAPABILITY_IAM
+    reject install_change "$transaction/state.json" dns-zones UPDATE "$transaction"
     test ! -e "$transaction/creation"
+    iam_reply=CAPABILITY_NAMED_IAM
+    reject install_change "$transaction/state.json" dns-zones UPDATE "$transaction"
+    grep -q -- '--capabilities CAPABILITY_NAMED_IAM' "$transaction/creation"
+    test ! -e "$transaction/execution"
     missing_preview=false
-    reject install_change "$transaction/state.json" database UPDATE "$transaction"
+    mismatch=yes operator_reply='EXECUTE dns-zones'
+    reject install_change "$transaction/state.json" dns-zones UPDATE "$transaction"
     test ! -e "$transaction/execution"
-    mismatch=yes operator_reply='EXECUTE database'
-    reject install_change "$transaction/state.json" database UPDATE "$transaction"
-    test ! -e "$transaction/execution"
-    mismatch=no operator_reply='EXECUTE database'
-    install_change "$transaction/state.json" database UPDATE "$transaction" >/dev/null
+    mismatch=no
+    install_change "$transaction/state.json" dns-zones UPDATE "$transaction" >/dev/null
+    test "$(wc -l <"$transaction/creation" | tr -d ' ')" = 1
     test "$(wc -l <"$transaction/execution" | tr -d ' ')" = 1
 )
 
