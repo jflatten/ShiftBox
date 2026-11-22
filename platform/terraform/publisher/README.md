@@ -8,15 +8,23 @@ already have the GitHub Actions OIDC provider for
 `token.actions.githubusercontent.com` with audience `sts.amazonaws.com`.
 
 Configure each GitHub environment to admit only approved release tags and
-maintainers. Use `candidate_template_role_arn` in `aws-release-candidate`,
+maintainers. The role trust matches the immutable GitHub owner and repository
+IDs for `jflatten/ShiftBox` and the exact environment on each role.
+Use `candidate_template_role_arn` in `aws-release-candidate`,
 `stable_verify_role_arn` in `aws-release-stable`, and the regional
 `template_buckets` result in the template stager. An approved, separately scoped
 AMI build and publication role supplies AMI-specific permissions.
 
-The buckets deny insecure transport, overwrites and ordinary deletion of
-launch object versions. Public access is limited to reading versioned launch
-templates over HTTPS. Verify the publisher account and Organizations allow
-this bucket-policy exception before applying a reviewed publication plan.
+The default plan keeps all four buckets private. It enables all four S3 Block
+Public Access settings and denies insecure transport, overwrites and ordinary
+deletion of launch object versions. Use this default when preparing publisher
+roles. Reuse the existing publisher state and review the plan for bucket
+replacement or policy changes before proceeding.
+
+Set `enable_public_template_reads = true` only in a separately approved
+publication plan. It permits anonymous HTTPS reads of exact launch template
+versions while keeping both ACL blocks and the existing denies. Verify that
+the publisher account and Organizations allow this bucket policy exception.
 Store internal files and qualification records in separate private storage.
 Review any intentional removal of an unreferenced public version separately
 from ordinary release operations.

@@ -57,14 +57,24 @@ run "distinct_publisher_roles_and_buckets" {
     error_message = "The template bucket map must match the explicit four-region input."
   }
 
-  # GitHub's environment-based OIDC claims must match exact role subjects.
+  # Each role accepts only its exact environment under the immutable repository identity.
   assert {
     condition = alltrue([
       for name, role in { candidate = aws_iam_role.candidate, stable = aws_iam_role.stable } :
-      jsondecode(role.assume_role_policy).Statement[0].Principal.Federated == "arn:aws:iam::111122223333:oidc-provider/token.actions.githubusercontent.com" &&
-      jsondecode(role.assume_role_policy).Statement[0].Action == "sts:AssumeRoleWithWebIdentity" &&
-      jsondecode(role.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com" &&
-      jsondecode(role.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:jflatten/ShiftBox:environment:aws-release-${name}"
+      jsondecode(role.assume_role_policy) == {
+        Version = "2012-10-17"
+        Statement = [{
+          Effect    = "Allow"
+          Action    = "sts:AssumeRoleWithWebIdentity"
+          Principal = { Federated = "arn:aws:iam::111122223333:oidc-provider/token.actions.githubusercontent.com" }
+          Condition = {
+            StringEquals = {
+              "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+              "token.actions.githubusercontent.com:sub" = "repo:jflatten@11561330/ShiftBox@1457179716:environment:aws-release-${name}"
+            }
+          }
+        }]
+      }
     ])
     error_message = "OIDC trusts an unexpected identity, repository or environment."
   }
@@ -106,7 +116,7 @@ run "distinct_publisher_roles_and_buckets" {
   }
 }
 
-run "release_bucket_security" {
+run "release_bucket_is_private_by_default" {
   command = plan
 
   module {
@@ -116,6 +126,46 @@ run "release_bucket_security" {
   variables {
     bucket_name  = "fixture-region-templates"
     cluster_name = "shiftbox-publisher"
+  }
+
+  # An ordinary publisher plan must block public policy and ACL access.
+  assert {
+    condition = (
+      aws_s3_bucket_public_access_block.templates.block_public_acls &&
+      aws_s3_bucket_public_access_block.templates.ignore_public_acls &&
+      aws_s3_bucket_public_access_block.templates.block_public_policy &&
+      aws_s3_bucket_public_access_block.templates.restrict_public_buckets
+    )
+    error_message = "Template buckets must block all public access by default."
+  }
+
+  # Creating publisher roles must leave the bucket policy deny-only.
+  assert {
+    condition = (
+      toset([
+        for statement in jsondecode(aws_s3_bucket_policy.templates.policy).Statement : statement.Sid
+        ]) == toset([
+        "DenyInsecureTransport", "DenyNonConditionalTemplateWrites", "RetainPublishedTemplateVersions"
+      ]) &&
+      alltrue([
+        for statement in jsondecode(aws_s3_bucket_policy.templates.policy).Statement : statement.Effect == "Deny"
+      ])
+    )
+    error_message = "The private template policy must preserve the three denies and grant no public reads."
+  }
+}
+
+run "explicit_release_bucket_security" {
+  command = plan
+
+  module {
+    source = "./modules/template-bucket"
+  }
+
+  variables {
+    bucket_name                  = "fixture-region-templates"
+    cluster_name                 = "shiftbox-publisher"
+    enable_public_template_reads = true
   }
 
   # Regional stores are versioned and encrypted with S3-managed keys for anonymous read.

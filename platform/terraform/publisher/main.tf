@@ -20,17 +20,25 @@ variable "release_buckets" {
   }
 }
 
+variable "enable_public_template_reads" {
+  description = "Allow anonymous versioned launch template reads only for an approved publication."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 locals {
   cluster_name = "shiftbox-publisher"
   tags         = { project = "shiftbox", cluster_name = local.cluster_name }
   regions      = ["us-east-1", "us-east-2", "us-west-1", "us-west-2"]
 
-  buckets           = { for region in local.regions : region => lookup(var.release_buckets, region, null) }
-  bucket_arns       = [for bucket in values(local.buckets) : "arn:aws:s3:::${bucket}" if bucket != null]
-  release_key       = "public/templates/v*-rc.*/*/shiftbox-aws-cloudformation.yaml"
-  template_arns     = [for arn in local.bucket_arns : "${arn}/${local.release_key}"]
-  github_oidc_arn   = "arn:aws:iam::${var.publisher_account_id}:oidc-provider/token.actions.githubusercontent.com"
-  github_sub_prefix = "repo:jflatten/ShiftBox:environment:aws-release-"
+  buckets         = { for region in local.regions : region => lookup(var.release_buckets, region, null) }
+  bucket_arns     = [for bucket in values(local.buckets) : "arn:aws:s3:::${bucket}" if bucket != null]
+  release_key     = "public/templates/v*-rc.*/*/shiftbox-aws-cloudformation.yaml"
+  template_arns   = [for arn in local.bucket_arns : "${arn}/${local.release_key}"]
+  github_oidc_arn = "arn:aws:iam::${var.publisher_account_id}:oidc-provider/token.actions.githubusercontent.com"
+  # This repository uses immutable GitHub OIDC subjects.
+  github_subject = "repo:jflatten@11561330/ShiftBox@1457179716"
 
   oidc_trust = {
     for environment in ["candidate", "stable"] : environment => jsonencode({
@@ -42,7 +50,7 @@ locals {
         Condition = {
           StringEquals = {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-            "token.actions.githubusercontent.com:sub" = "${local.github_sub_prefix}${environment}"
+            "token.actions.githubusercontent.com:sub" = "${local.github_subject}:environment:aws-release-${environment}"
           }
         }
       }]
@@ -51,30 +59,34 @@ locals {
 }
 
 module "us_east_1" {
-  source       = "./modules/template-bucket"
-  providers    = { aws = aws.us_east_1 }
-  bucket_name  = local.buckets["us-east-1"]
-  cluster_name = local.cluster_name
+  source                       = "./modules/template-bucket"
+  providers                    = { aws = aws.us_east_1 }
+  bucket_name                  = local.buckets["us-east-1"]
+  cluster_name                 = local.cluster_name
+  enable_public_template_reads = var.enable_public_template_reads
 }
 
 module "us_east_2" {
-  source       = "./modules/template-bucket"
-  bucket_name  = local.buckets["us-east-2"]
-  cluster_name = local.cluster_name
+  source                       = "./modules/template-bucket"
+  bucket_name                  = local.buckets["us-east-2"]
+  cluster_name                 = local.cluster_name
+  enable_public_template_reads = var.enable_public_template_reads
 }
 
 module "us_west_1" {
-  source       = "./modules/template-bucket"
-  providers    = { aws = aws.us_west_1 }
-  bucket_name  = local.buckets["us-west-1"]
-  cluster_name = local.cluster_name
+  source                       = "./modules/template-bucket"
+  providers                    = { aws = aws.us_west_1 }
+  bucket_name                  = local.buckets["us-west-1"]
+  cluster_name                 = local.cluster_name
+  enable_public_template_reads = var.enable_public_template_reads
 }
 
 module "us_west_2" {
-  source       = "./modules/template-bucket"
-  providers    = { aws = aws.us_west_2 }
-  bucket_name  = local.buckets["us-west-2"]
-  cluster_name = local.cluster_name
+  source                       = "./modules/template-bucket"
+  providers                    = { aws = aws.us_west_2 }
+  bucket_name                  = local.buckets["us-west-2"]
+  cluster_name                 = local.cluster_name
+  enable_public_template_reads = var.enable_public_template_reads
 }
 
 resource "aws_iam_role" "candidate" {
