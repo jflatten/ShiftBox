@@ -1,0 +1,55 @@
+.root {
+  --state-transition-color: #0043ce;
+  --state-transition-gap: calc(var(--mantine-spacing-xs) / 2);
+
+  display: grid;
+  grid-template-areas:
+    "current-label . . . next-label . ."
+    "current . connector . next . .";
+  /* Give the connector half of its previous share of the available space. */
+  grid-template-columns: max-content var(--state-transition-gap) minmax(0.5rem, 1fr)
+    var(--state-transition-gap) max-content minmax(0, 3fr) var(--mantine-spacing-xs);
+  align-items: center;
+  justify-items: center;
+  row-gap: 0.25rem;
+  max-width: 23rem;
+  direction: ltr;
+}
+
+.root[data-compact] {
+  grid-template-areas: "current . connector . next";
+  grid-template-columns: max-content var(--state-transition-gap) 2.5rem var(--state-transition-gap) max-content;
+  width: max-content;
+}
+
+:global([data-mantine-color-scheme="dark"]) .root {
+  --state-transition-color: #78a9ff;
+}
+
+.currentLabel { grid-area: current-label; }
+.current { grid-area: current; }
+.nextLabel { grid-area: next-label; }
+.next { grid-area: next; }
+
+.connector {
+  grid-area: connector;
+  justify-self: stretch;
+}
+
+.segment {
+  animation: travel 1.4s linear infinite;
+}
+
+.segment[data-paused] { animation-play-state: paused; }
+
+@keyframes travel {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segment {
+    animation: none;
+    transform: translateX(100%);
+  }
+}

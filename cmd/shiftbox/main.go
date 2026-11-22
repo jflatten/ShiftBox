@@ -1,0 +1,45 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		if err.Error() != "" {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		if failure, ok := errors.AsType[cliExit](err); ok {
+			os.Exit(failure.code)
+		}
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, args []string, out, status io.Writer) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "setup":
+			return runSetup(ctx, args[1:], out, status)
+		case "serve":
+			return runServe(ctx, args[1:])
+		case "recover-admin":
+			return runRecoverAdmin(ctx, args[1:], out, status)
+		case "backup":
+			return runBackup(ctx, args[1:], os.Stdin, out, status)
+		case "restore":
+			return runRestore(ctx, args[1:], os.Stdin, out, status)
+		case "migrate":
+			return runMigrate(ctx, args[1:], out, status)
+		}
+	}
+	return errors.New("usage: shiftbox setup | shiftbox serve | shiftbox recover-admin | shiftbox migrate preflight | shiftbox backup | shiftbox restore")
+}

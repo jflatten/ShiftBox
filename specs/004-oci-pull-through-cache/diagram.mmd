@@ -1,0 +1,15 @@
+flowchart LR
+    Admin[Administrator] -->|settings and status| UI[Mantine Registry cache tab]
+    UI -->|authorized management API| Controller[Single Go controller process]
+    Guest[Enrolled workspace VM] -->|original reference via Docker and embedded BuildKit| OCI[Guest HTTPS OCI handler]
+    OCI -->|current VM identity and ns dispatch| Controller
+    Controller --> Guard[Public destination transport]
+    Guard -->|anonymous OCI reads only| Registry[Public registries and token services]
+    Controller --> Admission[Reservations and LRU leases]
+    Admission --> CAS[Shared digest content and isolated repository links]
+    Admission --> Volume[Physical volume safety guard]
+    Controller -->|no retention when capacity refused| Stream[Bounded memory streaming]
+    Stream --> OCI
+    Controller --> State[Settings and workspace freshness]
+    State --> UI
+    Guest -.->|direct fallback only if existing egress allows| Registry

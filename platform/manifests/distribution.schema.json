@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ShiftBox public AWS distribution",
+  "description": "Immutable payload shared by a public release candidate and its stable promotion. The release validator additionally checks cross-field identities and asset bytes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "candidateTag", "sourceCommit", "runtimeCompatibility",
+    "publisherAccountId", "controller", "postgresImage", "template", "installer",
+    "supportAssets", "regions"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "candidateTag": { "$ref": "#/$defs/candidateTag" },
+    "sourceCommit": { "$ref": "#/$defs/commit" },
+    "runtimeCompatibility": { "$ref": "#/$defs/candidateTag" },
+    "publisherAccountId": { "type": "string", "pattern": "^[0-9]{12}$" },
+    "controller": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "platform"],
+      "properties": {
+        "repository": { "const": "ghcr.io/jflatten/shiftbox" },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "platform": { "const": "linux/amd64" }
+      }
+    },
+    "postgresImage": {
+      "type": "string",
+      "pattern": "^docker[.]io/library/postgres:17-(bookworm|bullseye|trixie)@sha256:[0-9a-f]{64}$"
+    },
+    "template": {
+      "$ref": "#/$defs/asset",
+      "properties": { "name": { "const": "shiftbox-aws-cloudformation.yaml" } }
+    },
+    "installer": {
+      "$ref": "#/$defs/asset",
+      "properties": { "name": { "const": "install.sh" } }
+    },
+    "supportAssets": {
+      "$ref": "#/$defs/asset",
+      "properties": { "name": { "const": "shiftbox-aws-support.tar.gz" } }
+    },
+    "regions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["us-east-1", "us-east-2", "us-west-1", "us-west-2"],
+      "properties": {
+        "us-east-1": { "$ref": "#/$defs/region" },
+        "us-east-2": { "$ref": "#/$defs/region" },
+        "us-west-1": { "$ref": "#/$defs/region" },
+        "us-west-2": { "$ref": "#/$defs/region" }
+      }
+    }
+  },
+  "$defs": {
+    "candidateTag": {
+      "type": "string",
+      "pattern": "^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)-rc[.][1-9][0-9]*$"
+    },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "ami": { "type": "string", "pattern": "^ami-[0-9a-f]{17}$" },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256"],
+      "properties": {
+        "name": { "type": "string" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostAmiId", "workspaceImage", "templateLocation"],
+      "properties": {
+        "hostAmiId": { "$ref": "#/$defs/ami" },
+        "workspaceImage": { "$ref": "#/$defs/workspaceImage" },
+        "templateLocation": { "$ref": "#/$defs/templateLocation" }
+      }
+    },
+    "workspaceImage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "amiId", "rootDeviceName", "rootSnapshotId", "sourceAmiId", "sourceRegion",
+        "sourceCommit", "guestRelease", "architecture", "minimumDiskGiB",
+        "catalogPath", "catalogSha256"
+      ],
+      "properties": {
+        "amiId": { "$ref": "#/$defs/ami" },
+        "rootDeviceName": { "type": "string", "pattern": "^/dev/[a-z0-9]+$" },
+        "rootSnapshotId": { "type": "string", "pattern": "^snap-[0-9a-f]{17}$" },
+        "sourceAmiId": { "$ref": "#/$defs/ami" },
+        "sourceRegion": { "type": "string", "pattern": "^[a-z]{2}-[a-z]+-[0-9]+$" },
+        "sourceCommit": { "$ref": "#/$defs/commit" },
+        "guestRelease": { "$ref": "#/$defs/candidateTag" },
+        "architecture": { "const": "amd64" },
+        "minimumDiskGiB": { "const": 32 },
+        "catalogPath": {
+          "enum": ["catalog/us-east-1.json", "catalog/us-east-2.json", "catalog/us-west-1.json", "catalog/us-west-2.json"]
+        },
+        "catalogSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "templateLocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket", "key", "versionId", "url", "quickCreateUrl", "sha256"],
+      "properties": {
+        "bucket": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$" },
+        "key": {
+          "type": "string",
+          "pattern": "^public/templates/v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)-rc[.][1-9][0-9]*/[0-9a-f]{64}/shiftbox-aws-cloudformation[.]yaml$"
+        },
+        "versionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[!-~]+$",
+          "not": { "const": "null" }
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^https://[^/]+[.]s3[.]us-(east-[12]|west-[12])[.]amazonaws[.]com/"
+        },
+        "quickCreateUrl": {
+          "type": "string",
+          "pattern": "^https://us-(east-[12]|west-[12])[.]console[.]aws[.]amazon[.]com/cloudformation/home[?]"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

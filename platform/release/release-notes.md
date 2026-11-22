@@ -1,0 +1,3 @@
+Choose the CloudFormation quick-create link for your region. Inspect the published template and its SHA-256 before deploying. The release also includes the Bash installer, support archive and manifest with the exact controller digest, template object versions and workspace AMIs.
+
+Follow the version-matched guides in the support archive for protected setup, private routing, the first workspace and recovery. The [public documentation](https://jflatten.github.io/ShiftBox/) links to stable and explicit releases. Existing installations should use the documented backup and update procedure before changing versions.

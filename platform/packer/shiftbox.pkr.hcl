@@ -1,0 +1,165 @@
+packer {
+  required_version = "= 1.14.2"
+  required_plugins {
+    utm = {
+      source  = "github.com/naveenrajm7/utm"
+      version = "= 4.0.0"
+    }
+  }
+}
+
+variable "build_name" {
+  type = string
+}
+
+variable "output_directory" {
+  type = string
+}
+
+variable "build_public_key" {
+  type = string
+}
+
+variable "build_private_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "agent_binary" {
+  type = string
+}
+
+variable "guest_update_public_key" {
+  type = string
+}
+
+variable "architecture" {
+  type    = string
+  default = "amd64"
+  validation {
+    condition     = contains(["amd64", "arm64"], var.architecture)
+    error_message = "Architecture must be amd64 or arm64."
+  }
+}
+
+locals {
+  platforms = {
+    amd64 = {
+      vm_arch  = "x86_64"
+      checksum = "sha256:d99d1abe3284e568161b3b7dabfbd6cf67956a7f4274b13842f10aa9c7807a2c"
+    }
+    arm64 = {
+      vm_arch  = "aarch64"
+      checksum = "sha256:7e938df669e3b1923595eeda97aa28569350c5283e05a835cc912a2486a54934"
+    }
+  }
+  platform = local.platforms[var.architecture]
+}
+
+source "utm-cloud" "shiftbox" {
+  vm_name            = var.build_name
+  vm_arch            = local.platform.vm_arch
+  vm_backend         = "qemu"
+  hypervisor         = var.architecture == "arm64"
+  uefi_boot          = true
+  cpus               = 2
+  memory             = 4096
+  disk_size          = 32768
+  resize_cloud_image = true
+
+  iso_url      = "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20260716/ubuntu-24.04-minimal-cloudimg-${var.architecture}.img"
+  iso_checksum = local.platform.checksum
+  use_cd       = true
+  cd_label     = "cidata"
+  cd_content = {
+    "meta-data"      = "instance-id: ${var.build_name}\nlocal-hostname: shiftbox-build\n"
+    "network-config" = <<-NETWORK
+      version: 2
+      ethernets:
+        build:
+          match:
+            name: "en*"
+          dhcp4: true
+          optional: true
+    NETWORK
+    "user-data"      = <<-SEED
+      #cloud-config
+      users:
+        - name: shiftbox-build
+          lock_passwd: true
+          sudo: "ALL=(ALL) NOPASSWD:ALL"
+          shell: /bin/bash
+          ssh_authorized_keys:
+            - ${jsonencode(var.build_public_key)}
+      ssh_pwauth: false
+    SEED
+  }
+
+  ssh_username         = "shiftbox-build"
+  ssh_private_key_file = var.build_private_key
+  ssh_timeout          = "20m"
+  shutdown_command     = "sudo /bin/sh /tmp/shiftbox-seal-image"
+  shutdown_timeout     = "5m"
+  display_nopause      = true
+  boot_nopause         = true
+  export_nopause       = true
+  output_directory     = var.output_directory
+  output_filename      = "shiftbox"
+}
+
+build {
+  sources = ["source.utm-cloud.shiftbox"]
+
+  provisioner "file" {
+    source      = var.agent_binary
+    destination = "/tmp/shiftbox-agent"
+  }
+
+  provisioner "file" {
+    source      = var.guest_update_public_key
+    destination = "/tmp/shiftbox-guest-update.pub"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/../guest/shiftbox-agent.service"
+    destination = "/tmp/shiftbox-agent.service"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/../guest/shiftbox-start-agent"
+    destination = "/tmp/shiftbox-start-agent"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/seal-image.sh"
+    destination = "/tmp/shiftbox-seal-image"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/install-toolchain.sh"
+    destination = "/tmp/shiftbox-install-toolchain"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/extend-devcontainer-cli.cjs"
+    destination = "/tmp/shiftbox-extend-devcontainer-cli.cjs"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/code-server.env"
+    destination = "/tmp/shiftbox-code-server.env"
+  }
+
+  provisioner "shell" {
+    inline = [
+      "cloud-init status --wait",
+      "sudo /bin/sh /tmp/shiftbox-install-toolchain ${var.architecture}",
+      "sudo install -m 0755 /tmp/shiftbox-agent /usr/local/bin/shiftbox-agent",
+      "sudo install -D -o root -g root -m 0644 /tmp/shiftbox-guest-update.pub /usr/local/share/shiftbox/guest-update.pub",
+      "sudo ln -s /usr/local/bin/shiftbox-agent /usr/local/bin/shiftbox",
+      "sudo install -D -m 0755 /tmp/shiftbox-start-agent /usr/local/libexec/shiftbox-start-agent",
+      "sudo install -m 0644 /tmp/shiftbox-agent.service /etc/systemd/system/shiftbox-agent.service",
+      "sudo systemctl enable shiftbox-agent.service",
+    ]
+  }
+}

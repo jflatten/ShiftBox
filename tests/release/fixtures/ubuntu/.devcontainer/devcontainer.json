@@ -1,0 +1,11 @@
+{
+  "name": "ShiftBox Ubuntu Dockerfile fixture",
+  "build": { "dockerfile": "Dockerfile", "options": ["--platform=linux/amd64"] },
+  "runArgs": ["--platform=linux/amd64"],
+  "features": { "./local-feature": {} },
+  "mounts": ["type=volume,source=${localEnv:SHIFTBOX_FIXTURE_VOLUME},target=/var/lib/shiftbox-fixture"],
+  "waitFor": "postCreateCommand",
+  "onCreateCommand": "test -f /usr/local/share/shiftbox-fixture-feature && test -f /usr/local/share/shiftbox-fixture-dockerfile && getconf GNU_LIBC_VERSION && test $(uname -m) = x86_64",
+  "postCreateCommand": "test ! -f fail-hook && touch ready",
+  "postStartCommand": "echo later > later"
+}

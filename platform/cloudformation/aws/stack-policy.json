@@ -1,0 +1,24 @@
+{
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "Update:*",
+      "Principal": "*",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Deny",
+      "Action": ["Update:Replace", "Update:Delete"],
+      "Principal": "*",
+      "Resource": [
+        "LogicalResourceId/InstallationVolume",
+        "LogicalResourceId/DataAttachment",
+        "LogicalResourceId/EcsHost",
+        "LogicalResourceId/PostgresAdminSecret",
+        "LogicalResourceId/PostgresAppSecret",
+        "LogicalResourceId/PostgresDexSecret",
+        "LogicalResourceId/PostgresTlsSecret"
+      ]
+    }
+  ]
+}

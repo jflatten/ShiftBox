@@ -1,0 +1,502 @@
+import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
+import { expect, test, type Locator, type Page } from '@playwright/test';
+
+type InstallationFixture = {
+  setupURL: string;
+  managementURL: string;
+  administratorEmail: string;
+  temporaryPassword: string;
+  password: string;
+  postgresURI?: string;
+  certificateChainPath: string;
+  privateKeyPath: string;
+  ideSuffix: string;
+  previewSuffix: string;
+  capacity: { cpuCount: number; memoryMiB: number; diskMiB: number };
+  workspaceFixturePath: string;
+};
+
+type WorkspaceFixture = {
+  artifactID: string;
+  profileID: string;
+  repositoryURL: string;
+  repositoryRef?: string;
+  devcontainerPath: string;
+  // Keep this file at the repository root so the workbench can select it by name.
+  markerFile: string;
+  originalDevcontainerPath: string;
+};
+
+const fixturePath = process.env.SHIFTBOX_MVP_FIXTURE;
+const publicAWSFixturePath = process.env.SHIFTBOX_PUBLIC_AWS_FIXTURE;
+const resumeActive = process.env.SHIFTBOX_MVP_RESUME_ACTIVE === '1';
+const resumeWorkspaceID = process.env.SHIFTBOX_MVP_RESUME_WORKSPACE;
+const startupTimeout = 4 * 60_000;
+const firstLaunchTimeout = 10 * 60_000;
+const workbenchTimeout = 3 * 60_000;
+const githubConsentTimeout = 9 * 60_000;
+
+// This fixture contains disposable passwords. Keep reproductions and
+// recordings on the fixture host, with browser capture disabled.
+test.use({ channel: 'chrome', trace: 'off', screenshot: 'off', video: 'off' });
+test.skip(({ browserName }) => browserName !== 'chromium', 'The exact-stack MVP journey uses Chrome');
+
+// Start setup with a fresh installation and locally trusted bootstrap TLS.
+// Use normal browser trust and DNS for all HTTPS origins. For ide.example.com
+// the management certificate must cover the management host, *.ide.example.com,
+// *.repair.example.com, and the configured preview wildcard.
+// The runner starts the controller on the same installation after activation
+// and writes workspaceFixturePath when the artifact and profile are ready.
+test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => {
+  test.skip(!fixturePath, 'Set SHIFTBOX_MVP_FIXTURE for the disposable UTM journey');
+  test.setTimeout(25 * 60_000);
+  if (!fixturePath || !isAbsolute(fixturePath)) throw new Error('SHIFTBOX_MVP_FIXTURE must be an absolute path');
+  const installation: InstallationFixture = JSON.parse(await readFile(fixturePath, 'utf8'));
+  const setupOrigin = new URL(installation.setupURL).origin;
+  const managementOrigin = new URL(installation.managementURL).origin;
+  if (resumeWorkspaceID && (!resumeActive || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(resumeWorkspaceID))) {
+    throw new Error('Resume requires an activated fixture and its workspace UUID');
+  }
+  if (!isAbsolute(installation.workspaceFixturePath) || new URL(setupOrigin).hostname !== '127.0.0.1' ||
+      !setupOrigin.startsWith('https://') || !managementOrigin.startsWith('https://') || setupOrigin === managementOrigin) {
+    throw new Error('Use a protected loopback setup URL and separate HTTPS management origin');
+  }
+
+  await test.step(resumeActive ? 'Sign in to the activated fixture' : 'Complete protected setup with the keyboard and sign in afresh', async () => {
+    if (resumeActive) {
+      await page.goto(new URL('/auth/login', managementOrigin).href);
+      await passwordLogin(page, installation.administratorEmail, installation.password);
+      return;
+    }
+    await page.goto(new URL('/setup/', setupOrigin).href);
+    await expect(page.getByRole('heading', { name: 'Local setup' })).toBeVisible();
+    await activate(page.getByRole('link', { name: 'Sign in', exact: true }));
+    await passwordLogin(page, installation.administratorEmail, installation.temporaryPassword);
+    await activate(page.getByRole('button', { name: 'Change password' }));
+    await expect(page.getByLabel(/^Current password/)).toBeFocused();
+    await enter(page.getByLabel(/^Current password/), installation.temporaryPassword);
+    await enter(page.getByLabel(/^New password/), installation.password);
+    await enter(page.getByLabel(/^Confirm password/), installation.password);
+    await activate(page.getByRole('button', { name: 'Change password' }));
+    await activate(page.getByRole('link', { name: 'Sign in', exact: true }));
+    await passwordLogin(page, installation.administratorEmail, installation.password);
+    if (installation.postgresURI) {
+      await activate(page.getByRole('radio', { name: 'PostgreSQL for production' }), 'Space');
+      await enter(page.getByLabel('PostgreSQL connection URI'), installation.postgresURI);
+    } else {
+      await activate(page.getByRole('radio', { name: 'SQLite for a small or demo installation' }), 'Space');
+    }
+    await activate(page.getByRole('button', { name: 'Validate database' }));
+    await enter(page.getByLabel('Management address'), managementOrigin);
+    await enter(page.getByLabel('IDE domain suffix'), installation.ideSuffix);
+    await enter(page.getByLabel('Preview domain suffix'), installation.previewSuffix);
+    // Playwright supplies native file-picker selections without a desktop
+    // dialog. The upload form and all submissions still use the real UI.
+    await page.locator('input[type=file]').nth(0).setInputFiles(installation.certificateChainPath);
+    await page.locator('input[type=file]').nth(1).setInputFiles(installation.privateKeyPath);
+    await activate(page.getByRole('button', { name: 'Validate certificate' }));
+    await activate(page.getByRole('button', { name: 'Validate platform image' }));
+    await expect(page.getByRole('heading', { name: 'Platform image', exact: true })).toBeHidden({ timeout: startupTimeout });
+    await enter(page.getByLabel('vCPU limit'), String(installation.capacity.cpuCount));
+    await enter(page.getByLabel('Memory limit (MiB)'), String(installation.capacity.memoryMiB));
+    await enter(page.getByLabel('Disk limit (MiB)'), String(installation.capacity.diskMiB));
+    await activate(page.getByRole('button', { name: 'Save capacity' }));
+    await activate(page.getByRole('checkbox', { name: 'I understand that I will need to sign in again' }), 'Space');
+    await activate(page.getByRole('button', { name: 'Activate installation' }));
+    await expect(page.getByText(/^Setup is complete\./)).toBeVisible();
+    const sessionURL = new URL('/api/v1/session', managementOrigin).href;
+    await expect.poll(async () => {
+      try {
+        return (await page.request.get(sessionURL, { timeout: 5_000 })).status();
+      } catch {
+        return 0;
+      }
+    }, { timeout: startupTimeout, message: 'The active controller must require a new sign-in' }).toBe(401);
+    await page.goto(new URL('/auth/login', managementOrigin).href);
+    await passwordLogin(page, installation.administratorEmail, installation.password);
+  });
+
+  let workspaceFixture: WorkspaceFixture | undefined;
+  await expect.poll(async () => {
+    try {
+      workspaceFixture = JSON.parse(await readFile(installation.workspaceFixturePath, 'utf8'));
+      return Boolean(workspaceFixture?.artifactID && workspaceFixture.profileID);
+    } catch {
+      return false;
+    }
+  }, { timeout: startupTimeout, message: 'The workspace runner must provide the pinned artifact and profile IDs' }).toBe(true);
+  if (!workspaceFixture) throw new Error('Workspace fixture unavailable');
+  const fixture: WorkspaceFixture = workspaceFixture;
+  if (!isAbsolute(fixture.originalDevcontainerPath)) throw new Error('Supply the local copy of the fixture Dev Container configuration');
+  const savedConfig = await readFile(fixture.originalDevcontainerPath, 'utf8');
+  const templateName = `MVP journey ${Date.now()}`;
+  const marker = `shiftbox-retained-${Date.now()}`;
+  let workspaceURL = resumeWorkspaceID ? new URL(`/workspaces/?id=${resumeWorkspaceID}`, managementOrigin).href : '';
+
+  await test.step('Authorize GitHub and create a project', async () => {
+    if (resumeWorkspaceID) return;
+    await page.goto(new URL('/account/', managementOrigin).href);
+    const connected = page.getByText('GitHub is connected.', { exact: true });
+    const connect = page.getByRole('button', { name: /^(Connect|Reconnect) GitHub$/ });
+    await expect(connected.or(connect)).toBeVisible({ timeout: startupTimeout });
+    if (!await connected.isVisible()) {
+      await activate(connect);
+      await activate(page.getByRole('link', { name: 'Continue to GitHub' }));
+      // Allow the fixture owner time for sign-in and consent within the
+      // controller's ten-minute OAuth state lifetime.
+      const authorizationURL = new URL('/api/v1/git/authorization', managementOrigin).href;
+      await expect.poll(async () => {
+        const response = await page.request.get(authorizationURL);
+        return response.ok() && (await response.json()).state === 'connected';
+      }, { timeout: githubConsentTimeout, message: 'The fixture owner must authorize the GitHub App' }).toBe(true);
+      await page.goto(new URL('/account/', managementOrigin).href, { waitUntil: 'domcontentloaded' });
+      await expect(connected).toBeVisible({ timeout: startupTimeout });
+    }
+    await page.goto(new URL('/templates/', managementOrigin).href);
+    await activate(page.getByRole('button', { name: 'New project' }));
+    const form = page.getByRole('dialog', { name: 'New project' });
+    await enter(form.getByRole('textbox', { name: /^Name(?:\s*\*)?$/ }), templateName);
+    await enter(form.getByLabel('Repository URL'), fixture.repositoryURL);
+    if (fixture.repositoryRef) await enter(form.getByLabel('Repository ref'), fixture.repositoryRef);
+    await enter(form.getByLabel('Dev Container configuration'), fixture.devcontainerPath);
+    await form.getByRole('combobox', { name: 'Resource profile' }).selectOption(fixture.profileID);
+    await form.getByRole('combobox', { name: 'Platform image' }).selectOption(fixture.artifactID);
+    await activate(form.getByRole('button', { name: 'Create project' }));
+    await expect(form).toBeHidden({ timeout: 15_000 });
+  });
+
+  await test.step('Reconnect workflow events and withhold IDE until verification', async () => {
+    if (resumeWorkspaceID) {
+      await page.goto(workspaceURL);
+      await expect(page.getByRole('button', { name: 'Open IDE', exact: true })).toBeVisible({ timeout: firstLaunchTimeout });
+      return;
+    }
+    let streamAttempts = 0;
+    await page.route('**/api/v1/operations/*/events', async route => {
+      streamAttempts++;
+      if (streamAttempts === 1) await route.abort('connectionreset');
+      else await route.continue();
+    });
+    await page.goto(new URL('/workspaces/', managementOrigin).href);
+    await activate(page.getByRole('link', { name: 'Launch Project' }));
+    await activate(page.getByRole('button', { name: `Launch workspace for ${templateName}` }), 'Space');
+    await expect(page.getByRole('heading', { name: `${templateName} · Revision 1` })).toBeVisible();
+    await enter(page.getByRole('textbox', { name: /workspace name/i }), templateName);
+    await activate(page.getByRole('dialog', { name: 'Review launch' }).getByRole('button', { name: 'Launch workspace', exact: true }));
+    const details = page.getByRole('link', { name: 'View workspace' });
+    await expect(details).toBeVisible();
+    workspaceURL = new URL((await details.getAttribute('href')) ?? '', managementOrigin).href;
+
+    // The launch page remains attached to its stream while another tab
+    // verifies the management entry control cannot open an unready IDE.
+    const early = await page.context().newPage();
+    try {
+      await early.goto(workspaceURL);
+      await expect(early.getByRole('heading', { name: templateName, exact: true })).toBeVisible();
+      await expect(early.getByRole('button', { name: /^Verify the browser IDE: (Pending|In progress)$/ })).toBeVisible();
+      await expect(early.getByRole('button', { name: 'Open IDE', exact: true })).toHaveCount(0);
+      await expect.poll(() => streamAttempts, { timeout: startupTimeout }).toBeGreaterThanOrEqual(2);
+      await stepCompleted(page, 'Verify the browser IDE', firstLaunchTimeout);
+      await expect(early.getByRole('button', { name: 'Open IDE', exact: true })).toBeVisible({ timeout: startupTimeout });
+      await stepCompleted(page, 'Finish remaining setup hooks');
+    } finally {
+      await early.close();
+      await page.unroute('**/api/v1/operations/*/events');
+    }
+    await activate(details);
+  });
+
+  const rebuiltIDE = await test.step('Save a file and retain it across stop, start, and rebuild', async () => {
+    const ide = await openIDE(page, 'Open IDE', managementOrigin);
+    const normalOrigin = new URL(ide.url()).origin;
+    const markerEditor = await openFile(ide, fixture.markerFile);
+    await writeEditor(ide, markerEditor, marker);
+    await verifySavedFile(ide, fixture.markerFile, marker);
+    await ide.close();
+    await activate(page.getByRole('button', { name: 'Stop workspace' }));
+    await stepCompleted(page, 'Stop workspace');
+    await expect(page.getByRole('button', { name: 'Open IDE', exact: true })).toHaveCount(0);
+    await activate(page.getByRole('button', { name: 'Start workspace' }));
+    await stepCompleted(page, 'Finish remaining setup hooks');
+    const restartedIDE = await openIDE(page, 'Open IDE', managementOrigin);
+    expect(new URL(restartedIDE.url()).origin).toBe(normalOrigin);
+    await expect((await openFile(restartedIDE, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
+    await restartedIDE.close();
+    await activate(page.getByRole('button', { name: 'Rebuild container' }));
+    await stepCompleted(page, 'Rebuild the development container');
+    await stepCompleted(page, 'Finish remaining setup hooks');
+    const rebuiltIDE = await openIDE(page, 'Open IDE', managementOrigin);
+    expect(new URL(rebuiltIDE.url()).origin).toBe(normalOrigin);
+    await expect((await openFile(rebuiltIDE, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
+    return rebuiltIDE;
+  });
+
+  await test.step('Repair a broken project and retry setup', async () => {
+    const broken = '{"image":"invalid image reference for repair fixture"}';
+    await writeEditor(rebuiltIDE, await openFile(rebuiltIDE, fixture.devcontainerPath), broken);
+    await verifySavedFile(rebuiltIDE, fixture.devcontainerPath, broken);
+    await rebuiltIDE.close();
+    await activate(page.getByRole('button', { name: 'Rebuild container' }));
+    await expect(page.getByRole('button', { name: 'Rebuild the development container: Failed' }))
+      .toBeVisible({ timeout: startupTimeout });
+    await expect(page.getByRole('button', { name: 'Open IDE', exact: true })).toHaveCount(0);
+    await activate(page.getByRole('button', { name: 'Start repair' }));
+    await stepCompleted(page, 'Verify the repair IDE');
+    const repairIDE = await openIDE(page, 'Open repair IDE', managementOrigin);
+    const repairOrigin = new URL(repairIDE.url()).origin;
+    expect(new URL(repairOrigin).hostname).toMatch(/^[a-f0-9-]+\.repair\./);
+    await expect((await openFile(repairIDE, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
+    // The fixture is plain JSON. Restore the equivalent configuration as
+    // one line so the editor's automatic indentation cannot change it.
+    const restored = JSON.stringify(JSON.parse(savedConfig));
+    await writeEditor(repairIDE, await openFile(repairIDE, fixture.devcontainerPath), restored);
+    await verifySavedFile(repairIDE, fixture.devcontainerPath, restored);
+    await repairIDE.close();
+    await activate(page.getByRole('button', { name: 'Exit repair and retry setup' }));
+    await stepCompleted(page, 'Exit repair and retry development setup');
+    await stepCompleted(page, 'Verify the browser IDE');
+    await stepCompleted(page, 'Finish remaining setup hooks');
+    const ide = await openIDE(page, 'Open IDE', managementOrigin);
+    expect(new URL(ide.url()).origin).not.toBe(repairOrigin);
+    await expect((await openFile(ide, fixture.markerFile)).locator('.view-lines')).toHaveText(marker);
+  });
+});
+
+// A disposable public AWS stack verifies that the admin can validate the exact
+// official image, reload the pinned profile and template, and open its private IDE.
+test('validates and launches the official AWS release image', async ({ page }) => {
+  test.skip(!publicAWSFixturePath, 'Set SHIFTBOX_PUBLIC_AWS_FIXTURE for a disposable activated public AWS stack');
+  if (!publicAWSFixturePath || !isAbsolute(publicAWSFixturePath)) throw new Error('SHIFTBOX_PUBLIC_AWS_FIXTURE must be an absolute path');
+  test.setTimeout(25 * 60_000);
+  const fixture: {
+    managementURL: string;
+    administratorEmail: string;
+    password: string;
+    catalogPath: string;
+    releaseId: string;
+    region: string;
+    repositoryURL: string;
+    devcontainerPath: string;
+  } = JSON.parse(await readFile(publicAWSFixturePath, 'utf8'));
+  const origin = new URL(fixture.managementURL).origin;
+  if (!origin.startsWith('https:') || !isAbsolute(fixture.catalogPath)) {
+    throw new Error('Use the private HTTPS installation and an absolute path to its regional catalog manifest');
+  }
+  const name = `Official AWS fixture ${Date.now()}`;
+
+  await page.goto(new URL('/auth/login', origin).href);
+  await passwordLogin(page, fixture.administratorEmail, fixture.password);
+  await page.goto(new URL('/infrastructure/', origin).href);
+  const official = page.getByRole('region', { name: 'Official AWS release' });
+  await expect(official.getByText(`${fixture.releaseId} · ${fixture.region}`, { exact: true })).toBeVisible();
+  await official.locator('input[type=file]').setInputFiles(fixture.catalogPath);
+  await activate(official.getByRole('button', { name: 'Validate official AMI' }));
+  await expect(official.getByText('Validated', { exact: true })).toBeVisible({ timeout: firstLaunchTimeout });
+  await page.reload();
+  await expect(official.getByText('Validated', { exact: true })).toBeVisible();
+
+  await activate(page.getByRole('button', { name: 'New resource profile' }));
+  const profile = page.getByRole('dialog', { name: 'New resource profile' });
+  await enter(profile.getByRole('textbox', { name: 'Profile name' }), name);
+  await profile.getByRole('combobox', { name: 'AMI image' }).click();
+  await page.getByRole('option', { name: fixture.releaseId, exact: true }).click();
+  await profile.getByRole('combobox', { name: 'EC2 instance type' }).click();
+  await page.getByRole('option', { name: 't3.medium', exact: true }).click();
+  await enter(profile.getByRole('textbox', { name: 'EBS disk (GiB)' }), '32');
+  await activate(profile.getByRole('button', { name: 'Create resource profile' }));
+  await expect(page.getByText('Resource profile created.')).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('table', { name: 'Resource profiles' }).getByRole('rowheader', { name })).toBeVisible();
+
+  await page.goto(new URL('/templates/', origin).href);
+  await activate(page.getByRole('button', { name: 'New project' }));
+  const project = page.getByRole('dialog', { name: 'New project' });
+  await enter(project.getByRole('textbox', { name: /^Name(?:\s*\*)?$/ }), name);
+  await enter(project.getByLabel('Repository URL'), fixture.repositoryURL);
+  await enter(project.getByLabel('Dev Container configuration'), fixture.devcontainerPath);
+  await project.getByRole('combobox', { name: 'Resource profile' }).selectOption({ label: name });
+  await project.getByRole('combobox', { name: 'Platform image' }).selectOption({ label: fixture.releaseId });
+  await activate(project.getByRole('button', { name: 'Create project' }));
+  await expect(project).toBeHidden({ timeout: 15_000 });
+  await page.reload();
+  await expect(page.getByText(name, { exact: true })).toBeVisible();
+
+  await page.goto(new URL('/workspaces/', origin).href);
+  await activate(page.getByRole('link', { name: 'Launch Project' }));
+  await activate(page.getByRole('button', { name: `Launch workspace for ${name}` }), 'Space');
+  await enter(page.getByRole('textbox', { name: /workspace name/i }), name);
+  await activate(page.getByRole('dialog', { name: 'Review launch' }).getByRole('button', { name: 'Launch workspace', exact: true }));
+  await activate(page.getByRole('link', { name: 'View workspace' }));
+  await expect(page.getByRole('button', { name: 'Open IDE', exact: true })).toBeVisible({ timeout: firstLaunchTimeout });
+  await openIDE(page, 'Open IDE', origin);
+});
+
+// The live Dev Container must preserve the developer's actual home and the
+// named application volume when a workload is stopped or replaced.
+test('retains the developer home and named volume on UTM', async ({ page }) => {
+  test.skip(!fixturePath, 'Set SHIFTBOX_MVP_FIXTURE for the disposable UTM journey');
+  test.skip(process.env.SHIFTBOX_TEST_MVP_PERSISTENCE !== '1', 'Enable only for the retained disposable MVP workspace');
+  test.setTimeout(16 * 60_000);
+  page.setDefaultTimeout(30_000);
+  if (!fixturePath || !isAbsolute(fixturePath) || !resumeWorkspaceID ||
+      !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(resumeWorkspaceID)) {
+    throw new Error('Supply the private installation fixture and retained workspace UUID');
+  }
+  const installation: InstallationFixture = JSON.parse(await readFile(fixturePath, 'utf8'));
+  const managementOrigin = new URL(installation.managementURL).origin;
+  const workspaceURL = new URL(`/workspaces/?id=${resumeWorkspaceID}`, managementOrigin).href;
+  const marker = randomUUID();
+  const name = `.shiftbox-retained-${marker}`;
+  const volume = `/var/lib/shiftbox-fixture/${name}`;
+  const verify = `test "$(cat "$HOME/${name}")" = '${marker}' && test "$(sudo -n cat '${volume}')" = '${marker}'`;
+  await page.goto(new URL('/auth/login', managementOrigin).href);
+  await passwordLogin(page, installation.administratorEmail, installation.password);
+  await page.goto(workspaceURL);
+  const ide = await openIDE(page, 'Open IDE', managementOrigin);
+  await persistenceTerminalCheck(ide, `mountpoint -q /var/lib/shiftbox-fixture && ` +
+    `printf '%s' '${marker}' > "$HOME/${name}" && printf '%s' '${marker}' | sudo -n tee '${volume}' >/dev/null && ${verify}`);
+  await ide.close();
+
+  await activate(page.getByRole('button', { name: 'Stop workspace' }));
+  await stepCompleted(page, 'Stop workspace');
+  await activate(page.getByRole('button', { name: 'Start workspace' }));
+  await stepCompleted(page, 'Finish remaining setup hooks');
+  const restartedIDE = await openIDE(page, 'Open IDE', managementOrigin);
+  await persistenceTerminalCheck(restartedIDE, verify);
+  await restartedIDE.close();
+
+  await activate(page.getByRole('button', { name: 'Rebuild container' }));
+  await stepCompleted(page, 'Finish remaining setup hooks');
+  const rebuiltIDE = await openIDE(page, 'Open IDE', managementOrigin);
+  await persistenceTerminalCheck(rebuiltIDE, `${verify} && rm -- "$HOME/${name}" && sudo -n rm -- '${volume}'`);
+});
+
+async function persistenceTerminalCheck(page: Page, check: string) {
+  await dismissFixtureTrust(page);
+  const select = async (command: string) => {
+    await page.keyboard.press('F1');
+    const input = page.locator('.quick-input-widget input:visible');
+    await input.fill(`>${command}`);
+    await expect(page.getByRole('option', { name: command, exact: false }).first()).toBeVisible();
+    await input.press('Enter');
+    await expect(input).toBeHidden();
+  };
+  await select('Terminal: Create New Terminal');
+  // Only this disposable repository is trusted so its shell can run.
+  const trust = page.getByRole('button', { name: 'Trust Folder & Continue', exact: true });
+  const input = page.locator('.xterm-helper-textarea').last();
+  const output = page.locator('.xterm-accessibility-tree').last();
+  const prompt = /[$#]/;
+  await expect.poll(async () => {
+    if (await trust.isVisible()) return 'trust';
+    return (await output.allTextContents()).some(text => prompt.test(text)) ? 'shell' : 'starting';
+  }, { timeout: 45_000 }).toMatch(/^(trust|shell)$/);
+  if (await trust.isVisible()) await trust.click();
+  await expect(output).toContainText(prompt, { timeout: 45_000 });
+  const receipt = randomUUID().slice(0, 8);
+  await input.focus();
+  await page.keyboard.type(`( ${check} ); printf 'SHIFTBOX_%s_RC_%s\\n' '${receipt}' "$?"`);
+  await page.keyboard.press('Enter');
+  await expect(output).toContainText(new RegExp(`SHIFTBOX_${receipt}_RC_\\d+`), { timeout: workbenchTimeout });
+  await expect(output).toContainText(`SHIFTBOX_${receipt}_RC_0`);
+}
+
+async function activate(control: Locator, key = 'Enter') {
+  await expect(control).toBeEnabled({ timeout: startupTimeout });
+  await control.press(key, { timeout: startupTimeout });
+}
+
+async function enter(control: Locator, value: string) {
+  await control.press('ControlOrMeta+A');
+  await control.pressSequentially(value);
+}
+
+async function passwordLogin(page: Page, email: string, password: string) {
+  await expect(page.getByRole('heading', { name: 'Log in to ShiftBox' })).toBeVisible();
+  await enter(page.getByLabel('Email', { exact: true }), email);
+  await enter(page.getByLabel('Password', { exact: true }), password);
+  await activate(page.getByRole('button', { name: 'Log in', exact: true }));
+  await page.waitForURL(url => !url.pathname.startsWith('/dex/'));
+}
+
+async function stepCompleted(page: Page, label: string, timeout = startupTimeout) {
+  await expect(page.getByRole('button', { name: `${label}: Completed`, exact: true })).toBeVisible({ timeout });
+}
+
+async function openIDE(page: Page, button: 'Open IDE' | 'Open repair IDE', managementOrigin: string) {
+  const consoleURL = page.url();
+  const control = page.getByRole('button', { name: button, exact: true });
+  const [ide] = await Promise.all([page.context().waitForEvent('page'), activate(control)]);
+  await ide.waitForURL(url => url.protocol === 'https:' && url.origin !== managementOrigin, { timeout: workbenchTimeout });
+  await expect(ide.locator('.monaco-workbench')).toBeVisible({ timeout: workbenchTimeout });
+  await expect(page).toHaveURL(consoleURL);
+  await dismissFixtureTrust(ide);
+  return ide;
+}
+
+async function dismissFixtureTrust(page: Page) {
+  // This journey needs only editor access. Decline any optional code execution.
+  const trust = page.getByRole('dialog', { name: /Do you trust the authors/ });
+  const cancel = trust.getByRole('button', { name: /^(Cancel|No, I don't trust the authors)$/ });
+  if (await cancel.isVisible()) await cancel.click();
+}
+
+async function openFile(page: Page, name: string) {
+  await dismissFixtureTrust(page);
+  const explorer = page.getByRole('tree', { name: 'Files Explorer' });
+  if (!await explorer.isVisible()) {
+    const explorerTab = page.getByRole('tab', { name: /^Explorer \(/ });
+    await expect(explorerTab).toBeVisible({ timeout: workbenchTimeout });
+    if (!await explorer.isVisible()) await explorerTab.click();
+  }
+  const path = name.split('/');
+  const file = path.pop();
+  for (const [index, folder] of path.entries()) {
+    const item = explorer.getByRole('treeitem', { name: folder, exact: true });
+    await expect(item).toBeVisible({ timeout: workbenchTimeout });
+    const child = explorer.getByRole('treeitem', { name: path[index + 1] ?? file, exact: true });
+    if (await item.getAttribute('aria-expanded') === 'false' || !await child.isVisible()) {
+      await item.locator('.monaco-tl-twistie').click();
+    }
+  }
+  const item = explorer.getByRole('treeitem', { name: file, exact: true });
+  await expect(item).toBeVisible({ timeout: workbenchTimeout });
+  await item.dblclick();
+  await expect(page.getByRole('tab', { name: file, exact: false, selected: true })).toBeVisible({ timeout: workbenchTimeout });
+  const editor = page.locator('.editor-instance .monaco-editor:visible').first();
+  await expect(editor).toBeVisible({ timeout: workbenchTimeout });
+  return editor;
+}
+
+async function writeEditor(page: Page, editor: Locator, content: string) {
+  await dismissFixtureTrust(page);
+  await editor.locator('.view-lines').click({ timeout: 15_000 });
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+Home');
+  await page.keyboard.press('Control+Shift+End');
+  await page.keyboard.press('Backspace');
+  await expect(editor.locator('.view-lines')).toHaveText(/^\s*$/);
+  await page.keyboard.type(content);
+  await expect(editor.locator('.view-lines')).toHaveText(content);
+  // The pinned browser workbench advertises Ctrl+S even on the macOS host.
+  await page.keyboard.press('Control+s');
+  await expect(page.locator('.tabs-container .tab.active')).not.toHaveClass(/\bdirty\b/);
+}
+
+async function verifySavedFile(page: Page, path: string, content: string) {
+  // Keep the saving editor open while a second tab verifies the remote write.
+  const reader = await page.context().newPage();
+  try {
+    const workbenchURL = page.url();
+    await expect(async () => {
+      await reader.goto(workbenchURL, { waitUntil: 'domcontentloaded' });
+      await dismissFixtureTrust(reader);
+      const saved = await openFile(reader, path);
+      await expect(saved.locator('.view-lines')).toHaveText(content, { timeout: 2_000 });
+    }).toPass({ timeout: workbenchTimeout });
+  } finally {
+    await reader.close();
+  }
+}

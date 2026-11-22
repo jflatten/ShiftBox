@@ -44,3 +44,16 @@ output-*/
 *.utm/
 *.qcow2
 *.qcow2.zst
+
+# Test reports and portable build artifacts
+*.exe
+*.out
+vendor/
+build/
+*.log
+*.tmp
+Thumbs.db
+.idea/
+.vscode/
+playwright-report/
+test-results/

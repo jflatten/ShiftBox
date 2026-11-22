@@ -2,6 +2,6 @@
   "name": "shiftbox-brand-assets",
   "private": true,
   "type": "module",
-  "scripts": { "build": "node build-brand-assets.mjs" },
+  "scripts": { "build": "node build-brand-assets.mjs", "test": "node --test" },
   "devDependencies": { "sharp": "0.35.5" }
 }

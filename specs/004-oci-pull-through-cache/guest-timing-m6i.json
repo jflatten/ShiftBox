@@ -1,0 +1,1178 @@
+{
+  "fixture": {
+    "repository": "https://github.com/jflatten/shiftbox-mvp-fixture",
+    "commit": "dcbb326d75969861ca689b15d3f67ae37818b588",
+    "configuration": ".devcontainer/devcontainer.json",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+    "amd64Manifest": "sha256:3612b800eaae8513e7dca54f21d2e4eda48eda57426f3746a78677f342ac7ee9"
+  },
+  "guest": {
+    "instanceType": "m6i.xlarge",
+    "rootDiskGiB": 32,
+    "binarySHA256": "39f4214b60563af0415404b4b031fe101a5a78df887093443e9a57fd5e7538c0"
+  },
+  "sequence": [
+    "unmeasured cache seed",
+    "warm",
+    "cold"
+  ],
+  "initialCache": {
+    "effective": {
+      "version": 14,
+      "enabled": true,
+      "storagePath": "/var/lib/shiftbox-registry-cache/cache",
+      "maxBytes": "15032385536",
+      "volumeHighPercent": 80,
+      "volumeLowPercent": 70
+    },
+    "activation": {
+      "phase": "ready"
+    },
+    "usage": {
+      "retainedBytes": "0",
+      "retiredBytes": "0",
+      "activeTransfers": 0
+    },
+    "effectiveness": {
+      "windowStartedAt": "2026-11-18T12:23:28.287394916Z",
+      "windowEndedAt": "2026-11-18T12:59:06.001341884Z",
+      "cachedBytes": "0",
+      "upstreamBytes": "0",
+      "metadataBytes": "0",
+      "streamedBytes": "0"
+    }
+  },
+  "amiBuild": {
+    "architecture": "amd64",
+    "codeServerRecipeSHA256": "0a9d01d8fb68754d0e3e1126b0576fef0e1290d6ebfba919e27abe8616c1ba2d",
+    "guestAgentRelease": "development",
+    "guestAgentSHA256": "39f4214b60563af0415404b4b031fe101a5a78df887093443e9a57fd5e7538c0",
+    "guestUpdateKeySHA256": "d3516bb841d84ae6d1189aefc3e6efad035c5616cf4d1f686c3ac60f4cd7e963",
+    "minimumRootDiskGiB": "32",
+    "platformVersion": "24.04",
+    "protocolVersion": "1",
+    "provider": "ec2",
+    "region": "us-east-2",
+    "releaseId": "oci-cache-timing-20261118T125200Z",
+    "sourceAmiId": "ami-059b52d411601986c",
+    "sourceAmiOwnerId": "099720109477",
+    "sourceRevision": "798d5299d5798da664b68269e9963087a27a5137-dirty",
+    "toolchainRecipeSHA256": "3b0db4762eb6552fbd75d626bceef5c8fe926f97f44506600733261534f03381"
+  },
+  "instanceTypeSpecifications": [
+    {
+      "name": "m6i.xlarge",
+      "burstable": false,
+      "vcpus": 4,
+      "memoryMiB": 16384,
+      "net": "Up to 12.5 Gigabit",
+      "ebs": {
+        "BaselineBandwidthInMbps": 1250,
+        "BaselineThroughputInMBps": 156.25,
+        "BaselineIops": 6000,
+        "MaximumBandwidthInMbps": 10000,
+        "MaximumThroughputInMBps": 1250.0,
+        "MaximumIops": 40000
+      }
+    },
+    {
+      "name": "t3.medium",
+      "burstable": true,
+      "vcpus": 2,
+      "memoryMiB": 4096,
+      "net": "Up to 5 Gigabit",
+      "ebs": {
+        "BaselineBandwidthInMbps": 347,
+        "BaselineThroughputInMBps": 43.375,
+        "BaselineIops": 2000,
+        "MaximumBandwidthInMbps": 2085,
+        "MaximumThroughputInMBps": 260.625,
+        "MaximumIops": 11800
+      }
+    }
+  ],
+  "seed": {
+    "purpose": "Populate the warm cache before the measured pair",
+    "guestTiming": {
+      "complete": true,
+      "exporter_ready": true,
+      "events": [
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "repository_preparation",
+          "duration_ms": 3658,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007712515876
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "image_config_read",
+          "duration_ms": 15626,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007728148048
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "image_prefetch_pull",
+          "duration_ms": 7705,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007735853230
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "image_prepare",
+          "duration_ms": 23332,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007735853230
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "docker_image_build",
+          "duration_ms": 16433,
+          "outcome": "observed",
+          "journal_time_us": 1795007763249251
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "docker_container_ready",
+          "duration_ms": 1323,
+          "outcome": "observed",
+          "journal_time_us": 1795007764575168
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "devcontainer_up",
+          "duration_ms": 28891,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007764744613
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "docker_image_build",
+          "duration_ms": 332,
+          "outcome": "observed",
+          "journal_time_us": 1795007765854183
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "docker_container_ready",
+          "duration_ms": 161,
+          "outcome": "observed",
+          "journal_time_us": 1795007766017582
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "devcontainer_up",
+          "duration_ms": 1097,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007766185376
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "retained_home",
+          "duration_ms": 1518,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007766263049
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "project_permissions",
+          "duration_ms": 59,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007766322659
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "required_hooks",
+          "duration_ms": 5412,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007771735205
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "ide_install",
+          "duration_ms": 116082,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007887817515
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "ide_start",
+          "duration_ms": 1475,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007889293222
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "browser_ide_start",
+          "duration_ms": 117558,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007889293222
+        },
+        {
+          "operation_id": "709ee078-f970-49fe-9588-85379a2b1f55",
+          "phase": "remaining_hooks",
+          "duration_ms": 296,
+          "outcome": "succeeded",
+          "journal_time_us": 1795007889645786
+        }
+      ]
+    }
+  },
+  "runs": {
+    "warm": {
+      "identity": {
+        "instance": "i-0dc678f12a2b3655a",
+        "image": "ami-092ac38774377d1fd",
+        "state": "running",
+        "workspace": "ad727fb2-71ce-4bbd-88ef-ebcb316671ff",
+        "operation": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+        "root": "vol-0ca103bb51537f0b4",
+        "launchedAt": "2026-11-18T13:18:31+00:00",
+        "type": "m6i.xlarge",
+        "zone": "us-east-2a",
+        "public": false,
+        "role": false
+      },
+      "controller": {
+        "id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+        "workspaceId": "ad727fb2-71ce-4bbd-88ef-ebcb316671ff",
+        "status": "succeeded",
+        "createdAt": "2026-11-18T13:18:29.770051443Z",
+        "startedAt": "2026-11-18T13:18:30.264240655Z",
+        "finishedAt": "2026-11-18T13:21:43.280697575Z",
+        "steps": {
+          "provision": {
+            "activeAt": "2026-11-18T13:18:30.270872285Z",
+            "succeededAt": "2026-11-18T13:18:35.803221385Z",
+            "durationMs": 5532.349
+          },
+          "enroll": {
+            "activeAt": "2026-11-18T13:18:35.818143903Z",
+            "succeededAt": "2026-11-18T13:19:08.478572504Z",
+            "durationMs": 32660.429
+          },
+          "configure": {
+            "activeAt": "2026-11-18T13:19:09.270732023Z",
+            "succeededAt": "2026-11-18T13:21:41.293473638Z",
+            "durationMs": 152022.741
+          },
+          "verify_ide": {
+            "activeAt": "2026-11-18T13:21:42.273529122Z",
+            "succeededAt": "2026-11-18T13:21:42.565226852Z",
+            "durationMs": 291.697
+          },
+          "finish_setup": {
+            "activeAt": "2026-11-18T13:21:43.273771286Z",
+            "succeededAt": "2026-11-18T13:21:43.28069632Z",
+            "durationMs": 6.925
+          }
+        },
+        "durationMs": 193510.646
+      },
+      "guestTiming": {
+        "complete": true,
+        "exporter_ready": true,
+        "events": [
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "repository_preparation",
+            "duration_ms": 3219,
+            "outcome": "succeeded",
+            "journal_time_us": 1795007952779953
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "image_config_read",
+            "duration_ms": 15933,
+            "outcome": "succeeded",
+            "journal_time_us": 1795007968718029
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "image_prefetch_pull",
+            "duration_ms": 6152,
+            "outcome": "succeeded",
+            "journal_time_us": 1795007974870493
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "image_prepare",
+            "duration_ms": 22085,
+            "outcome": "succeeded",
+            "journal_time_us": 1795007974870493
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "docker_image_build",
+            "duration_ms": 16925,
+            "outcome": "observed",
+            "journal_time_us": 1795007992787753
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "docker_container_ready",
+            "duration_ms": 323,
+            "outcome": "observed",
+            "journal_time_us": 1795007993113149
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "devcontainer_up",
+            "duration_ms": 18416,
+            "outcome": "succeeded",
+            "journal_time_us": 1795007993287087
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "docker_image_build",
+            "duration_ms": 337,
+            "outcome": "observed",
+            "journal_time_us": 1795007994409967
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "docker_container_ready",
+            "duration_ms": 170,
+            "outcome": "observed",
+            "journal_time_us": 1795007994581762
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "devcontainer_up",
+            "duration_ms": 1117,
+            "outcome": "succeeded",
+            "journal_time_us": 1795007994752385
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "retained_home",
+            "duration_ms": 1544,
+            "outcome": "succeeded",
+            "journal_time_us": 1795007994831633
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "project_permissions",
+            "duration_ms": 58,
+            "outcome": "succeeded",
+            "journal_time_us": 1795007994889975
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "required_hooks",
+            "duration_ms": 5421,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008000311500
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "ide_install",
+            "duration_ms": 99000,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008099312060
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "ide_start",
+            "duration_ms": 1490,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008100802979
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "browser_ide_start",
+            "duration_ms": 100491,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008100802979
+          },
+          {
+            "operation_id": "333a76f3-cfa8-4e80-81ba-75f1a3094060",
+            "phase": "remaining_hooks",
+            "duration_ms": 305,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008101173360
+          }
+        ]
+      },
+      "performance": {
+        "source": "Six UTC minute samples starting at the EC2 launch minute. EBS latencies weighted by completed operations.",
+        "volume": {
+          "sizeGiB": 32,
+          "type": "gp3",
+          "iops": 3000,
+          "throughput": 125,
+          "snapshot": "snap-03997a1034d7716fc",
+          "fastRestored": null,
+          "encrypted": true
+        },
+        "readOps": 22454,
+        "writeOps": 19638,
+        "readBytes": 1217808896,
+        "writeBytes": 2695279104,
+        "averageReadMs": 13.259,
+        "averageWriteMs": 2.048,
+        "registry": {
+          "run": "warm",
+          "approximateBlobWindowMs": 638.397,
+          "responses": [
+            {
+              "digest": "sha256:52225fb6c367b6637a2fb76646b57c2e2c5df6416b7338803bb7ee96f14e516c",
+              "method": "GET",
+              "status": 200,
+              "bytes": 12610,
+              "durationMs": 0.396972,
+              "completedMs": 1795007968953
+            },
+            {
+              "digest": "sha256:46582ab21e581185bcda42d697491712772255e88fab186407e7cb91e2de7cb8",
+              "method": "GET",
+              "status": 200,
+              "bytes": 134,
+              "durationMs": 0.269912,
+              "completedMs": 1795007969111
+            },
+            {
+              "digest": "sha256:1f9b59bb58bf8b81b14773ac0013295f06642cd0fe66c76f7f98fa16af482bf6",
+              "method": "GET",
+              "status": 200,
+              "bytes": 224,
+              "durationMs": 0.277925,
+              "completedMs": 1795007969126
+            },
+            {
+              "digest": "sha256:aefaabaf638518e8b604909cefaa93ca74a37d8fc7378bfb6303aa08dec1899c",
+              "method": "GET",
+              "status": 200,
+              "bytes": 408,
+              "durationMs": 0.285781,
+              "completedMs": 1795007969141
+            },
+            {
+              "digest": "sha256:2a414139e6b03ffff1afe71b264b79ae9061b16c0b0f2d07e69712c681ed34f9",
+              "method": "GET",
+              "status": 200,
+              "bytes": 233,
+              "durationMs": 0.257992,
+              "completedMs": 1795007969162
+            },
+            {
+              "digest": "sha256:256a6e01082ab012dfbb83b600c2a755d9ab2215c6b5b10205ae42f5afb91995",
+              "method": "GET",
+              "status": 200,
+              "bytes": 1298,
+              "durationMs": 0.249358,
+              "completedMs": 1795007969173
+            },
+            {
+              "digest": "sha256:0d4da1c38cd39a1dd115e9a6c26965a439c65b03d482b5fa7a24467582eadd75",
+              "method": "GET",
+              "status": 200,
+              "bytes": 13625081,
+              "durationMs": 61.409165,
+              "completedMs": 1795007969246
+            },
+            {
+              "digest": "sha256:0497118c0496c2dc2454b4a81eb979ea4d46e0556c75187a7cd79a06db653ead",
+              "method": "GET",
+              "status": 200,
+              "bytes": 74423140,
+              "durationMs": 297.970869,
+              "completedMs": 1795007969287
+            },
+            {
+              "digest": "sha256:3240e01dfa65b6a1136770fa7ed2079aae74d894a4f0f9f810db8607e399f440",
+              "method": "GET",
+              "status": 200,
+              "bytes": 7477,
+              "durationMs": 0.377379,
+              "completedMs": 1795007969320
+            },
+            {
+              "digest": "sha256:beede58b20ed694598d02a6189af26ae2f6bf2ddd8e643cf4c34576dad493624",
+              "method": "GET",
+              "status": 200,
+              "bytes": 167,
+              "durationMs": 0.25562,
+              "completedMs": 1795007969337
+            },
+            {
+              "digest": "sha256:4b3ffd8ccb5201a0fc03585952effb4ed2d1ea5e704d2e7330212fb8b16c86a3",
+              "method": "GET",
+              "status": 200,
+              "bytes": 29723147,
+              "durationMs": 103.073997,
+              "completedMs": 1795007969390
+            },
+            {
+              "digest": "sha256:a3da54c918e017f446356e02e3e6f4306e8860575da12fd00af90b3ed9227476",
+              "method": "GET",
+              "status": 200,
+              "bytes": 161819539,
+              "durationMs": 590.520712,
+              "completedMs": 1795007969591
+            }
+          ]
+        },
+        "metrics": {
+          "volumereadbytes": {
+            "2026-11-18T13:19:00+00:00": 258357760.0,
+            "2026-11-18T13:20:00+00:00": 366796800.0,
+            "2026-11-18T13:21:00+00:00": 398376960.0,
+            "2026-11-18T13:22:00+00:00": 194256896.0,
+            "2026-11-18T13:23:00+00:00": 20480.0
+          },
+          "volumewritebytes": {
+            "2026-11-18T13:19:00+00:00": 11096576.0,
+            "2026-11-18T13:20:00+00:00": 1929633792.0,
+            "2026-11-18T13:21:00+00:00": 295727104.0,
+            "2026-11-18T13:22:00+00:00": 457445376.0,
+            "2026-11-18T13:23:00+00:00": 1376256.0
+          },
+          "volumereadops": {
+            "2026-11-18T13:19:00+00:00": 6714.0,
+            "2026-11-18T13:20:00+00:00": 5538.0,
+            "2026-11-18T13:21:00+00:00": 4771.0,
+            "2026-11-18T13:22:00+00:00": 5430.0,
+            "2026-11-18T13:23:00+00:00": 1.0
+          },
+          "volumewriteops": {
+            "2026-11-18T13:19:00+00:00": 231.0,
+            "2026-11-18T13:20:00+00:00": 15643.0,
+            "2026-11-18T13:21:00+00:00": 1254.0,
+            "2026-11-18T13:22:00+00:00": 2496.0,
+            "2026-11-18T13:23:00+00:00": 14.0
+          },
+          "volumetotalreadtime": {
+            "2026-11-18T13:19:00+00:00": 91.356843,
+            "2026-11-18T13:20:00+00:00": 56.068715,
+            "2026-11-18T13:21:00+00:00": 113.794941,
+            "2026-11-18T13:22:00+00:00": 36.4907,
+            "2026-11-18T13:23:00+00:00": 0.000488
+          },
+          "volumetotalwritetime": {
+            "2026-11-18T13:19:00+00:00": 0.276214,
+            "2026-11-18T13:20:00+00:00": 30.53428,
+            "2026-11-18T13:21:00+00:00": 3.543125,
+            "2026-11-18T13:22:00+00:00": 5.842005,
+            "2026-11-18T13:23:00+00:00": 0.021371
+          },
+          "volumequeuelength": {
+            "2026-11-18T13:19:00+00:00": 2.2119140625,
+            "2026-11-18T13:20:00+00:00": 1.443359375,
+            "2026-11-18T13:21:00+00:00": 1.955078125,
+            "2026-11-18T13:22:00+00:00": 0.7099609375,
+            "2026-11-18T13:23:00+00:00": 0.0
+          },
+          "volumeiopsexceededcheck": {
+            "2026-11-18T13:19:00+00:00": 0.0,
+            "2026-11-18T13:20:00+00:00": 0.0,
+            "2026-11-18T13:21:00+00:00": 0.0,
+            "2026-11-18T13:22:00+00:00": 0.0,
+            "2026-11-18T13:23:00+00:00": 0.0
+          },
+          "volumethroughputexceededcheck": {
+            "2026-11-18T13:19:00+00:00": 0.0,
+            "2026-11-18T13:20:00+00:00": 1.0,
+            "2026-11-18T13:21:00+00:00": 0.0,
+            "2026-11-18T13:22:00+00:00": 0.0,
+            "2026-11-18T13:23:00+00:00": 0.0
+          },
+          "volumestallediocheck": {
+            "2026-11-18T13:19:00+00:00": 0.0,
+            "2026-11-18T13:20:00+00:00": 0.0,
+            "2026-11-18T13:21:00+00:00": 0.0,
+            "2026-11-18T13:22:00+00:00": 0.0,
+            "2026-11-18T13:23:00+00:00": 0.0
+          },
+          "instanceebsiopsexceededcheck": {
+            "2026-11-18T13:19:00+00:00": 0.0,
+            "2026-11-18T13:20:00+00:00": 0.0,
+            "2026-11-18T13:21:00+00:00": 0.0,
+            "2026-11-18T13:22:00+00:00": 0.0,
+            "2026-11-18T13:23:00+00:00": 0.0
+          },
+          "instanceebsthroughputexceededcheck": {
+            "2026-11-18T13:19:00+00:00": 0.0,
+            "2026-11-18T13:20:00+00:00": 0.0,
+            "2026-11-18T13:21:00+00:00": 0.0,
+            "2026-11-18T13:22:00+00:00": 0.0,
+            "2026-11-18T13:23:00+00:00": 0.0
+          },
+          "cpuutilization": {
+            "2026-11-18T13:18:00+00:00": 2.699492688283349
+          },
+          "networkin": {
+            "2026-11-18T13:18:00+00:00": 21960.0
+          },
+          "networkout": {
+            "2026-11-18T13:18:00+00:00": 28952.0
+          }
+        },
+        "launchToFirstLayerMs": 57952.603
+      },
+      "rootInitializationSamples": [
+        {
+          "observedAt": "2026-11-18T13:19:46Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T13:20:27Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T13:21:08Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T13:21:49Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T13:22:30Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T13:23:11Z",
+          "initialization": "initializing"
+        }
+      ],
+      "beforeCache": {
+        "effective": {
+          "version": 15,
+          "enabled": true,
+          "storagePath": "/var/lib/shiftbox-registry-cache/timing-m6i-warm-20261118T125309Z",
+          "maxBytes": "15032385536",
+          "volumeHighPercent": 80,
+          "volumeLowPercent": 70
+        },
+        "activation": {
+          "phase": "ready"
+        },
+        "usage": {
+          "retainedBytes": "279619568",
+          "retiredBytes": "0",
+          "activeTransfers": 0,
+          "observedAt": "2026-11-18T13:18:28.581892365Z"
+        },
+        "effectiveness": {
+          "windowStartedAt": "2026-11-18T13:08:40.28811161Z",
+          "windowEndedAt": "2026-11-18T13:18:28.581892365Z",
+          "cachedBytes": "0",
+          "upstreamBytes": "279613458",
+          "metadataBytes": "4179",
+          "streamedBytes": "0"
+        }
+      },
+      "afterCache": {
+        "effective": {
+          "version": 15,
+          "enabled": true,
+          "storagePath": "/var/lib/shiftbox-registry-cache/timing-m6i-warm-20261118T125309Z",
+          "maxBytes": "15032385536",
+          "volumeHighPercent": 80,
+          "volumeLowPercent": 70
+        },
+        "activation": {
+          "phase": "ready"
+        },
+        "usage": {
+          "retainedBytes": "279619568",
+          "retiredBytes": "0",
+          "activeTransfers": 0,
+          "observedAt": "2026-11-18T13:22:06.766514848Z"
+        },
+        "effectiveness": {
+          "windowStartedAt": "2026-11-18T13:08:40.28811161Z",
+          "windowEndedAt": "2026-11-18T13:22:06.766514848Z",
+          "cachedBytes": "279613458",
+          "upstreamBytes": "279613458",
+          "metadataBytes": "5788",
+          "streamedBytes": "0"
+        }
+      },
+      "payloadAndMetadataBytes": {
+        "cachedBytes": 279613458,
+        "upstreamBytes": 0,
+        "metadataBytes": 1609,
+        "streamedBytes": 0
+      }
+    },
+    "cold": {
+      "identity": {
+        "instance": "i-0b1f35952657cadd8",
+        "image": "ami-092ac38774377d1fd",
+        "state": "running",
+        "workspace": "ad579dfb-40f5-4922-a1f1-ad28bde1018f",
+        "operation": "834d1758-f891-4f41-a3b4-29a4c93434de",
+        "root": "vol-07fd3fcf0b0c882d8",
+        "launchedAt": "2026-11-18T13:22:42+00:00",
+        "type": "m6i.xlarge",
+        "zone": "us-east-2a",
+        "public": false,
+        "role": false
+      },
+      "controller": {
+        "id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+        "workspaceId": "ad579dfb-40f5-4922-a1f1-ad28bde1018f",
+        "status": "succeeded",
+        "createdAt": "2026-11-18T13:22:40.904350658Z",
+        "startedAt": "2026-11-18T13:22:41.266755709Z",
+        "finishedAt": "2026-11-18T13:25:05.280008517Z",
+        "steps": {
+          "provision": {
+            "succeededAt": "2026-11-18T13:22:46.801331095Z"
+          },
+          "enroll": {
+            "activeAt": "2026-11-18T13:22:46.81834764Z",
+            "succeededAt": "2026-11-18T13:23:24.472197362Z",
+            "durationMs": 37653.85
+          },
+          "configure": {
+            "activeAt": "2026-11-18T13:23:25.274688308Z",
+            "succeededAt": "2026-11-18T13:25:03.291641467Z",
+            "durationMs": 98016.953
+          },
+          "verify_ide": {
+            "activeAt": "2026-11-18T13:25:04.271163222Z",
+            "succeededAt": "2026-11-18T13:25:04.604637274Z",
+            "durationMs": 333.474
+          },
+          "finish_setup": {
+            "activeAt": "2026-11-18T13:25:05.272066091Z",
+            "succeededAt": "2026-11-18T13:25:05.280007397Z",
+            "durationMs": 7.941
+          }
+        },
+        "durationMs": 144375.658
+      },
+      "guestTiming": {
+        "complete": true,
+        "exporter_ready": true,
+        "events": [
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "repository_preparation",
+            "duration_ms": 3224,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008208832361
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "image_config_read",
+            "duration_ms": 14960,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008223797989
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "image_prefetch_pull",
+            "duration_ms": 7289,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008231088120
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "image_prepare",
+            "duration_ms": 22250,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008231088120
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "docker_image_build",
+            "duration_ms": 17114,
+            "outcome": "observed",
+            "journal_time_us": 1795008258496109
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "docker_container_ready",
+            "duration_ms": 1403,
+            "outcome": "observed",
+            "journal_time_us": 1795008259901276
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "devcontainer_up",
+            "duration_ms": 28996,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008260085065
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "docker_image_build",
+            "duration_ms": 359,
+            "outcome": "observed",
+            "journal_time_us": 1795008261271811
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "docker_container_ready",
+            "duration_ms": 180,
+            "outcome": "observed",
+            "journal_time_us": 1795008261454271
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "devcontainer_up",
+            "duration_ms": 1202,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008261646378
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "retained_home",
+            "duration_ms": 1642,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008261728059
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "project_permissions",
+            "duration_ms": 61,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008261789415
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "required_hooks",
+            "duration_ms": 5448,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008267238207
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "ide_install",
+            "duration_ms": 33937,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008301176199
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "ide_start",
+            "duration_ms": 1517,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008302693755
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "browser_ide_start",
+            "duration_ms": 35455,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008302693755
+          },
+          {
+            "operation_id": "834d1758-f891-4f41-a3b4-29a4c93434de",
+            "phase": "remaining_hooks",
+            "duration_ms": 325,
+            "outcome": "succeeded",
+            "journal_time_us": 1795008303208734
+          }
+        ]
+      },
+      "performance": {
+        "source": "Six UTC minute samples starting at the EC2 launch minute. EBS latencies weighted by completed operations.",
+        "volume": {
+          "sizeGiB": 32,
+          "type": "gp3",
+          "iops": 3000,
+          "throughput": 125,
+          "snapshot": "snap-03997a1034d7716fc",
+          "fastRestored": null,
+          "encrypted": true
+        },
+        "readOps": 22514,
+        "writeOps": 20034,
+        "readBytes": 1222990336,
+        "writeBytes": 2696925696,
+        "averageReadMs": 8.208,
+        "averageWriteMs": 1.946,
+        "registry": {
+          "run": "cold",
+          "approximateBlobWindowMs": 2191.294,
+          "responses": [
+            {
+              "digest": "sha256:52225fb6c367b6637a2fb76646b57c2e2c5df6416b7338803bb7ee96f14e516c",
+              "method": "GET",
+              "status": 200,
+              "bytes": 12610,
+              "durationMs": 100.293748,
+              "completedMs": 1795008224150
+            },
+            {
+              "digest": "sha256:aefaabaf638518e8b604909cefaa93ca74a37d8fc7378bfb6303aa08dec1899c",
+              "method": "GET",
+              "status": 200,
+              "bytes": 408,
+              "durationMs": 93.817863,
+              "completedMs": 1795008224378
+            },
+            {
+              "digest": "sha256:2a414139e6b03ffff1afe71b264b79ae9061b16c0b0f2d07e69712c681ed34f9",
+              "method": "GET",
+              "status": 200,
+              "bytes": 233,
+              "durationMs": 44.75823,
+              "completedMs": 1795008224432
+            },
+            {
+              "digest": "sha256:256a6e01082ab012dfbb83b600c2a755d9ab2215c6b5b10205ae42f5afb91995",
+              "method": "GET",
+              "status": 200,
+              "bytes": 1298,
+              "durationMs": 52.528027,
+              "completedMs": 1795008224492
+            },
+            {
+              "digest": "sha256:0d4da1c38cd39a1dd115e9a6c26965a439c65b03d482b5fa7a24467582eadd75",
+              "method": "GET",
+              "status": 200,
+              "bytes": 13625081,
+              "durationMs": 434.166496,
+              "completedMs": 1795008224949
+            },
+            {
+              "digest": "sha256:0497118c0496c2dc2454b4a81eb979ea4d46e0556c75187a7cd79a06db653ead",
+              "method": "GET",
+              "status": 200,
+              "bytes": 74423140,
+              "durationMs": 1023.885032,
+              "completedMs": 1795008225275
+            },
+            {
+              "digest": "sha256:46582ab21e581185bcda42d697491712772255e88fab186407e7cb91e2de7cb8",
+              "method": "GET",
+              "status": 200,
+              "bytes": 134,
+              "durationMs": 41.577449,
+              "completedMs": 1795008225410
+            },
+            {
+              "digest": "sha256:1f9b59bb58bf8b81b14773ac0013295f06642cd0fe66c76f7f98fa16af482bf6",
+              "method": "GET",
+              "status": 200,
+              "bytes": 224,
+              "durationMs": 43.546933,
+              "completedMs": 1795008225488
+            },
+            {
+              "digest": "sha256:3240e01dfa65b6a1136770fa7ed2079aae74d894a4f0f9f810db8607e399f440",
+              "method": "GET",
+              "status": 200,
+              "bytes": 7477,
+              "durationMs": 43.840634,
+              "completedMs": 1795008225541
+            },
+            {
+              "digest": "sha256:beede58b20ed694598d02a6189af26ae2f6bf2ddd8e643cf4c34576dad493624",
+              "method": "GET",
+              "status": 200,
+              "bytes": 167,
+              "durationMs": 40.55726,
+              "completedMs": 1795008225702
+            },
+            {
+              "digest": "sha256:4b3ffd8ccb5201a0fc03585952effb4ed2d1ea5e704d2e7330212fb8b16c86a3",
+              "method": "GET",
+              "status": 200,
+              "bytes": 29723147,
+              "durationMs": 734.594782,
+              "completedMs": 1795008225787
+            },
+            {
+              "digest": "sha256:a3da54c918e017f446356e02e3e6f4306e8860575da12fd00af90b3ed9227476",
+              "method": "GET",
+              "status": 200,
+              "bytes": 161819539,
+              "durationMs": 1966.5821,
+              "completedMs": 1795008226241
+            }
+          ]
+        },
+        "metrics": {
+          "volumereadbytes": {
+            "2026-11-18T13:22:00+00:00": 42350592.0,
+            "2026-11-18T13:23:00+00:00": 393748992.0,
+            "2026-11-18T13:24:00+00:00": 725856256.0,
+            "2026-11-18T13:25:00+00:00": 61034496.0,
+            "2026-11-18T13:26:00+00:00": 0.0
+          },
+          "volumewritebytes": {
+            "2026-11-18T13:22:00+00:00": 3072.0,
+            "2026-11-18T13:23:00+00:00": 321558016.0,
+            "2026-11-18T13:24:00+00:00": 1776652288.0,
+            "2026-11-18T13:25:00+00:00": 596676608.0,
+            "2026-11-18T13:26:00+00:00": 2035712.0
+          },
+          "volumereadops": {
+            "2026-11-18T13:22:00+00:00": 1258.0,
+            "2026-11-18T13:23:00+00:00": 7804.0,
+            "2026-11-18T13:24:00+00:00": 11153.0,
+            "2026-11-18T13:25:00+00:00": 2299.0,
+            "2026-11-18T13:26:00+00:00": 0.0
+          },
+          "volumewriteops": {
+            "2026-11-18T13:22:00+00:00": 3.0,
+            "2026-11-18T13:23:00+00:00": 2290.0,
+            "2026-11-18T13:24:00+00:00": 14658.0,
+            "2026-11-18T13:25:00+00:00": 3058.0,
+            "2026-11-18T13:26:00+00:00": 25.0
+          },
+          "volumetotalreadtime": {
+            "2026-11-18T13:22:00+00:00": 9.502182,
+            "2026-11-18T13:23:00+00:00": 122.21325,
+            "2026-11-18T13:24:00+00:00": 46.712895,
+            "2026-11-18T13:25:00+00:00": 6.366986,
+            "2026-11-18T13:26:00+00:00": 0.0
+          },
+          "volumetotalwritetime": {
+            "2026-11-18T13:22:00+00:00": 0.002058,
+            "2026-11-18T13:23:00+00:00": 4.956819,
+            "2026-11-18T13:24:00+00:00": 26.469447,
+            "2026-11-18T13:25:00+00:00": 7.51079,
+            "2026-11-18T13:26:00+00:00": 0.039008
+          },
+          "volumequeuelength": {
+            "2026-11-18T13:22:00+00:00": 0.8701171875,
+            "2026-11-18T13:23:00+00:00": 2.12109375,
+            "2026-11-18T13:24:00+00:00": 1.2197265625,
+            "2026-11-18T13:25:00+00:00": 0.234375,
+            "2026-11-18T13:26:00+00:00": 0.0
+          },
+          "volumeiopsexceededcheck": {
+            "2026-11-18T13:22:00+00:00": 0.0,
+            "2026-11-18T13:23:00+00:00": 0.0,
+            "2026-11-18T13:24:00+00:00": 0.0,
+            "2026-11-18T13:25:00+00:00": 0.0,
+            "2026-11-18T13:26:00+00:00": 0.0
+          },
+          "volumethroughputexceededcheck": {
+            "2026-11-18T13:22:00+00:00": 0.0,
+            "2026-11-18T13:23:00+00:00": 0.0,
+            "2026-11-18T13:24:00+00:00": 1.0,
+            "2026-11-18T13:25:00+00:00": 1.0,
+            "2026-11-18T13:26:00+00:00": 0.0
+          },
+          "volumestallediocheck": {
+            "2026-11-18T13:22:00+00:00": 0.0,
+            "2026-11-18T13:23:00+00:00": 0.0,
+            "2026-11-18T13:24:00+00:00": 0.0,
+            "2026-11-18T13:25:00+00:00": 0.0,
+            "2026-11-18T13:26:00+00:00": 0.0
+          },
+          "instanceebsiopsexceededcheck": {
+            "2026-11-18T13:22:00+00:00": 0.0,
+            "2026-11-18T13:23:00+00:00": 0.0,
+            "2026-11-18T13:24:00+00:00": 0.0,
+            "2026-11-18T13:25:00+00:00": 0.0,
+            "2026-11-18T13:26:00+00:00": 0.0
+          },
+          "instanceebsthroughputexceededcheck": {
+            "2026-11-18T13:22:00+00:00": 0.0,
+            "2026-11-18T13:23:00+00:00": 0.0,
+            "2026-11-18T13:24:00+00:00": 0.0,
+            "2026-11-18T13:25:00+00:00": 0.0,
+            "2026-11-18T13:26:00+00:00": 0.0
+          },
+          "cpuutilization": {
+            "2026-11-18T13:22:00+00:00": 1.3950191670541718
+          },
+          "networkin": {
+            "2026-11-18T13:22:00+00:00": 15607.0
+          },
+          "networkout": {
+            "2026-11-18T13:22:00+00:00": 22763.0
+          }
+        },
+        "launchToFirstLayerMs": 62049.706
+      },
+      "rootInitializationSamples": [
+        {
+          "observedAt": "2026-11-18T13:23:21Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T13:24:02Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T13:24:43Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T13:25:24Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T13:26:05Z",
+          "initialization": "initializing"
+        },
+        {
+          "observedAt": "2026-11-18T13:26:46Z",
+          "initialization": "initializing"
+        }
+      ],
+      "beforeCache": {
+        "effective": {
+          "version": 16,
+          "enabled": true,
+          "storagePath": "/var/lib/shiftbox-registry-cache/timing-m6i-cold-20261118T125309Z",
+          "maxBytes": "15032385536",
+          "volumeHighPercent": 80,
+          "volumeLowPercent": 70
+        },
+        "activation": {
+          "phase": "ready"
+        },
+        "usage": {
+          "retainedBytes": "279619568",
+          "retiredBytes": "279619568",
+          "activeTransfers": 0,
+          "observedAt": "2026-11-18T13:22:39.760547233Z"
+        },
+        "effectiveness": {
+          "windowStartedAt": "2026-11-18T13:22:39.281954824Z",
+          "windowEndedAt": "2026-11-18T13:22:39.760547233Z",
+          "cachedBytes": "0",
+          "upstreamBytes": "0",
+          "metadataBytes": "0",
+          "streamedBytes": "0"
+        }
+      },
+      "afterCache": {
+        "effective": {
+          "version": 16,
+          "enabled": true,
+          "storagePath": "/var/lib/shiftbox-registry-cache/timing-m6i-cold-20261118T125309Z",
+          "maxBytes": "15032385536",
+          "volumeHighPercent": 80,
+          "volumeLowPercent": 70
+        },
+        "activation": {
+          "phase": "ready"
+        },
+        "usage": {
+          "retainedBytes": "559239136",
+          "retiredBytes": "279619568",
+          "activeTransfers": 0,
+          "observedAt": "2026-11-18T13:26:18.93885861Z"
+        },
+        "effectiveness": {
+          "windowStartedAt": "2026-11-18T13:22:39.281954824Z",
+          "windowEndedAt": "2026-11-18T13:26:18.93885861Z",
+          "cachedBytes": "0",
+          "upstreamBytes": "279613458",
+          "metadataBytes": "4179",
+          "streamedBytes": "0"
+        }
+      },
+      "payloadAndMetadataBytes": {
+        "cachedBytes": 0,
+        "upstreamBytes": 279613458,
+        "metadataBytes": 4179,
+        "streamedBytes": 0
+      }
+    }
+  }
+}

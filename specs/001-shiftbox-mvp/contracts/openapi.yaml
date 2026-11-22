@@ -1,0 +1,2370 @@
+openapi: 3.1.0
+info:
+  title: ShiftBox Management API
+  version: 0.1.0
+  description: >-
+    Contract for the static ShiftBox management UI and operator clients. Guest
+    polling and provider integration use separate contracts. Protected mutations
+    require both the host-only session cookie and X-CSRF-Token.
+servers:
+  - url: https://{managementHost}/api/v1
+    variables:
+      managementHost:
+        default: shiftbox.example.test
+security:
+  - sessionCookie: []
+tags:
+  - name: Setup
+  - name: Session
+  - name: Workspaces
+  - name: Operations
+  - name: Templates
+  - name: Secrets
+  - name: Git
+  - name: Administration
+  - name: Infrastructure
+  - name: Recovery
+
+paths:
+  /setup/status:
+    get:
+      tags: [Setup]
+      security: []
+      operationId: getSetupStatus
+      responses:
+        '200':
+          description: Current locally reachable setup gate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupStatus'
+
+  /setup/administrator:
+    post:
+      tags: [Setup]
+      security: []
+      operationId: createInitialAdministrator
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '201':
+          description: Restricted administrator created; temporary password is shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [administratorId, temporaryPassword, operation]
+                properties:
+                  administratorId: { type: string, format: uuid }
+                  temporaryPassword: { type: string, writeOnly: true }
+                  operation: { $ref: '#/components/schemas/Operation' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /setup/data-profile:
+    put:
+      tags: [Setup]
+      operationId: configureDataProfile
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/SQLiteProfileInput'
+                - $ref: '#/components/schemas/PostgresProfileInput'
+              discriminator:
+                propertyName: profile
+      responses:
+        '202': { $ref: '#/components/responses/OperationAccepted' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /setup/certificate:
+    put:
+      tags: [Setup]
+      operationId: configureBrowserCertificate
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [certificateChainPem, privateKeyPem, managementOrigin, ideHostPattern, previewHostPattern]
+              properties:
+                certificateChainPem: { type: string }
+                privateKeyPem: { type: string, writeOnly: true }
+                managementOrigin: { type: string, format: uri }
+                ideHostPattern: { type: string }
+                previewHostPattern: { type: string }
+      responses:
+        '202': { $ref: '#/components/responses/OperationAccepted' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /setup/platform:
+    post:
+      tags: [Setup]
+      operationId: validateSetupPlatform
+      description: Verify the local bundle configured by the operator, enroll a disposable UTM clone, confirm cleanup, and select the validated default.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      responses:
+        '204': { description: Platform image validated and selected }
+        default: { $ref: '#/components/responses/Error' }
+
+  /setup/activate:
+    post:
+      tags: [Setup]
+      operationId: activateInstallation
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202': { $ref: '#/components/responses/OperationAccepted' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /session:
+    get:
+      tags: [Session]
+      operationId: getSession
+      responses:
+        '200':
+          description: Current principal, permissions, gates, and CSRF token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionView' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Session]
+      operationId: logout
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      responses:
+        '204': { description: Session revoked }
+        default: { $ref: '#/components/responses/Error' }
+
+  /session/password:
+    put:
+      tags: [Session]
+      operationId: changeOwnPassword
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, writeOnly: true }
+                newPassword: { type: string, writeOnly: true, minLength: 12 }
+      responses:
+        '204': { description: Password changed and password-change session gate cleared }
+        default: { $ref: '#/components/responses/Error' }
+
+  /session/external-reauthorization:
+    post:
+      tags: [Session]
+      operationId: beginExternalReauthorization
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      responses:
+        '200':
+          description: Short-lived upstream authorization URL bound to the current session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authorizationUrl, expiresAt]
+                properties:
+                  authorizationUrl: { type: string, format: uri }
+                  expiresAt: { type: string, format: date-time }
+        default: { $ref: '#/components/responses/Error' }
+
+  /ssh/helper/download:
+    get:
+      tags: [Workspaces]
+      operationId: downloadWorkspaceSSHHelper
+      responses:
+        '200':
+          description: Signed internal macOS app archive for the current installation
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+
+  /ssh/helper/approve:
+    post:
+      tags: [Workspaces]
+      operationId: approveWorkspaceSSHHelper
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [state, challenge, redirectUri]
+              properties:
+                state: { type: string }
+                challenge: { type: string, description: Base64url SHA-256 proof challenge }
+                redirectUri: { type: string, format: uri, description: Exact numeric HTTP loopback callback }
+      responses:
+        '200':
+          description: Single-use approval code and state in the exact loopback callback
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [callbackUrl]
+                properties:
+                  callbackUrl: { type: string, format: uri }
+        default: { $ref: '#/components/responses/Error' }
+
+  /ssh/helper/exchange:
+    post:
+      tags: [Workspaces]
+      security: []
+      operationId: exchangeWorkspaceSSHHelper
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code, state, verifier, redirectUri]
+              properties:
+                code: { type: string }
+                state: { type: string }
+                verifier: { type: string, writeOnly: true }
+                redirectUri: { type: string, format: uri }
+      responses:
+        '200':
+          description: Workspace-scoped credential and expiry for the approving account
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credential, expiresAt, accountId]
+                properties:
+                  credential: { type: string }
+                  expiresAt: { type: string, format: date-time }
+                  accountId: { type: string, format: uuid }
+        default: { $ref: '#/components/responses/Error' }
+
+  /ssh/workspaces:
+    get:
+      tags: [Workspaces]
+      security:
+        - workspaceHelper: []
+      operationId: listSSHWorkspaces
+      responses:
+        '200':
+          description: Workspaces eligible for SSH for the current helper session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name]
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+
+  /ssh/workspaces/{workspaceId}/readiness:
+    get:
+      tags: [Workspaces]
+      security:
+        - workspaceHelper: []
+      operationId: getWorkspaceSSHReadiness
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '204':
+          description: The authorized workspace SSH server completed a handshake over its guest tunnel
+        '503':
+          description: Workspace SSH is unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default: { $ref: '#/components/responses/Error' }
+
+  /ssh/workspaces/{workspaceId}/connect:
+    get:
+      tags: [Workspaces]
+      security:
+        - workspaceHelper: []
+      operationId: connectWorkspaceSSH
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '101':
+          description: Authorized shiftbox.ssh.v1 upgrade with workspace readiness followed by the SSH byte stream
+        default: { $ref: '#/components/responses/Error' }
+
+  /workspaces:
+    get:
+      tags: [Workspaces]
+      operationId: listWorkspaces
+      parameters:
+        - { name: owner, in: query, schema: { type: string, format: uuid } }
+        - { name: state, in: query, schema: { type: string } }
+        - name: lifecycleState
+          in: query
+          description: Match the current lifecycle chip before pagination.
+          schema: { $ref: '#/components/schemas/WorkspaceLifecycleMilestone' }
+        - name: excludeDeleted
+          in: query
+          description: Exclude workspaces with confirmed observed state deleted before pagination. In-progress deletion remains visible.
+          schema: { type: boolean, default: false }
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Authorized workspace page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Workspace' }
+                  nextCursor: { type: [string, 'null'] }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Workspaces]
+      operationId: launchWorkspace
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [templateId, templateRevision]
+              properties:
+                templateId: { type: string, format: uuid }
+                templateRevision: { type: integer, minimum: 1 }
+                name: { type: string, minLength: 1, maxLength: 120 }
+                retentionSeconds: { type: [integer, 'null'], minimum: 1 }
+      responses:
+        '202': { $ref: '#/components/responses/OperationAccepted' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /workspaces/{workspaceId}:
+    get:
+      tags: [Workspaces]
+      operationId: getWorkspace
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Authorized workspace detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Workspaces]
+      operationId: updateWorkspacePolicy
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                retentionSeconds: { type: [integer, 'null'], minimum: 1 }
+                keepAliveMinutes:
+                  type: [integer, 'null']
+                  minimum: 0
+                  maximum: 153722867
+                  description: Select an administrator-allowed inactivity shutdown period in minutes. Zero means Unlimited; null inherits the current administrator default.
+                networkPolicyId: { type: string, format: uuid }
+                previewPorts:
+                  type: array
+                  description: Manually configured workspace VM loopback preview ports. An empty array revokes every preview.
+                  maxItems: 32
+                  uniqueItems: true
+                  items: { type: integer, minimum: 1, maximum: 65535 }
+      responses:
+        '200':
+          description: Updated workspace policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /workspaces/{workspaceId}/logs:
+    get:
+      tags: [Workspaces]
+      operationId: streamWorkspaceLogs
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string, pattern: '^[0-9]+$' }
+      responses:
+        '200':
+          description: Owner-only stream of recent and live Dev Container output. Each workspace.log event carries a JSON object with the output text.
+          content:
+            text/event-stream:
+              schema:
+                type: object
+                required: [text]
+                properties:
+                  text: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+
+  /workspaces/{workspaceId}/actions/{action}:
+    post:
+      tags: [Workspaces]
+      operationId: requestWorkspaceAction
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: action
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [start, stop, rebuild, repair, delete, retry, update]
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                confirmDataLoss: { type: boolean, default: false }
+      responses:
+        '202': { $ref: '#/components/responses/OperationAccepted' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /workspaces/{workspaceId}/entry-grants:
+    post:
+      tags: [Workspaces]
+      operationId: createWorkspaceEntryGrant
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [service]
+              properties:
+                service: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      responses:
+        '201':
+          description: Single-origin, short-lived exchange URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [exchangeUrl, expiresAt]
+                properties:
+                  exchangeUrl: { type: string, format: uri }
+                  expiresAt: { type: string, format: date-time }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/workspaces/{workspaceId}/connection-grants:
+    get:
+      tags: [Workspaces]
+      operationId: listWorkspaceConnectionGrants
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Active administrator connection grants for this workspace
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, email]
+                      properties:
+                        id: { type: string, format: uuid }
+                        email: { type: string, format: email }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/workspaces/{workspaceId}/connection-grants/{grantId}:
+    delete:
+      tags: [Workspaces]
+      operationId: revokeWorkspaceConnectionGrant
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/CSRFToken'
+        - in: path
+          name: grantId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Grant revoked and its active connections closed }
+        default: { $ref: '#/components/responses/Error' }
+
+  /operations/{operationId}:
+    get:
+      tags: [Operations]
+      operationId: getOperation
+      parameters:
+        - $ref: '#/components/parameters/OperationId'
+      responses:
+        '200':
+          description: Authorized durable operation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operation' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /operations/{operationId}/events:
+    get:
+      tags: [Operations]
+      operationId: streamOperationEvents
+      parameters:
+        - $ref: '#/components/parameters/OperationId'
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string }
+      responses:
+        '200':
+          description: Ordered operation events; event IDs support reconnect replay
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/OperationEvent' }
+        '409':
+          description: Replay window unavailable; client must refetch operation
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /templates/catalog:
+    get:
+      tags: [Templates]
+      operationId: listTemplateCatalog
+      responses:
+        '200':
+          description: Available resource profile and platform image choices
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [resourceProfiles, platformImages]
+                properties:
+                  resourceProfiles: { type: array, items: { $ref: '#/components/schemas/TemplateCatalogChoice' } }
+                  platformImages: { type: array, items: { $ref: '#/components/schemas/TemplateCatalogChoice' } }
+                  providerKind: { type: string, enum: [utm, ec2] }
+                  defaultPlatformArtifactId: { type: string, description: The compatible installation default when available }
+        default: { $ref: '#/components/responses/Error' }
+  /templates:
+    get:
+      tags: [Templates]
+      operationId: listTemplates
+      parameters:
+        - { name: archived, in: query, schema: { type: boolean, default: false } }
+        - name: q
+          in: query
+          description: Case-insensitive literal search of template name and repository URL, applied before pagination. Maximum 200 UTF-8 bytes.
+          schema: { type: string, maxLength: 200 }
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Authorized templates
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ProjectTemplate' } }
+                  nextCursor: { type: [string, 'null'] }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Templates]
+      operationId: createTemplate
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TemplateInput' }
+      responses:
+        '201':
+          description: Template and first immutable revision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectTemplate' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /templates/{templateId}:
+    patch:
+      tags: [Templates]
+      operationId: updateTemplate
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 120 }
+                state: { type: string, enum: [active, archived] }
+      responses:
+        '200':
+          description: Template identity updated without changing ownership or prior revisions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectTemplate' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /templates/{templateId}/revisions:
+    post:
+      tags: [Templates]
+      operationId: createTemplateRevision
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TemplateInput' }
+      responses:
+        '201':
+          description: New immutable revision selected as current
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectTemplate' }
+        default: { $ref: '#/components/responses/Error' }
+  /templates/{templateId}/grants:
+    post:
+      tags: [Templates]
+      operationId: grantTemplateLaunch
+      parameters:
+        - { name: templateId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [userId, acknowledgeProjectSecretExposure]
+              properties:
+                userId: { type: string, format: uuid }
+                acknowledgeProjectSecretExposure: { const: true }
+      responses:
+        '204': { description: Launch grant active }
+        default: { $ref: '#/components/responses/Error' }
+
+  /templates/{templateId}/grants/{userId}:
+    delete:
+      tags: [Templates]
+      operationId: revokeTemplateLaunch
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/CSRFToken'
+      responses:
+        '204': { description: Launch and future project-secret retrieval grant revoked }
+        default: { $ref: '#/components/responses/Error' }
+
+  /secrets:
+    get:
+      tags: [Secrets]
+      operationId: listSecretMetadata
+      parameters:
+        - name: scope
+          in: query
+          required: true
+          schema: { type: string, enum: [user, template, organization] }
+        - name: scopeId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Authorized names, scopes, fallback metadata, and timestamps; never values
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SecretMetadata' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /secrets/{scope}/{scopeId}/{name}:
+    put:
+      tags: [Secrets]
+      operationId: setSecret
+      parameters:
+        - name: scope
+          in: path
+          required: true
+          schema: { type: string, enum: [user, template, organization] }
+        - name: scopeId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: name
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,126}$' }
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [value]
+              properties:
+                value: { type: string, writeOnly: true }
+      responses:
+        '204': { description: Value stored; it cannot be redisplayed }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Secrets]
+      operationId: deleteSecretOverride
+      parameters:
+        - { name: scope, in: path, required: true, schema: { type: string, enum: [user, template, organization] } }
+        - { name: scopeId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: name, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/CSRFToken'
+        - name: X-Acknowledge-Fallback
+          in: header
+          required: true
+          schema: { const: acknowledged }
+      responses:
+        '204': { description: Override removed after fallback warning acknowledgment }
+        default: { $ref: '#/components/responses/Error' }
+
+  /git/authorization:
+    get:
+      tags: [Git]
+      operationId: getGitAuthorization
+      responses:
+        '200':
+          description: Current user's GitHub authorization metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitAuthorizationView' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Git]
+      operationId: beginGitAuthorization
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      responses:
+        '200':
+          description: Short-lived GitHub authorization URL bound to current user and state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authorizationUrl, expiresAt]
+                properties:
+                  authorizationUrl: { type: string, format: uri }
+                  expiresAt: { type: string, format: date-time }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Git]
+      operationId: revokeGitAuthorization
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      responses:
+        '204': { description: Current user's Git authorization revoked }
+        default: { $ref: '#/components/responses/Error' }
+
+  /git/authorization/callback:
+    get:
+      tags: [Git]
+      security: []
+      operationId: completeGitAuthorization
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: string } }
+        - { name: state, in: query, required: true, schema: { type: string } }
+      responses:
+        '303':
+          description: Authorization recorded for the state-bound user and redirected to management UI
+          headers:
+            Location: { schema: { type: string, format: uri } }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/users:
+    get:
+      tags: [Administration]
+      operationId: listUsers
+      responses:
+        '200':
+          description: Organization membership
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/User' } }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Administration]
+      operationId: createLocalUser
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [member, administrator] }
+      responses:
+        '201':
+          description: Local user and one-time temporary password
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, temporaryPassword]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+                  temporaryPassword: { type: string, writeOnly: true }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/users/{userId}:
+    patch:
+      tags: [Administration]
+      operationId: updateMembership
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                role: { type: string, enum: [member, administrator] }
+                membershipState: { type: string, enum: [pending, active, disabled] }
+      responses:
+        '200':
+          description: Updated membership; disabling also starts workspace stop operations
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/users/{userId}/password-reset:
+    post:
+      tags: [Administration]
+      operationId: resetLocalUserPassword
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: Access revoked and temporary password issued for private one-time delivery
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: [no-store] }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, temporaryPassword]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+                  temporaryPassword: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/identity/external:
+    put:
+      tags: [Administration]
+      operationId: configureExternalIdentity
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled, authorizationIntervalSeconds]
+              properties:
+                enabled: { type: boolean }
+                issuer: { type: [string, 'null'], format: uri }
+                connectorId: { type: [string, 'null'] }
+                clientId: { type: [string, 'null'] }
+                clientSecret: { type: [string, 'null'], writeOnly: true }
+                authorizationIntervalSeconds: { type: integer, minimum: 1, default: 14400 }
+      responses:
+        '204': { description: External connector configuration activated after validation }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/notices:
+    post:
+      tags: [Administration]
+      operationId: publishNotice
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NoticeInput' }
+      responses:
+        '201':
+          description: Published notice
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Notice' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /notices:
+    get:
+      tags: [Administration]
+      operationId: listNotices
+      parameters:
+        - { name: includeDismissed, in: query, schema: { type: boolean, default: false } }
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Current and historical notices authorized for the user
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Notice' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /notices/{noticeId}/receipt:
+    patch:
+      tags: [Administration]
+      operationId: updateNoticeReceipt
+      parameters:
+        - { name: noticeId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [state]
+              properties:
+                state: { type: string, enum: [read, dismissed] }
+      responses:
+        '204': { description: Receipt updated; active persistent conditions remain visible }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/audit:
+    get:
+      tags: [Administration]
+      operationId: listAuditEvents
+      parameters:
+        - { name: action, in: query, schema: { type: string } }
+        - { name: resourceId, in: query, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Redacted bounded security-relevant history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AuditEvent' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/infrastructure:
+    get:
+      tags: [Infrastructure]
+      operationId: getInfrastructureStatus
+      responses:
+        '200':
+          description: Provider, capacity, artifact, certificate, key, storage, and compatibility conditions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InfrastructureStatus' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/certificate:
+    get:
+      tags: [Infrastructure]
+      operationId: getBrowserCertificate
+      responses:
+        '200':
+          description: Public metadata of the leaf certificate currently served by browser HTTPS; excludes private key material
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BrowserCertificateDetails' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Infrastructure]
+      operationId: replaceBrowserCertificate
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [certificateChainPem, privateKeyPem]
+              properties:
+                certificateChainPem: { type: string }
+                privateKeyPem: { type: string, writeOnly: true }
+      responses:
+        '202': { $ref: '#/components/responses/OperationAccepted' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/platform-artifacts:
+    post:
+      tags: [Infrastructure]
+      operationId: importPlatformArtifact
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlatformArtifactInput' }
+      responses:
+        '202': { $ref: '#/components/responses/OperationAccepted' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/platform-artifacts/{artifactId}:
+    delete:
+      tags: [Infrastructure]
+      operationId: retireAMI
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - name: artifactId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Retired from family selection }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/resource-profiles:
+    get:
+      tags: [Infrastructure]
+      operationId: listResourceProfiles
+      responses:
+        '200':
+          description: All saved resource profiles, including disabled profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ResourceProfile' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Infrastructure]
+      operationId: createResourceProfile
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResourceProfileInput' }
+      responses:
+        '201':
+          description: Resource profile created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResourceProfileInput' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/resource-profiles/{profileId}:
+    parameters:
+      - name: profileId
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [Infrastructure]
+      operationId: updateResourceProfile
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResourceProfileUpdate' }
+      responses:
+        '204': { description: Resource profile updated for future launches }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Infrastructure]
+      operationId: deleteResourceProfile
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Unreferenced resource profile deleted }
+        '409': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/capacity:
+    put:
+      tags: [Infrastructure]
+      operationId: updateCapacityBudget
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CapacityBudget' }
+      responses:
+        '204': { description: Capacity budget updated without evicting existing workspaces }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/settings/session:
+    get:
+      tags: [Administration]
+      operationId: getSessionTimeout
+      description: Read the session timeout for the active installation.
+      responses:
+        '200':
+          description: Current session timeout and revision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionTimeoutSettings' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Administration]
+      operationId: updateSessionTimeout
+      description: Set the lifetime for newly issued management sessions, up to 400 days in the selected unit.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionTimeout' }
+      responses:
+        '204': { description: Session timeout saved }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/image-cache:
+    get:
+      tags: [Infrastructure]
+      operationId: getImageCache
+      description: Read public registry settings, the independent built-image policy, runtime measurements and up to 100 retained public image references.
+      responses:
+        '200':
+          description: Registry cache snapshot
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageCacheSnapshot' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Infrastructure]
+      operationId: updateImageCache
+      description: Stage cache settings activation using the current version.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImageCacheSettings' }
+      responses:
+        '200':
+          description: Current settings already match the request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageCacheSnapshot' }
+        '202':
+          description: Settings staged for activation
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageCacheActivationOperation' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/image-cache/built-images:
+    put:
+      tags: [Infrastructure]
+      operationId: updateBuiltImagePolicy
+      description: Save the organization-wide built devcontainer image setting using its independent version. Saving Off immediately fences reuse and publication and schedules background removal.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: Persisted built devcontainer image policy
+          headers:
+            ETag:
+              description: Current independent built-image policy version.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuiltImagePolicy' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/launch-log-retention:
+    put:
+      tags: [Infrastructure]
+      operationId: updateLaunchLogRetention
+      description: Sets the retention period for completed launch diagnostic records.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [days]
+              properties:
+                days: { type: integer, minimum: 1, maximum: 3650 }
+      responses:
+        '204': { description: Launch log retention saved }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/keep-alive:
+    put:
+      tags: [Infrastructure]
+      operationId: updateKeepAlivePolicy
+      description: Updates inactivity shutdown settings. Removed workspace choices inherit the current default. Zero minutes means Unlimited.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [maximumMinutes, allowedMinutes, defaultMinutes]
+              properties:
+                maximumMinutes: { type: integer, minimum: 0, maximum: 153722867 }
+                allowedMinutes:
+                  type: array
+                  minItems: 1
+                  maxItems: 64
+                  uniqueItems: true
+                  items: { type: integer, minimum: 0, maximum: 153722867 }
+                defaultMinutes: { type: integer, minimum: 0, maximum: 153722867 }
+      responses:
+        '204': { description: Keep-alive policy updated }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/network-policies:
+    post:
+      tags: [Infrastructure]
+      operationId: createNetworkPolicy
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NetworkPolicyInput' }
+      responses:
+        '201':
+          description: Policy admitted against current provider capabilities
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkPolicyInput' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/maintenance:
+    get:
+      tags: [Infrastructure]
+      operationId: listMaintenanceCampaigns
+      responses:
+        '200':
+          description: Current and historical maintenance campaigns
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MaintenanceCampaign' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Infrastructure]
+      operationId: createMaintenanceCampaign
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [releaseId, deadline]
+              properties:
+                releaseId: { type: string }
+                deadline: { type: string, format: date-time }
+      responses:
+        '202': { $ref: '#/components/responses/OperationAccepted' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/migrations/preflight:
+    post:
+      tags: [Infrastructure]
+      operationId: runMigrationPreflight
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [releaseId]
+              properties:
+                releaseId: { type: string }
+      responses:
+        '202': { $ref: '#/components/responses/OperationAccepted' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /backups:
+    post:
+      tags: [Recovery]
+      operationId: createBackup
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [password, destination]
+              properties:
+                password: { type: string, writeOnly: true, minLength: 12 }
+                destination: { type: string, description: Controller-local validated export path }
+      responses:
+        '202': { $ref: '#/components/responses/OperationAccepted' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /restores/validate:
+    post:
+      tags: [Recovery]
+      operationId: validateRestore
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [archivePath, password]
+              properties:
+                archivePath: { type: string }
+                destination: { type: string, description: Optional absolute replacement directory on the controller }
+                password: { type: string, writeOnly: true }
+                replacementPostgres:
+                  type: object
+                  additionalProperties: false
+                  required: [profile, tlsMode, connectionUri, dexConnectionUri]
+                  properties:
+                    profile: { const: postgres }
+                    tlsMode: { const: verify-full }
+                    connectionUri: { type: string, writeOnly: true }
+                    dexConnectionUri: { type: string, writeOnly: true }
+      responses:
+        '202': { $ref: '#/components/responses/OperationAccepted' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /recovery/{reviewId}:
+    get:
+      tags: [Recovery]
+      operationId: getRecoveryReview
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+      responses:
+        '200':
+          description: Current identity, provider, workspace, authorization, and retention review state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecoveryReview' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Recovery]
+      operationId: updateRecoveryReview
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [section, decisions]
+              properties:
+                section: { type: string, enum: [identities, provider, authorization_retention] }
+                decisions: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Review evidence recorded; copied authority is not restored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecoveryReview' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /recovery/{reviewId}/activate:
+    post:
+      tags: [Recovery]
+      operationId: activateRecovery
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - $ref: '#/components/parameters/CSRFToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202': { $ref: '#/components/responses/OperationAccepted' }
+        default: { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    workspaceHelper:
+      type: http
+      scheme: bearer
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-shiftbox_session
+
+  parameters:
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema: { type: string, minLength: 32 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 16, maxLength: 128 }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: { type: string, pattern: '^"[0-9]+"$' }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    OperationId:
+      name: operationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TemplateId:
+      name: templateId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ReviewId:
+      name: reviewId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    OperationAccepted:
+      description: Durable operation accepted or existing idempotent operation returned
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Operation' }
+    Error:
+      description: Stable problem response
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    SessionTimeout:
+      type: object
+      additionalProperties: false
+      required: [value, unit]
+      properties:
+        value: { type: integer, minimum: 1, maximum: 576000, description: A duration of up to 400 days in the selected unit. }
+        unit: { type: string, enum: [minutes, hours, days] }
+    SessionTimeoutSettings:
+      type: object
+      required: [value, unit, version]
+      properties:
+        value: { type: integer, minimum: 1, maximum: 576000 }
+        unit: { type: string, enum: [minutes, hours, days] }
+        version: { type: integer, minimum: 1 }
+    TemplateCatalogChoice:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        providerKind: { type: string, enum: [utm, ec2] }
+        architecture: { type: string, enum: [amd64, arm64] }
+        amiId: { type: string, description: Verified regional AWS image identifier. }
+        minimumDiskGiB: { type: integer, minimum: 1 }
+        platformArtifactId: { type: string, description: AMI owned by an AWS resource profile. }
+        amiFamily: { type: string, description: Family followed by the image or resource profile. }
+        imageCreatedAtUnixMillis: { type: integer, format: int64, description: AWS creation time for a validated family member. }
+    SetupStatus:
+      type: object
+      required: [state, localOnly, completedSteps, availableSteps]
+      properties:
+        state: { type: string, enum: [bootstrap, configuring, active, recovery, blocked] }
+        localOnly: { type: boolean }
+        completedSteps: { type: array, items: { type: string } }
+        availableSteps: { type: array, items: { type: string } }
+        blockingProblem: { oneOf: [{ $ref: '#/components/schemas/Problem' }, { type: 'null' }] }
+
+    SQLiteProfileInput:
+      type: object
+      additionalProperties: false
+      required: [profile]
+      properties:
+        profile: { const: sqlite }
+
+    PostgresProfileInput:
+      type: object
+      additionalProperties: false
+      required: [profile, connectionUri, tlsMode]
+      properties:
+        profile: { const: postgres }
+        connectionUri: { type: string, writeOnly: true }
+        tlsMode: { type: string, enum: [verify-full] }
+        setupConnectionUri: { type: [string, 'null'], writeOnly: true }
+
+    SessionView:
+      type: object
+      required: [user, mode, csrfToken, permissions, installationState, expiresAt]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        mode: { type: string, enum: [bootstrap_restricted, password_change, normal, recovery_review] }
+        csrfToken: { type: string, writeOnly: true }
+        permissions: { type: array, items: { type: string } }
+        installationState: { type: string }
+        expiresAt: { type: string, format: date-time }
+        externalAuthorizationDueAt: { type: [string, 'null'], format: date-time }
+        organizationSecretScopeId:
+          type: string
+          format: uuid
+          description: Active organization scope for administrators permitted to manage organization secrets.
+        recoveryReviewId:
+          type: string
+          format: uuid
+          description: Current review available to an authenticated recovery administrator.
+
+    User:
+      type: object
+      required: [id, primaryEmail, role, membershipState, credentialMode, version]
+      properties:
+        id: { type: string, format: uuid }
+        primaryEmail: { type: string, format: email }
+        displayName: { type: [string, 'null'] }
+        role: { type: string, enum: [member, administrator] }
+        membershipState: { type: string, enum: [pending, active, disabled] }
+        credentialMode: { type: string, enum: [local, external] }
+        mustChangePassword: { type: boolean }
+        version: { type: integer, minimum: 1 }
+
+    ProbeResult:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string, enum: [code-server] }
+        status: { type: string, enum: [healthy, error] }
+
+    Workspace:
+      type: object
+      required: [id, ownerId, templateId, templateRevision, desiredState, observedState, generation, resources, lifecycle, version]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, description: Workspace display name. Older workspaces display their ID. }
+        ownerId: { type: string, format: uuid }
+        templateId: { type: string, format: uuid }
+        templateRevision: { type: integer, minimum: 1 }
+        providerKind: { type: string, enum: [utm, ec2] }
+        platformRelease: { type: string }
+        desiredState: { type: string, enum: [stopped, running, deleted] }
+        observedState: { type: string, enum: [unknown, provisioning, stopped, starting, running, unreachable, stopping, deleting, deleted, failed] }
+        generation: { type: integer, minimum: 1 }
+        resources: { $ref: '#/components/schemas/Resources' }
+        currentOperationId: { type: [string, 'null'], format: uuid }
+        launchOperationId:
+          type: string
+          format: uuid
+          description: Initial launch operation when available on workspace detail.
+        lifecycle: { $ref: '#/components/schemas/WorkspaceLifecycle' }
+        previewPorts:
+          type: array
+          items: { type: integer, minimum: 1, maximum: 65535 }
+        probes:
+          description: Recent probe results for the current guest generation, included on workspace detail only.
+          type: array
+          items: { $ref: '#/components/schemas/ProbeResult' }
+        services:
+          description: Services with a recent healthy probe that the caller can enter, included on workspace list items.
+          type: array
+          items: { type: string, enum: [code-server] }
+        canOpenPreviews: { type: boolean }
+        canEditPreviewPorts: { type: boolean }
+        canInterruptDeployment:
+          type: boolean
+          description: Included on workspace detail. The caller can use the stop action to cancel an active deployment and start shutdown.
+        canStart:
+          type: boolean
+          description: Included on workspace detail. The caller has start permission and a retained provider VM.
+        imageCache: { $ref: '#/components/schemas/WorkspaceImageCache' }
+        lastActivityAt: { type: [string, 'null'], format: date-time }
+        retentionDeadline: { type: [string, 'null'], format: date-time }
+        keepAlivePolicy: { $ref: '#/components/schemas/KeepAlivePolicy' }
+        keepAliveMinutes:
+          type: integer
+          minimum: 0
+          description: Effective inactivity shutdown period, included on detail only. Zero means Unlimited.
+        keepAliveOverrideMinutes:
+          type: [integer, 'null']
+          minimum: 0
+          description: Owner selection; null inherits the current default. Removed selections also resolve to the default.
+        canEditKeepAlive: { type: boolean }
+        inactivityShutdownAt: { type: [string, 'null'], format: date-time }
+        inactivityMinutes: { type: integer, minimum: 0 }
+        maintenance:
+          type: object
+          required: [releaseId, deadline, state, operationId]
+          properties:
+            releaseId: { type: string }
+            deadline: { type: string, format: date-time }
+            state: { type: string, enum: [pending, waiting_safe, updating, verified, restoring_state, failed] }
+            operationId: { type: [string, 'null'], format: uuid }
+        failure: { oneOf: [{ $ref: '#/components/schemas/Problem' }, { type: 'null' }] }
+        version: { type: integer, minimum: 1 }
+
+    WorkspaceLifecycleMilestone:
+      type: string
+      enum: [unknown, provisioned, stopped, vm-running, container-ready, ready, repair-ready, updated, unreachable, deleted]
+
+    WorkspaceLifecycle:
+      type: object
+      required: [current, next, mode, workflowOperationId]
+      properties:
+        current: { $ref: '#/components/schemas/WorkspaceLifecycleMilestone' }
+        next:
+          oneOf:
+            - { $ref: '#/components/schemas/WorkspaceLifecycleMilestone' }
+            - { type: string, const: failed }
+            - { type: 'null' }
+        mode: { type: string, enum: [settled, transitioning, timed_out, failed] }
+        workflowOperationId: { type: [string, 'null'], format: uuid }
+
+    Resources:
+      type: object
+      required: [cpuCount, memoryMiB, diskMiB]
+      properties:
+        cpuCount: { type: integer, minimum: 1 }
+        memoryMiB: { type: integer, minimum: 1 }
+        diskMiB: { type: integer, minimum: 1 }
+
+    WorkspaceImageCache:
+      type: object
+      required: [warningActive, updateAvailable]
+      properties:
+        warningActive: { type: boolean }
+        warningMessage: { type: string }
+        updateAvailable: { type: boolean }
+        operationId: { type: string, format: uuid }
+        bytes:
+          type: object
+          required: [cachedBytes, upstreamBytes, metadataBytes, streamedBytes]
+          properties:
+            cachedBytes: { type: string }
+            upstreamBytes: { type: string }
+            metadataBytes: { type: string }
+            streamedBytes: { type: string }
+        references:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            required: [origin, repository, tag, resolvedDigest, warningActive]
+            properties:
+              origin: { type: string }
+              repository: { type: string }
+              tag: { type: string }
+              resolvedDigest: { type: string }
+              verifiedDigest: { type: string }
+              verifiedAt: { type: string, format: date-time }
+              warningActive: { type: boolean }
+    ImageCacheActivationOperation:
+      allOf:
+        - $ref: '#/components/schemas/Operation'
+        - type: object
+          required: [operationId]
+          properties:
+            operationId: { type: string, format: uuid }
+    ImageCacheSettings:
+      type: object
+      additionalProperties: false
+      required: [enabled, storagePath, maxBytes, volumeHighPercent, volumeLowPercent]
+      properties:
+        enabled: { type: boolean }
+        storagePath: { type: string, description: Canonical absolute path in dedicated storage. }
+        maxBytes:
+          type: [string, 'null']
+          pattern: '^[1-9][0-9]{0,18}$'
+          description: Positive integer bytes within signed 64-bit range. Required when retaining content.
+        volumeHighPercent: { type: integer, minimum: 2, maximum: 99 }
+        volumeLowPercent: { type: integer, minimum: 1, maximum: 98 }
+    ImageCacheSnapshot:
+      type: object
+      required: [version, desired, effective, activation, health, usage, effectiveness, retiredLocations, cachedImages, builtImages]
+      properties:
+        version: { type: integer, minimum: 1 }
+        builtImages: { $ref: '#/components/schemas/BuiltImagePolicy' }
+        desired: { $ref: '#/components/schemas/ImageCacheSettings' }
+        effective:
+          allOf:
+            - type: object
+              required: [version]
+              properties:
+                version: { type: integer, minimum: 1 }
+            - $ref: '#/components/schemas/ImageCacheSettings'
+        activation:
+          type: object
+          required: [phase, error]
+          properties:
+            phase: { type: string, enum: [disabled, staged, draining, ready, failed] }
+            error: { type: [string, 'null'] }
+            operationId: { type: string, format: uuid }
+        health:
+          type: object
+          required: [state, observedAt, detail, guestEndpoint, capabilities]
+          properties:
+            state: { type: string, enum: [ready, disabled, degraded, unavailable, pressure, unknown] }
+            observedAt: { type: [string, 'null'], format: date-time }
+            detail: { type: [string, 'null'] }
+            guestEndpoint: { type: [string, 'null'], format: uri }
+            capabilities:
+              type: array
+              items: { type: string }
+        usage:
+          oneOf: [{ $ref: '#/components/schemas/ImageCacheUsage' }, { type: 'null' }]
+        effectiveness:
+          oneOf: [{ $ref: '#/components/schemas/ImageCacheEffectiveness' }, { type: 'null' }]
+        retiredLocations:
+          type: array
+          items:
+            type: object
+            required: [storagePath, bytes, retiredAt]
+            properties:
+              storagePath: { type: string }
+              bytes: { type: string }
+              retiredAt: { type: string, format: date-time }
+        cachedImages:
+          type: array
+          items:
+            type: object
+            required: [reference, digest, availability, source, addedAt, layerBytes]
+            properties:
+              reference: { type: string, description: Public registry reference or the project display name for a published devcontainer image. }
+              digest: { type: string }
+              architecture: { type: string }
+              availability: { type: string, enum: [complete, partial] }
+              source: { type: string, enum: [registry, devcontainer] }
+              addedAt: { type: string, format: date-time, description: When the manifest was retained or the devcontainer build was published. }
+              layerBytes:
+                type: array
+                description: Retained bytes in manifest layer order. Null means the layer is unavailable. Shared layers can appear in more than one row.
+                items: { type: [string, 'null'] }
+    BuiltImagePolicy:
+      type: object
+      required: [enabled, version, availability]
+      properties:
+        enabled: { type: boolean }
+        version: { type: integer, minimum: 1 }
+        availability: { type: string, enum: [available, unavailable, disabled] }
+    ImageCacheUsage:
+      type: object
+      required: [retainedBytes, temporaryBytes, reservedBytes, retiredBytes, budgetBytes, volumeTotalBytes, volumeUsedBytes, volumeAvailableBytes, activeTransfers, lastEvictionAt, lastEvictedBytes, pressureReason, observedAt]
+      properties:
+        retainedBytes: { type: [string, 'null'] }
+        temporaryBytes: { type: [string, 'null'] }
+        reservedBytes: { type: [string, 'null'] }
+        retiredBytes: { type: [string, 'null'] }
+        budgetBytes: { type: [string, 'null'] }
+        volumeTotalBytes: { type: [string, 'null'] }
+        volumeUsedBytes: { type: [string, 'null'] }
+        volumeAvailableBytes: { type: [string, 'null'] }
+        activeTransfers: { type: integer, minimum: 0 }
+        lastEvictionAt: { type: [string, 'null'], format: date-time }
+        lastEvictedBytes: { type: [string, 'null'] }
+        pressureReason: { type: [string, 'null'] }
+        observedAt: { type: string, format: date-time }
+    ImageCacheEffectiveness:
+      type: object
+      required: [windowStartedAt, windowEndedAt, cachedBytes, upstreamBytes, metadataBytes, streamedBytes, directBytes, guestLocalBytes, controllerReusePercent]
+      properties:
+        windowStartedAt: { type: string, format: date-time }
+        windowEndedAt: { type: string, format: date-time }
+        cachedBytes: { type: [string, 'null'] }
+        upstreamBytes: { type: [string, 'null'] }
+        metadataBytes: { type: [string, 'null'] }
+        streamedBytes: { type: [string, 'null'] }
+        directBytes: { type: [string, 'null'] }
+        guestLocalBytes: { type: [string, 'null'] }
+        controllerReusePercent: { type: [number, 'null'], minimum: 0, maximum: 100 }
+
+    KeepAlivePolicy:
+      type: object
+      description: Administrator workspace inactivity policy. Zero minutes means Unlimited. A finite maximum requires finite choices within it.
+      required: [maximumMinutes, allowedMinutes, defaultMinutes, version]
+      properties:
+        maximumMinutes: { type: integer, minimum: 0, maximum: 153722867 }
+        allowedMinutes:
+          type: array
+          minItems: 1
+          maxItems: 64
+          uniqueItems: true
+          items: { type: integer, minimum: 0, maximum: 153722867 }
+        defaultMinutes: { type: integer, minimum: 0, maximum: 153722867 }
+        version: { type: integer, minimum: 1 }
+
+    CapacityBudget:
+      type: object
+      description: Each limit is independent. Zero means Unlimited and disables capacity budget enforcement for that resource. Fresh installations default to Unlimited.
+      required: [cpuCount, memoryMiB, diskMiB]
+      properties:
+        cpuCount: { type: integer, minimum: 0, default: 0 }
+        memoryMiB: { type: integer, minimum: 0, default: 0 }
+        diskMiB: { type: integer, minimum: 0, default: 0 }
+
+    Operation:
+      type: object
+      required: [id, type, status, steps, createdAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        workspaceId: { type: [string, 'null'], format: uuid }
+        type: { type: string }
+        status: { type: string, enum: [pending, running, waiting, succeeded, failed, cancelled] }
+        currentStep: { type: [string, 'null'] }
+        steps: { type: array, items: { $ref: '#/components/schemas/OperationStep' } }
+        problem: { oneOf: [{ $ref: '#/components/schemas/Problem' }, { type: 'null' }] }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: [string, 'null'], format: date-time }
+        finishedAt: { type: [string, 'null'], format: date-time }
+        version: { type: integer, minimum: 1 }
+        launchPerformance:
+          description: Launch-only timing details. Guest events are guest reported.
+          $ref: '#/components/schemas/LaunchPerformance'
+
+    LaunchPerformance:
+      type: object
+      required: [steps, events]
+      properties:
+        timeToIdeReadyMs: { type: integer, minimum: 0 }
+        timeToSetupCompleteMs: { type: integer, minimum: 0 }
+        vmRunningToGuestContactMs: { type: integer, minimum: 0 }
+        steps:
+          type: array
+          items:
+            type: object
+            required: [key, label, status, durationMs]
+            properties:
+              key: { type: string }
+              label: { type: string }
+              status: { type: string, enum: [pending, active, succeeded, failed, skipped] }
+              startedAt: { type: string, format: date-time }
+              durationMs: { type: integer, minimum: 0 }
+        events:
+          type: array
+          items:
+            type: object
+            required: [id, source, phase, outcome, occurredAt, durationMs]
+            properties:
+              id: { type: string }
+              source: { type: string, enum: [controller, provider, guest] }
+              phase: { type: string }
+              outcome: { type: string, enum: [succeeded, failed, observed] }
+              occurredAt: { type: string, format: date-time }
+              durationMs: { type: integer, minimum: 0 }
+              reasonCode: { type: string }
+        cache:
+          type: object
+          required: [requests, cachedRequests, failedRequests, rateLimitedRequests, cachedBytes, upstreamBytes, windowMs]
+          properties:
+            requests: { type: integer, minimum: 1 }
+            cachedRequests: { type: integer, minimum: 0 }
+            failedRequests: { type: integer, minimum: 0 }
+            rateLimitedRequests: { type: integer, minimum: 0 }
+            cachedBytes: { type: integer, minimum: 0 }
+            upstreamBytes: { type: integer, minimum: 0 }
+            windowMs: { type: integer, minimum: 0 }
+
+    OperationStep:
+      type: object
+      required: [key, label, status, index]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        index: { type: integer, minimum: 0 }
+        status: { type: string, enum: [pending, active, succeeded, failed, skipped] }
+        detail: { type: [string, 'null'] }
+        problem: { oneOf: [{ $ref: '#/components/schemas/Problem' }, { type: 'null' }] }
+        timeout:
+          type: object
+          description: Retained lifecycle transition timeout, including after late completion.
+          required: [occurredAt, reason]
+          properties:
+            occurredAt: { type: string, format: date-time }
+            reason: { type: string, minLength: 1, maxLength: 4096 }
+
+    OperationEvent:
+      type: object
+      required: [eventId, operationId, operationVersion, eventType, occurredAt]
+      properties:
+        eventId: { type: string }
+        operationId: { type: string, format: uuid }
+        operationVersion: { type: integer, minimum: 1 }
+        eventType: { type: string, enum: [operation.updated, step.updated, authorization.revoked, heartbeat] }
+        occurredAt: { type: string, format: date-time }
+        operation: { $ref: '#/components/schemas/Operation' }
+
+    ProjectTemplate:
+      type: object
+      required: [id, ownerId, name, state, currentRevision, repositoryUrl, resourceProfileId, version]
+      properties:
+        id: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid }
+        ownerName: { type: string, description: Current owner display name or email. }
+        resourceProfileName: { type: string }
+        platformImageName: { type: string }
+        providerKind: { type: string, enum: [utm, ec2] }
+        name: { type: string }
+        state: { type: string, enum: [active, archived] }
+        currentRevision: { type: integer, minimum: 1 }
+        repositoryUrl: { type: string, format: uri }
+        resourceProfileId: { type: string, format: uuid }
+        secretNames: { type: array, items: { type: string } }
+        launchGrants:
+          description: Active launch grants visible only to the template owner and administrators.
+          type: array
+          items:
+            type: object
+            required: [userId, email]
+            properties:
+              userId: { type: string, format: uuid }
+              email: { type: string, format: email }
+        version: { type: integer, minimum: 1 }
+
+    TemplateInput:
+      type: object
+      additionalProperties: false
+      required: [name, repositoryUrl, resourceProfileId]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        repositoryUrl: { type: string, format: uri }
+        repositoryRef: { type: [string, 'null'] }
+        devcontainerPath: { type: string, default: .devcontainer/devcontainer.json }
+        resourceProfileId: { type: string, format: uuid }
+        platformArtifactId: { type: string, format: uuid, description: Required for UTM; AWS derives the AMI from the resource profile. }
+        networkPolicyId: { type: [string, 'null'], format: uuid }
+        secretNames: { type: array, items: { type: string } }
+
+    SecretMetadata:
+      type: object
+      required: [scope, scopeId, name, explicitEmpty, updatedAt]
+      properties:
+        scope: { type: string, enum: [user, template, organization] }
+        scopeId: { type: string, format: uuid }
+        name: { type: string }
+        explicitEmpty: { type: boolean }
+        fallbackScope: { type: [string, 'null'], enum: [user, template, organization, null] }
+        updatedAt: { type: string, format: date-time }
+
+    GitAuthorizationView:
+      type: object
+      required: [provider, state, version]
+      properties:
+        provider: { const: github.com }
+        providerUserId: { type: [string, 'null'] }
+        state: { type: string, enum: [connected, refreshing, reconnect_required, revoked] }
+        accessExpiresAt: { type: [string, 'null'], format: date-time }
+        version: { type: integer, minimum: 1 }
+
+    AuditEvent:
+      type: object
+      required: [id, occurredAt, actorType, action, resourceType, outcome]
+      properties:
+        id: { type: string, format: uuid }
+        occurredAt: { type: string, format: date-time }
+        actorType: { type: string, enum: [user, guest, controller, local_recovery] }
+        actorId: { type: [string, 'null'] }
+        action: { type: string }
+        resourceType: { type: string }
+        resourceId: { type: [string, 'null'] }
+        outcome: { type: string }
+        reasonCode: { type: [string, 'null'] }
+        metadata: { type: object, additionalProperties: true, description: Redacted bounded context }
+
+    BrowserCertificateDetails:
+      type: object
+      additionalProperties: false
+      required: [subject, issuer, dnsNames, ipAddresses, emailAddresses, uris, notBefore, notAfter, serialNumber, fingerprintSha256, signatureAlgorithm, publicKeyAlgorithm, version, chainLength, status]
+      properties:
+        subject: { type: string }
+        issuer: { type: string }
+        dnsNames: { type: array, items: { type: string } }
+        ipAddresses: { type: array, items: { type: string } }
+        emailAddresses: { type: array, items: { type: string } }
+        uris: { type: array, items: { type: string } }
+        notBefore: { type: string, format: date-time }
+        notAfter: { type: string, format: date-time }
+        serialNumber: { type: string, description: Hexadecimal serial number }
+        fingerprintSha256: { type: string, description: SHA-256 of the DER leaf certificate, pattern: '^[0-9a-f]{64}$' }
+        signatureAlgorithm: { type: string }
+        publicKeyAlgorithm: { type: string }
+        version: { type: integer }
+        chainLength: { type: integer, minimum: 1 }
+        status:
+          type: string
+          description: Time validity of the leaf; expiring means 30 days or less remain
+          enum: [valid, expiring, expired, not_yet_valid]
+
+    InfrastructureStatus:
+      type: object
+      required: [provider, capacity, conditions, version]
+      properties:
+        provider: { $ref: '#/components/schemas/InfrastructureProvider' }
+        capacity: { $ref: '#/components/schemas/CapacityBudget' }
+        keepAlivePolicy: { $ref: '#/components/schemas/KeepAlivePolicy' }
+        launchLogRetention:
+          type: object
+          required: [days, version]
+          properties:
+            days: { type: integer, minimum: 1, maximum: 3650, default: 30 }
+            version: { type: integer, minimum: 1 }
+        conditions:
+          type: array
+          items:
+            type: object
+            required: [key, severity, active]
+            properties:
+              key: { type: string }
+              severity: { type: string, enum: [info, warning, critical] }
+              active: { type: boolean }
+              detail: { type: string }
+        version: { type: integer, minimum: 1 }
+
+    InfrastructureProvider:
+      type: object
+      required: [name, version, architecture, networkModes]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        architecture: { type: string }
+        architectures:
+          type: array
+          items: { type: string }
+        networkModes:
+          type: [array, 'null']
+          items: { type: string }
+        instanceTypes:
+          type: array
+          description: EC2 types offered in the configured workspace Availability Zone.
+          items:
+            type: object
+            required: [name, architecture, cpuCount, memoryMiB]
+            properties:
+              name: { type: string }
+              architecture: { type: string, enum: [amd64, arm64] }
+              cpuCount: { type: integer, minimum: 1 }
+              memoryMiB: { type: integer, minimum: 1 }
+        minimumDiskGiB: { type: integer, minimum: 1 }
+        maximumDiskGiB: { type: integer, minimum: 1 }
+        officialImage:
+          type: object
+          description: The official release image configured for this deployment.
+          required: [releaseId, region, amiId]
+          properties:
+            releaseId: { type: string }
+            region: { type: string }
+            amiId: { type: string }
+
+    PlatformArtifactInput:
+      type: object
+      additionalProperties: false
+      oneOf:
+        - required: [folder]
+        - required: [manifest]
+        - required: [officialManifest]
+      properties:
+        folder:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Absolute path on the controller containing the UTM bundle and manifest.json.
+        manifest:
+          type: object
+          description: The Packer AMI manifest for a cloud EC2 controller.
+        officialManifest:
+          type: string
+          minLength: 1
+          description: The exact regional catalog JSON text from the configured ShiftBox release's support archive.
+        makeDefault: { type: boolean, default: false }
+        amiFamily:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+          description: Publish the validated EC2 image to this family without changing the default.
+
+    ResourceProfileInput:
+      type: object
+      additionalProperties: false
+      required: [name, diskMiB]
+      anyOf:
+        - required: [cpuCount, memoryMiB]
+        - required: [instanceType, platformArtifactId]
+        - required: [instanceType, amiFamily]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        cpuCount: { type: integer, minimum: 1, description: CPU count for manually sized providers. }
+        memoryMiB: { type: integer, minimum: 1, description: Memory for manually sized providers. }
+        diskMiB: { type: integer, minimum: 1, description: EC2 disk size must be a whole GiB expressed in MiB. }
+        platformArtifactId: { type: string, description: Approved platform AMI selected on the AWS profile. }
+        amiFamily: { type: string, description: Launch new workspaces with the newest compatible validated member. }
+        instanceType: { type: string, description: EC2 type offered in the workspace Availability Zone. }
+
+    ResourceProfileUpdate:
+      type: object
+      additionalProperties: false
+      required: [name, diskMiB, enabled]
+      anyOf:
+        - required: [cpuCount, memoryMiB]
+        - required: [instanceType, platformArtifactId]
+        - required: [instanceType, amiFamily]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        cpuCount: { type: integer, minimum: 1 }
+        memoryMiB: { type: integer, minimum: 1 }
+        diskMiB: { type: integer, minimum: 1 }
+        platformArtifactId: { type: string, description: Approved platform AMI selected on the AWS profile. }
+        amiFamily: { type: string, description: Launch new workspaces with the newest compatible validated member. }
+        instanceType: { type: string }
+        enabled: { type: boolean }
+
+    ResourceProfile:
+      type: object
+      required: [id, name, cpuCount, memoryMiB, diskMiB, enabled, version]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        cpuCount: { type: integer }
+        memoryMiB: { type: integer }
+        diskMiB: { type: integer }
+        platformArtifactId: { type: string, description: Approved platform AMI selected on the AWS profile. }
+        amiFamily: { type: string, description: Family followed by the AWS profile. }
+        instanceType: { type: string }
+        enabled: { type: boolean }
+        platformImageName: { type: string }
+        version: { type: integer, minimum: 1 }
+
+    NetworkPolicyInput:
+      type: object
+      additionalProperties: false
+      required: [name, mode]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        mode: { type: string, enum: [all, no_network, allowlist] }
+        rules:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [destination, transport, port]
+            properties:
+              destination: { type: string }
+              transport: { type: string, enum: [tcp, udp] }
+              port: { type: integer, minimum: 1, maximum: 65535 }
+
+    MaintenanceCampaign:
+      type: object
+      required: [id, releaseId, deadline, state, operationId]
+      properties:
+        id: { type: string, format: uuid }
+        releaseId: { type: string }
+        deadline: { type: string, format: date-time }
+        state: { type: string, enum: [scheduled, active, blocked, completed, cancelled] }
+        operationId: { type: string, format: uuid }
+
+    RecoveryReview:
+      type: object
+      required: [id, state, restoreOperationId, sections, version]
+      properties:
+        id: { type: string, format: uuid }
+        state: { type: string, enum: [identity_review, provider_reconcile, authorization_review, ready, activated, blocked] }
+        restoreOperationId: { type: string, format: uuid }
+        sections:
+          type: object
+          additionalProperties: true
+          properties:
+            identities:
+              type: array
+              description: Restored identities available during identity review.
+              items:
+                type: object
+                required: [id, primaryEmail, role, membershipState, credentialMode]
+                properties:
+                  id: { type: string, format: uuid }
+                  primaryEmail: { type: string, format: email }
+                  role: { type: string, enum: [member, administrator] }
+                  membershipState: { type: string, enum: [pending, active, disabled] }
+                  credentialMode: { type: string, enum: [local, external] }
+        version: { type: integer, minimum: 1 }
+
+    NoticeInput:
+      type: object
+      additionalProperties: false
+      required: [severity, title, body]
+      properties:
+        severity: { type: string, enum: [info, warning, critical] }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        body: { type: string, minLength: 1, maxLength: 4000 }
+        effectiveAt: { type: [string, 'null'], format: date-time }
+        expiresAt: { type: [string, 'null'], format: date-time }
+
+    Notice:
+      allOf:
+        - $ref: '#/components/schemas/NoticeInput'
+        - type: object
+          required: [id, createdAt]
+          properties:
+            id: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            readAt: { type: [string, 'null'], format: date-time }
+            dismissedAt: { type: [string, 'null'], format: date-time }
+
+    Problem:
+      type: object
+      required: [type, title, status, code, requestId]
+      properties:
+        type: { type: string, format: uri-reference }
+        title: { type: string }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        code: { type: string, pattern: '^[a-z0-9_.-]+$' }
+        detail: { type: string }
+        requestId: { type: string }
+        retryable: { type: boolean, default: false }
+        fields:
+          type: object
+          additionalProperties: { type: string }

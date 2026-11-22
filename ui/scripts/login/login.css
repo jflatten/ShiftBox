@@ -1,0 +1,25 @@
+header {
+  display: flex;
+  align-items: center;
+  height: 3rem;
+  padding-inline: 1rem;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-default);
+}
+
+.login {
+  padding-block: clamp(3rem, 12vh, 8rem) 3rem;
+}
+
+.session-notice:not(:target) {
+  display: none;
+}
+
+.brand-dark,
+[data-mantine-color-scheme='dark'] .brand-light {
+  display: none;
+}
+
+[data-mantine-color-scheme='dark'] .brand-dark {
+  display: block;
+}

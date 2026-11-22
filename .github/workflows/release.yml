@@ -1,0 +1,322 @@
+name: Public AWS release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-aws-release
+  cancel-in-progress: false
+
+env:
+  SHIFTBOX_RELEASE_MAINTAINERS: ${{ vars.SHIFTBOX_RELEASE_MAINTAINERS }}
+  SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+  AWS_REGION: us-east-2
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      source: ${{ steps.tag.outputs.source }}
+      channel: ${{ steps.tag.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify protected event and fresh source identity
+        id: tag
+        run: |
+          channel=$(platform/release/publish.sh check-event)
+          tag=${GITHUB_REF#refs/tags/}
+          git fetch --no-tags origin "+refs/tags/$tag:refs/tags/$tag" \
+            "+refs/heads/main:refs/remotes/origin/main"
+          source=$(platform/release/publish.sh check-source "$tag" "$GITHUB_SHA")
+          test "$(git rev-parse HEAD)" = "$source"
+          printf 'tag=%s\nsource=%s\nchannel=%s\n' "$tag" "$source" "$channel" >> "$GITHUB_OUTPUT"
+      - name: Require passed CI on the exact source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ steps.tag.outputs.source }}
+        run: |
+          for _attempt in $(seq 1 60); do
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SOURCE_COMMIT&per_page=100")
+            if jq -e --arg sha "$SOURCE_COMMIT" \
+            'any(.workflow_runs[]; .head_sha == $sha and .conclusion == "success")' <<< "$runs" > /dev/null; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'The exact source commit has no successful baseline CI run.' >&2
+          exit 1
+
+  candidate:
+    if: needs.preflight.outputs.channel == 'rc'
+    needs: preflight
+    # The approved runner must be able to reach the private Packer build network.
+    runs-on: ${{ vars.SHIFTBOX_RELEASE_CANDIDATE_RUNNER || 'ubuntu-latest' }}
+    environment: aws-release-candidate
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      actions: read
+      packages: write
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.source }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check repository policy and restore prior candidate stage
+        id: stage
+        env:
+          SHIFTBOX_RELEASE_SETTINGS_TOKEN: ${{ secrets.SHIFTBOX_RELEASE_SETTINGS_TOKEN }}
+        run: |
+          git fetch --no-tags origin "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG" \
+            "+refs/heads/main:refs/remotes/origin/main"
+          test "$(platform/release/publish.sh check-source "$RELEASE_TAG" "$GITHUB_SHA")" = "$SOURCE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          platform/release/publish.sh verify-settings
+          mkdir -p "$RUNNER_TEMP/candidate/assets"
+          if gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "release-assets-$RELEASE_TAG" \
+            --dir "$RUNNER_TEMP/candidate/assets"; then
+            manifest="$RUNNER_TEMP/candidate/assets/distribution-manifest.json"
+            platform/release/manifest.sh validate "$manifest" "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID"
+            platform/release/manifest.sh verify-assets "$manifest" "$RUNNER_TEMP/candidate/assets"
+            printf 'restored=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'restored=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Validate configured and scoped publisher inputs
+        if: steps.stage.outputs.restored == 'false'
+        env:
+          APPROVED_RUNNER: ${{ vars.SHIFTBOX_RELEASE_CANDIDATE_RUNNER }}
+          PACKER_INPUTS: ${{ vars.SHIFTBOX_RELEASE_PACKER_INPUTS_PATH }}
+          GUEST_SIGNING_PUBLIC_KEY: ${{ vars.SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY_PATH }}
+          HOST_AMIS: ${{ vars.SHIFTBOX_RELEASE_HOST_AMIS }}
+          TEMPLATE_BUCKETS: ${{ vars.SHIFTBOX_RELEASE_TEMPLATE_BUCKETS }}
+          POSTGRES_IMAGE: ${{ vars.SHIFTBOX_RELEASE_POSTGRES_IMAGE }}
+          AMI_ROLE: ${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}
+          TEMPLATE_ROLE: ${{ vars.SHIFTBOX_RELEASE_TEMPLATE_ROLE_ARN }}
+        run: |
+          test -n "$APPROVED_RUNNER" && test -f "$PACKER_INPUTS" && test -f "$GUEST_SIGNING_PUBLIC_KEY"
+          test -n "$AMI_ROLE" && test -n "$TEMPLATE_ROLE" && test "$AMI_ROLE" != "$TEMPLATE_ROLE"
+          [[ "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
+          [[ "$POSTGRES_IMAGE" =~ ^docker\.io/library/postgres:17(-bookworm|-trixie|-bullseye)?@sha256:[0-9a-f]{64}$ ]]
+          jq -e 'keys == ["us-east-1","us-east-2","us-west-1","us-west-2"] and
+            all(.[]; test("^ami-([0-9a-f]{8}|[0-9a-f]{17})$"))' <<< "$HOST_AMIS" >/dev/null
+          jq -e 'keys == ["us-east-1","us-east-2","us-west-1","us-west-2"] and
+            all(.[]; test("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")) and ([.[]] | unique | length) == 4' \
+            <<< "$TEMPLATE_BUCKETS" > "$RUNNER_TEMP/candidate/buckets.json"
+          for tool in aws docker go packer cfn-lint cfn-guard; do
+            command -v "$tool" >/dev/null
+          done
+          packer init platform/packer/aws
+          platform/release/publish.sh reserve-candidate "$RELEASE_TAG" "$SOURCE_COMMIT"
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        if: steps.stage.outputs.restored == 'false'
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Build and verify the official AMIs in all four regions
+        if: steps.stage.outputs.restored == 'false'
+        env:
+          PACKER_INPUTS: ${{ vars.SHIFTBOX_RELEASE_PACKER_INPUTS_PATH }}
+          GUEST_SIGNING_PUBLIC_KEY: ${{ vars.SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY_PATH }}
+        run: |
+          export PUBLIC_AMI_BUILD=1 RELEASE_CANDIDATE="$RELEASE_TAG"
+          export RELEASE_PUBLISHER_ACCOUNT_ID="$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID"
+          umask 077
+          output="$RUNNER_TEMP/candidate/packer-output.log"
+          if ! platform/packer/aws/build-image.sh "$RELEASE_TAG" "$GUEST_SIGNING_PUBLIC_KEY" "$PACKER_INPUTS" > "$output" 2>&1; then
+            echo 'Packer failed. Review the protected runner log before retrying this candidate.' >&2
+            exit 1
+          fi
+          packer_manifest=$(sed -n 's/^AMI provenance manifest: //p' "$output")
+          rm -f -- "$output"
+          test -f "$packer_manifest"
+          stage="$RUNNER_TEMP/candidate/amis"
+          platform/release/amis.sh prepare "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" \
+            "$packer_manifest" "$stage"
+          platform/release/amis.sh share "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" \
+            "$packer_manifest" "$stage"
+      - name: Build the full controller and record its registry digest
+        if: steps.stage.outputs.restored == 'false'
+        env:
+          HOST_AMIS: ${{ vars.SHIFTBOX_RELEASE_HOST_AMIS }}
+          POSTGRES_IMAGE: ${{ vars.SHIFTBOX_RELEASE_POSTGRES_IMAGE }}
+        run: |
+          image=ghcr.io/jflatten/shiftbox
+          registry_config=$(mktemp -d)
+          trap 'rm -rf -- "$registry_config"' EXIT
+          printf '%s\n' "$GH_TOKEN" | docker --config "$registry_config" login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker --config "$registry_config" buildx build --platform linux/amd64 \
+            --file platform/container/Dockerfile --build-arg "RELEASE_CANDIDATE=$RELEASE_TAG" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \
+            --metadata-file "$RUNNER_TEMP/candidate/controller.json" \
+            --output "type=image,name=$image,push-by-digest=true,name-canonical=true,push=true" .
+          digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/candidate/controller.json")
+          jq -n --arg tag "$RELEASE_TAG" --arg source "$SOURCE_COMMIT" --arg publisher "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" \
+            --arg image "$image" --arg digest "$digest" --arg postgres "$POSTGRES_IMAGE" \
+            --argjson hosts "$HOST_AMIS" --slurpfile workspace "$RUNNER_TEMP/candidate/amis/workspace-images.json" '
+            {schemaVersion:1,candidateTag:$tag,sourceCommit:$source,runtimeCompatibility:$tag,publisherAccountId:$publisher,
+              controller:{repository:$image,digest:$digest,platform:"linux/amd64"},postgresImage:$postgres,
+              regions:($hosts | with_entries(.key as $region | .value = {hostAmiId:.value,workspaceImage:$workspace[0][$region]}))}
+          ' > "$RUNNER_TEMP/candidate/pins.json"
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        if: steps.stage.outputs.restored == 'false'
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_TEMPLATE_ROLE_ARN }}
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Validate the exact template and stage the candidate
+        if: steps.stage.outputs.restored == 'false'
+        run: |
+          stage="$RUNNER_TEMP/candidate"
+          platform/release/build-candidate.sh prepare "$stage/pins.json" "$stage/amis/catalog" docs/site "$stage/assets"
+          cfn-lint --regions us-east-1 us-east-2 us-west-1 us-west-2 -- "$stage/assets/shiftbox-aws-cloudformation.yaml"
+          cfn-guard validate --rules platform/cloudformation/aws/shiftbox.guard --data "$stage/assets/shiftbox-aws-cloudformation.yaml"
+          platform/release/templates.sh stage "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" "$RELEASE_TAG" \
+            "$stage/assets/shiftbox-aws-cloudformation.yaml" "$stage/buckets.json" > "$stage/locations.json"
+          platform/release/build-candidate.sh finalize "$stage/pins.json" "$stage/locations.json" "$stage/assets"
+      # Preserve the exact candidate across an initial GHCR visibility approval.
+      - uses: actions/upload-artifact@v7.0.2
+        if: steps.stage.outputs.restored == 'false'
+        with:
+          name: release-assets-${{ needs.preflight.outputs.tag }}
+          path: ${{ runner.temp }}/candidate/assets/
+          if-no-files-found: error
+      - name: Recheck the frozen template versions
+        run: |
+          stage="$RUNNER_TEMP/candidate/assets"
+          platform/release/templates.sh verify "$stage/distribution-manifest.json" "$stage/shiftbox-aws-cloudformation.yaml"
+      - name: Verify anonymous controller manifest and layers
+        run: |
+          manifest="$RUNNER_TEMP/candidate/assets/distribution-manifest.json"
+          image=$(jq -er '.controller.repository' "$manifest")
+          digest=$(jq -er '.controller.digest' "$manifest")
+          anonymous_config=$(mktemp -d)
+          trap 'rm -rf -- "$anonymous_config"' EXIT
+          platform/release/manifest.sh verify-controller "$image" "$digest"
+          docker --config "$anonymous_config" pull --platform linux/amd64 "$image@$digest"
+
+  qualify-stable:
+    if: needs.preflight.outputs.channel == 'stable'
+    needs: preflight
+    runs-on: ubuntu-latest
+    environment: aws-release-stable
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.source }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify independently recorded immutable candidate
+        run: |
+          git fetch --no-tags origin "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG" \
+            "+refs/heads/main:refs/remotes/origin/main"
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = tag
+          note=$(git for-each-ref --format='%(contents)' "refs/tags/$RELEASE_TAG")
+          candidate=$(sed -n 's/^candidate: //p' <<< "$note")
+          qualification=$(sed -n 's/^qualification: //p' <<< "$note")
+          [[ "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[1-9][0-9]*$ ]]
+          [[ "$qualification" =~ ^[0-9a-f]{40}$ ]]
+          test "${candidate%-rc.*}" = "$RELEASE_TAG"
+          git fetch --no-tags origin "+refs/tags/$candidate:refs/tags/$candidate"
+          test "$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")" = "$SOURCE_COMMIT"
+          test "$(git rev-parse --verify "refs/tags/$candidate^{commit}")" = "$SOURCE_COMMIT"
+          git merge-base --is-ancestor "$qualification" refs/remotes/origin/main
+          git show "$qualification:platform/manifests/qualification/$candidate.json" > "$RUNNER_TEMP/qualification.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$candidate" > "$RUNNER_TEMP/rc-release.json"
+          mkdir -p "$RUNNER_TEMP/stable-assets"
+          gh release download "$candidate" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/stable-assets" \
+            --pattern distribution-manifest.json --pattern install.sh --pattern shiftbox-aws-cloudformation.yaml \
+            --pattern shiftbox-aws-support.tar.gz
+          platform/release/promote.sh verify "$RUNNER_TEMP/stable-assets/distribution-manifest.json" \
+            "$RUNNER_TEMP/qualification.json" "$RUNNER_TEMP/stable-assets" "$RUNNER_TEMP/rc-release.json" \
+            "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID"
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_VERIFY_ROLE_ARN }}
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Recheck four public images and the exact hosted template
+        run: |
+          stage="$RUNNER_TEMP/stable-assets"
+          platform/release/promote.sh verify-live "$stage/distribution-manifest.json" "$stage/shiftbox-aws-cloudformation.yaml"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-assets-${{ needs.preflight.outputs.tag }}
+          path: ${{ runner.temp }}/stable-assets/
+          if-no-files-found: error
+          overwrite: true
+
+  publish:
+    needs: [preflight, candidate, qualify-stable]
+    if: always() && !cancelled() && needs.preflight.result == 'success' && ((needs.preflight.outputs.channel == 'rc' && needs.candidate.result == 'success') || (needs.preflight.outputs.channel == 'stable' && needs.qualify-stable.result == 'success'))
+    runs-on: ubuntu-latest
+    environment: ${{ needs.preflight.outputs.channel == 'rc' && 'aws-release-candidate' || 'aws-release-stable' }}
+    permissions:
+      contents: write
+      actions: read
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.source }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-assets-${{ needs.preflight.outputs.tag }}
+          path: ${{ runner.temp }}/release-assets/
+      - name: Verify current settings and reconcile the GitHub release
+        env:
+          SHIFTBOX_RELEASE_SETTINGS_TOKEN: ${{ secrets.SHIFTBOX_RELEASE_SETTINGS_TOKEN }}
+        run: |
+          git fetch --no-tags origin "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG" \
+            "+refs/heads/main:refs/remotes/origin/main"
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          platform/release/publish.sh verify-settings
+          stage="$RUNNER_TEMP/release-assets"
+          platform/release/manifest.sh validate "$stage/distribution-manifest.json" "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID"
+          platform/release/manifest.sh verify-assets "$stage/distribution-manifest.json" "$stage"
+          notes="$RUNNER_TEMP/release-notes.md"
+          jq -r '"## Launch ShiftBox on AWS\n\n", (.regions | to_entries[] |
+            "- [Launch in \(.key)](\(.value.templateLocation.quickCreateUrl))"),
+            "\nTemplate SHA-256: `\(.template.sha256)`\n",
+            "Controller: `\(.controller.repository)@\(.controller.digest)`\n"' "$stage/distribution-manifest.json" > "$notes"
+          cat platform/release/release-notes.md >> "$notes"
+          platform/release/publish.sh prepare-draft "$RELEASE_TAG" "$SOURCE_COMMIT" "$stage" "$notes"
+          platform/release/publish.sh finalize "$RELEASE_TAG" "$SOURCE_COMMIT" "$stage"

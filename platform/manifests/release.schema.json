@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "sha256"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "title": "ShiftBox release manifest",
+  "required": [
+    "schemaVersion",
+    "releaseId",
+    "controller",
+    "dex",
+    "utm",
+    "packerFork",
+    "ubuntu",
+    "guest",
+    "ide",
+    "protocolVersion"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "releaseId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "protocolVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "controller": {
+      "$ref": "#/$defs/component"
+    },
+    "dex": {
+      "$ref": "#/$defs/component"
+    },
+    "utm": {
+      "$ref": "#/$defs/component"
+    },
+    "packerFork": {
+      "$ref": "#/$defs/component"
+    },
+    "ubuntu": {
+      "$ref": "#/$defs/component"
+    },
+    "guest": {
+      "$ref": "#/$defs/component"
+    },
+    "ide": {
+      "$ref": "#/$defs/component"
+    }
+  }
+}

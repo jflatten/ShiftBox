@@ -1,0 +1,247 @@
+package workspace
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"slices"
+	"time"
+
+	"github.com/jflatten/ShiftBox/internal/operation"
+	"github.com/jflatten/ShiftBox/internal/provider"
+)
+
+var errGuestContactPending = errors.New("waiting for authenticated guest contact")
+
+var errGuestConfigurationPending = errors.New("waiting for guest configuration")
+
+// EnrollmentDelivery handles the private recovery image for one operation.
+type EnrollmentDelivery interface {
+	Deliver(context.Context, string, provider.Inventory, time.Time, string, string, string,
+		func(context.Context, provider.EnrollmentRequest) (provider.DeliveryResult, error)) (string, error)
+	CleanupDelivery(context.Context, string, provider.WorkspaceRef, string) error
+}
+
+// LaunchExecutor reconciles VM provisioning and authenticated initial enrollment.
+type LaunchExecutor struct {
+	provision                         *ProvisionExecutor
+	enrollment                        EnrollmentDelivery
+	mediaRoot, endpoint, pollEndpoint string
+	now                               func() time.Time
+	probeIDE                          IDEProbe
+}
+
+// NewLaunchExecutor binds launch workflow steps to the provider and enrollment service.
+func NewLaunchExecutor(store *Store, machines provider.Provider, enrollment EnrollmentDelivery,
+	mediaRoot, endpoint, pollEndpoint string, now func() time.Time, probe IDEProbe) *LaunchExecutor {
+	return &LaunchExecutor{provision: NewProvisionExecutor(store, machines), enrollment: enrollment,
+		mediaRoot: mediaRoot, endpoint: endpoint, pollEndpoint: pollEndpoint, now: now, probeIDE: probe}
+}
+
+// SetEC2BootstrapData prepares versioned, public user data for admitted EC2 launches.
+func (e *LaunchExecutor) SetEC2BootstrapData(build func(string) (string, error)) {
+	e.provision.bootstrapData = build
+}
+
+// Observe reconciles launch steps from provider inventory and authenticated guest evidence.
+func (e *LaunchExecutor) Observe(ctx context.Context, op operation.Operation, step operation.Step) (string, bool, error) {
+	if step.Key == "verify_ide" {
+		evidence, err := verifyIDE(ctx, e.provision.store.db, op, e.probeIDE)
+		return evidence, err == nil, err
+	}
+	if step.Key == "configure" || step.Key == "finish_setup" {
+		evidence, err := configurationEvidence(ctx, e.provision.store.db, op, step)
+		return evidence, err == nil, err
+	}
+	if step.Key != "enroll" {
+		return e.provision.Observe(ctx, op, step)
+	}
+	req, got, err := e.inspectEnrollment(ctx, op, step)
+	if err != nil {
+		return "", false, err
+	}
+	if req.BootstrapData != "" && got.Power != provider.Running {
+		return "", false, provider.ErrOutcomeUnknown
+	}
+	switch got.Power {
+	case provider.Stopped:
+		return "", false, nil
+	case provider.Running:
+		evidence, err := e.confirmContact(ctx, req)
+		return evidence, err == nil, err
+	default:
+		return "", false, provider.ErrOutcomeUnknown
+	}
+}
+
+// Apply advances the launch and rechecks the target after enrollment media attaches.
+func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step operation.Step) (string, error) {
+	if step.Key == "verify_ide" {
+		return verifyIDE(ctx, e.provision.store.db, op, e.probeIDE)
+	}
+	if step.Key == "configure" || step.Key == "finish_setup" {
+		return configurationEvidence(ctx, e.provision.store.db, op, step)
+	}
+	if step.Key != "enroll" {
+		return e.provision.Apply(ctx, op, step)
+	}
+	req, got, err := e.inspectEnrollment(ctx, op, step)
+	if err != nil {
+		return "", err
+	}
+	if req.BootstrapData != "" && got.Power != provider.Running {
+		return "", provider.ErrOutcomeUnknown
+	}
+	switch got.Power {
+	case provider.Running:
+		return e.confirmContact(ctx, req)
+	case provider.Stopped:
+	default:
+		return "", provider.ErrOutcomeUnknown
+	}
+	timed := e.provision.observeLaunchTiming(ctx, op.ID)
+	deliverStarted := time.Now()
+	_, err = e.enrollment.Deliver(ctx, op.ID, got, e.now(), e.mediaRoot, e.endpoint, e.pollEndpoint, e.provision.provider.DeliverEnrollment)
+	provider.ReportLaunchTiming(timed, "enrollment_delivery", deliverStarted, err)
+	if err != nil {
+		return "", err
+	}
+	// Recheck the workspace after the external attachment. Only this path,
+	// following confirmed grant delivery, can start an unenrolled VM.
+	current, err := e.provision.request(ctx, op, step)
+	if err != nil {
+		return "", err
+	}
+	if current != req {
+		return "", provider.ErrOwnershipMismatch
+	}
+	bootStarted := time.Now()
+	started, err := e.provision.provider.Start(timed, provider.StartRequest{Ref: req.Ref, OperationID: op.ID, NetworkMode: req.NetworkMode})
+	provider.ReportLaunchTiming(timed, "vm_start", bootStarted, err)
+	if err != nil {
+		return "", err
+	}
+	if err := verifyWorkspaceVM(req, started); err != nil {
+		return "", err
+	}
+	if started.Power != provider.Running {
+		return "", provider.ErrOutcomeUnknown
+	}
+	e.provision.markLaunchVMRunning(ctx, op.ID, started)
+	return e.confirmContact(ctx, req)
+}
+
+func configurationEvidence(ctx context.Context, db *sql.DB, op operation.Operation, step operation.Step) (string, error) {
+	var status, problem, container string
+	err := db.QueryRowContext(ctx, `SELECT status,problem,container_id FROM guest_dispatches WHERE operation_id=$1`, op.ID).
+		Scan(&status, &problem, &container)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errGuestConfigurationPending
+	}
+	if err != nil {
+		return "", err
+	}
+	// Workflows created before finish_setup must still wait for the terminal
+	// guest report during configure.
+	if step.Key == "configure" && container != "" && slices.ContainsFunc(op.Steps, func(s operation.Step) bool {
+		return s.Key == "finish_setup"
+	}) {
+		return "The guest reports that the Dev Container reached its declared connection gate.", nil
+	}
+	switch status {
+	case "succeeded":
+		return "The guest reports that the Dev Container completed its setup hooks.", nil
+	case "failed":
+		switch problem {
+		case "guest.repository_preparation_failed":
+			return "", &operation.StepFailure{Detail: "The guest could not prepare the repository with the owner's Git authorization."}
+		case "guest.required_setup_failed":
+			return "", &operation.StepFailure{Detail: "Required Dev Container setup failed before the connection gate."}
+		case "guest.ide_start_failed":
+			return "", &operation.StepFailure{Detail: "The browser IDE could not start in the Dev Container."}
+		case "guest.later_setup_failed":
+			return "", &operation.StepFailure{Detail: "A Dev Container hook failed after the connection gate."}
+		case "guest.lifecycle_interrupted":
+			return "", &operation.StepFailure{Detail: "The guest restarted during a Dev Container setup hook."}
+		default:
+			return "", errors.New("invalid persisted guest configuration failure")
+		}
+	default:
+		return "", errGuestConfigurationPending
+	}
+}
+
+func (e *LaunchExecutor) inspectEnrollment(ctx context.Context, op operation.Operation, step operation.Step) (provider.CreateRequest, provider.Inventory, error) {
+	if e.enrollment == nil || e.now == nil {
+		return provider.CreateRequest{}, provider.Inventory{}, provider.ErrInvalidState
+	}
+	req, err := e.provision.request(ctx, op, step)
+	if err != nil {
+		return req, provider.Inventory{}, err
+	}
+	if req.Ref.InstanceID == "" {
+		return req, provider.Inventory{}, provider.ErrInvalidState
+	}
+	got, err := e.provision.provider.Inspect(ctx, req.Ref)
+	if err != nil {
+		return req, got, err
+	}
+	err = verifyWorkspaceVM(req, got)
+	if err == nil && got.Power == provider.Running {
+		e.provision.markLaunchVMRunning(ctx, op.ID, got)
+	}
+	return req, got, err
+}
+
+// verifyWorkspaceVM binds provider observations to the retained instance and
+// its pinned artifact and network policy before reconciliation uses them.
+func verifyWorkspaceVM(req provider.CreateRequest, got provider.Inventory) error {
+	if got.Ref != req.Ref || got.InstanceID != req.Ref.InstanceID {
+		return provider.ErrOwnershipMismatch
+	}
+	if got.ArtifactID != req.ArtifactID || got.Release != req.Release || got.NetworkMode != req.NetworkMode ||
+		got.ObservedAt.IsZero() {
+		return provider.ErrOutcomeUnknown
+	}
+	return nil
+}
+
+func (e *LaunchExecutor) confirmContact(ctx context.Context, req provider.CreateRequest) (string, error) {
+	ref := req.Ref
+	now := e.now().UTC()
+	db := e.provision.store.db
+	if _, err := db.ExecContext(ctx, `UPDATE workspaces SET observed_state='running',updated_at=$1,version=version+1
+		WHERE id=$2 AND installation_id=$3 AND generation=$4 AND ownership_marker=$5 AND provider_instance_id=$6
+		  AND desired_state='running' AND observed_state IN ('stopped','starting')`,
+		now.Format(time.RFC3339Nano), ref.WorkspaceID, ref.InstallationID, ref.Generation, ref.OwnershipMarker, ref.InstanceID); err != nil {
+		return "", err
+	}
+
+	var expiry string
+	err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(r.certificate_not_after),'') FROM guest_registrations r
+		JOIN workspaces w ON w.id=r.workspace_id AND w.generation=r.generation
+		JOIN enrollment_grants g ON g.workspace_id=w.id AND g.generation=w.generation AND g.key_proof=r.public_key_fingerprint
+		JOIN users u ON u.id=w.owner_user_id JOIN installations i ON i.id=w.installation_id
+		WHERE w.id=$1 AND w.installation_id=$2 AND w.generation=$3 AND w.ownership_marker=$4
+		  AND w.provider_instance_id=$5 AND w.desired_state='running' AND w.observed_state='running'
+		  AND g.operation_id=$6 AND g.provider_instance_id=$5 AND g.state='consumed'
+		  AND i.state='active' AND u.membership_state='active' AND r.state='active' AND r.last_authenticated_at IS NOT NULL`,
+		ref.WorkspaceID, ref.InstallationID, ref.Generation, ref.OwnershipMarker, ref.InstanceID, req.OperationID).Scan(&expiry)
+	if err != nil {
+		return "", err
+	}
+	if expiry == "" {
+		return "", errGuestContactPending
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, expiry)
+	if err != nil {
+		return "", err
+	}
+	if !now.Before(deadline) {
+		return "", errGuestContactPending
+	}
+	if err := e.enrollment.CleanupDelivery(ctx, req.OperationID, ref, e.mediaRoot); err != nil {
+		return "", err
+	}
+	return "The enrolled guest authenticated with its registered key.", nil
+}
