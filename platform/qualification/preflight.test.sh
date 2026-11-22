@@ -64,5 +64,5 @@ FIXTURE_QUOTA=null reject bash "$here/preflight.sh" capacity automated
 # Stable tags and user-controlled paths fail before any remote release access.
 for tag in v1.0.0 'v01.0.0-rc.1' 'v1.0.0-rc.0' '../v1.0.0-rc.1'; do
   reject bash "$here/preflight.sh" fetch "$tag" "$scratch/assets"
-  rg -q 'explicit canonical RC' "$scratch/rejected"
+  grep -q 'explicit canonical RC' "$scratch/rejected"
 done
