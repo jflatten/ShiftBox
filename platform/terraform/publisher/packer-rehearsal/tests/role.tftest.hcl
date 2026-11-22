@@ -57,6 +57,15 @@ run "bound" {
     error_message = "Every grant must expire, stay in Ohio and avoid publication or delegation."
   }
 
+  # The pinned Packer plugin enumerates regions before it can launch a builder.
+  assert {
+    condition = [
+      for statement in jsondecode(aws_iam_role_policy.attempt[0].policy).Statement : statement.Sid
+      if contains(statement.Action, "ec2:DescribeRegions")
+    ] == ["ReadOhioBuildInventory"]
+    error_message = "Packer requires an Ohio-scoped DescribeRegions grant before launching."
+  }
+
   assert {
     condition = one([
       for statement in jsondecode(aws_iam_role_policy.attempt[0].policy).Statement : statement
