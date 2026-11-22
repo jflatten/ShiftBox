@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 BRIDGE = Path(__file__).with_name("eice-socks.py")
-ACCOUNT = "668112512962"
+ACCOUNT = "111122223333"
 ENDPOINT = "eice-00000000000000001"
 VPC = "vpc-00000000000000002"
 SUBNET = "subnet-00000000000000003"
@@ -23,7 +23,7 @@ GROUP = "sg-00000000000000004"
 BUILDER = "i-00000000000000005"
 TAG = "v1.0.0-rc.1"
 ATTEMPT = "attempt-1"
-ADDRESS = "10.98.0.70"
+ADDRESS = "10.42.0.70"
 BANNER = b"SSH-2.0-fixture\r\n"
 
 AWS_STUB = r"""#!/usr/bin/env python3
@@ -121,7 +121,7 @@ class BridgeTest(unittest.TestCase):
             "vpc-id": VPC,
             "subnet-id": SUBNET,
             "security-group-id": GROUP,
-            "subnet-cidr": "10.98.0.64/26",
+            "subnet-cidr": "10.42.0.64/26",
             "candidate-tag": TAG,
             "attempt-id": ATTEMPT,
             "port-file": str(self.port_path),
@@ -248,7 +248,7 @@ class BridgeTest(unittest.TestCase):
         # Non-SSH requests or non-IPv4 destinations cannot reach the AWS resolver.
         self.start()
         for request in (
-            self.request("10.98.0.4"),
+            self.request("10.42.0.4"),
             self.request("8.8.8.8"),
             self.request(port=443),
             self.request(command=2),

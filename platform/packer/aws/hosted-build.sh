@@ -34,10 +34,11 @@ if ! jq -ces --arg tag "$tag" --arg publisher "$publisher" '
   select(length==1) | .[0] |
   select(keys==["account","attempt_id","builder_group_id","candidate_tag","deadline","endpoint_id","packer_key_pair",
     "packer_public_key_sha256","private_subnet_cidr","private_subnet_id","region","source_ami","vpc_id"]) |
-  select($publisher=="668112512962" and .account==$publisher and .region=="us-east-2" and .candidate_tag==$tag) |
+  select(($publisher|test("^[0-9]{12}$")) and .account==$publisher and .region=="us-east-2" and .candidate_tag==$tag) |
   select((.attempt_id|test("^[a-z0-9][a-z0-9-]{0,17}$")) and
     .packer_key_pair==("shiftbox-publisher-"+.attempt_id+"-packer") and
-    (.packer_public_key_sha256|test("^[a-f0-9]{64}$")) and .private_subnet_cidr=="10.98.0.64/26" and
+    (.packer_public_key_sha256|test("^[a-f0-9]{64}$")) and
+    (.private_subnet_cidr|test("^[0-9]{1,3}(\\.[0-9]{1,3}){2}\\.64/26$")) and
     (.vpc_id|test("^vpc-[a-f0-9]{17}$")) and (.private_subnet_id|test("^subnet-[a-f0-9]{17}$")) and
     (.builder_group_id|test("^sg-[a-f0-9]{17}$")) and (.endpoint_id|test("^eice-[a-f0-9]{17}$")) and
     (.source_ami|test("^ami-[a-f0-9]{17}$"))) |

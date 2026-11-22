@@ -17,8 +17,8 @@ SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY=$(head -c 32 /dev/zero | openssl base6
 deadline=$(python3 -c 'from datetime import datetime,timedelta,timezone; print((datetime.now(timezone.utc)+timedelta(minutes=100)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
 export SHIFTBOX_RELEASE_BUILD_NETWORK
 SHIFTBOX_RELEASE_BUILD_NETWORK=$(jq -cn --arg deadline "$deadline" --arg digest "${digest%% *}" '
-  {account:"668112512962",region:"us-east-2",candidate_tag:"v1.0.0-rc.1",attempt_id:"fixture",
-   vpc_id:"vpc-00000000000000001",private_subnet_id:"subnet-00000000000000002",private_subnet_cidr:"10.98.0.64/26",
+  {account:"111122223333",region:"us-east-2",candidate_tag:"v1.0.0-rc.1",attempt_id:"fixture",
+   vpc_id:"vpc-00000000000000001",private_subnet_id:"subnet-00000000000000002",private_subnet_cidr:"10.42.0.64/26",
    builder_group_id:"sg-00000000000000003",endpoint_id:"eice-00000000000000004",source_ami:"ami-00000000000000005",
    packer_key_pair:"shiftbox-publisher-fixture-packer",packer_public_key_sha256:$digest,deadline:$deadline}')
 approved_network=$SHIFTBOX_RELEASE_BUILD_NETWORK
@@ -31,7 +31,7 @@ import time
 
 assert "SHIFTBOX_RELEASE_BUILD_SSH_KEY" not in os.environ
 assert sys.argv[sys.argv.index("--attempt-id") + 1] == "fixture"
-assert sys.argv[sys.argv.index("--subnet-cidr") + 1] == "10.98.0.64/26"
+assert sys.argv[sys.argv.index("--subnet-cidr") + 1] == "10.42.0.64/26"
 port_file = pathlib.Path(sys.argv[sys.argv.index("--port-file") + 1])
 assert port_file.parent.stat().st_mode & 0o777 == 0o700
 port_file.write_text("4125\n")
@@ -62,12 +62,13 @@ AMI
 chmod 700 "$fixture/platform/packer/aws/build-image.sh" "$fixture/platform/release/amis.sh"
 hosted_build() {
     bash "$fixture/platform/packer/aws/hosted-build.sh" v1.0.0-rc.1 0123456789abcdef0123456789abcdef01234567 \
-        668112512962 "$RUNNER_TEMP/handoff.json"
+        111122223333 "$RUNNER_TEMP/handoff.json"
 }
 
-# Invalid network identity, stale deadlines, and mismatched key pins fail before creating a build.
+# Invalid network identity, CIDRs, deadlines, and key pins fail before creating a build.
 for edit in '.account="000000000000"' '.deadline="2020-01-01T00:00:00Z"' \
-    '.packer_key_pair="unrelated"' '.packer_public_key_sha256=("0"*64)' '.extra="unexpected"'; do
+    '.private_subnet_cidr="10.42.0.0/24"' '.packer_key_pair="unrelated"' \
+    '.packer_public_key_sha256=("0"*64)' '.extra="unexpected"'; do
     SHIFTBOX_RELEASE_BUILD_NETWORK=$(jq -c "$edit" <<< "$approved_network")
     if hosted_build >"$fixture/error" 2>&1; then
         echo "Hosted fixture accepted invalid network data: $edit" >&2
@@ -81,7 +82,8 @@ for edit in '.account="000000000000"' '.deadline="2020-01-01T00:00:00Z"' \
     fi
 done
 
-# A valid build uses loopback and emits only sanitized metadata, with secrets and the bridge removed.
+# An approved nonproduction account and Terraform-shaped CIDR round-trip to the bridge.
+# The build emits only sanitized metadata and removes the secrets and bridge.
 SHIFTBOX_RELEASE_BUILD_NETWORK=$approved_network
 hosted_build
 jq -e '.sanitized == true' "$RUNNER_TEMP/handoff.json" >/dev/null
