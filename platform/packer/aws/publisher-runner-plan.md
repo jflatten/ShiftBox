@@ -47,7 +47,7 @@ provisioning.
 | Planned resource | Scope |
 | --- | --- |
 | Dedicated VPC and subnets | One VPC, one private build subnet and one egress subnet in a verified Ohio availability zone. Neither subnet auto-assigns public addresses. |
-| Egress | An internet gateway, temporary NAT gateway and EIP. The private subnet routes outbound through NAT for Ubuntu packages, Docker, Node.js, and registry sources. Default builder egress is TCP 443. Confirm whether the selected base uses signed Ubuntu APT sources on TCP 80 before selecting the optional builder-only rule. |
+| Egress | An internet gateway, temporary NAT gateway and EIP. The private subnet routes outbound through NAT for Ubuntu packages, Docker, Node.js, and registry sources. Default builder egress is TCP 443. Public-mode Packer guests receive the canonical Ubuntu archive and security mirror HTTPS URLs through cloud-init. Packer waits for cloud-init before installing packages. The rehearsal verifies this on the pinned Ubuntu AMI. |
 | EC2 Instance Connect Endpoint | An IPv4 endpoint in the build subnet with client IP preservation disabled. Endpoint egress is TCP 22 to the exact builder security group, and the builder accepts TCP 22 only from that endpoint group. |
 | Imported key pair | One attempt's Ed25519 SSH public key. Keep the private key outside Terraform and EC2 user data. |
 | Expiry | One attempt-scoped Lambda and five bounded one-time Scheduler invocations. The cleanup is independent of GitHub and expires with the attempt. |

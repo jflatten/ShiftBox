@@ -162,6 +162,7 @@ source "amazon-ebs" "shiftbox" {
   ssh_disable_agent_forwarding = var.public_build
   ssh_timeout                  = "20m"
   imds_support                 = "v2.0"
+  user_data_file               = var.public_build ? "${path.root}/apt-https.cloud-config.yaml" : ""
 
   # The pinned regional AMI must also satisfy the publisher and platform filters.
   source_ami_filter {
