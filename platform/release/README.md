@@ -83,9 +83,14 @@ environment.
   `SHIFTBOX_RELEASE_HOST_AMIS` to the vetted regional ECS AL2023 pins, and
   `SHIFTBOX_RELEASE_POSTGRES_IMAGE` to the approved PostgreSQL 17 Debian digest.
 
-Require a successful baseline CI run on the exact reviewed tag commit. Only
-the protected tag starts a public candidate. Stable uses a protected annotated
-tag on that same commit. Include one `candidate: <tag>` and one
+Require a successful baseline CI run on the exact reviewed tag commit. If that
+commit is at the tip of `main`, run `gh workflow run ci.yml --ref main` and
+verify the run succeeded on the intended SHA before pushing the tag. For an
+existing release tag, dispatch Checks with `--ref <version-tag>` and rerun the
+release workflow once Checks passes.
+
+Only the protected tag starts a public candidate. Stable uses a protected
+annotated tag on that same commit. Include one `candidate: <tag>` and one
 `qualification: <reviewed-main-commit>` line. Keep the full verification
 evidence private and use the minimal reviewed qualification record from the
 [publication contract](../../specs/010-public-aws-distribution/contracts/release-publication.md).

@@ -1,7 +1,7 @@
 name: Checks
 on:
-  push:
   pull_request:
+  # Release preflight requires a successful run on the exact tag commit.
   workflow_dispatch:
 
 permissions:
