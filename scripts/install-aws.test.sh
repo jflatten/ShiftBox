@@ -165,6 +165,21 @@ jq '
 test "$(install_record_stage "$stage_state" "$test_dir/services-stage.json" dns-services)" = dns-services
 reject install_record_stage "$stage_state" "$stage_stack"
 
+# An approved update must show its review and return only the phase so the installer
+# continues to the next stage during the same invocation.
+(
+    install_change() {
+        printf 'Review fixture change set for %s\n' "$2"
+    }
+    install_describe_stack() {
+        cp "$test_dir/services-stage.json" "$3"
+    }
+    observed_phase=$(install_advance "$stage_state" dns-services us-east-2 "$stack" \
+        "$stage_stack" "$test_dir" 2>"$test_dir/stage-review.txt")
+    test "$observed_phase" = dns-services
+    grep -Fxq 'Review fixture change set for dns-services' "$test_dir/stage-review.txt"
+)
+
 # A deployment fingerprint binds a concrete stack name and immutable payload.
 state="$test_dir/started.json"
 printf '{"account":"111111111111","region":"us-east-2","stackName":"fresh","stack":"","release":"v1.2.3","manifestSha256":"fixture"}\n' > "$state"

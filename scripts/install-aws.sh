@@ -505,7 +505,8 @@ install_record_stage() {
 
 install_advance() {
   local state=$1 phase=$2 region=$3 stack=$4 stack_file=$5 scratch=$6
-  install_change "$state" "$phase" UPDATE "$scratch" || return 1
+  # Keep the review visible while the caller captures only the verified phase.
+  install_change "$state" "$phase" UPDATE "$scratch" >&2 || return 1
   install_describe_stack "$region" "$stack" "$stack_file" || return 1
   install_record_stage "$state" "$stack_file" "$phase"
 }
