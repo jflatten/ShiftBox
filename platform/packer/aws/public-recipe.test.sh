@@ -165,3 +165,35 @@ if grep -Fq 'credential fixture' "$test_dir/seal.out"; then
     echo 'Verifier disclosed file contents.' >&2
     exit 1
 fi
+
+# A TLS-only builder must get HTTPS APT mirrors before installing packages.
+# The private AWS recipe must retain its original cloud-init configuration.
+python3 - "$recipe" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+recipe = Path(sys.argv[1])
+config = (recipe / "apt-https.cloud-config.yaml").read_text()
+assert config.splitlines()[0] == "#cloud-config"
+assert yaml.safe_load(config) == {
+    "apt": {
+        "preserve_sources_list": False,
+        "primary": [{"arches": ["amd64"], "uri": "https://archive.ubuntu.com/ubuntu/"}],
+        "security": [{"arches": ["amd64"], "uri": "https://security.ubuntu.com/ubuntu/"}],
+    },
+}
+
+template = (recipe / "shiftbox.pkr.hcl").read_text()
+assert re.search(
+    r'^\s*user_data_file\s*=\s*var\.public_build\s*\?\s*'
+    r'"\$\{path\.root\}/apt-https\.cloud-config\.yaml"\s*:\s*""\s*$',
+    template,
+    re.MULTILINE,
+)
+assert template.index('"cloud-init status --wait"') < template.index(
+    '"sudo /bin/sh /tmp/shiftbox-install-tools amd64"'
+)
+PY

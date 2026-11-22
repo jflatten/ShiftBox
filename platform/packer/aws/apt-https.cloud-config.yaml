@@ -1,0 +1,9 @@
+#cloud-config
+apt:
+  preserve_sources_list: false
+  primary:
+    - arches: [amd64]
+      uri: https://archive.ubuntu.com/ubuntu/
+  security:
+    - arches: [amd64]
+      uri: https://security.ubuntu.com/ubuntu/
