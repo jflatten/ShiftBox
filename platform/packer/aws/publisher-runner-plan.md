@@ -1,49 +1,122 @@
-# Ohio publisher network and Packer runner plan
+# Ohio hosted Packer build plan
 
-This plan covers one staff-supervised AMI build in the approved publisher account in `us-east-2`. The build runner and its network exist only for that attempt. Regional AMI copy and share use hosted runners after the Ohio build handoff. Review this infrastructure, its cost, and the GitHub runner access design before authorizing any provisioning or release tag.
+The protected candidate build runs on a fresh GitHub-hosted Ubuntu VM. Packer
+launches the only EC2 instance used for the build, a private `t3.medium` in the
+publisher's Ohio account. The operator reviews a separate Terraform plan for
+each attempt. Regional copy and sharing retain their existing protected jobs
+and exact artifact handoffs.
 
-## Terraform review
+## Established CI pattern
 
-Use a dedicated Terraform root and private state per attempt. Fence the AWS provider and the operator preflight to the approved publisher account and `us-east-2`. Keep the attempt separate from the publisher IAM and template bucket state, the demo, and qualification. Run a refreshed plan and retain the reviewed resource inventory for teardown.
+HashiCorp's GitHub Actions tutorial checks out the release source, installs
+Packer, initializes the builder and runs the image build. The workflow follows
+HashiCorp's init, validate, build sequence using Packer 1.14.2, Amazon plugin
+1.8.4, the published binary checksum, and the repository's Go toolchain.
+AWS's GitHub Actions guidance uses short-lived OIDC credentials. ShiftBox keeps
+the existing immutable candidate environment subject and tag protections.
+The existing manifest remains the build output.
+[HashiCorp Actions tutorial](https://developer.hashicorp.com/packer/tutorials/cloud-production/github-actions) · [HashiCorp CI validation example](https://github.com/hashicorp/web-unified-docs/blob/main/content/well-architected-framework/docs/docs/define-and-automate-processes/process-automation/fully-automated.mdx) · [AWS OIDC guidance](https://aws.amazon.com/blogs/security/use-iam-roles-to-connect-github-actions-to-actions-in-aws/)
 
-| Plan resources | Proposed scope |
+GitHub-hosted runners use a fresh VM for each standard job. This repository is
+personally owned and public, and its repository-level runner labels do not
+restrict which eligible workflow can take a runner. The release job needs
+no runner registration or separately hosted worker.
+[GitHub-hosted runners](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) · [GitHub runner group controls](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access)
+
+Packer's normal private-IP SSH communicator supports a SOCKS proxy. The
+ShiftBox loopback bridge forwards that stream through AWS CLI
+`ec2-instance-connect open-tunnel`. The Amazon plugin's native Session Manager
+option requires an SSM-enabled instance profile and the workstation plugin.
+EC2 Instance Connect works with the existing imported SSH key and keeps the
+builder without an instance profile.
+[Packer SSH communicator](https://developer.hashicorp.com/packer/docs/communicators/ssh) · [Amazon EBS builder](https://developer.hashicorp.com/packer/integrations/hashicorp/amazon/latest/components/builder/ebs) · [AWS CLI OpenTunnel](https://docs.aws.amazon.com/cli/latest/reference/ec2-instance-connect/open-tunnel.html)
+
+## Terraform and IAM review
+
+Use a separate Ohio Terraform root and private state for the attempt. The
+publisher account and region fences must pass before planning. Review the
+following network scope and its exact delta. The reusable configuration is in
+the [Ohio build Terraform root](../../terraform/publisher/ohio-build/README.md).
+The read-only review plan showed 32 AWS creates and one local deadline guard,
+with zero updates or destroys. The AWS inventory includes the dedicated
+network, endpoint, public key and cleanup controls. The reusable configuration
+keeps account and network inputs in operator-provided files. Generate a fresh
+private saved plan with current attempt inputs before any separately approved
+provisioning.
+
+| Planned resource | Scope |
 | --- | --- |
-| VPC, routes and subnets | One dedicated VPC with DNS support, one public egress subnet and one private build subnet in the same approved availability zone. Neither subnet auto-assigns public IPs. No peering, inbound Internet route to an instance, or access to the demo, testing, or operator networks. |
-| Egress | One Internet gateway, one Elastic IP and one zonal public NAT gateway in the public subnet. Only the private subnet defaults to NAT. Remove the NAT gateway and release its address after the attempt. This provides IPv4 egress for package mirrors, registries and GitHub while both EC2 instances have only private addresses. |
-| Security groups | The runner accepts TCP 22 only from a dedicated EC2 Instance Connect Endpoint security group and can reach TCP 22 on the Packer builder security group. The builder accepts TCP 22 only from the runner group and cannot initiate SSH to the runner. Both instances can reach required external HTTPS endpoints. Permit outbound TCP 80 on the builder only if the pinned Ubuntu image's signed APT sources require it. NAT and port-level rules leave destination hosts unrestricted on those ports. |
-| Operator access | One private EC2 Instance Connect Endpoint for runner bootstrap. Its only egress is TCP 22 to the runner group. The operator uses a short-lived tunnel and an ephemeral SSH public key against a pinned runner AMI with EC2 Instance Connect installed. |
-| Runner EC2 | One on-demand `t3.large` Linux x86-64 host, Standard CPU credits, encrypted 40 GiB gp3 root and delete-on-termination. Use IMDSv2 and no instance profile. Configure EC2 shutdown behavior to terminate, with a boot-time wall clock deadline. Use a clean OS and pinned toolchain each attempt. |
-| Packer build EC2 and key | The reviewed role allows Packer to create the private `t3.medium`, with the clean 32 GiB build root and attached ENI set to delete on termination. Import only the attempt's Packer SSH **public** key as an EC2 key pair under Terraform. Its private key lives on the isolated runner for the job. Packer's builder and final artifact metadata come from the existing recipe. |
-| Expiry safeguard | Add bounded one-time EventBridge Scheduler invocations and a run-scoped Lambda cleanup function, with separate roles and short log retention. Independently force-stop spending through tagged and exact-ID cleanup after the attempt deadline. The operator reconciles and destroys the Terraform state afterward. |
+| Dedicated VPC and subnets | One VPC, one private build subnet and one egress subnet in a verified Ohio availability zone. Neither subnet auto-assigns public addresses. |
+| Egress | An internet gateway, temporary NAT gateway and EIP. The private subnet routes outbound through NAT for Ubuntu packages, Docker, Node.js, and registry sources. Default builder egress is TCP 443. Confirm whether the selected base uses signed Ubuntu APT sources on TCP 80 before selecting the optional builder-only rule. |
+| EC2 Instance Connect Endpoint | An IPv4 endpoint in the build subnet with client IP preservation disabled. Endpoint egress is TCP 22 to the exact builder security group, and the builder accepts TCP 22 only from that endpoint group. |
+| Imported key pair | One attempt's Ed25519 SSH public key. Keep the private key outside Terraform and EC2 user data. |
+| Expiry | One attempt-scoped Lambda and five bounded one-time Scheduler invocations. The cleanup is independent of GitHub and expires with the attempt. |
 
-Use `project=shiftbox`, `cluster_name=shiftbox-publisher`, the exact candidate's `environment` tag from the reviewed AMI policy, and an attempt ID on supported Terraform resources. Identify Packer temporary resources by the exact VPC/subnet and that recipe's existing project, cluster and environment tags. Keep a single active attempt. Terraform outputs should include the account and region, VPC, subnet, security groups, runner instance and private address, endpoint, NAT gateway and EIP IDs, Packer key-pair name, and expiry time. Keep state, inputs, reviewed plan, and exact IDs in protected operator storage. Disallow in-place reuse of a runner instance or disk on another attempt. [EC2 Instance Connect security groups](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/eice-security-groups.html) · [AWS NAT gateway design](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html)
+Verify the first-use EC2 Instance Connect service-linked role separately. AWS
+may create it at endpoint creation. Keep that account-level role outside the
+attempt's state and teardown. The AMI build policy needs
+`ec2-instance-connect:OpenTunnel` only for the exact endpoint ARN, private
+builder CIDR, TCP 22, current attempt tags, and a maximum 2,700-second tunnel.
+The limit keeps one Packer provisioning session comfortably within the
+50-minute job and one-hour role session. The AWS CLI also needs
+`ec2:DescribeInstanceConnectEndpoints` in Ohio to resolve the endpoint. No
+instance profile, public SSH ingress, `iam:PassRole`, or endpoint-management
+grant is needed in the build role. Copy and share policies receive no tunnel
+permission.
+[AWS endpoint permissions](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/permissions-for-ec2-instance-connect-endpoint.html) · [Endpoint security groups](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/eice-security-groups.html)
 
-The operator identity provisions and cleans up the network. Scope bootstrap permission to `ec2-instance-connect:OpenTunnel` on the exact endpoint, runner private IP, TCP 22 and an approved short maximum duration. Scope `SendSSHPublicKey` to the exact runner instance and OS user. Separate these from the candidate role, which receives short-lived OIDC credentials only from the protected GitHub job and has no network-creation or key-pair-management permission. The runner has no AWS credentials from the host. The build guest has neither the runner's credentials nor its private SSH key. Review any EC2 Instance Connect service-linked role creation separately in the Terraform plan and keep that account-level role outside run teardown. [EC2 Instance Connect permission reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ec2-instance-connect.html) · [EC2 Instance Connect Endpoint considerations](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/connect-with-ec2-instance-connect-endpoint.html)
+## Protected job inputs
 
-## On-demand GitHub handoff
+After a separately approved network deployment, prepare the
+`aws-release-candidate` environment inputs from the exact attempt outputs and
+reviewed Canonical AMI. The variable `SHIFTBOX_RELEASE_BUILD_NETWORK` takes
+the following JSON. The fields other than `source_ami` come from the attempt
+output.
 
-1. Before any live build or tag, select and verify a GitHub runner access mechanism that prevents unrelated workflows from taking the runner. GitHub's repository-level JIT registration admits at most one job, and a custom label selects compatible runners. Either can still be used by an eligible competing job. A protected release environment controls deploy approvals and OIDC; it does not restrict which other jobs can reference the runner. For this public personal repository, verify the actual isolation capability before enabling a runner. If job or workflow isolation cannot be demonstrated, keep registration blocked pending an approved routing design. [GitHub secure use](https://docs.github.com/en/actions/reference/security/secure-use#hardening-for-self-hosted-runners) · [GitHub runner group policies](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access)
-2. After separate approval for the runner plan, budget, and candidate operation, prepare the clean host with Linux amd64, the pinned Packer Amazon plugin and Go toolchain, AWS CLI v2, Bash, Git, jq, SSH, and digest utilities. Confirm package and registry egress and verify runner bootstrap and builder access. Populate the runner-local `.pkrvars.json` and raw 32-byte guest-update public key at the configured paths. Set the Packer input region, approved source AMI, private subnet, build group, imported EC2 key-pair name, and local private-key path. Use `cluster_name=shiftbox-publisher` and `environment=release-<candidate tag>`. Keep the private key and registration data outside Terraform state, EC2 user data, workflow logs, and artifact uploads.
-3. Scope `SHIFTBOX_RELEASE_CANDIDATE_RUNNER` to the approved build runner label, unique to the candidate attempt where supported. Once the precise protected build job is queued and approved, generate a repository JIT configuration for that runner. Deliver it over the private operator SSH session and start the runner once on the clean host. Keep the GitHub admin credential with the operator. Verify the queued job, run ID, attempt, tag and assigned runner ID, and cancel immediately if they differ. Record the proven access controls separately from these checks. Subsequent jobs consume the immutable build handoff and run without build-network access. [GitHub repository JIT runner REST API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-a-repository)
-4. Cap the entire live attempt, including startup and teardown, at two hours. Start the build role and workflow only after readiness checks succeed and use the job's shorter timeout for Packer. Approve IAM policy transitions and new role sessions before the copy and share phases. End the build session and tear down the runner and egress after the verified private build handoff.
+```sh
+terraform output -json attempt | jq -c --arg source_ami "$reviewed_base_ami" '
+  {account,attempt_id,builder_group_id,candidate_tag,deadline,endpoint_id,packer_key_pair,
+   packer_public_key_sha256,private_subnet_cidr,private_subnet_id,region,source_ami:$source_ami,vpc_id}'
+```
 
-## Cleanup and verification
+Store the matching one-attempt SSH private key as
+`SHIFTBOX_RELEASE_BUILD_SSH_KEY` in that protected environment only. Set
+`SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY` to the one-line base64 encoding of
+the existing 32-byte guest-update public key. The build step verifies the SSH
+key pin, writes the key into an owner-only temporary directory, and clears
+the key and bridge on exit. Delete the environment's temporary SSH secret and
+EC2 key pair when the attempt ends, including after cancellation.
 
-- For success, failure or cancellation, a named operator cancels any active build, ends or removes the JIT runner, reconciles the Packer resource IDs, and reviews and applies the destroy plan for that attempt's infrastructure. Wait for NAT deletion, verify the Elastic IP was released, and check that the VPC, endpoints, instances, ENIs, volumes, key pair, routes, and runner registration are gone. Record exact AMI and snapshot IDs separately for the managed release handoff. Use the approved artifact disposition for unreferenced images or snapshots. A runner destroy never deletes retained candidate or published artifacts.
-- For operator disconnect or runner loss, the hard expiry uses the recorded account, region, VPC, subnet, candidate tags, and exact NAT, EIP and runner IDs. The expiry function can terminate the exact runner and matching Packer instances, clean attempt-owned orphan root volumes and ENIs only after confirming they are detached, delete the NAT, and release its address only after confirmed disassociation. Use repeat one-time checks within a bounded window because deletion is asynchronous. A terminal error requires operator escalation. The function refuses missing or mismatching identity and ownership. It has no AMI, snapshot, S3, GitHub, or qualification mutation permissions. Scheduler can invoke only the exact cleanup function and verify its source account and schedule group. The operator verifies completion and removes residual zero-cost infrastructure and temporary access. [EventBridge Scheduler one-time schedules](https://docs.aws.amazon.com/scheduler/latest/UserGuide/schedule-types.html#one-time) · [NAT gateway deletion and EIP release](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DeleteNatGateway.html)
-- Before future activation, inspect the Terraform delta for only these resources, and validate rendered permissions. Test private SSH and expected egress, rejection of public IPs and direct ingress, incorrect account/subnet, mismatched key, an unexpected workflow, a failed Packer run, cancellation and a lost runner. Confirm expiry and a complete destroy with disposable resources before relying on the infrastructure for a public release. The current design is a planning artifact.
+The hosted build validates the exact publisher, release, region and
+attempt before invoking Packer. The loopback bridge rechecks AWS identity
+and endpoint ownership and placement, then validates the builder's private
+address, subnet, security group, attempt tags and identity before opening
+TCP 22. Reconnects must target the same builder. Local build logs and keys
+stay outside the sanitized Packer artifact. Leave enough time on the AWS
+attempt deadline for the full 50-minute job before approving the build.
 
-## Attempt budget
+## Teardown and rehearsal
 
-Budget one approved two-hour attempt in Ohio, with both instances and the NAT charged for the full window, 10 GB total through NAT, 1 GB outbound internet transfer, and no free-tier credits. Use rounded-up Linux EC2 rates of $0.084 and $0.042 per hour, $0.08 per GiB-month of gp3 over 720 hours, $0.045 per NAT hour and processed GB, $0.005 per public IPv4 hour, and $0.09 per GB outbound. The provisioned roots use baseline gp3 performance. Standard CPU credits avoid surplus credit charges. Small expiry and logging requests are included as an allowance. [AWS T3 pricing](https://aws.amazon.com/ec2/instance-types/t3/) · [Ohio EC2 price catalog](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/20261121004816/us-east-2/index.csv) · [EBS pricing](https://aws.amazon.com/ebs/pricing/) · [NAT and IPv4 pricing](https://aws.amazon.com/vpc/pricing/) · [EC2 data transfer](https://aws.amazon.com/ec2/pricing/on-demand/) · [EventBridge Scheduler pricing](https://aws.amazon.com/eventbridge/pricing/)
+Verify the expiry schedules after any future apply and before approving the
+build job. A partial apply before schedule creation needs staffed teardown.
+The cleanup checks attempt ownership and deletes eligible disposable compute
+and detached storage, drops NAT, and releases the EIP only when dissociated.
+It has no AMI or snapshot deletion permission. The operator reconciles private
+state and verifies complete removal of the attempt resources and GitHub
+secret after success, failure or cancellation.
 
-| Component | Conservative estimate |
-| --- | ---: |
-| Runner and builder compute | $0.252 |
-| Encrypted runner root and build root | $0.016 |
-| NAT gateway hours and 10 GB processing | $0.540 |
-| Public IPv4 and outbound transfer | $0.100 |
-| Expiry and logging allowance | $0.010 |
-| **Subtotal** | **$0.918** |
+Before using the protected tag, separately approve a disposable,
+nonpublishing rehearsal for the exact hosted runner image, CLI, key and
+Packer inputs. Verify private SSH, blocked alternate endpoints/ports and
+cross-attempt targets, guest package egress, session and job cancellation,
+guest tagging, and full teardown after runner loss. Test effective IAM against
+actual resource IDs. Inventory any existing private candidate image instead
+of rebuilding over it.
 
-Reserve **$1.25** for one build attempt and check observed NAT bytes and elapsed time while the attempt runs. The estimate excludes retries, AMI copies and retained snapshot charges, which have a separate estimate in the [qualification runbook](../../qualification/README.md). Verify available headroom across ShiftBox's $30 monthly cap before approval. A forgotten NAT, retained volume, extra download or failed teardown can exceed the estimate. No infrastructure changes, AWS spend approval, runner registration, tags or publication are part of this plan.
+The earlier two-hour estimate for 10 GB of NAT processing and 1 GB of
+outbound transfer was $0.92 with a separate EC2 runner. Removing that
+instance and its root reduces the same modeled attempt to about $0.74.
+The estimate excludes retries, AMI copies, and snapshot retention. Confirm
+current rates and aggregate headroom under the $30 monthly cap before
+authorizing a paid rehearsal.
+[AWS T3 pricing](https://aws.amazon.com/ec2/instance-types/t3/) · [AWS NAT pricing](https://aws.amazon.com/vpc/pricing/) · [AWS EBS pricing](https://aws.amazon.com/ebs/pricing/) · [GitHub Actions billing](https://docs.github.com/en/actions/concepts/billing-and-usage)

@@ -99,7 +99,6 @@ jobs:
       - name: Check the release inputs before reserving the candidate
         if: steps.handoffs.outputs.assets == ''
         env:
-          APPROVED_RUNNER: ${{ vars.SHIFTBOX_RELEASE_CANDIDATE_RUNNER }}
           BUILD_HANDOFF: ${{ steps.handoffs.outputs.build }}
           SHARE_HANDOFF: ${{ steps.handoffs.outputs.share }}
           HOST_AMIS: ${{ vars.SHIFTBOX_RELEASE_HOST_AMIS }}
@@ -108,9 +107,6 @@ jobs:
           AMI_ROLE: ${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}
           TEMPLATE_ROLE: ${{ vars.SHIFTBOX_RELEASE_TEMPLATE_ROLE_ARN }}
         run: |
-          if [[ -z "$BUILD_HANDOFF" ]]; then
-            [[ "$APPROVED_RUNNER" =~ ^shiftbox-ami-[a-zA-Z0-9-]+$ ]]
-          fi
           [[ "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
           role_prefix="arn:aws:iam::$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID:role/"
           if [[ -z "$SHARE_HANDOFF" ]]; then
@@ -133,7 +129,7 @@ jobs:
     name: Build the private Ohio AMI
     needs: [preflight, candidate-setup]
     if: needs.candidate-setup.outputs.assets == '' && needs.candidate-setup.outputs.build == ''
-    runs-on: [self-hosted, '${{ vars.SHIFTBOX_RELEASE_CANDIDATE_RUNNER }}']
+    runs-on: ubuntu-24.04
     environment: aws-release-candidate
     timeout-minutes: 50
     permissions:
@@ -145,22 +141,29 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
       SOURCE_COMMIT: ${{ needs.preflight.outputs.source }}
-      PACKER_INPUTS: ${{ vars.SHIFTBOX_RELEASE_PACKER_INPUTS_PATH }}
-      GUEST_SIGNING_PUBLIC_KEY: ${{ vars.SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY_PATH }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.preflight.outputs.source }}
           persist-credentials: false
-      - name: Validate the private runner inputs
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install and initialize the pinned Packer toolchain
         run: |
-          test -f "$PACKER_INPUTS" && test -f "$GUEST_SIGNING_PUBLIC_KEY"
-          jq -e --arg tag "$RELEASE_TAG" '
-            .region == "us-east-2" and .cluster_name == "shiftbox-publisher" and
-            .environment == ("release-" + $tag)
-          ' "$PACKER_INPUTS" >/dev/null
-          packer init platform/packer/aws
-      - uses: aws-actions/configure-aws-credentials@v6.3.0
+          test "$(uname -m)" = x86_64
+          [[ "$(aws --version)" == aws-cli/2.* ]]
+          tools="$(mktemp -d "$RUNNER_TEMP/packer-tools.XXXXXX")"
+          curl --fail --silent --show-error --location --proto '=https' \
+            https://releases.hashicorp.com/packer/1.14.2/packer_1.14.2_linux_amd64.zip \
+            --output "$tools/packer.zip"
+          printf 'cfefdea4ac580eba7b254ef34d25b756d4961741004e3e701a1476594d13e64a  %s\n' "$tools/packer.zip" |
+            sha256sum --check
+          unzip -q "$tools/packer.zip" packer -d "$tools"
+          "$tools/packer" init platform/packer/aws
+          printf '%s\n' "$tools" >> "$GITHUB_PATH"
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}
           role-session-name: shiftbox-ami-build-${{ github.run_id }}-${{ github.run_attempt }}
@@ -168,22 +171,15 @@ jobs:
           allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
           unset-current-credentials: true
       - name: Build and freeze the Packer manifest
+        env:
+          SHIFTBOX_RELEASE_BUILD_NETWORK: ${{ vars.SHIFTBOX_RELEASE_BUILD_NETWORK }}
+          SHIFTBOX_RELEASE_BUILD_SSH_KEY: ${{ secrets.SHIFTBOX_RELEASE_BUILD_SSH_KEY }}
+          SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY: ${{ vars.SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY }}
         run: |
-          export PUBLIC_AMI_BUILD=1 RELEASE_CANDIDATE="$RELEASE_TAG"
-          export RELEASE_PUBLISHER_ACCOUNT_ID="$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID"
-          umask 077
-          output="$RUNNER_TEMP/packer-output.log"
-          if ! platform/packer/aws/build-image.sh "$RELEASE_TAG" "$GUEST_SIGNING_PUBLIC_KEY" "$PACKER_INPUTS" > "$output" 2>&1; then
-            echo 'Packer failed. Review the protected runner log before retrying this candidate.' >&2
-            exit 1
-          fi
-          manifest=$(sed -n 's/^AMI provenance manifest: //p' "$output")
-          platform/release/amis.sh packer-handoff "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" \
-            "$manifest" > "$RUNNER_TEMP/packer.json"
-          rm -f -- "$output"
+          platform/packer/aws/hosted-build.sh "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" "$RUNNER_TEMP/packer.json"
           jq -r '"Review the private Ohio build before granting copy: " + .builds[0].artifact_id' \
             "$RUNNER_TEMP/packer.json" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         id: upload
         with:
           name: ami-build-${{ needs.preflight.outputs.tag }}

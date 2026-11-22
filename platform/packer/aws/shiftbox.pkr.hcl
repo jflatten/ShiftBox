@@ -59,6 +59,15 @@ variable "environment" {
   default = "private"
 }
 
+variable "publisher_attempt" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.publisher_attempt == "" || can(regex("^[a-z0-9][a-z0-9-]{0,17}$", var.publisher_attempt))
+    error_message = "A publisher attempt must be a 1–18 character lower-case attempt ID."
+  }
+}
+
 variable "build_key_pair" {
   type = string
 }
@@ -127,30 +136,31 @@ variable "manifest_path" {
 locals {
   canonical_account = "099720109477"
   root_disk_gib     = 32
-  tags = {
+  tags = merge({
     project      = "shiftbox"
     cluster_name = var.cluster_name
     environment  = var.environment
-  }
+  }, var.publisher_attempt == "" ? {} : { publisher_attempt = var.publisher_attempt })
 }
 
 source "amazon-ebs" "shiftbox" {
-  region                      = var.region
-  source_ami                  = var.source_ami
-  ami_name                    = coalesce(var.ami_name, "shiftbox-${var.release_id}-amd64")
-  ami_description             = "ShiftBox workspace platform ${var.release_id} on Ubuntu 24.04 Minimal amd64"
-  instance_type               = "t3.medium"
-  subnet_id                   = var.build_subnet_id
-  security_group_id           = var.build_security_group_id
-  associate_public_ip_address = false
-  ssh_interface               = "private_ip"
-  ssh_username                = "ubuntu"
-  ssh_keypair_name            = var.build_key_pair
-  ssh_private_key_file        = var.build_private_key_file
-  ssh_proxy_host              = var.build_ssh_proxy_host
-  ssh_proxy_port              = var.build_ssh_proxy_port
-  ssh_timeout                 = "20m"
-  imds_support                = "v2.0"
+  region                       = var.region
+  source_ami                   = var.source_ami
+  ami_name                     = coalesce(var.ami_name, "shiftbox-${var.release_id}-amd64")
+  ami_description              = "ShiftBox workspace platform ${var.release_id} on Ubuntu 24.04 Minimal amd64"
+  instance_type                = "t3.medium"
+  subnet_id                    = var.build_subnet_id
+  security_group_id            = var.build_security_group_id
+  associate_public_ip_address  = false
+  ssh_interface                = "private_ip"
+  ssh_username                 = "ubuntu"
+  ssh_keypair_name             = var.build_key_pair
+  ssh_private_key_file         = var.build_private_key_file
+  ssh_proxy_host               = var.build_ssh_proxy_host
+  ssh_proxy_port               = var.build_ssh_proxy_port
+  ssh_disable_agent_forwarding = var.public_build
+  ssh_timeout                  = "20m"
+  imds_support                 = "v2.0"
 
   # The pinned regional AMI must also satisfy the publisher and platform filters.
   source_ami_filter {

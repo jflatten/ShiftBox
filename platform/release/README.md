@@ -54,14 +54,13 @@ public qualification records.
 
 ## Configure the staged release
 
-Review the publisher Terraform plan and the existing private Packer runner before
+Review the publisher Terraform plan and the hosted Packer build and its leased Ohio network before
 the first protected tag. Keep Terraform state, Packer inputs, build SSH material,
 and qualification logs out of the repository and the release.
 
-Set the maintainer list, publisher account and runner label as repository
-variables so preflight and runner selection can read them. Keep each role,
-runner-local input and settings token scoped to its protected release
-environment.
+Set the maintainer list and publisher account as repository variables. Keep
+the build inputs, role ARNs and settings token scoped to their protected
+release environments.
 
 - `SHIFTBOX_RELEASE_MAINTAINERS` is the approved comma-separated maintainer
   GitHub login list. Confirm effective creation restrictions and independent
@@ -74,17 +73,16 @@ environment.
   Packer/copy/share role. Set `SHIFTBOX_RELEASE_TEMPLATE_ROLE_ARN` and
   `SHIFTBOX_RELEASE_VERIFY_ROLE_ARN` to the publisher module's candidate/stable
   role outputs. Use exact environment OIDC subjects and tag restrictions.
-- Set `SHIFTBOX_RELEASE_CANDIDATE_RUNNER` to the approved
-  `shiftbox-ami-...` label for the single-job Packer runner from the
-  [Ohio publisher runner plan](../packer/aws/publisher-runner-plan.md).
-  Only the AMI build job uses this runner. The hosted packaging job builds
-  the controller with Docker Buildx and installs the pinned CloudFormation tools. Set
-  `SHIFTBOX_RELEASE_PACKER_INPUTS_PATH` to the runner-local `.pkrvars.json` path
-  and `SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY_PATH` to the runner-local
-  32-byte Ed25519 public key path. Set
-  `SHIFTBOX_RELEASE_TEMPLATE_BUCKETS` from the Terraform outputs,
-  `SHIFTBOX_RELEASE_HOST_AMIS` to the vetted regional ECS AL2023 pins, and
-  `SHIFTBOX_RELEASE_POSTGRES_IMAGE` to the approved PostgreSQL 17 Debian digest.
+- For the hosted Packer job, prepare the attempt-scoped network variable,
+  matching temporary SSH secret and guest signing public key in
+  `aws-release-candidate` using the
+  [Ohio hosted build plan](../packer/aws/publisher-runner-plan.md).
+  The hosted packaging job still builds the controller with Docker Buildx
+  and installs the pinned CloudFormation tools.
+- Set `SHIFTBOX_RELEASE_TEMPLATE_BUCKETS` from the publisher Terraform
+  outputs, `SHIFTBOX_RELEASE_HOST_AMIS` to the vetted regional ECS AL2023
+  pins, and `SHIFTBOX_RELEASE_POSTGRES_IMAGE` to the approved PostgreSQL 17
+  Debian digest.
 
 Require a successful baseline CI run on the exact reviewed tag commit. If that
 commit is at the tip of `main`, run `gh workflow run ci.yml --ref main` and
@@ -107,9 +105,10 @@ for the previous phase's AWS session to expire. Stopping the runner alone
 does not invalidate credentials that were already issued. [AWS role sessions](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_revoke-sessions.html)
 
 1. For **Build the private Ohio AMI**, require the build policy scoped to the
-   approved subnet, key pair and Canonical image. Review the build job's private
-   Ohio AMI ID and its sanitized Packer handoff. Tear down the build runner
-   and network after checking that Packer temporary resources are gone.
+   approved subnet, endpoint, key pair and Canonical image. Review the build
+   job's private Ohio AMI ID and sanitized Packer handoff. Verify Packer
+   temporary resources are gone, then remove the network and temporary SSH
+   secret.
 2. Before **Copy the approved Ohio AMI**, review the exact build output and
    the policy granting copy from only that Ohio AMI. The hosted job verifies
    ownership and root snapshots and freezes the four-region set in the copy
@@ -123,7 +122,7 @@ does not invalidate credentials that were already issued. [AWS role sessions](ht
 
 Retries use explicit Actions artifact IDs from the same workflow run. Rerun
 all jobs of that run to rediscover completed handoffs after an interrupted
-phase. A recovered build handoff skips Packer and the private runner. A
+phase. A recovered build handoff skips the hosted Packer job. A
 recovered copy handoff skips copying. A successful share handoff unlocks
 packaging. If Packer created an AMI but its handoff never uploaded, reconcile
 the existing image and operator evidence before retrying. Never recreate a

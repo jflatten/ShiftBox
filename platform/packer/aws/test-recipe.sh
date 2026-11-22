@@ -103,9 +103,10 @@ VARS
 "$packer" fmt -check "$recipe"
 "$packer" validate -evaluate-datasources=false -var-file="$test_dir/release.pkrvars.hcl" "$recipe"
 
-# Exercise the optional public builder shape without AWS calls or provisioning.
+# Exercise the hosted release's attempt tags and local proxy without AWS calls or provisioning.
 "$packer" validate -evaluate-datasources=false -var-file="$test_dir/release.pkrvars.hcl" \
-    -var public_build=true -var publisher_account_id=111111111111 "$recipe"
+    -var public_build=true -var publisher_account_id=111111111111 -var publisher_attempt=recipe-test \
+    -var build_ssh_proxy_host=127.0.0.1 -var build_ssh_proxy_port=4125 "$recipe"
 
 # Reject an image alias so the builder always starts from an immutable AMI ID.
 if "$packer" validate -evaluate-datasources=false -var-file="$test_dir/release.pkrvars.hcl" \

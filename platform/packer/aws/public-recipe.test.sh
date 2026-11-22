@@ -74,6 +74,10 @@ cat > "$test_dir/bin/stub-packer" <<'PACKER'
 #!/bin/sh
 set -eu
 printf 'PACKER %s\n' "$*" >> "$FIXTURE_TRACE"
+if [ "$1" = validate ]; then
+    [ "$FIXTURE_CASE" != invalid-packer-template ]
+    exit
+fi
 for argument; do
     case "$argument" in
         manifest_path=*) manifest=${argument#manifest_path=} ;;
@@ -115,6 +119,13 @@ build valid 1
 grep -Fq -- '-var public_build=true' "$FIXTURE_TRACE"
 grep -Fq -- "-var publisher_account_id=$FIXTURE_ACCOUNT" "$FIXTURE_TRACE"
 grep -Fq "AMI provenance manifest:" "$test_dir/build.out"
+
+# Static Packer validation runs before build and a failed recipe never launches a guest.
+test "$(grep '^PACKER ' "$FIXTURE_TRACE" | awk '{print $2}' | paste -sd ' ' -)" = 'validate build'
+if build invalid-packer-template 1 || grep -q '^PACKER build ' "$FIXTURE_TRACE"; then
+    echo 'A rejected Packer validation reached the build command.' >&2
+    exit 1
+fi
 
 # Rejected output never receives a success handoff or a publication API call.
 for scenario in wrong-source-region public-output encrypted-output-snapshot; do
