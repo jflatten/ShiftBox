@@ -58,6 +58,11 @@ private image, set its description and IMDSv2, and stop or remove the
 attempt's own resources. The pinned Packer Amazon plugin uses
 `ec2:DescribeRegions` before launching. That request must use the Ohio
 endpoint and occur before expiry, like the other inventory reads.
+A launch or image-creation request is authorized before EC2 assigns IDs
+to the new resources. The policy uses their resource types for creation
+and keeps the account or region scope, exact launch inputs, and required
+attempt tags. Operations on existing resources keep the ID prefixes and
+ownership checks.
 A full binding allows no AMI copy, AMI launch
 permission change, snapshot sharing, bucket access, IAM delegation, or
 network creation. Inventory calls that require a wildcard stay bounded by

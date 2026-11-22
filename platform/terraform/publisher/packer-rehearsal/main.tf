@@ -90,11 +90,17 @@ locals {
   subnet                = "${local.owned}:subnet/${try(var.attempt.subnet_id, "")}"
   vpc                   = "${local.owned}:vpc/${try(var.attempt.vpc_id, "")}"
   instance              = "${local.owned}:instance/i-*"
-  interface             = "${local.owned}:network-interface/eni-*"
-  volume                = "${local.owned}:volume/vol-*"
   image                 = "${local.ohio}::image/ami-*"
   snapshot              = "${local.ohio}::snapshot/snap-*"
   trusted_principal     = { Federated = "arn:aws:iam::${var.publisher_account_id}:oidc-provider/${local.oidc_url}" }
+
+  # EC2 authorizes new resources before assigning IDs. Use the resource type
+  # here and keep the ID prefixes on operations against existing resources.
+  new_instance  = "${local.owned}:instance/*"
+  new_interface = "${local.owned}:network-interface/*"
+  new_volume    = "${local.owned}:volume/*"
+  new_image     = "${local.ohio}::image/*"
+  new_snapshot  = "${local.ohio}::snapshot/*"
 
   # EC2 authorizes RunInstances against its inputs and all the resources it creates.
   grants = {
@@ -131,7 +137,7 @@ locals {
     }
     TaggedPrivateInterface = {
       Action   = ["ec2:RunInstances"]
-      Resource = [local.interface]
+      Resource = [local.new_interface]
       Condition = {
         StringEquals = local.request_tags
         ArnEquals    = { "ec2:Subnet" = local.subnet, "ec2:Vpc" = local.vpc }
@@ -140,7 +146,7 @@ locals {
     }
     TaggedT3Builder = {
       Action   = ["ec2:RunInstances"]
-      Resource = [local.instance]
+      Resource = [local.new_instance]
       Condition = {
         StringEquals = merge(local.request_tags, {
           "ec2:InstanceType"       = "t3.medium"
@@ -151,7 +157,7 @@ locals {
     }
     TaggedBuildRoot = {
       Action   = ["ec2:RunInstances"]
-      Resource = [local.volume]
+      Resource = [local.new_volume]
       Condition = {
         StringEquals  = merge(local.request_tags, { "ec2:VolumeType" = "gp3" })
         NumericEquals = { "ec2:VolumeSize" = 32 }
@@ -165,12 +171,12 @@ locals {
     }
     CreateOwnedImageAndSnapshot = {
       Action    = ["ec2:CreateImage"]
-      Resource  = [local.image, local.snapshot]
+      Resource  = [local.new_image, local.new_snapshot]
       Condition = { StringEquals = local.request_tags }
     }
     TagAttemptOnCreation = {
       Action   = ["ec2:CreateTags"]
-      Resource = [local.instance, local.interface, local.volume, local.image, local.snapshot]
+      Resource = [local.new_instance, local.new_interface, local.new_volume, local.new_image, local.new_snapshot]
       Condition = {
         StringEquals                = merge(local.request_tags, { "ec2:CreateAction" = ["RunInstances", "CreateImage"] })
         "ForAllValues:StringEquals" = { "aws:TagKeys" = keys(local.scope_tags) }

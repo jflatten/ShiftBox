@@ -66,6 +66,26 @@ run "bound" {
     error_message = "Packer requires an Ohio-scoped DescribeRegions grant before launching."
   }
 
+  # EC2 checks the resources it will create before their IDs are allocated.
+  # Existing builders remain scoped to real instance IDs and attempt tags.
+  assert {
+    condition = {
+      for statement in jsondecode(aws_iam_role_policy.attempt[0].policy).Statement : statement.Sid => statement.Resource
+      if contains(["TaggedT3Builder", "TaggedPrivateInterface", "TaggedBuildRoot", "CreateOwnedImageAndSnapshot", "TagAttemptOnCreation", "ImageOnlyOwnedAttemptBuilder"], statement.Sid)
+      } == {
+      TaggedT3Builder             = ["arn:aws:ec2:us-east-2:111122223333:instance/*"]
+      TaggedPrivateInterface      = ["arn:aws:ec2:us-east-2:111122223333:network-interface/*"]
+      TaggedBuildRoot             = ["arn:aws:ec2:us-east-2:111122223333:volume/*"]
+      CreateOwnedImageAndSnapshot = ["arn:aws:ec2:us-east-2::image/*", "arn:aws:ec2:us-east-2::snapshot/*"]
+      TagAttemptOnCreation = [
+        "arn:aws:ec2:us-east-2:111122223333:instance/*", "arn:aws:ec2:us-east-2:111122223333:network-interface/*",
+        "arn:aws:ec2:us-east-2:111122223333:volume/*", "arn:aws:ec2:us-east-2::image/*", "arn:aws:ec2:us-east-2::snapshot/*",
+      ]
+      ImageOnlyOwnedAttemptBuilder = ["arn:aws:ec2:us-east-2:111122223333:instance/i-*"]
+    }
+    error_message = "Creation grants must match unassigned EC2 resource IDs, while existing instance operations retain their ID fence."
+  }
+
   assert {
     condition = one([
       for statement in jsondecode(aws_iam_role_policy.attempt[0].policy).Statement : statement
