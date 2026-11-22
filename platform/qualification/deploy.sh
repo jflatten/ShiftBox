@@ -21,13 +21,19 @@ fail() {
   exit 1
 }
 
-[[ $# = 4 ]] || fail 'usage: deploy.sh manifest asset-directory sbq-RUNID-ATTEMPT evidence-directory'
+verify_staffed=false
+if [[ ${1:-} == --verify-staffed-dns ]]; then
+  verify_staffed=true
+  shift
+fi
+[[ $# = 4 ]] || fail 'usage: deploy.sh [--verify-staffed-dns] manifest asset-directory sbq-RUNID-ATTEMPT evidence-directory'
 manifest=$1
 assets=$2
 run=$3
 evidence=$4
 role=${SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN:-}
 staffed=${SHIFTBOX_QUALIFICATION_STAFFED:-false}
+staffed_role=${SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN:-}
 
 [[ $run =~ ^sbq-[1-9][0-9]{0,15}-[1-9][0-9]{0,3}$ ]] || fail 'invalid qualification run identity'
 [[ $staffed == true || $staffed == false ]] || fail 'invalid qualification operator mode'
@@ -36,13 +42,20 @@ staffed=${SHIFTBOX_QUALIFICATION_STAFFED:-false}
   fail 'expected separate approved qualification and publisher accounts'
 [[ $role == "arn:aws:iam::$account:role/shiftbox-qualification-cloudformation" ]] ||
   fail 'expected a dedicated testing-account qualification service role'
-[[ -d $assets && -f $manifest && -d $evidence && ! -e $evidence/automated.json ]] ||
-  fail 'verified assets and a fresh private evidence directory are required'
+if [[ $staffed == true && $staffed_role != "arn:aws:iam::$account:role/shiftbox-qualification-staffed-cloudformation" ]]; then
+  fail 'a staffed run requires the separately reviewed testing-account service role for the console and teardown'
+fi
+[[ -d $assets && -f $manifest && -d $evidence ]] ||
+  fail 'verified assets and a private evidence directory are required'
+if [[ $verify_staffed == true ]]; then
+  [[ $staffed == true && -f $evidence/automated.json ]] || fail 'an existing staffed handoff is required'
+else
+  [[ ! -e $evidence/automated.json ]] || fail 'a fresh private evidence directory is required'
+fi
 
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 template="$assets/shiftbox-aws-cloudformation.yaml"
-change_name="$run-foundation"
 
 cloud() {
   local region=$1
@@ -85,56 +98,61 @@ choose_zone() {
     '
 }
 
-review() {
-  local region=$1 directory=$2 url zone stack change
+review_change_set() {
+  local region=$1 directory=$2 phase=$3 type=$4 target=$5 zone=$6
+  local url stack change change_name="$run-$phase"
   url=$(jq -er --arg region "$region" '.regions[$region].templateLocation.url' "$manifest")
-  zone=$(choose_zone "$region") || fail "could not verify an eligible availability zone in $region"
-  printf '%s\n' "$zone" >"$directory/zone"
-  cloud "$region" cloudformation validate-template --template-url "$url" >/dev/null ||
-    fail "CloudFormation could not validate the hosted template in $region"
-  if cloud "$region" cloudformation describe-stacks --stack-name "$run" >/dev/null; then
-    fail "a stack already uses the qualification run name in $region"
-  fi
-  grep -Eq 'ValidationError.*Stack .* does not exist' "$scratch/aws-error" ||
-    fail "cannot establish that the qualification stack name is unused in $region"
-  jq -n --arg name "$run" --arg dns "$run.internal" --arg zone "$zone" '
-    {DeploymentName:$name,DnsSuffix:$dns,AvailabilityZone:$zone,Phase:"foundation",AccessMode:"tailscale",
-     CreateNatGateway:"true",DataVolumeSizeGiB:"32",InitializeDataVolume:"true"} |
+  jq -n --arg name "$run" --arg dns "$run.internal" --arg zone "$zone" --arg phase "$phase" '
+    {DeploymentName:$name,DnsSuffix:$dns,AvailabilityZone:$zone,Phase:$phase,AccessMode:"tailscale",
+     RoleBoundaryMode:"external",CreateNatGateway:"true",DataVolumeSizeGiB:"32",InitializeDataVolume:"true"} |
     to_entries | map({ParameterKey:.key,ParameterValue:.value})
   ' >"$directory/parameters.json"
   fence "$region"
-  cloud "$region" cloudformation create-change-set --stack-name "$run" \
-    --change-set-type CREATE --change-set-name "$change_name" --client-token "$change_name" \
-    --role-arn "$role" --capabilities CAPABILITY_IAM --template-url "$url" \
+  cloud "$region" cloudformation create-change-set --stack-name "$target" \
+    --change-set-type "$type" --change-set-name "$change_name" --client-token "$change_name" \
+    --role-arn "$role" --capabilities CAPABILITY_NAMED_IAM --template-url "$url" \
     --parameters "file://$directory/parameters.json" --tags "Key=project,Value=shiftbox" \
     "Key=cluster_name,Value=$run" "Key=shiftbox_qualification_run,Value=$run" --output json >"$directory/created.json" ||
-    fail "could not create the regional change set in $region"
+    fail "could not create the $phase change set in $region"
   stack=$(jq -er '.StackId' "$directory/created.json")
   change=$(jq -er '.Id' "$directory/created.json")
   if ! resource_arn "$stack" "arn:aws:cloudformation:$region:$account:stack/$run/" ||
-    ! resource_arn "$change" "arn:aws:cloudformation:$region:$account:changeSet/$change_name/"; then
+    ! resource_arn "$change" "arn:aws:cloudformation:$region:$account:changeSet/$change_name/" ||
+    [[ $type == UPDATE && $stack != "$target" ]]; then
     fail "CloudFormation returned an unexpected stack or change-set identity in $region"
   fi
   cloud "$region" cloudformation wait change-set-create-complete --change-set-name "$change" ||
     fail "the change set did not validate in $region"
   cloud "$region" cloudformation describe-change-set --change-set-name "$change" --output json >"$directory/review.json" ||
     fail "the change set could not be inspected in $region"
-  jq -e --arg stack "$stack" --arg change "$change" --arg name "$change_name" --arg run "$run" \
+  jq -e --arg stack "$stack" --arg change "$change" --arg name "$change_name" --arg run "$run" --arg phase "$phase" \
     --slurpfile expected "$directory/parameters.json" "$owned_tags"'
+    def planned:
+      .Changes | type == "array" and length > 0 and
+      all(.[]; .Type == "Resource" and .ResourceChange.Action == "Add");
     .StackId == $stack and .ChangeSetId == $change and .ChangeSetName == $name and
-    .Status == "CREATE_COMPLETE" and .ExecutionStatus == "AVAILABLE" and .Capabilities == ["CAPABILITY_IAM"] and
+    .Status == "CREATE_COMPLETE" and .ExecutionStatus == "AVAILABLE" and .Capabilities == ["CAPABILITY_NAMED_IAM"] and
     (.Tags | owned($run)) and
     (.Parameters as $parameters | all($expected[0][]; . as $target |
       any($parameters[]; .ParameterKey == $target.ParameterKey and .ParameterValue == $target.ParameterValue))) and
-    (.Changes | type == "array" and length > 0 and
+    planned and
+    (if $phase == "dns-zones" then
+      ([.Changes[].ResourceChange | [.LogicalResourceId, .ResourceType]] | sort) ==
+        [["DiscoveryNamespace", "AWS::ServiceDiscovery::PrivateDnsNamespace"], ["PrivateZone", "AWS::Route53::HostedZone"]]
+    else .Changes |
       any(.[]; .ResourceChange.LogicalResourceId == "InstallationVolume" and
         .ResourceChange.ResourceType == "AWS::EC2::Volume") and
-      all(.[]; .Type == "Resource" and (.ResourceChange |
-        .Action == "Add" and (.ResourceType | test("^AWS::(EC2|ECS|IAM|Logs|Route53|SecretsManager|ServiceDiscovery)::")) and
-        (.ResourceType != "AWS::ECS::Service" and .ResourceType != "AWS::ECS::TaskDefinition") and
-        (.LogicalResourceId | startswith("Router") or . == "TailscaleRouter" | not))))
+      any(.[]; .ResourceChange.LogicalResourceId == "HostRole" and
+        .ResourceChange.ResourceType == "AWS::IAM::Role") and
+      all(.[]; .ResourceChange |
+        (.ResourceType | test("^AWS::(EC2|SecretsManager)::|^AWS::(ECS::Cluster|IAM::Role|IAM::InstanceProfile|Logs::LogGroup)$")) and
+        (if (.ResourceType | startswith("AWS::IAM::")) then
+          .LogicalResourceId == "HostRole" or .LogicalResourceId == "HostProfile"
+        else true end) and
+        (.LogicalResourceId | startswith("Router") or . == "TailscaleRouter" | not))
+    end)
   ' "$directory/review.json" >/dev/null ||
-    fail "change-set parameters, ownership or foundation changes are invalid in $region"
+    fail "$phase change set parameters, ownership or resource changes are invalid in $region"
   cloud "$region" cloudformation get-template --stack-name "$stack" --change-set-name "$change" \
     --template-stage Original --output json | jq -ej '.TemplateBody | strings' >"$directory/observed-template.yaml" ||
     fail "the hosted change-set template could not be read in $region"
@@ -145,8 +163,23 @@ review() {
   jq -e '.OperationEvents | type == "array" and all(.[];
     .EventType != "VALIDATION_ERROR" and .ValidationStatus != "FAILED" and .ValidationStatus != "SKIPPED")
   ' "$directory/events.json" >/dev/null || fail "the hosted template has validation findings in $region"
+}
 
+review() {
+  local region=$1 directory=$2 zone stack change
+  zone=$(choose_zone "$region") || fail "could not verify an eligible availability zone in $region"
+  printf '%s\n' "$zone" >"$directory/zone"
+  cloud "$region" cloudformation validate-template --template-url "$(jq -er --arg region "$region" '.regions[$region].templateLocation.url' "$manifest")" >/dev/null ||
+    fail "CloudFormation could not validate the hosted template in $region"
+  if cloud "$region" cloudformation describe-stacks --stack-name "$run" >/dev/null; then
+    fail "a stack already uses the qualification run name in $region"
+  fi
+  grep -Eq 'ValidationError.*Stack .* does not exist' "$scratch/aws-error" ||
+    fail "cannot establish that the qualification stack name is unused in $region"
+  review_change_set "$region" "$directory" foundation CREATE "$run" "$zone"
   if [[ $region != "$ohio" || $staffed == true ]]; then
+    stack=$(jq -er '.StackId' "$directory/review.json")
+    change=$(jq -er '.ChangeSetId' "$directory/review.json")
     fence "$region"
     cloud "$region" cloudformation delete-change-set --change-set-name "$change" ||
       fail "could not discard the unexecuted change set in $region"
@@ -249,7 +282,7 @@ probe() (
 )
 
 start_foundation() {
-  local directory="$scratch/$ohio" stack change volume
+  local directory="$scratch/$ohio" stack change volume vpc
   stack=$(jq -er '.StackId' "$directory/review.json")
   change=$(jq -er '.ChangeSetId' "$directory/review.json")
   fence "$ohio"
@@ -257,7 +290,7 @@ start_foundation() {
     fail 'the Ohio change set could not be rechecked before execution'
   diff -q <(jq -cS . "$directory/review.json") <(jq -cS . "$directory/recheck.json") >/dev/null ||
     fail 'the Ohio change set changed after validation'
-  cloud "$ohio" cloudformation execute-change-set --change-set-name "$change" --client-request-token "$change_name" ||
+  cloud "$ohio" cloudformation execute-change-set --change-set-name "$change" --client-request-token "$run-foundation" ||
     fail 'could not execute the reviewed Ohio foundation'
   cloud "$ohio" cloudformation wait stack-create-complete --stack-name "$stack" ||
     fail 'the Ohio foundation did not finish creating'
@@ -280,16 +313,86 @@ start_foundation() {
   ' "$directory/deployed.json" >/dev/null || fail 'Ohio foundation ownership, phase or protection verification failed'
   volume=$(jq -er '.Stacks[0].Outputs[] | select(.OutputKey == "InstallationVolumeId") | .OutputValue |
     select(test("^vol-[0-9a-f]{17}$"))' "$directory/deployed.json")
+  vpc=$(jq -er '.Stacks[0].Outputs[] | select(.OutputKey == "VpcId") | .OutputValue |
+    select(test("^vpc-[0-9a-f]{17}$"))' "$directory/deployed.json")
   cloud "$ohio" cloudformation list-stack-resources --stack-name "$stack" --output json |
-    jq -e --arg volume "$volume" '
+    jq -e --arg volume "$volume" --arg vpc "$vpc" '
       any(.StackResourceSummaries[]; .LogicalResourceId == "InstallationVolume" and .PhysicalResourceId == $volume) and
+      any(.StackResourceSummaries[]; .LogicalResourceId == "Vpc" and .ResourceType == "AWS::EC2::VPC" and .PhysicalResourceId == $vpc) and
       all(.StackResourceSummaries[]; (.LogicalResourceId |
-        test("^(PostgresTask|SetupTask|ControllerTask|PostgresService|ControllerService|SetupSession|TailscaleRouter)$") | not))
+        test("^(PostgresTask|SetupTask|ControllerTask|PostgresService|ControllerService|SetupSession|TailscaleRouter|PrivateZone|DiscoveryNamespace|PostgresDiscovery|ControllerDiscovery|PrivateRecords|PostgresExecutionRole|SetupExecutionRole|ControllerExecutionRole|SetupTaskRole|ControllerTaskRole)$") | not))
     ' >/dev/null || fail 'the Ohio foundation unexpectedly started a protected setup or active resource'
   cloud "$ohio" ec2 describe-volumes --volume-ids "$volume" --output json |
     jq -e --arg volume "$volume" '.Volumes | length == 1 and
       (.[0] | .VolumeId == $volume and .Encrypted == true and .VolumeType == "gp3")' >/dev/null ||
     fail 'could not verify encrypted Ohio foundation storage'
+
+  # Cloud Map assigns its physical namespace and service IDs on creation. The
+  # execution role must not tag arbitrary IDs, so only review this first DNS stage.
+  mkdir "$directory/dns-zones"
+  review_change_set "$ohio" "$directory/dns-zones" dns-zones UPDATE "$stack" "$(cat "$directory/zone")"
+  change=$(jq -er '.ChangeSetId' "$directory/dns-zones/review.json")
+  fence "$ohio"
+  cloud "$ohio" cloudformation delete-change-set --change-set-name "$change" ||
+    fail 'could not discard the unexecuted Ohio DNS zone change set'
+}
+
+verify_staffed_dns() {
+  local stack receipt
+  jq -e --arg sha "$(manifest_sha256 "$manifest")" '
+    .status == "ohio-console-launch-pending" and .manifestSha256 == $sha and
+    .manualGatesPending == true and .dnsBootstrapExecuted == false
+  ' "$evidence/automated.json" >/dev/null || fail 'the staffed handoff does not identify this candidate'
+  cloud "$ohio" cloudformation describe-stacks --stack-name "$run" --output json >"$scratch/staffed-stack.json" ||
+    fail 'the staffed Ohio stack is unavailable for DNS readback'
+  stack=$(jq -er --arg run "$run" --arg role "$staffed_role" "$owned_tags"'
+    def parameter($key): [.Parameters[] | select(.ParameterKey == $key) | .ParameterValue];
+    .Stacks | select(length == 1) | .[0] |
+    select(.StackName == $run and .StackStatus == "UPDATE_COMPLETE" and .RoleARN == $role and
+      (.Capabilities | index("CAPABILITY_NAMED_IAM") != null) and .EnableTerminationProtection == true and
+      (.Tags | owned($run)) and parameter("RoleBoundaryMode") == ["managed"] and
+      parameter("DnsSuffix") == [($run + ".internal")]) | .StackId
+  ' "$scratch/staffed-stack.json") ||
+    fail 'the staffed Ohio stack does not match the reviewed role, parameters or ownership'
+  resource_arn "$stack" "arn:aws:cloudformation:$ohio:$account:stack/$run/" ||
+    fail 'the staffed stack is outside this qualification run'
+  cloud "$ohio" cloudformation get-template --stack-name "$stack" --template-stage Original --output json |
+    jq -ej '.TemplateBody | strings' >"$scratch/staffed-template.yaml" ||
+    fail 'could not read the template used by the staffed stack'
+  cmp -s "$template" "$scratch/staffed-template.yaml" ||
+    fail 'the staffed stack template differs from the exact RC'
+  cloud "$ohio" cloudformation list-stack-resources --stack-name "$stack" --output json |
+    jq -e --slurpfile stack "$scratch/staffed-stack.json" '
+      def zone_id: ltrimstr("/hostedzone/");
+      def output($key; $pattern):
+        [$stack[0].Stacks[0].Outputs[] | select(.OutputKey == $key) | .OutputValue] |
+        if length == 1 and (.[0] | type == "string" and test($pattern)) then .[0]
+        else error("missing or invalid staffed DNS output") end;
+      def resource($key; $resource_type):
+        [.StackResourceSummaries[] | select(.LogicalResourceId == $key and .ResourceType == $resource_type and
+          (.ResourceStatus | IN("CREATE_COMPLETE", "UPDATE_COMPLETE"))) | .PhysicalResourceId] |
+        if length == 1 and (.[0] | type == "string") and .[0] != "" then .[0]
+        else error("missing staffed DNS resource \($key)") end;
+      "^(/hostedzone/)?Z[A-Z0-9]{5,32}$" as $zone |
+      (output("PrivateZoneId"; $zone) | zone_id) as $private |
+      (output("DiscoveryHostedZoneId"; $zone) | zone_id) as $discovery |
+      output("DiscoveryNamespaceId"; "^ns-[a-z0-9]{16}$") as $namespace |
+      output("PostgresDiscoveryServiceId"; "^srv-[a-z0-9]{16}$") as $postgres |
+      output("ControllerDiscoveryServiceId"; "^srv-[a-z0-9]{16}$") as $controller |
+      $private != $discovery and $postgres != $controller and
+      (output("Phase"; "^(database|active)$") | length > 0) and
+      output("VpcId"; "^vpc-[0-9a-f]{17}$") == resource("Vpc"; "AWS::EC2::VPC") and
+      $private == (resource("PrivateZone"; "AWS::Route53::HostedZone") | zone_id) and
+      $namespace == resource("DiscoveryNamespace"; "AWS::ServiceDiscovery::PrivateDnsNamespace") and
+      $postgres == resource("PostgresDiscovery"; "AWS::ServiceDiscovery::Service") and
+      $controller == resource("ControllerDiscovery"; "AWS::ServiceDiscovery::Service") and
+      resource("PrivateRecords"; "AWS::Route53::RecordSetGroup") != ""
+    ' >/dev/null ||
+    fail 'the staffed stack does not expose the verified staged DNS inventory'
+  receipt=$(mktemp "$evidence/.staffed.XXXXXX")
+  jq '.staffedDnsInventoryVerified = true' "$evidence/automated.json" >"$receipt"
+  mv -- "$receipt" "$evidence/automated.json"
+  printf 'Verified the exact staffed stack and its DNS inventory. Operator and teardown evidence remain pending.\n'
 }
 
 fence "$ohio"
@@ -297,6 +400,10 @@ jq -es --arg publisher "$publisher" "$manifest_filter"'
   length == 1 and (.[0] | distribution and .publisherAccountId == $publisher)
 ' "$manifest" >/dev/null || fail 'expected the approved public publisher and a complete exact RC manifest'
 manifest_verify_assets "$manifest" "$assets" || fail 'RC asset verification failed'
+if [[ $verify_staffed == true ]]; then
+  verify_staffed_dns
+  exit 0
+fi
 "$here/../release/templates.sh" verify "$manifest" "$template" || fail 'hosted template bytes differ in a release region'
 tar -xOzf "$assets/shiftbox-aws-support.tar.gz" stack-policy.json >"$scratch/stack-policy.json"
 jq -e '.Statement | type == "array"' "$scratch/stack-policy.json" >/dev/null ||
@@ -323,6 +430,8 @@ fi
 jq -s --arg candidate "$(jq -er .candidateTag "$manifest")" --arg sha "$(manifest_sha256 "$manifest")" \
   --arg status "$status" '
   {schemaVersion:1,candidateTag:$candidate,manifestSha256:$sha,status:$status,
-   ohioFoundationDeployed:($status == "automated-foundation-only"),manualGatesPending:true,regions:sort_by(.region)}
+   ohioFoundationDeployed:($status == "automated-foundation-only"),
+   dnsZoneChangeSetReviewed:($status == "automated-foundation-only"),
+   dnsBootstrapExecuted:false,manualGatesPending:true,regions:sort_by(.region)}
 ' "$scratch/"*/result.json >"$evidence/automated.json"
 printf 'Automated checks passed (%s). Browser, Tailscale, CLI, recovery and teardown evidence remain separate.\n' "$status"

@@ -1,6 +1,7 @@
 let volumes = Resources.*[ Type == 'AWS::EC2::Volume' ]
 let secrets = Resources.*[ Type == 'AWS::SecretsManager::Secret' ]
 let ingress = Resources.*[ Type == 'AWS::EC2::SecurityGroupIngress' ]
+let runtime_roles = Resources.*[ Type == 'AWS::IAM::Role' ]
 
 rule retained_volume when %volumes !empty {
     %volumes {
@@ -20,6 +21,14 @@ rule retained_secrets when %secrets !empty {
 
 rule staged_startup when Parameters.Phase exists {
     Parameters.Phase.Default == 'foundation'
+}
+
+rule bounded_runtime_roles when %runtime_roles !empty {
+    %runtime_roles.Properties {
+        RoleName exists
+        Path exists
+        PermissionsBoundary exists
+    }
 }
 
 rule no_public_ingress when %ingress !empty {

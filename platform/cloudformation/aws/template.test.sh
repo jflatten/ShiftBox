@@ -11,6 +11,7 @@ from ipaddress import ip_network
 import json
 from pathlib import Path
 import re
+import runpy
 import subprocess
 import sys
 
@@ -70,6 +71,10 @@ substitutions = {
     "TAILSCALE_USER_DATA": (terraform / "tailscale/user-data.sh.tftpl").read_text(),
 }
 template_bytes = (cloudformation / "template.yaml").read_text()
+# Exercise the production renderer, then independently compare the parsed
+# boundary and inline policy documents below.
+render_task_boundaries = runpy.run_path(str(cloudformation / "render_boundaries.py"))["render_task_boundaries"]
+template_bytes = render_task_boundaries(template_bytes)
 for key, value in substitutions.items():
     token = f"@@{key}@@"
     assert token in template_bytes, f"Missing release pin or script: {key}"
@@ -86,13 +91,122 @@ def properties(name):
 
 # The console and CLI create only the foundation by default.
 assert template["Parameters"]["Phase"]["Default"] == "foundation"
-assert set(template["Parameters"]["Phase"]["AllowedValues"]) == {"foundation", "database", "active"}
+phases = ("foundation", "dns-zones", "dns-services", "database", "active")
+assert tuple(template["Parameters"]["Phase"]["AllowedValues"]) == phases
 assert resources["PostgresService"]["Condition"] == "DatabaseEnabled"
 assert resources["ControllerService"]["Condition"] == "DatabaseEnabled"
 assert properties("ControllerService")["DesiredCount"] == {"If": ["ControllerEnabled", 1, 0]}
 assert resources["SetupTask"]["Condition"] == "DatabaseEnabled"
 assert template["Conditions"]["ControllerEnabled"] == {"Equals": [{"Ref": "Phase"}, "active"]}
 assert {"Condition": "DatabaseEnabled"} in template["Conditions"]["UseTailnet"]["And"]
+
+
+def phase_condition(expression, phase):
+    """Evaluate only the intrinsics that control DNS and database staging."""
+    if not isinstance(expression, dict):
+        return expression
+    (function, args), = expression.items()
+    if function == "Condition":
+        return phase_condition(template["Conditions"][args], phase)
+    if function == "Ref":
+        assert args == "Phase"
+        return phase
+    values = [phase_condition(arg, phase) for arg in args]
+    if function == "Equals":
+        return values[0] == values[1]
+    if function == "Not":
+        return not values[0]
+    if function == "Or":
+        return any(values)
+    raise AssertionError(f"Unexpected phase condition: {function}")
+
+
+# Verify physical DNS IDs can be reviewed before creating their dependents.
+for index, phase in enumerate(phases):
+    for name, first_phase in {
+        "PrivateZone": 1, "DiscoveryNamespace": 1, "PostgresDiscovery": 2,
+        "ControllerDiscovery": 2, "PrivateRecords": 3, "PostgresTask": 3,
+        "PostgresExecutionRole": 3, "SetupExecutionRole": 3, "ControllerExecutionRole": 3,
+        "SetupTaskRole": 3, "ControllerTaskRole": 3,
+    }.items():
+        assert phase_condition({"Condition": resources[name]["Condition"]}, phase) == (index >= first_phase), name
+    for name, reference, first_phase in (
+        ("PrivateZoneId", {"Ref": "PrivateZone"}, 1),
+        ("DiscoveryNamespaceId", {"Ref": "DiscoveryNamespace"}, 1),
+        ("DiscoveryHostedZoneId", {"GetAtt": "DiscoveryNamespace.HostedZoneId"}, 1),
+        ("PostgresDiscoveryServiceId", {"GetAtt": "PostgresDiscovery.Id"}, 2),
+        ("ControllerDiscoveryServiceId", {"GetAtt": "ControllerDiscovery.Id"}, 2),
+    ):
+        output = template["Outputs"][name]
+        assert output["Value"] == reference
+        assert phase_condition({"Condition": output["Condition"]}, phase) == (index >= first_phase), name
+    trust_rule = template["Rules"]["DatabaseTrustRequired"]
+    assert phase_condition(trust_rule["RuleCondition"], phase) == (index >= 3)
+assert "PrivateRecords" in resources["PostgresService"]["DependsOn"]
+assert template["Outputs"]["WorkspaceSecurityGroupId"]["Value"] == {"Ref": "WorkspaceGroup"}
+
+# The qualification role can only administer its exact named resources and
+# boundary ARNs. Public installs need distinct names across AWS regions.
+assert template["Parameters"]["RoleBoundaryMode"]["Default"] == "managed"
+assert template["Conditions"]["UseExternalBoundaries"] == {"Equals": [{"Ref": "RoleBoundaryMode"}, "external"]}
+assert template["Conditions"]["UseManagedBoundaries"] == {"Not": [{"Condition": "UseExternalBoundaries"}]}
+roles = {name for name, resource in resources.items() if resource["Type"] == "AWS::IAM::Role"}
+assert roles == {
+    "HostRole", "RouterRole", "PostgresExecutionRole", "SetupExecutionRole",
+    "ControllerExecutionRole", "SetupTaskRole", "ControllerTaskRole",
+}
+managed_role_names = set()
+for name in roles | {"HostProfile", "RouterProfile"}:
+    identity = properties(name)
+    name_property = "RoleName" if name in roles else "InstanceProfileName"
+    condition, external_name, managed_name = identity[name_property]["If"]
+    assert condition == "UseExternalBoundaries"
+    assert external_name == {"Sub": "${DeploymentName}-" + name}
+    public_name = managed_name["Sub"]
+    assert "${AWS::Region}" in public_name
+    assert len(public_name.replace("${DeploymentName}", "x" * 32).replace("${AWS::Region}", "us-east-2")) <= 64
+    assert identity["Path"]["If"][:2] == ["UseExternalBoundaries", {"Sub": "/shiftbox-qualification/${DeploymentName}/"}]
+    if name in roles:
+        assert public_name not in managed_role_names
+        managed_role_names.add(public_name)
+        assert identity["PermissionsBoundary"]["If"] == [
+            "UseExternalBoundaries",
+            {"Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/shiftbox-qualification-boundaries/${DeploymentName}-" + name},
+            {"Ref": name + "Boundary"},
+        ]
+        assert resources[name + "Boundary"]["Type"] == "AWS::IAM::ManagedPolicy"
+        assert resources[name + "Boundary"]["Condition"] == (
+            {
+                "HostRole": "UseManagedBoundaries",
+                "RouterRole": "UseManagedRouterBoundary",
+            }.get(name, "UseManagedTaskBoundaries")
+        )
+        if "Policies" in identity:
+            assert properties(name + "Boundary")["PolicyDocument"] == identity["Policies"][0]["PolicyDocument"], name
+assert resources["SetupOperatorPolicy"]["Condition"] == "ManageSetupOperatorPolicy"
+assert template["Outputs"]["SetupOperatorPolicyArn"]["Condition"] == "ManageSetupOperatorPolicy"
+assert template["Conditions"]["ManageSetupOperatorPolicy"] == {
+    "And": [{"Condition": "UseManagedBoundaries"}, {"Condition": "DatabaseEnabled"}]
+}
+assert template["Conditions"]["UseManagedTaskBoundaries"] == {
+    "And": [{"Condition": "UseManagedBoundaries"}, {"Condition": "DatabaseEnabled"}]
+}
+
+# The two AWS-managed agent policies stay capped by local policies, including
+# restrictions on permission domains inherited by future managed versions.
+for name, allowed_prefixes in (
+    ("HostRoleBoundary", ("ec2:", "ecs:", "logs:")),
+    ("RouterRoleBoundary", ("ssm:", "ssmmessages:", "ec2messages:")),
+):
+    actions = {
+        action
+        for statement in properties(name)["PolicyDocument"]["Statement"]
+        for action in (
+            [statement["Action"]] if isinstance(statement["Action"], str) else statement["Action"]
+        )
+    }
+    assert all(action.startswith(allowed_prefixes) and "*" not in action for action in actions), actions
+    assert not ({"ecs:RunTask", "ssm:StartSession", "ssm:GetParameter", "ssm:GetParameters"} & actions)
 
 # Review uses the same hosted image pins for both ECS paths.
 assert properties("ControllerTask")["ContainerDefinitions"][0]["Image"] == controller
@@ -113,6 +227,10 @@ assert properties("InstallationVolume")["AvailabilityZone"] == {"Ref": "Availabi
 for name in protected:
     assert "Condition" not in resources[name], name
     assert resources[name]["DeletionPolicy"] == resources[name]["UpdateReplacePolicy"] == "Retain", name
+for name in protected - {"InstallationVolume"}:
+    assert properties(name)["Name"]["If"] == [
+        "UseExternalBoundaries", {"Sub": "${DeploymentName}-" + name}, {"Ref": "AWS::NoValue"},
+    ], name
 policy = json.loads((cloudformation / "stack-policy.json").read_text())
 denial = next(s for s in policy["Statement"] if s["Effect"] == "Deny")
 assert set(denial["Action"]) == {"Update:Replace", "Update:Delete"}
@@ -268,6 +386,12 @@ subprocess.run(["sh", "-n"], input=postgres_start, text=True, check=True)
 (fixture_dir / "rendered.yaml").write_text(template_bytes)
 print("CloudFormation structure tests passed.")
 PY
+
+# The independent execution-policy fixture can validate the same rendered
+# template without exposing or depending on the test's temporary directory.
+if [[ -n ${SHIFTBOX_TEST_TEMPLATE_OUTPUT:-} ]]; then
+  cp -- "$fixture_dir/rendered.yaml" "$SHIFTBOX_TEST_TEMPLATE_OUTPUT"
+fi
 
 # Opt in to the CloudFormation tooling layers with provisioned, pinned tools.
 if [[ ${1:-} == --aws-tooling ]]; then

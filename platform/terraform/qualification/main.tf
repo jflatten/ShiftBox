@@ -77,12 +77,17 @@ locals {
     deploy  = "aws-qualification"
     cleanup = "aws-qualification-cleanup"
   }
-  oidc    = "arn:aws:iam::${local.account}:oidc-provider/token.actions.githubusercontent.com"
-  service = "arn:aws:iam::${local.account}:role/shiftbox-qualification-cloudformation"
-  stacks  = [for region in local.regions : "arn:aws:cloudformation:${region}:${local.account}:stack/sbq-*-*/*"]
-  ohio    = "arn:aws:cloudformation:us-east-2:${local.account}:stack/sbq-*-*/*"
-  changes = [for region in local.regions : "arn:aws:cloudformation:${region}:${local.account}:changeSet/sbq-*-*-foundation/*"]
-  tags    = { project = "shiftbox", cluster_name = "shiftbox-qualification-access" }
+  # Match the repository's verified immutable GitHub OIDC subject mode.
+  github_subject = "repo:jflatten@11561330/ShiftBox@1457179716"
+  oidc           = "arn:aws:iam::${local.account}:oidc-provider/token.actions.githubusercontent.com"
+  service        = "arn:aws:iam::${local.account}:role/shiftbox-qualification-cloudformation"
+  stacks         = [for region in local.regions : "arn:aws:cloudformation:${region}:${local.account}:stack/sbq-*-*/*"]
+  ohio           = "arn:aws:cloudformation:us-east-2:${local.account}:stack/sbq-*-*/*"
+  changes = concat(
+    [for region in local.regions : "arn:aws:cloudformation:${region}:${local.account}:changeSet/sbq-*-*-foundation/*"],
+    ["arn:aws:cloudformation:us-east-2:${local.account}:changeSet/sbq-*-*-dns-zones/*"]
+  )
+  tags = { project = "shiftbox", cluster_name = "shiftbox-qualification-access" }
   ec2_read = [
     "ec2:DescribeAddresses", "ec2:DescribeAvailabilityZones", "ec2:DescribeImages",
     "ec2:DescribeInstanceAttribute", "ec2:DescribeInstanceCreditSpecifications",
@@ -122,10 +127,11 @@ locals {
     "cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet", "cloudformation:GetTemplate",
     "cloudformation:GetStackPolicy", "cloudformation:ListStackResources"
   ]
-  urls = [
+  template_urls = {
     for region, bucket in var.release_template_buckets :
-    "https://${bucket}.s3.${region}.amazonaws.com/public/templates/v*-rc.*/*/shiftbox-aws-cloudformation.yaml?versionId=*"
-  ]
+    region => "https://${bucket}.s3.${region}.amazonaws.com/public/templates/v*-rc.*/*/shiftbox-aws-cloudformation.yaml?versionId=*"
+  }
+  urls = values(local.template_urls)
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
@@ -150,7 +156,7 @@ resource "aws_iam_role" "actions" {
       Principal = { Federated = local.oidc }
       Condition = { StringEquals = {
         "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-        "token.actions.githubusercontent.com:sub" = "repo:jflatten/ShiftBox:environment:${each.value}"
+        "token.actions.githubusercontent.com:sub" = "${local.github_subject}:environment:${each.value}"
       } }
     }]
   })
@@ -220,10 +226,31 @@ resource "aws_iam_role_policy" "deploy" {
           }
         }
       },
+      {
+        Sid = "CreateOhioDnsPreview", Effect = "Allow", Action = "cloudformation:CreateChangeSet", Resource = local.ohio
+        Condition = {
+          StringEquals = {
+            "cloudformation:RoleArn" = local.service
+            "aws:RequestTag/project" = "shiftbox"
+          }
+          StringLike = {
+            "cloudformation:TemplateUrl"                = local.template_urls["us-east-2"]
+            "cloudformation:ChangeSetName"              = "sbq-*-*-dns-zones"
+            "aws:RequestTag/cluster_name"               = "sbq-*-*"
+            "aws:RequestTag/shiftbox_qualification_run" = "sbq-*-*"
+          }
+        }
+      },
       { Sid = "RemoveOwnedReviewStacks", Effect = "Allow", Action = ["cloudformation:DeleteChangeSet", "cloudformation:DeleteStack"], Resource = local.stacks, Condition = local.stack_tags },
       {
-        Sid    = "ExecuteOnlyOhio", Effect = "Allow", Resource = local.ohio, Condition = local.stack_tags
-        Action = ["cloudformation:ExecuteChangeSet", "cloudformation:SetStackPolicy", "cloudformation:UpdateTerminationProtection"]
+        Sid = "ExecuteOnlyOhioFoundation", Effect = "Allow", Action = ["cloudformation:ExecuteChangeSet"], Resource = local.ohio
+        Condition = merge(local.stack_tags, {
+          StringLike = merge(local.stack_tags.StringLike, { "cloudformation:ChangeSetName" = "sbq-*-*-foundation" })
+        })
+      },
+      {
+        Sid    = "ProtectOhioStack", Effect = "Allow", Resource = local.ohio, Condition = local.stack_tags
+        Action = ["cloudformation:SetStackPolicy", "cloudformation:UpdateTerminationProtection"]
       },
       {
         Sid       = "PassReviewedCloudFormationRole", Effect = "Allow", Resource = local.service, Action = "iam:PassRole"

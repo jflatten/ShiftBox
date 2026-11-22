@@ -47,6 +47,22 @@ class QualificationWorkflow(unittest.TestCase):
         self.assertIn("cleanup.sh sweep", str(jobs["sweep"]["steps"]))
         self.assertIn("cleanup.sh empty", str(jobs["sweep"]["steps"]))
 
+    def test_named_qualification_and_staged_dns_handoff(self):
+        """The workflow identifies its reviewed DNS stage and reserves mutations for the staffed path."""
+        qualify = self.workflow["jobs"]["qualify"]
+        self.assertIn("vars.SHIFTBOX_QUALIFICATION_ENABLED == 'true'", qualify["if"])
+        self.assertIn("vars.SHIFTBOX_QUALIFICATION_SWEEP_ENABLED == 'true'", qualify["if"])
+        deploy = next(s for s in qualify["steps"] if "deploy.sh" in s.get("run", ""))
+        summary = deploy["run"]
+        self.assertIn("dns-zones", summary)
+        self.assertIn("dns-services", summary)
+        self.assertIn("dnsZoneChangeSetReviewed", summary)
+        self.assertIn("SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN", deploy["env"])
+        staffed = next(s for s in qualify["steps"] if "--verify-staffed-dns" in s.get("run", ""))
+        self.assertEqual("inputs.staffed", staffed["if"])
+        self.assertIn("SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN", staffed["env"])
+        self.assertNotIn("execute-change-set", staffed["run"])
+
     def test_tailnet_credentials_are_only_available_to_cleanup_steps(self):
         """The dedicated fixture tailnet is swept even if AWS teardown failed."""
         jobs = self.workflow["jobs"]

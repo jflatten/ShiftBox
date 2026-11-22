@@ -60,6 +60,33 @@
     rules:
       staged_startup: FAIL
 
+# A role created by the public template needs a name, path and permissions ceiling.
+- name: A named role with a permissions boundary is accepted
+  input:
+    Resources:
+      HostRole:
+        Type: AWS::IAM::Role
+        Properties:
+          RoleName: {Ref: RoleName}
+          Path: /shiftbox/
+          PermissionsBoundary: {Ref: HostRoleBoundary}
+  expectations:
+    rules:
+      bounded_runtime_roles: PASS
+
+# Failing to set a boundary can let later policies expand a runtime identity.
+- name: A named role without a permissions boundary is rejected
+  input:
+    Resources:
+      HostRole:
+        Type: AWS::IAM::Role
+        Properties:
+          RoleName: {Ref: RoleName}
+          Path: /shiftbox/
+  expectations:
+    rules:
+      bounded_runtime_roles: FAIL
+
 # Browser ingress rejects the universal IPv4 prefix.
 - name: Public ingress into the private browser port fails
   input:

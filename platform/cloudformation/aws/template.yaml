@@ -10,6 +10,8 @@ Metadata:
         Parameters: [DnsSuffix, AccessMode, OperatorCidr, CreateNatGateway]
       - Label: {default: Database trust and optional GitHub App}
         Parameters: [PostgresCaPem, GitHubAppSecretArn]
+      - Label: {default: Qualification IAM}
+        Parameters: [RoleBoundaryMode]
 
 Parameters:
   DeploymentName:
@@ -20,8 +22,13 @@ Parameters:
   Phase:
     Type: String
     Default: foundation
-    AllowedValues: [foundation, database, active]
-    Description: Create the foundation, start the database for protected setup, then activate the controller after setup has stopped.
+    AllowedValues: [foundation, dns-zones, dns-services, database, active]
+    Description: Create the foundation, review the private zones and discovery services in separate updates, then start the database and activate the controller.
+  RoleBoundaryMode:
+    Type: String
+    Default: managed
+    AllowedValues: [managed, external]
+    Description: Use managed for a public installation. External is for qualification with pre-approved run-specific boundaries and a separate setup operator. Keep this mode unchanged after installation.
   AvailabilityZone:
     Type: AWS::EC2::AvailabilityZone::Name
     Description: Availability Zone for both private subnets, EC2 and installation storage. Keep it unchanged.
@@ -80,7 +87,7 @@ Rules:
       - Assert: !Not [!Equals [!Ref OperatorCidr, 192.0.2.255/32]]
         AssertDescription: Enter the source CIDR of the approved private link.
   DatabaseTrustRequired:
-    RuleCondition: !Not [!Equals [!Ref Phase, foundation]]
+    RuleCondition: !Or [!Equals [!Ref Phase, database], !Equals [!Ref Phase, active]]
     Assertions:
       - Assert: !Not [!Equals [!Ref PostgresCaPem, '']]
         AssertDescription: Configure the PostgreSQL certificate/key secret and provide its public CA certificate.
@@ -89,8 +96,15 @@ Mappings:
   ReleaseRegions: @@RELEASE_REGIONS@@
 
 Conditions:
-  DatabaseEnabled: !Not [!Equals [!Ref Phase, foundation]]
+  DnsZonesEnabled: !Not [!Equals [!Ref Phase, foundation]]
+  DnsServicesEnabled: !Or [!Equals [!Ref Phase, dns-services], !Condition DatabaseEnabled]
+  DatabaseEnabled: !Or [!Equals [!Ref Phase, database], !Equals [!Ref Phase, active]]
   ControllerEnabled: !Equals [!Ref Phase, active]
+  UseExternalBoundaries: !Equals [!Ref RoleBoundaryMode, external]
+  UseManagedBoundaries: !Not [!Condition UseExternalBoundaries]
+  UseManagedRouterBoundary: !And [!Condition UseManagedBoundaries, !Condition UseTailnet]
+  UseManagedTaskBoundaries: !And [!Condition UseManagedBoundaries, !Condition DatabaseEnabled]
+  ManageSetupOperatorPolicy: !And [!Condition UseManagedBoundaries, !Condition DatabaseEnabled]
   # The foundation allows the operator to establish existing outbound routing
   # before the router's bootstrap downloads its packages.
   UseTailnet: !And [!Equals [!Ref AccessMode, tailscale], !Condition DatabaseEnabled]
@@ -302,9 +316,131 @@ Resources:
       VolumeType: gp3
       Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
 
+  # Customer installs create their own boundary policies. The qualification
+  # service role instead references policies owned by a separate operator.
+  HostRoleBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: UseManagedBoundaries
+    Properties:
+      Path: !Sub '/shiftbox-boundaries/${AWS::Region}/${DeploymentName}/'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: [ec2:DescribeTags, ecs:DiscoverPollEndpoint, ecs:Poll, ecs:StartTelemetrySession]
+            Resource: '*'
+            Condition: {StringEquals: {'aws:RequestedRegion': !Ref 'AWS::Region'}}
+          - Effect: Allow
+            Action:
+              - ecs:DeregisterContainerInstance
+              - ecs:RegisterContainerInstance
+              - ecs:SubmitAttachmentStateChanges
+              - ecs:SubmitContainerStateChange
+              - ecs:SubmitTaskStateChange
+            Resource: !GetAtt Cluster.Arn
+          - Effect: Allow
+            Action: ecs:UpdateContainerInstancesState
+            Resource: !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:container-instance/${Cluster}/*'
+          - Effect: Allow
+            Action: ecs:TagResource
+            Resource: !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:container-instance/${Cluster}/*'
+            Condition: {StringEquals: {'ecs:CreateAction': RegisterContainerInstance}}
+          - Effect: Allow
+            Action: ecs:ListTagsForResource
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${Cluster}/*'
+              - !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:container-instance/${Cluster}/*'
+          - Effect: Allow
+            Action: [logs:CreateLogStream, logs:PutLogEvents]
+            Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ServicesLogGroup}:log-stream:ecs/*'
+
+  RouterRoleBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: UseManagedRouterBoundary
+    Properties:
+      Path: !Sub '/shiftbox-boundaries/${AWS::Region}/${DeploymentName}/'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ssm:DescribeAssociation
+              - ssm:DescribeDocument
+              - ssm:GetDeployablePatchSnapshotForInstance
+              - ssm:GetDocument
+              - ssm:GetManifest
+              - ssm:ListAssociations
+              - ssm:ListInstanceAssociations
+              - ssm:PutComplianceItems
+              - ssm:PutConfigurePackageResult
+              - ssm:PutInventory
+              - ssm:UpdateAssociationStatus
+              - ssm:UpdateInstanceAssociationStatus
+              - ssm:UpdateInstanceInformation
+              - ssmmessages:CreateControlChannel
+              - ssmmessages:CreateDataChannel
+              - ssmmessages:OpenControlChannel
+              - ssmmessages:OpenDataChannel
+              - ec2messages:AcknowledgeMessage
+              - ec2messages:DeleteMessage
+              - ec2messages:FailMessage
+              - ec2messages:GetEndpoint
+              - ec2messages:GetMessages
+              - ec2messages:SendReply
+            Resource: '*'
+            Condition: {StringEquals: {'aws:RequestedRegion': !Ref 'AWS::Region'}}
+
+  # The bundle renderer copies each task boundary document from the role's
+  # inline policy below so the authorization and its ceiling stay in sync.
+  PostgresExecutionRoleBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: UseManagedTaskBoundaries
+    Properties:
+      Path: !Sub '/shiftbox-boundaries/${AWS::Region}/${DeploymentName}/'
+      PolicyDocument:
+@@POSTGRES_EXECUTION_BOUNDARY_DOCUMENT@@
+
+  SetupExecutionRoleBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: UseManagedTaskBoundaries
+    Properties:
+      Path: !Sub '/shiftbox-boundaries/${AWS::Region}/${DeploymentName}/'
+      PolicyDocument:
+@@SETUP_EXECUTION_BOUNDARY_DOCUMENT@@
+
+  ControllerExecutionRoleBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: UseManagedTaskBoundaries
+    Properties:
+      Path: !Sub '/shiftbox-boundaries/${AWS::Region}/${DeploymentName}/'
+      PolicyDocument:
+@@CONTROLLER_EXECUTION_BOUNDARY_DOCUMENT@@
+
+  SetupTaskRoleBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: UseManagedTaskBoundaries
+    Properties:
+      Path: !Sub '/shiftbox-boundaries/${AWS::Region}/${DeploymentName}/'
+      PolicyDocument:
+@@SETUP_TASK_BOUNDARY_DOCUMENT@@
+
+  ControllerTaskRoleBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: UseManagedTaskBoundaries
+    Properties:
+      Path: !Sub '/shiftbox-boundaries/${AWS::Region}/${DeploymentName}/'
+      PolicyDocument:
+@@CONTROLLER_TASK_BOUNDARY_DOCUMENT@@
+
   HostRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-HostRole', !Sub '${DeploymentName}-${AWS::Region}-host']
+      Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
+      PermissionsBoundary: !If
+        - UseExternalBoundaries
+        - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/shiftbox-qualification-boundaries/${DeploymentName}-HostRole'
+        - !Ref HostRoleBoundary
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -318,6 +454,8 @@ Resources:
   HostProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
+      InstanceProfileName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-HostProfile', !Sub '${DeploymentName}-${AWS::Region}-host']
+      Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
       Roles: [!Ref HostRole]
 
   Cluster:
@@ -406,6 +544,12 @@ Resources:
     Type: AWS::IAM::Role
     Condition: UseTailnet
     Properties:
+      RoleName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-RouterRole', !Sub '${DeploymentName}-${AWS::Region}-router']
+      Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
+      PermissionsBoundary: !If
+        - UseExternalBoundaries
+        - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/shiftbox-qualification-boundaries/${DeploymentName}-RouterRole'
+        - !Ref RouterRoleBoundary
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -420,6 +564,8 @@ Resources:
     Type: AWS::IAM::InstanceProfile
     Condition: UseTailnet
     Properties:
+      InstanceProfileName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-RouterProfile', !Sub '${DeploymentName}-${AWS::Region}-router']
+      Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
       Roles: [!Ref RouterRole]
 
   RouterGroup:
@@ -488,6 +634,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      Name: !If [UseExternalBoundaries, !Sub '${DeploymentName}-PostgresAdminSecret', !Ref 'AWS::NoValue']
       Description: PostgreSQL initialization owner credential
       GenerateSecretString: {PasswordLength: 40, ExcludePunctuation: true}
       Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
@@ -497,6 +644,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      Name: !If [UseExternalBoundaries, !Sub '${DeploymentName}-PostgresAppSecret', !Ref 'AWS::NoValue']
       Description: Scoped PostgreSQL ShiftBox role credential
       GenerateSecretString: {PasswordLength: 40, ExcludePunctuation: true}
       Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
@@ -506,6 +654,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      Name: !If [UseExternalBoundaries, !Sub '${DeploymentName}-PostgresDexSecret', !Ref 'AWS::NoValue']
       Description: Scoped PostgreSQL Dex role credential
       GenerateSecretString: {PasswordLength: 40, ExcludePunctuation: true}
       Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
@@ -515,11 +664,13 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      Name: !If [UseExternalBoundaries, !Sub '${DeploymentName}-PostgresTlsSecret', !Ref 'AWS::NoValue']
       Description: Populate with certificate and private_key JSON values before starting PostgreSQL.
       Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
 
   DiscoveryNamespace:
     Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Condition: DnsZonesEnabled
     Properties:
       Name: !Sub 'services.${DnsSuffix}'
       Vpc: !Ref Vpc
@@ -527,6 +678,7 @@ Resources:
 
   PostgresDiscovery:
     Type: AWS::ServiceDiscovery::Service
+    Condition: DnsServicesEnabled
     Properties:
       Name: postgres
       DnsConfig:
@@ -537,6 +689,7 @@ Resources:
 
   ControllerDiscovery:
     Type: AWS::ServiceDiscovery::Service
+    Condition: DnsServicesEnabled
     Properties:
       Name: shiftbox
       DnsConfig:
@@ -547,6 +700,7 @@ Resources:
 
   PrivateZone:
     Type: AWS::Route53::HostedZone
+    Condition: DnsZonesEnabled
     Properties:
       Name: !Ref DnsSuffix
       VPCs: [{VPCId: !Ref Vpc, VPCRegion: !Ref 'AWS::Region'}]
@@ -554,6 +708,7 @@ Resources:
 
   PrivateRecords:
     Type: AWS::Route53::RecordSetGroup
+    Condition: DatabaseEnabled
     Properties:
       HostedZoneId: !Ref PrivateZone
       RecordSets:
@@ -573,7 +728,14 @@ Resources:
 
   PostgresExecutionRole:
     Type: AWS::IAM::Role
+    Condition: DatabaseEnabled
     Properties:
+      RoleName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-PostgresExecutionRole', !Sub '${DeploymentName}-${AWS::Region}-pg-exec']
+      Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
+      PermissionsBoundary: !If
+        - UseExternalBoundaries
+        - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/shiftbox-qualification-boundaries/${DeploymentName}-PostgresExecutionRole'
+        - !Ref PostgresExecutionRoleBoundary
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -598,7 +760,14 @@ Resources:
 
   SetupExecutionRole:
     Type: AWS::IAM::Role
+    Condition: DatabaseEnabled
     Properties:
+      RoleName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-SetupExecutionRole', !Sub '${DeploymentName}-${AWS::Region}-setup-exec']
+      Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
+      PermissionsBoundary: !If
+        - UseExternalBoundaries
+        - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/shiftbox-qualification-boundaries/${DeploymentName}-SetupExecutionRole'
+        - !Ref SetupExecutionRoleBoundary
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -623,7 +792,14 @@ Resources:
 
   ControllerExecutionRole:
     Type: AWS::IAM::Role
+    Condition: DatabaseEnabled
     Properties:
+      RoleName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-ControllerExecutionRole', !Sub '${DeploymentName}-${AWS::Region}-ctrl-exec']
+      Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
+      PermissionsBoundary: !If
+        - UseExternalBoundaries
+        - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/shiftbox-qualification-boundaries/${DeploymentName}-ControllerExecutionRole'
+        - !Ref ControllerExecutionRoleBoundary
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -650,7 +826,14 @@ Resources:
 
   SetupTaskRole:
     Type: AWS::IAM::Role
+    Condition: DatabaseEnabled
     Properties:
+      RoleName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-SetupTaskRole', !Sub '${DeploymentName}-${AWS::Region}-setup-task']
+      Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
+      PermissionsBoundary: !If
+        - UseExternalBoundaries
+        - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/shiftbox-qualification-boundaries/${DeploymentName}-SetupTaskRole'
+        - !Ref SetupTaskRoleBoundary
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -676,7 +859,14 @@ Resources:
 
   ControllerTaskRole:
     Type: AWS::IAM::Role
+    Condition: DatabaseEnabled
     Properties:
+      RoleName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-ControllerTaskRole', !Sub '${DeploymentName}-${AWS::Region}-ctrl-task']
+      Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
+      PermissionsBoundary: !If
+        - UseExternalBoundaries
+        - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/shiftbox-qualification-boundaries/${DeploymentName}-ControllerTaskRole'
+        - !Ref ControllerTaskRoleBoundary
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -960,7 +1150,7 @@ Resources:
   PostgresService:
     Type: AWS::ECS::Service
     Condition: DatabaseEnabled
-    DependsOn: DataAttachment
+    DependsOn: [DataAttachment, PrivateRecords]
     Properties:
       ServiceName: postgres
       Cluster: !Ref Cluster
@@ -1016,7 +1206,7 @@ Resources:
 
   SetupOperatorPolicy:
     Type: AWS::IAM::ManagedPolicy
-    Condition: DatabaseEnabled
+    Condition: ManageSetupOperatorPolicy
     Properties:
       Description: Run the reviewed ShiftBox setup task and forward its local HTTPS port.
       PolicyDocument:
@@ -1077,10 +1267,27 @@ Outputs:
     Value: !Ref ServiceSubnet
   WorkspaceSubnetId:
     Value: !Ref WorkspaceSubnet
+  WorkspaceSecurityGroupId:
+    Value: !Ref WorkspaceGroup
   PrivateRouteTableId:
     Value: !Ref PrivateRoutes
   DnsSuffix:
     Value: !Ref DnsSuffix
+  PrivateZoneId:
+    Condition: DnsZonesEnabled
+    Value: !Ref PrivateZone
+  DiscoveryNamespaceId:
+    Condition: DnsZonesEnabled
+    Value: !Ref DiscoveryNamespace
+  DiscoveryHostedZoneId:
+    Condition: DnsZonesEnabled
+    Value: !GetAtt DiscoveryNamespace.HostedZoneId
+  PostgresDiscoveryServiceId:
+    Condition: DnsServicesEnabled
+    Value: !GetAtt PostgresDiscovery.Id
+  ControllerDiscoveryServiceId:
+    Condition: DnsServicesEnabled
+    Value: !GetAtt ControllerDiscovery.Id
   InstallationVolumeId:
     Value: !Ref InstallationVolume
   PostgresTlsSecretArn:
@@ -1088,7 +1295,7 @@ Outputs:
   PostgresHostname:
     Value: !Sub 'postgres.${DnsSuffix}'
   SetupOperatorPolicyArn:
-    Condition: DatabaseEnabled
+    Condition: ManageSetupOperatorPolicy
     Value: !Ref SetupOperatorPolicy
   SetupConfig:
     Condition: DatabaseEnabled
