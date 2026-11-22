@@ -136,6 +136,7 @@ variable "manifest_path" {
 locals {
   canonical_account = "099720109477"
   root_disk_gib     = 32
+  rehearsal         = startswith(var.publisher_attempt, "rehearsal-")
   tags = merge({
     project      = "shiftbox"
     cluster_name = var.cluster_name
@@ -146,8 +147,8 @@ locals {
 source "amazon-ebs" "shiftbox" {
   region                       = var.region
   source_ami                   = var.source_ami
-  ami_name                     = coalesce(var.ami_name, "shiftbox-${var.release_id}-amd64")
-  ami_description              = "ShiftBox workspace platform ${var.release_id} on Ubuntu 24.04 Minimal amd64"
+  ami_name                     = local.rehearsal ? "shiftbox-${var.publisher_attempt}-amd64" : coalesce(var.ami_name, "shiftbox-${var.release_id}-amd64")
+  ami_description              = local.rehearsal ? "ShiftBox Packer rehearsal ${var.publisher_attempt}" : "ShiftBox workspace platform ${var.release_id} on Ubuntu 24.04 Minimal amd64"
   instance_type                = "t3.medium"
   subnet_id                    = var.build_subnet_id
   security_group_id            = var.build_security_group_id
@@ -193,8 +194,8 @@ source "amazon-ebs" "shiftbox" {
   run_volume_tags = local.tags
   snapshot_tags   = local.tags
   tags = merge(local.tags, {
-    ShiftBoxArtifact     = "workspace-ami"
-    ShiftBoxRelease      = var.release_id
+    ShiftBoxArtifact     = local.rehearsal ? "packer-rehearsal" : "workspace-ami"
+    ShiftBoxRelease      = local.rehearsal ? var.publisher_attempt : var.release_id
     ShiftBoxSourceAMI    = var.source_ami
     ShiftBoxSourceCommit = var.source_revision
   })

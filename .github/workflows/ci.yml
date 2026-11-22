@@ -63,6 +63,7 @@ jobs:
             --test-data platform/cloudformation/aws/tests/guard/template-tests.yaml
           bash platform/release/workflows.test.sh --workflows --aws-tooling
           bash platform/packer/aws/hosted-build.test.sh
+          bash platform/packer/aws/rehearsal.test.sh
           bash platform/packer/aws/public-recipe.test.sh
           python3 platform/packer/aws/eice-socks.test.py
           bash platform/release/release.test.sh
@@ -76,6 +77,12 @@ jobs:
         run: |
           terraform -chdir=platform/terraform/publisher init -backend=false -lockfile=readonly
           terraform -chdir=platform/terraform/publisher test
+      - name: Check the closed and bound Packer rehearsal role offline
+        run: |
+          root=platform/terraform/publisher/packer-rehearsal
+          terraform -chdir="$root" fmt -check -recursive
+          terraform -chdir="$root" init -backend=false -lockfile=readonly
+          terraform -chdir="$root" test
       - name: Plan the Ohio build network and test expiry offline
         env:
           PYTHONDONTWRITEBYTECODE: '1'

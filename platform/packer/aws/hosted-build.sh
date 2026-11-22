@@ -3,8 +3,8 @@
 set -euo pipefail
 umask 077
 
-if [[ $# != 4 ]]; then
-  printf 'Usage: %s <rc-tag> <source-commit> <publisher-account> <packer-handoff>\n' "$0" >&2
+if [[ $# != 4 && ( $# != 5 || ${5:-} != --rehearsal ) ]]; then
+  printf 'Usage: %s <rc-tag> <source-commit> <publisher-account> <output> [--rehearsal]\n' "$0" >&2
   exit 2
 fi
 tag=$1 source_commit=$2 publisher=$3 handoff=$4
@@ -45,6 +45,14 @@ if ! jq -ces --arg tag "$tag" --arg publisher "$publisher" '
   select((.deadline | fromdateiso8601)-now >= 3000 and (.deadline | fromdateiso8601)-now <= 7200)
 ' <<< "${SHIFTBOX_RELEASE_BUILD_NETWORK:-}" > "$network" 2>/dev/null; then
   fail 'use the exact reviewed Ohio attempt inputs with 50–120 minutes remaining'
+fi
+attempt=$(jq -er .attempt_id "$network")
+if [[ $# == 5 ]]; then
+  [[ "$attempt" == "$REHEARSAL_ATTEMPT" && "$attempt" =~ ^rehearsal-[a-z0-9]{1,8}$ ]] ||
+    fail 'the rehearsal must use its exact reviewed attempt'
+  [[ "$(git -C "$here" rev-parse HEAD)" == "$source_commit" ]] || fail 'the reviewed rehearsal commit changed'
+else
+  [[ "$attempt" != rehearsal-* ]] || fail 'the release cannot consume a rehearsal attempt'
 fi
 
 key="$scratch/build-key"
@@ -90,4 +98,9 @@ if ! PUBLIC_AMI_BUILD=1 RELEASE_CANDIDATE="$tag" RELEASE_PUBLISHER_ACCOUNT_ID="$
   fail 'Packer failed. Check the scoped AWS attempt and reconcile any private artifacts before retrying.'
 fi
 manifest=$(sed -n 's/^AMI provenance manifest: //p' "$scratch/packer.log")
-"$here/../../release/amis.sh" packer-handoff "$tag" "$source_commit" "$publisher" "$manifest" > "$handoff"
+if [[ $# == 5 ]]; then
+  # The verified rehearsal output is intentionally incompatible with an RC handoff.
+  jq -e '{result:"private-rehearsal-built",count:(.builds|length)} | select(.count==1)' "$manifest" > "$handoff"
+else
+  "$here/../../release/amis.sh" packer-handoff "$tag" "$source_commit" "$publisher" "$manifest" > "$handoff"
+fi
