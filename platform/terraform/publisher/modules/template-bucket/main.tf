@@ -17,6 +17,13 @@ variable "cluster_name" {
   type        = string
 }
 
+variable "enable_public_template_reads" {
+  description = "Allow anonymous reads of versioned launch templates after publication is approved."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 locals {
   bucket_arn   = "arn:aws:s3:::${var.bucket_name}"
   template_arn = "${local.bucket_arn}/public/templates/v*-rc.*/*/shiftbox-aws-cloudformation.yaml"
@@ -59,26 +66,26 @@ resource "aws_s3_bucket_ownership_controls" "templates" {
 }
 
 resource "aws_s3_bucket_public_access_block" "templates" {
-  bucket             = aws_s3_bucket.templates.id
-  block_public_acls  = true
-  ignore_public_acls = true
-  # This dedicated bucket permits only the policy's public versioned reads.
-  block_public_policy     = false
-  restrict_public_buckets = false
+  bucket                  = aws_s3_bucket.templates.id
+  block_public_acls       = true
+  ignore_public_acls      = true
+  block_public_policy     = !var.enable_public_template_reads
+  restrict_public_buckets = !var.enable_public_template_reads
 }
 
 resource "aws_s3_bucket_policy" "templates" {
   bucket = aws_s3_bucket.templates.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat(var.enable_public_template_reads ? [
       {
         Sid       = "ReadVersionedLaunchTemplates"
         Effect    = "Allow"
         Action    = ["s3:GetObjectVersion"]
         Principal = "*"
         Resource  = [local.template_arn]
-      },
+      }
+      ] : [], [
       {
         Sid       = "DenyInsecureTransport"
         Effect    = "Deny"
@@ -106,7 +113,7 @@ resource "aws_s3_bucket_policy" "templates" {
         Principal = "*"
         Resource  = [local.template_arn]
       },
-    ]
+    ])
   })
 
   depends_on = [

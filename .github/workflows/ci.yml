@@ -69,6 +69,10 @@ jobs:
           bash platform/release/templates.test.sh
           bash platform/cloudformation/aws/setup.test.sh
           bash scripts/install-aws.test.sh
+      - name: Plan publisher roles and template buckets offline
+        run: |
+          terraform -chdir=platform/terraform/publisher init -backend=false -lockfile=readonly
+          terraform -chdir=platform/terraform/publisher test
       - name: Exercise AWS qualification offline
         env:
           PYTHONDONTWRITEBYTECODE: '1'
