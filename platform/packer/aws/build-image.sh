@@ -160,7 +160,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "${GO:-go}" build -trimpath \
 agent_sha=$(shasum -a 256 < "$build_dir/shiftbox-agent")
 publisher_key_sha=$(shasum -a 256 < "$build_dir/guest-update.pub")
 
-"${PACKER:-packer}" build \
+set -- \
     -var-file="$deployment_vars" \
     -var "public_build=$public_flag" \
     -var "publisher_account_id=$publisher_account" \
@@ -173,6 +173,11 @@ publisher_key_sha=$(shasum -a 256 < "$build_dir/guest-update.pub")
     -var "guest_update_key_sha256=${publisher_key_sha%% *}" \
     -var "manifest_path=$build_dir/manifest.json" \
     "$recipe_dir"
+
+if [ "$public_flag" = true ]; then
+    "${PACKER:-packer}" validate -evaluate-datasources=false "$@"
+fi
+"${PACKER:-packer}" build "$@"
 
 if [ "$public_build" -eq 1 ] && ! verify_public_output; then
     echo 'Public build metadata is unverified. Keep the AMI private and inspect the local Packer output.' >&2

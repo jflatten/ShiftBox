@@ -233,7 +233,7 @@ assert len({role for _, role in aws_jobs}) >= 2, aws_jobs
 # Each phase needs its own approved candidate job and a fresh AMI role session.
 # Retry inputs come from immutable same-run artifacts rather than re-running Packer.
 jobs = release["jobs"]
-phases = {"candidate-ami-build": "build-image.sh", "candidate-ami-copy": "amis.sh prepare",
+phases = {"candidate-ami-build": "hosted-build.sh", "candidate-ami-copy": "amis.sh prepare",
           "candidate-ami-share": "amis.sh share"}
 for name, operation in phases.items():
     job = jobs[name]
@@ -249,7 +249,18 @@ for name, operation in phases.items():
         assert job["runs-on"] == "ubuntu-latest"
         assert all(step["with"].get("artifact-ids") for step in job["steps"]
                    if step.get("uses", "").startswith("actions/download-artifact@"))
-assert jobs["candidate-ami-build"]["runs-on"] == ["self-hosted", "${{ vars.SHIFTBOX_RELEASE_CANDIDATE_RUNNER }}"]
+
+# Only the protected build step gets the one-attempt SSH key and network inputs.
+assert jobs["candidate-ami-build"]["runs-on"] == "ubuntu-24.04"
+secret = "${{ secrets.SHIFTBOX_RELEASE_BUILD_SSH_KEY }}"
+key_steps = [(name, step) for name, job in jobs.items() for step in job["steps"]
+             if secret in step.get("env", {}).values()]
+assert len(key_steps) == 1 and key_steps[0][0] == "candidate-ami-build"
+key_step = key_steps[0][1]
+assert "hosted-build.sh" in key_step["run"]
+assert key_step["env"]["SHIFTBOX_RELEASE_BUILD_NETWORK"] == "${{ vars.SHIFTBOX_RELEASE_BUILD_NETWORK }}"
+assert all(secret not in job.get("env", {}).values() for job in jobs.values())
+assert "SHIFTBOX_RELEASE_CANDIDATE_RUNNER" not in (workflows / "release.yml").read_text()
 assert "outputs.build == ''" in jobs["candidate-ami-build"]["if"]
 assert "candidate-ami-build" in jobs["candidate-ami-copy"]["needs"]
 assert "candidate-ami-copy" in jobs["candidate-ami-share"]["needs"]
