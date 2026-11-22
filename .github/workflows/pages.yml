@@ -41,6 +41,7 @@ jobs:
           working-directory: docs/site
           bundler-cache: true
       - name: Verify site and publishing boundaries
+        if: github.event_name == 'pull_request'
         run: |
           platform/release/pages-workflow.test.sh
           docs/site/tests/site.test.sh

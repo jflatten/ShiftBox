@@ -182,11 +182,17 @@ def writable(permissions):
     )
 
 
-# Ordinary checks never gain publication or AWS writer authority on branches and pull requests.
+# Ordinary checks run automatically on PRs and can be dispatched for an exact release commit.
 ci = workflow("ci.yml")
-assert {"push", "pull_request"} <= set(ci["on"])
+assert set(ci["on"]) == {"pull_request", "workflow_dispatch"}, "Checks must avoid duplicate push runs"
+
+# Ordinary checks never gain publication or AWS writer authority.
 assert not writable(ci["permissions"])
 assert all(not writable(job.get("permissions", {})) for job in ci["jobs"].values())
+
+# CodeQL scans PRs to main without repeating the scan on push.
+codeql = workflow("codeql.yml")
+assert codeql["on"] == {"pull_request": {"branches": ["main"]}}, "CodeQL must run only on PRs to main"
 
 # Production publication is triggered by version tags only and the default token is read-only.
 release = workflow("release.yml")

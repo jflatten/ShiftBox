@@ -8,7 +8,7 @@ ruby -ryaml - "$root/.github/workflows/pages.yml" <<'RUBY'
 workflow = YAML.safe_load(File.read(ARGV.fetch(0)))
 triggers = workflow.fetch("on")
 
-# The site's push trigger is limited to main branch docs changes, and PRs only build.
+# The site's push trigger is limited to main branch docs changes for publication.
 abort "wrong Pages workflow events" unless triggers.keys.sort == %w[pull_request push workflow_dispatch]
 abort "Pages push must select main only" unless triggers.fetch("push").fetch("branches") == ["main"]
 abort "Pages push cannot select tags" if triggers.fetch("push").key?("tags")
@@ -20,9 +20,15 @@ jobs = workflow.fetch("jobs")
 build = jobs.fetch("build")
 deploy = jobs.fetch("deploy")
 abort "Pages build cannot write" unless build.fetch("permissions", {"contents" => "read"}) == {"contents" => "read"}
-commands = build.fetch("steps").map { |step| step.fetch("run", "") }.join("\n")
-abort "Pages build must test the site and workflow fixtures" unless
-  commands.include?("docs/site/tests/site.test.sh") && commands.include?("platform/release/pages-workflow.test.sh")
+steps = build.fetch("steps")
+
+# PRs verify the site and workflow fixtures. Publishing builds skip these checks.
+%w[docs/site/tests/site.test.sh platform/release/pages-workflow.test.sh].each do |fixture|
+  checks = steps.select { |step| step.fetch("run", "").include?(fixture) }
+  abort "Pages #{fixture} must run only on PRs" unless
+    checks.length == 1 && checks.first["if"] == "github.event_name == 'pull_request'"
+end
+commands = steps.map { |step| step.fetch("run", "") }.join("\n")
 abort "Pages build must use the guarded renderer" unless commands.include?("docs/site/build.sh")
 abort "Pages must depend on the build" unless [deploy.fetch("needs")].flatten == ["build"]
 guard = deploy.fetch("if")
