@@ -10,6 +10,8 @@ fail() { printf 'Release network: %s\n' "$1" >&2; exit 1; }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=platform/packer/aws/terraform-workflow.sh
 source "$here/terraform-workflow.sh"
+# shellcheck source=platform/packer/aws/network-retirement.sh
+source "$here/network-retirement.sh"
 repo=$(cd -- "$here/../../.." && pwd)
 cd "$repo"
 
@@ -341,24 +343,6 @@ verify_no_network() {
     aws ec2 describe-network-interfaces --filters "$filter" | jq -e '.NetworkInterfaces==[]' >/dev/null
 }
 
-verify_attempt_state() {
-    jq -e --rawfile expected "$scratch/addresses" --arg attempt "$attempt" --arg tag "$tag" '
-      ($expected|split("\n")) as $expected |
-      (.values.root_module // {}) | (.child_modules // [])==[] and
-      all(.resources[]?; .address as $address | .mode=="managed" and ($expected|index($address)!=null) and
-        (.values.id|type=="string" and length>0) and
-        (.values.tags_all==null or .values.tags_all=={} or
-         (.values.tags_all|.project=="shiftbox" and .cluster_name=="shiftbox-publisher" and
-         .publisher_attempt==$attempt and .environment==("release-"+$tag))))
-    ' "$scratch/prior.json" >/dev/null || fail 'the state contains resources outside the exact attempt'
-}
-
-state_id() {
-    jq -r --arg address "$1" '
-      [.values.root_module.resources[]?|select(.address==$address)|.values.id] | first // ""
-    ' "$scratch/prior.json"
-}
-
 adopt_failed_endpoint() {
     local endpoint_address=aws_ec2_instance_connect_endpoint.builder tracked subnet endpoint
     tracked=$(state_id "$endpoint_address")
@@ -420,21 +404,7 @@ retire() {
         vpc=$(state_id aws_vpc.build)
         check_build_stopped || fail 'builder compute remains, keep the lease for independent cleanup'
         adopt_failed_endpoint
-        if jq -e '(.values.root_module.resources // [])|length>0' "$scratch/prior.json" >/dev/null; then
-            tf_logged plan -destroy -input=false -lock-timeout=60s -var-file="$inputs" -out="$scratch/destroy.tfplan" ||
-                fail 'could not plan network retirement'
-            tf show -json "$scratch/destroy.tfplan" > "$scratch/plan.json"
-            jq -e --slurpfile prior "$scratch/prior.json" --slurpfile vars "$inputs" '
-              (.variables | map_values(.value))==$vars[0] and
-              all(.resource_changes[]; . as $change | .mode=="managed" and .change.actions==["delete"] and
-                any($prior[0].values.root_module.resources[];
-                  .address==$change.address and .type==$change.type and .values.id==$change.change.before.id))
-            ' "$scratch/plan.json" >/dev/null || fail 'retirement plan is outside the verified network state'
-            tf_logged apply -input=false -lock-timeout=60s "$scratch/destroy.tfplan" ||
-                fail 'network retirement failed, retain the lease for recovery'
-            tf show -json | jq -e '(.values.root_module.resources // [])==[]' >/dev/null ||
-                fail 'network state still contains resources'
-        fi
+        retire_network_state
     fi
     check_build_stopped || fail 'builder compute remains, retain the lease for recovery'
     verify_no_network || fail 'network resources remain, retain the lease for recovery'

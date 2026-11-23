@@ -109,6 +109,13 @@ change counts and AWS error identifiers. Hosted Packer steps show their
 checkpoints as the build runs. The public logs omit raw plans, Terraform
 outputs, provider request details, and raw guest or Packer output.
 
+For IAM troubleshooting, run the same Ohio Terraform root locally with the
+pinned AWS provider. Use a temporary role that mirrors the rehearsal policy,
+scoped to the verified operator, one attempt and one private state prefix.
+Review the saved plan before applying it. Use the scoped role for both apply
+and teardown, then verify the attempt is gone and remove the temporary role.
+This lets you validate a policy change before merging it or dispatching GitHub.
+
 ## Run a protected release
 
 Run Checks on the exact main SHA, then create the protected RC tag at that

@@ -147,7 +147,12 @@ case "$1 $2" in
   'ec2 describe-volumes') echo '{"Volumes":[]}' ;;
   'ec2 describe-nat-gateways')
     if [[ ${LEFTOVER_NAT:-} == true ]]; then echo '{"NatGateways":[{"State":"available"}]}'; else echo '{"NatGateways":[]}'; fi ;;
-  'ec2 describe-addresses') echo '{"Addresses":[]}' ;;
+  'ec2 describe-addresses')
+    if [[ " $* " == *'Name=allocation-id,Values=eipalloc-'* && ${LINKED_EIP:-} == true && ! -f "$STORE/nat-retired" ]]; then
+      echo '{"Addresses":[{"AllocationId":"eipalloc-00000000000000008","AssociationId":"eipassoc-00000000000000009"}]}'
+    else
+      echo '{"Addresses":[]}'
+    fi ;;
   'ec2 describe-instance-connect-endpoints')
     if [[ -f "$STORE/orphan-endpoint" ]]; then
       jq -cn --arg vpc "${ORPHAN_VPC:-vpc-00000000000000001}" --arg attempt "$(cat "$STORE/orphan-endpoint")" --arg tag "$RELEASE_TAG" '
@@ -186,22 +191,34 @@ case "$cmd" in
     ;;
   plan)
     printf 'plan\n' >> "$TRACE"
-    mode=create
+    mode=create target=''
     for flag; do
-      case "$flag" in -destroy) mode=delete ;; -out=*) output=${flag#-out=} ;; -var-file=*) inputs=${flag#-var-file=} ;; esac
+      case "$flag" in -destroy) mode=delete ;; -target=*) target=${flag#-target=} ;; -out=*) output=${flag#-out=} ;; -var-file=*) inputs=${flag#-var-file=} ;; esac
     done
     attempt=$(jq -er '.attempt_id' "$inputs")
-    jq -Rn --arg mode "$mode" --arg attempt "$attempt" --slurpfile inputs "$inputs" '
+    if [[ "$mode" == delete ]]; then
+      key=$(cat .fixture-state-key)
+      jq --arg target "$target" --arg stale "${STALE_EIP_PLAN:-}" --slurpfile inputs "$inputs" '
+        {variables:($inputs[0]|map_values({value:.})),resource_changes:[.values.root_module.resources[] |
+          select($target=="" or .address==$target) |
+          {address,type,mode,change:{actions:["delete"],before:(.values |
+            if .id=="eipalloc-00000000000000008" and $stale=="true" then .association_id="eipassoc-00000000000000009" else . end)}}]}
+      ' "$STORE/$key" > "$output"
+    else
+      jq -Rn --arg mode "$mode" --arg attempt "$attempt" --slurpfile inputs "$inputs" '
       [inputs] as $addresses |
       {variables:($inputs[0]|map_values({value:.})),resource_changes:[$addresses[] as $address |
         {mode:"managed",address:$address,type:($address|split(".")[0]),change:{
           actions:[$mode], before:{id:({"aws_vpc.build":"vpc-00000000000000001",
             "aws_subnet.private":"subnet-00000000000000002",
+            "aws_eip.nat":"eipalloc-00000000000000008",
+            "aws_nat_gateway.build":"nat-00000000000000009",
             "aws_ec2_instance_connect_endpoint.builder":"eice-00000000000000003"}[$address] // $address),
             tags_all:{project:"shiftbox",cluster_name:"shiftbox-publisher",
             environment:("release-"+$inputs[0].candidate_tag),publisher_attempt:$attempt}},
           after:{id:$address}}}]}
-    ' < "$RESOURCE_ADDRESSES" > "$output"
+      ' < "$RESOURCE_ADDRESSES" > "$output"
+    fi
     if [[ ${FOREIGN_PLAN:-} == true ]]; then
       jq '.resource_changes[0].address="aws_ami.unowned"' "$output" > "$output.tmp"
       mv "$output.tmp" "$output"
@@ -235,6 +252,11 @@ case "$cmd" in
         jq -nc '{type:"diagnostic",diagnostic:{severity:"error",summary:"reading expiry function: operation error Lambda: ListVersionsByFunction, api error AccessDeniedException: missing access",detail:"PRIVATE_TERRAFORM_DIAGNOSTIC_FIXTURE"}}'
         exit 1
       fi
+    elif [[ "$(jq -r '[.resource_changes[].address]|join(",")' "$plan")" == aws_nat_gateway.build ]]; then
+      printf 'apply nat-delete\n' >> "$TRACE"
+      jq 'del(.values.root_module.resources[]|select(.address=="aws_nat_gateway.build"))' "$STORE/$key" > "$STORE/$key.tmp"
+      mv "$STORE/$key.tmp" "$STORE/$key"
+      touch "$STORE/nat-retired"
     else
       printf 'apply delete\n' >> "$TRACE"
       echo '{"values":{"root_module":{"resources":[]}}}' > "$STORE/$key"
@@ -426,4 +448,16 @@ run retire 10004 1
 test "$(grep -c '^import failed endpoint$' "$TRACE")" = 1
 test ! -e "$STORE/orphan-endpoint"
 test -f "$STORE/release-builds/rehearsals/10004/1/retired.json"
+
+# An EIP's saved association can be stale after NAT deletion. Split the NAT
+# teardown from the address release and reject a stale second saved plan.
+export GITHUB_RUN_ID=10005 RUNNER_TEMP="$scratch/stale-address-runner"
+mkdir "$RUNNER_TEMP"
+rm -f "$STORE/nat-retired"
+run provision
+reject env LINKED_EIP=true STALE_EIP_PLAN=true bash "$here/release-network.sh" retire 10005 1
+test -f "$STORE/nat-retired"
+test ! -f "$STORE/release-builds/rehearsals/10005/1/retired.json"
+LINKED_EIP=true run retire 10005 1
+test -f "$STORE/release-builds/rehearsals/10005/1/retired.json"
 printf 'Release network lifecycle fixtures passed.\n'
