@@ -4,6 +4,37 @@ variables {
   publisher_account_id = "111122223333"
 }
 
+# Live Terraform TAG-on-create and resource refresh need these narrow grants.
+run "network_provider_api_dependencies" {
+  command = plan
+
+  assert {
+    condition = (
+      contains(flatten([for grant in local.network_inventory : grant.Action]), "ec2:DescribeAddressesAttribute") &&
+      local.iam_expiry_tag.Condition.StringEqualsIfExists["aws:ResourceTag/publisher_attempt"] == "$${aws:RequestTag/publisher_attempt}" &&
+      local.iam_expiry_tag.Condition.StringEqualsIfExists["aws:ResourceTag/environment"] == "$${aws:RequestTag/environment}" &&
+      local.iam_expiry_tag.Resource == local.expiry_role_arns &&
+      one([for grant in local.network_provision_expiry : grant if try(grant.Sid, "") == "LimitExpiryLogRetention"]).Condition == local.region_condition
+    )
+    error_message = "Elastic IP refresh, expiry role creation and named log retention must work without unscoped write access."
+  }
+
+  assert {
+    condition = one([for grant in local.network_provision_ec2_existing : grant if try(grant.Sid, "") == "TagOnlyNewEndpointInterface"]) == {
+      Sid      = "TagOnlyNewEndpointInterface"
+      Effect   = "Allow"
+      Action   = "ec2:CreateTags"
+      Resource = "arn:aws:ec2:us-east-2:111122223333:network-interface/*"
+      Condition = {
+        StringEquals                = { "aws:RequestedRegion" = "us-east-2", "ec2:CreateAction" = "CreateNetworkInterface" }
+        "ForAllValues:StringEquals" = { "aws:TagKeys" = ["InstanceConnectEndpointId"] }
+        StringLike                  = { "aws:RequestTag/InstanceConnectEndpointId" = "eice-*" }
+      }
+    }
+    error_message = "The EICE service-created interface may receive only its endpoint ID tag on creation in Ohio."
+  }
+}
+
 # The manual workflow identity cannot reach release journals, expiry names,
 # image mutation or the temporary identities that publish candidate artifacts.
 run "isolated_network_rehearsal" {

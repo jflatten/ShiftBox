@@ -338,6 +338,51 @@ verify_no_network() {
     aws ec2 describe-key-pairs --filters "$filter" | jq -e '.KeyPairs==[]' >/dev/null &&
     aws ec2 describe-network-interfaces --filters "$filter" | jq -e '.NetworkInterfaces==[]' >/dev/null
 }
+
+verify_attempt_state() {
+    jq -e --rawfile expected "$scratch/addresses" --arg attempt "$attempt" --arg tag "$tag" '
+      ($expected|split("\n")) as $expected |
+      (.values.root_module // {}) | (.child_modules // [])==[] and
+      all(.resources[]?; .address as $address | .mode=="managed" and ($expected|index($address)!=null) and
+        (.values.id|type=="string" and length>0) and
+        (.values.tags_all==null or .values.tags_all=={} or
+         (.values.tags_all|.project=="shiftbox" and .cluster_name=="shiftbox-publisher" and
+         .publisher_attempt==$attempt and .environment==("release-"+$tag))))
+    ' "$scratch/prior.json" >/dev/null || fail 'the state contains resources outside the exact attempt'
+}
+
+state_id() {
+    jq -r --arg address "$1" '
+      [.values.root_module.resources[]?|select(.address==$address)|.values.id] | first // ""
+    ' "$scratch/prior.json"
+}
+
+adopt_failed_endpoint() {
+    local endpoint_address=aws_ec2_instance_connect_endpoint.builder tracked subnet endpoint
+    tracked=$(state_id "$endpoint_address")
+    subnet=$(state_id aws_subnet.private)
+    # EC2 can return an endpoint ID before its interface fails asynchronously.
+    # Adopt only that attempt's sole untracked endpoint, under its saved parents.
+    endpoint=$(aws ec2 describe-instance-connect-endpoints --filters "Name=tag:publisher_attempt,Values=$attempt" |
+      jq -er --arg tracked "$tracked" --arg vpc "$vpc" --arg subnet "$subnet" --arg attempt "$attempt" --arg tag "$tag" '
+        .InstanceConnectEndpoints | select(type=="array") |
+        map(select(.State!="delete-complete" and .InstanceConnectEndpointId!=$tracked)) |
+        if length==0 then ""
+        elif length==1 and $tracked=="" and ($vpc|test("^vpc-[0-9a-f]{17}$")) and ($subnet|test("^subnet-[0-9a-f]{17}$")) then
+          .[0] | select(.VpcId==$vpc and .SubnetId==$subnet and (.State|IN("create-failed","create-complete")) and
+            ([.Tags[]|{key:.Key,value:.Value}]|from_entries|.project=="shiftbox" and .cluster_name=="shiftbox-publisher" and
+            .publisher_attempt==$attempt and .environment==("release-"+$tag))) |
+          .InstanceConnectEndpointId | select(test("^eice-[0-9a-f]{17}$"))
+        else empty end
+      ') || fail 'could not prove ownership of the untracked endpoint'
+    [[ -n "$endpoint" ]] || return 0
+    tf import -input=false -no-color -lock-timeout=60s -var-file="$inputs" "$endpoint_address" "$endpoint" > "$scratch/import.log" 2>&1 ||
+        fail 'could not adopt the owned endpoint for retirement'
+    tf show -json > "$scratch/prior.json"
+    verify_attempt_state
+    [[ "$(state_id "$endpoint_address")" == "$endpoint" ]] || fail 'the adopted endpoint is outside the verified state'
+}
+
 retire() {
     if [[ "${SHIFTBOX_RELEASE_RECOVERY:-}" != true ]]; then
         # The temporary key is needed only during the hosted build.
@@ -369,17 +414,10 @@ retire() {
         else
             printf '{}\n' > "$scratch/prior.json"
         fi
-        jq -e --rawfile expected "$scratch/addresses" --arg attempt "$attempt" --arg tag "$tag" '
-          ($expected|split("\n")) as $expected |
-          (.values.root_module // {}) | (.child_modules // [])==[] and
-          all(.resources[]?; .address as $address | .mode=="managed" and ($expected|index($address)!=null) and
-            (.values.id|type=="string" and length>0) and
-            (.values.tags_all==null or .values.tags_all=={} or
-             (.values.tags_all|.project=="shiftbox" and .cluster_name=="shiftbox-publisher" and
-             .publisher_attempt==$attempt and .environment==("release-"+$tag))))
-        ' "$scratch/prior.json" >/dev/null || fail 'the state contains resources outside the exact attempt'
-        vpc=$(jq -r '[.values.root_module.resources[]?|select(.address=="aws_vpc.build")|.values.id] | first // ""' "$scratch/prior.json")
+        verify_attempt_state
+        vpc=$(state_id aws_vpc.build)
         check_build_stopped || fail 'builder compute remains, keep the lease for independent cleanup'
+        adopt_failed_endpoint
         if jq -e '(.values.root_module.resources // [])|length>0' "$scratch/prior.json" >/dev/null; then
             tf plan -destroy -input=false -no-color -lock-timeout=60s -var-file="$inputs" \
                 -out="$scratch/destroy.tfplan" > "$scratch/plan.log" 2>&1 || fail 'could not plan network retirement'

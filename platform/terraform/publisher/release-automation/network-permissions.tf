@@ -73,7 +73,7 @@ locals {
       Sid    = "ReadOhioBuildInventory"
       Effect = "Allow"
       Action = [
-        "ec2:DescribeAddresses", "ec2:DescribeAvailabilityZones", "ec2:DescribeImages",
+        "ec2:DescribeAddresses", "ec2:DescribeAddressesAttribute", "ec2:DescribeAvailabilityZones", "ec2:DescribeImages",
         "ec2:DescribeInstanceConnectEndpoints", "ec2:DescribeInstances", "ec2:DescribeInstanceTypeOfferings",
         "ec2:DescribeInternetGateways", "ec2:DescribeKeyPairs", "ec2:DescribeNatGateways",
         "ec2:DescribeNetworkAcls", "ec2:DescribeNetworkInterfaces", "ec2:DescribeRouteTables",
@@ -215,6 +215,19 @@ locals {
         })
       },
       {
+        Sid      = "TagOnlyNewEndpointInterface"
+        Effect   = "Allow"
+        Action   = "ec2:CreateTags"
+        Resource = "${local.ec2}:network-interface/*"
+        # EC2 supplies this service-owned tag on the EICE interface instead of
+        # forwarding the endpoint's caller-supplied ownership tags.
+        Condition = {
+          StringEquals                = merge(local.region_condition.StringEquals, { "ec2:CreateAction" = "CreateNetworkInterface" })
+          "ForAllValues:StringEquals" = { "aws:TagKeys" = ["InstanceConnectEndpointId"] }
+          StringLike                  = { "aws:RequestTag/InstanceConnectEndpointId" = "eice-*" }
+        }
+      },
+      {
         Sid       = "ConfigureOwnedVpc"
         Effect    = "Allow"
         Action    = ["ec2:ModifyVpcAttribute"]
@@ -255,11 +268,13 @@ locals {
         Condition = local.request_region
       },
       {
-        Sid       = "LimitExpiryLogRetention"
-        Effect    = "Allow"
-        Action    = ["logs:PutRetentionPolicy"]
-        Resource  = [local.expiry_log_group, "${local.expiry_log_group}:*"]
-        Condition = local.owned_region
+        Sid      = "LimitExpiryLogRetention"
+        Effect   = "Allow"
+        Action   = ["logs:PutRetentionPolicy"]
+        Resource = [local.expiry_log_group, "${local.expiry_log_group}:*"]
+        # The provider sets retention immediately after creation. The reserved
+        # attempt log group ARN scopes this call during tag propagation.
+        Condition = local.region_condition
       },
       {
         Sid       = "CreateTaggedExpiryScheduleGroup"

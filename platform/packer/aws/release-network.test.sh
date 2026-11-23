@@ -148,7 +148,16 @@ case "$1 $2" in
   'ec2 describe-nat-gateways')
     if [[ ${LEFTOVER_NAT:-} == true ]]; then echo '{"NatGateways":[{"State":"available"}]}'; else echo '{"NatGateways":[]}'; fi ;;
   'ec2 describe-addresses') echo '{"Addresses":[]}' ;;
-  'ec2 describe-instance-connect-endpoints') echo '{"InstanceConnectEndpoints":[]}' ;;
+  'ec2 describe-instance-connect-endpoints')
+    if [[ -f "$STORE/orphan-endpoint" ]]; then
+      jq -cn --arg vpc "${ORPHAN_VPC:-vpc-00000000000000001}" --arg attempt "$(cat "$STORE/orphan-endpoint")" --arg tag "$RELEASE_TAG" '
+        {InstanceConnectEndpoints:[{InstanceConnectEndpointId:"eice-00000000000000003",State:"create-failed",
+          VpcId:$vpc,SubnetId:"subnet-00000000000000002",Tags:[{Key:"project",Value:"shiftbox"},
+            {Key:"cluster_name",Value:"shiftbox-publisher"},{Key:"publisher_attempt",Value:$attempt},
+            {Key:"environment",Value:("release-"+$tag)}]}]}'
+    else
+      echo '{"InstanceConnectEndpoints":[]}'
+    fi ;;
   'ec2 describe-key-pairs') echo '{"KeyPairs":[]}' ;;
   'ec2 describe-network-interfaces') echo '{"NetworkInterfaces":[]}' ;;
   *) printf 'unexpected AWS call: %s %s\n' "$1" "$2" >&2; exit 1 ;;
@@ -186,7 +195,10 @@ case "$cmd" in
       [inputs] as $addresses |
       {variables:($inputs[0]|map_values({value:.})),resource_changes:[$addresses[] as $address |
         {mode:"managed",address:$address,type:($address|split(".")[0]),change:{
-          actions:[$mode], before:{id:$address,tags_all:{project:"shiftbox",cluster_name:"shiftbox-publisher",
+          actions:[$mode], before:{id:({"aws_vpc.build":"vpc-00000000000000001",
+            "aws_subnet.private":"subnet-00000000000000002",
+            "aws_ec2_instance_connect_endpoint.builder":"eice-00000000000000003"}[$address] // $address),
+            tags_all:{project:"shiftbox",cluster_name:"shiftbox-publisher",
             environment:("release-"+$inputs[0].candidate_tag),publisher_attempt:$attempt}},
           after:{id:$address}}}]}
     ' < "$RESOURCE_ADDRESSES" > "$output"
@@ -209,11 +221,28 @@ case "$cmd" in
     if [[ "$(jq -r '.resource_changes[0].change.actions[0]' "$plan")" == create ]]; then
       printf 'apply create\n' >> "$TRACE"
       jq '{values:{root_module:{resources:[.resource_changes[]|{address,type,mode,values:.change.before}]}}}' "$plan" > "$STORE/$key"
+      if [[ ${ORPHAN_ENDPOINT:-} == true ]]; then
+        jq -r '.resource_changes[0].change.before.tags_all.publisher_attempt' "$plan" > "$STORE/orphan-endpoint"
+        jq 'del(.values.root_module.resources[]|select(.address=="aws_ec2_instance_connect_endpoint.builder"))' "$STORE/$key" > "$STORE/$key.tmp"
+        mv "$STORE/$key.tmp" "$STORE/$key"
+      fi
       [[ ${PARTIAL_APPLY:-} != true ]]
     else
       printf 'apply delete\n' >> "$TRACE"
       echo '{"values":{"root_module":{"resources":[]}}}' > "$STORE/$key"
+      rm -f "$STORE/orphan-endpoint"
     fi ;;
+  import)
+    key=$(cat .fixture-state-key)
+    [[ "$*" == *'aws_ec2_instance_connect_endpoint.builder eice-00000000000000003' ]]
+    attempt=$(cat "$STORE/orphan-endpoint")
+    jq --arg attempt "$attempt" --arg tag "$RELEASE_TAG" '.values.root_module.resources += [{
+      address:"aws_ec2_instance_connect_endpoint.builder",type:"aws_ec2_instance_connect_endpoint",mode:"managed",
+      values:{id:"eice-00000000000000003",tags_all:{project:"shiftbox",cluster_name:"shiftbox-publisher",
+        publisher_attempt:$attempt,environment:("release-"+$tag)}}}]' "$STORE/$key" > "$STORE/$key.tmp"
+    mv "$STORE/$key.tmp" "$STORE/$key"
+    printf 'import failed endpoint\n' >> "$TRACE"
+    ;;
   output)
     key=$(cat .fixture-state-key)
     lease="$STORE/${key%/*}/lease.json"
@@ -370,4 +399,17 @@ test ! -e "$STORE/release-builds/10003/1"
 run retire 10003 1
 jq -e '.run_id=="10003" and (.attempt_id|startswith("rel-r"))' "$rehearsal/retired.json" >/dev/null
 test ! -e "$RUNNER_TEMP/shiftbox-publisher-network/packer"
+
+# An AWS endpoint record left behind by a failed create enters Terraform state
+# only if it belongs to the original attempt's recorded VPC and private subnet.
+export GITHUB_RUN_ID=10004 RUNNER_TEMP="$scratch/orphan-runner"
+mkdir "$RUNNER_TEMP"
+reject env PARTIAL_APPLY=true ORPHAN_ENDPOINT=true bash "$here/release-network.sh" provision
+reject env ORPHAN_VPC=vpc-00000000000000009 bash "$here/release-network.sh" retire 10004 1
+test -f "$STORE/orphan-endpoint"
+if grep -q '^import failed endpoint$' "$TRACE"; then exit 1; fi
+run retire 10004 1
+test "$(grep -c '^import failed endpoint$' "$TRACE")" = 1
+test ! -e "$STORE/orphan-endpoint"
+test -f "$STORE/release-builds/rehearsals/10004/1/retired.json"
 printf 'Release network lifecycle fixtures passed.\n'
