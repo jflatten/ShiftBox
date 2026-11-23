@@ -181,6 +181,64 @@ done
 jq -n --arg tag "$tag" '[{artifacts:[{id:10,name:("release-assets-"+$tag),expired:false}]}]' |
   jq -er --arg tag "$tag" -f "$handoffs" | grep -Fx 'assets=10' >/dev/null
 
+# Exercise the approval gate against GitHub API-shaped fixtures without authenticating.
+(
+  export GITHUB_REPOSITORY=jflatten/ShiftBox GITHUB_EVENT_NAME=push GITHUB_REF_TYPE=tag
+  export GITHUB_REF_PROTECTED=true GITHUB_RUN_ID=100 GITHUB_ACTOR=jflatten
+  export GITHUB_TRIGGERING_ACTOR=jflatten SHIFTBOX_RELEASE_MAINTAINERS=jflatten
+  export GITHUB_REF="refs/tags/$tag"
+  export APPROVAL_FIXTURES="$scratch/approval"
+  mkdir "$APPROVAL_FIXTURES"
+  cat >"$scratch/bin/gh" <<'GH'
+#!/usr/bin/env bash
+case "$*" in
+  'api repos/jflatten/ShiftBox/actions/runs/100/approvals') name=approvals ;;
+  'api repos/jflatten/ShiftBox/environments/aws-release-approval') name=gate ;;
+  'api repos/jflatten/ShiftBox/environments/aws-release-'candidate|'api repos/jflatten/ShiftBox/environments/aws-release-'stable) name=runtime ;;
+  'api repos/jflatten/ShiftBox/environments/aws-release-approval/deployment-branch-policies?per_page=100') name=gate-tags ;;
+  'api repos/jflatten/ShiftBox/environments/aws-release-'*/'deployment-branch-policies?per_page=100') name=runtime-tags ;;
+  *) printf 'Unexpected approval fixture request: %s\n' "$*" >&2; exit 91 ;;
+esac
+cat "$APPROVAL_FIXTURES/$name"
+GH
+  printf '%s\n' '{"id":50,"name":"aws-release-approval","protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":11561330}}]},{"type":"branch_policy"}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' >"$APPROVAL_FIXTURES/gate"
+  printf '%s\n' '{"id":51,"name":"aws-release-candidate","protection_rules":[{"type":"branch_policy"}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' >"$APPROVAL_FIXTURES/runtime"
+  printf '%s\n' '{"total_count":1,"branch_policies":[{"name":"v*","type":"tag"}]}' >"$APPROVAL_FIXTURES/gate-tags"
+  jq -n --arg tag "$tag" '{total_count:1,branch_policies:[{name:$tag,type:"tag"}]}' >"$APPROVAL_FIXTURES/runtime-tags"
+  printf '%s\n' '[{"state":"approved","user":{"id":11561330},"environments":[{"name":"aws-release-approval","id":50}]}]' >"$APPROVAL_FIXTURES/approvals"
+  approve=(bash "$here/verify-approval.sh")
+
+  # The owner's review unlocks the RC with the exact approved runtime tag.
+  "${approve[@]}"
+  check_rejected_approval() {
+    local file=$1 change=$2
+    cp "$APPROVAL_FIXTURES/$file" "$scratch/original"
+    jq "$change" "$scratch/original" >"$APPROVAL_FIXTURES/$file"
+    expect_rejected "$file $change" "${approve[@]}"
+    mv "$scratch/original" "$APPROVAL_FIXTURES/$file"
+  }
+
+  # Fail closed after an unprotected auto-creation, a missing or invalid review,
+  # a lingering phase reviewer, or a tag policy admitting legacy workflows.
+  check_rejected_approval gate '.protection_rules = []'
+  check_rejected_approval gate '.protection_rules[0].reviewers[0].reviewer.id = 42'
+  check_rejected_approval gate-tags '.branch_policies[0].type = "branch"'
+  check_rejected_approval approvals '[]'
+  check_rejected_approval approvals '.[0].user.id = 42'
+  check_rejected_approval approvals '.[0].environments[0].id = 49'
+  check_rejected_approval approvals '.[0].state = "rejected"'
+  check_rejected_approval runtime '.protection_rules += [{type:"required_reviewers"}]'
+  check_rejected_approval runtime-tags '.branch_policies[0].name = "v*"'
+  check_rejected_approval runtime-tags '.total_count = 2'
+
+  # The stable release uses the same approval and checks its own execution environment.
+  export GITHUB_REF=refs/tags/v2.0.1
+  jq '.name = "aws-release-stable"' "$APPROVAL_FIXTURES/runtime" >"$scratch/stable-env"
+  mv "$scratch/stable-env" "$APPROVAL_FIXTURES/runtime"
+  jq -n '{total_count:1,branch_policies:[{name:"v2.0.1",type:"tag"}]}' >"$APPROVAL_FIXTURES/runtime-tags"
+  "${approve[@]}"
+)
+
 python3 - "$root" <<'PY'
 from pathlib import Path
 import sys
@@ -230,9 +288,22 @@ for name, job in release["jobs"].items():
             aws_jobs.append((name, step["with"]["role-to-assume"]))
 assert len({role for _, role in aws_jobs}) >= 2, aws_jobs
 
-# Each phase needs its own approved candidate job and a fresh AMI role session.
-# Retry inputs come from immutable same-run artifacts rather than re-running Packer.
+# One read-only gate covers all release jobs, including retry paths that can
+# run when another dependency is skipped. The runtime OIDC environments stay separate.
 jobs = release["jobs"]
+gate = jobs["approve-release"]
+assert gate["environment"] == "aws-release-approval"
+assert gate["needs"] == "preflight"
+assert gate["permissions"] == {"contents": "read", "actions": "read"}
+assert any(step.get("run") == "bash platform/release/verify-approval.sh" for step in gate["steps"])
+assert [name for name, job in jobs.items() if job.get("environment") == gate["environment"]] == ["approve-release"]
+for name, job in jobs.items():
+    if name not in {"preflight", "approve-release"}:
+        assert "approve-release" in job["needs"], name
+        assert "needs.approve-release.result == 'success'" in job["if"], name
+
+# Each AMI phase needs a fresh role session after the shared approval.
+# Retry inputs come from immutable same-run artifacts rather than re-running Packer.
 phases = {"candidate-ami-build": "hosted-build.sh", "candidate-ami-copy": "amis.sh prepare",
           "candidate-ami-share": "amis.sh share"}
 for name, operation in phases.items():
@@ -260,10 +331,14 @@ for name, operation in phases.items():
 # to Packer. Both success and failure paths attempt to retire the exact state.
 assert jobs["candidate-ami-build"]["runs-on"] == "ubuntu-24.04"
 build_steps = jobs["candidate-ami-build"]["steps"]
+phase_check_index, = [index for index, step in enumerate(build_steps) if "release-phase.sh check" in step.get("run", "")]
 provision_index, = [index for index, step in enumerate(build_steps) if "release-network.sh provision" in step.get("run", "")]
 build_index, = [index for index, step in enumerate(build_steps) if "hosted-build.sh" in step.get("run", "")]
 retire_index, = [index for index, step in enumerate(build_steps) if "release-network.sh retire" in step.get("run", "")]
-assert provision_index < build_index < retire_index
+# Check every delegated role name with the control session before creating egress.
+control_index, = [index for index, step in enumerate(build_steps) if step.get("id") == "control"]
+assert control_index < phase_check_index < provision_index < build_index < retire_index
+assert "for phase in build copy share" in build_steps[phase_check_index]["run"]
 assert "always()" in build_steps[retire_index]["if"]
 assert "shiftbox-publisher-network/packer" in build_steps[build_index]["run"]
 assert "secrets.SHIFTBOX_RELEASE_BUILD_SSH_KEY" not in (workflows / "release.yml").read_text()
@@ -276,7 +351,7 @@ assert ("candidate", "${{ vars.SHIFTBOX_RELEASE_NETWORK_ROLE_ARN }}") not in aws
 assert jobs["candidate"]["runs-on"] == "ubuntu-latest"
 
 # An independent protected main workflow can recover expired state even if
-# the build runner disappeared or the release is waiting for another review.
+# the build runner disappeared.
 cleanup = workflow("cleanup-release-network.yml")
 
 # The live rehearsal has one protected job that shares the release Terraform
@@ -318,6 +393,18 @@ assert "hosted-build.sh" not in cleanup_commands
 # A first GHCR push can require a separate visibility approval. Freeze the
 # exact candidate before testing anonymous layers so its protected rerun can resume.
 candidate_steps = release["jobs"]["candidate"]["steps"]
+# Digest-only pushing requires an explicit container builder in the same
+# temporary Docker configuration as the authenticated registry export.
+controller, = [step for step in candidate_steps
+               if step.get("name") == "Build the full controller and record its registry digest"]
+controller_commands = controller["run"]
+assert controller["if"] == "steps.restore.outputs.assets == ''"
+assert 'export DOCKER_CONFIG="$registry_config" BUILDX_CONFIG="$registry_config/buildx"' in controller_commands
+create_builder = 'docker buildx create --name "$builder" --driver docker-container --bootstrap'
+push_digest = 'docker buildx build --builder "$builder" --platform linux/amd64'
+assert controller_commands.index(create_builder) < controller_commands.index(push_digest)
+assert 'docker buildx rm "$builder"' in controller_commands and 'trap cleanup EXIT' in controller_commands
+assert 'push-by-digest=true,name-canonical=true,push=true' in controller_commands
 stage_index, = [index for index, step in enumerate(candidate_steps)
                 if step.get("uses", "").startswith("actions/upload-artifact@")]
 registry_index, = [index for index, step in enumerate(candidate_steps)

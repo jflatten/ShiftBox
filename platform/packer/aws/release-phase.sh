@@ -31,7 +31,7 @@ repo_name=jflatten/ShiftBox
     fail 'requires the verified GitHub publisher and private runner directory'
 
 case "$operation:$phase:$#" in
-  open:build:2|open:copy:3|open:share:4|close:build:2|close:copy:2|close:share:2)
+  check:build:2|check:copy:2|check:share:2|open:build:2|open:copy:3|open:share:4|close:build:2|close:copy:2|close:share:2)
     [[ ${GITHUB_REF:-} == "refs/tags/$tag" && ${GITHUB_SHA:-} == "$source" &&
       "$source" =~ ^[0-9a-f]{40}$ && "$("$repo/platform/release/publish.sh" check-event)" == rc ]] ||
         fail 'requires the active protected RC workflow'
@@ -45,7 +45,7 @@ case "$operation:$phase:$#" in
           ${GITHUB_TRIGGERING_ACTOR:-} == jflatten ) ) ]] || fail 'requires the protected cleanup workflow on main'
     caller_arn="arn:aws:sts::$account:assumed-role/shiftbox-publisher-release-network-cleanup/shiftbox-release-cleanup-$run-$retry"
     ;;
-  *) fail 'use open build, open copy <packer>, open share <packer> <copy-stage>, close <phase>, or sweep' ;;
+  *) fail 'use check <phase>, open build, open copy <packer>, open share <packer> <copy-stage>, close <phase>, or sweep' ;;
 esac
 
 aws sts get-caller-identity |
@@ -123,9 +123,8 @@ verify_role() {
       .Condition.DateLessThan["aws:CurrentTime"]==$input[0].execution.expires_at))
   ' "$scratch/role.json" >/dev/null
 }
-read_role() {
+lookup_role() {
   if aws iam get-role --role-name "$role" > "$scratch/role.json" 2> "$scratch/role.err"; then
-    verify_role || fail 'live role is outside the exact phase'
     return 0
   fi
   if ! grep -q NoSuchEntity "$scratch/role.err"; then
@@ -133,6 +132,16 @@ read_role() {
     fail 'could not read the exact role'
   fi
   return 1
+}
+read_role() {
+  lookup_role || return 1
+  verify_role || fail 'live role is outside the exact phase'
+}
+require_fresh_phase() {
+  if has_key "$prefix/phase.json" || has_key "$prefix/terraform.tfstate" ||
+    has_key "$prefix/terraform.tfstate.tflock" || lookup_role; then
+    fail 'phase lease, state, lock, or role already exists'
+  fi
 }
 verify_journal() {
   jq -e --arg account "$account" --arg phase "$phase" --arg run "$run" --arg retry "$retry" \
@@ -176,7 +185,7 @@ open_phase() {
      execution:{run_id:$run,run_attempt:$retry,expires_at:$expires,source_commit:$source,source_ami:$ami},
      built_ami_id:(if $image=="" then null else $image end),regional_amis:$pins,build:$build}
   ' > "$scratch/phase.json"
-  if has_key "$prefix/terraform.tfstate" || read_role; then fail 'phase state or role already exists'; fi
+  require_fresh_phase
   write_key "$prefix/phase.json" "$scratch/phase.json" || fail 'could not reserve a new phase lease'
   init_state
   tf_logged plan -input=false -lock-timeout=2m -var-file="$scratch/phase.json" -out="$scratch/phase.tfplan"
@@ -192,7 +201,9 @@ open_phase() {
 }
 close_phase() {
   if ! has_key "$prefix/phase.json"; then
-    if has_key "$prefix/terraform.tfstate" || read_role; then fail 'an existing role or state has no lease'; fi
+    if has_key "$prefix/terraform.tfstate" || has_key "$prefix/terraform.tfstate.tflock" || lookup_role; then
+      fail 'an existing role, state, or lock has no lease'
+    fi
     return 0
   fi
   read_key "$prefix/phase.json" "$scratch/phase.json"
@@ -270,6 +281,7 @@ sweep_phases() {
 }
 
 case "$operation" in
+  check) set_phase; require_fresh_phase; printf 'Verified the %s phase role and state are absent.\n' "$phase" ;;
   open) set_phase; open_phase "${@:3}" ;;
   close) set_phase; close_phase ;;
   sweep) sweep_phases ;;

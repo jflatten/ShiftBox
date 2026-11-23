@@ -68,17 +68,40 @@ Configure these inputs once for the protected workflow.
 | GitHub scope | Variables and secrets |
 | --- | --- |
 | Repository variables | `SHIFTBOX_RELEASE_MAINTAINERS`, `SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID`, `SHIFTBOX_RELEASE_STATE_BUCKET`, and `SHIFTBOX_RELEASE_CLEANUP_ENABLED`. Set the cleanup flag only after verifying the cleanup environment and role. |
+| `aws-release-approval` | No variables or secrets. The repository owner reviews the tagged release here. |
 | `aws-release-candidate` | `SHIFTBOX_RELEASE_NETWORK_ROLE_ARN` from the bootstrap, the verified upstream Ohio `SHIFTBOX_RELEASE_SOURCE_AMI`, `SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY`, the template staging role and bucket map, ECS host AMI map, PostgreSQL digest, and the read-only settings token. The workflow generates the one-time SSH private key and keeps it on the build runner. |
 | `aws-release-stable` | The stable verification role and read-only settings token. |
 | `aws-release-cleanup` | `SHIFTBOX_RELEASE_NETWORK_CLEANUP_ROLE_ARN` from the bootstrap. Restrict deployments to protected main and allow unattended runs so the schedule can recover a lost runner. |
 
-Use the existing reviewed tag rules and matching candidate and stable
-deployment protections. The release verifier checks canonical version syntax,
-maintainer authority, immutable releases, and exact source and evidence.
+Use the existing reviewed tag rules. The release verifier checks canonical
+version syntax, maintainer authority, immutable releases, and exact source
+and evidence.
 Confirm the reviewed Canonical source, guest public key, ECS host AMIs and
 PostgreSQL digest before tags. Rotate those inputs when their upstream pins
 change. The settings token requires repository Administration read and
-belongs in each release environment.
+belongs in the candidate and stable execution environments.
+
+### Configure the single release approval
+
+1. Create `aws-release-approval` with `jflatten` as the sole required reviewer,
+   self-review permitted, and a selected **Tag** rule of `v*`. Disable
+   administrator bypass and leave wait timers and custom protection rules off.
+2. After this workflow is on reviewed main, select the next release tag and
+   its exact checked commit. In the applicable execution environment
+   (`aws-release-candidate` or `aws-release-stable`), set the sole selected
+   **Tag** rule to that exact tag. Remove any older tag rules **before**
+   removing its required reviewer. An immutable tag still runs its original
+   workflow, which may rely on the reviewer in the execution environment.
+3. Remove the required reviewer and any wait timers or custom protection rules
+   from that execution environment. Keep its exact tag rule, name, variables,
+   secrets, and AWS OIDC trust. Apply the same cutover to the other execution
+   environment when its first tag with this workflow is ready. Update the exact
+   execution tag rule before each subsequent tag push.
+
+The approval job checks GitHub's review history for the current run and verifies
+the selected environment and tag rules before handing off to the execution
+jobs. The gate has read-only GitHub access. AWS and publication permissions
+remain scoped to the execution jobs that need them.
 
 ### Rehearse the build network
 
@@ -118,20 +141,22 @@ This lets you validate a policy change before merging it or dispatching GitHub.
 
 ## Run a protected release
 
-Run Checks on the exact main SHA, then create the protected RC tag at that
-commit. Approve the candidate setup job to reserve a private draft. The build
-job's approval covers the leased Ohio Terraform plan, which the workflow
-checks and applies before Packer starts. The only EC2 builder is private and
-uses the scoped EC2 Instance Connect endpoint. The build saves the immutable
+Run Checks on the exact main SHA and check the execution environment's tag
+rule before creating the protected RC tag at that commit. Prepare the authorized
+AMI sharing window in all four regions and verify the public template bucket
+policies before approving **Approve the tagged release**. One review authorizes
+the full candidate run, from draft reservation through publication. The build
+job checks all three temporary role names and their state before provisioning.
+It checks and applies the leased Ohio Terraform plan before Packer starts.
+The only EC2 builder is private and uses the scoped EC2 Instance Connect
+endpoint. The build saves the immutable
 AMI handoff, closes its temporary AWS role, and retires the network and key.
 Terraform uses an encrypted, locked state key for that GitHub run attempt.
 The workflow keeps plans and state out of GitHub artifacts.
 
-Approve regional copy after inspecting the Ohio handoff. The copy job opens a
+The copy job consumes the verified Ohio handoff and opens a
 separate temporary role for that AMI, freezes the regional set and retires
-the role. Review the four exact AMIs before approving sharing. The regional
-AMI sharing gate and public template bucket policy are separate publisher
-access controls and require their existing authorization. The share job
+the role. The share job verifies the frozen four-AMI set and
 requires EC2 DryRun success for all still-private AMIs before sharing any.
 Recheck the public grants and restore the block on new sharing after the
 reviewed publication window.
@@ -152,15 +177,15 @@ separate package visibility approval. The workflow preserves the exact
 payload so a protected rerun can verify anonymous pull and complete
 publication.
 
-Stable uses a protected annotated tag at the qualified RC commit. Include
-one `candidate: <tag>` and one `qualification: <reviewed-main-commit>` line.
+Stable uses the same single approval gate and a protected annotated tag at
+the qualified RC commit. Include one `candidate: <tag>` and one
+`qualification: <reviewed-main-commit>` line.
 The stable workflow verifies the exact published artifacts and qualification
 record before promotion.
 
-The original protected `v1.0.0-rc.1` tag keeps its original release workflow.
-Operate its remaining phases with the corresponding reviewed legacy role
-and handoffs. Use the automated workflow from a later tag that contains
-these changes.
+The protected `v1.0.0-rc.1` and `v1.0.0-rc.2` tags keep their original
+release workflows. Use a fresh protected tag containing the updated workflow
+for single-approval publication.
 
 Before authorizing Docs deployment, set the GitHub Pages publishing source to
 **GitHub Actions** and set the `github-pages` environment deployment policy to

@@ -62,9 +62,28 @@ jobs:
           echo 'The exact source commit has no successful baseline CI run.' >&2
           exit 1
 
-  candidate-setup:
-    if: needs.preflight.outputs.channel == 'rc'
+  approve-release:
+    name: Approve the tagged release
     needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: aws-release-approval
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.source }}
+          persist-credentials: false
+      - name: Verify the maintainer review and execution environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash platform/release/verify-approval.sh
+
+  candidate-setup:
+    if: needs.approve-release.result == 'success' && needs.preflight.outputs.channel == 'rc'
+    needs: [preflight, approve-release]
     runs-on: ubuntu-latest
     environment: aws-release-candidate
     permissions:
@@ -132,8 +151,10 @@ jobs:
 
   candidate-ami-build:
     name: Build the private Ohio AMI
-    needs: [preflight, candidate-setup]
-    if: needs.candidate-setup.outputs.assets == '' && needs.candidate-setup.outputs.build == ''
+    needs: [preflight, approve-release, candidate-setup]
+    if: >-
+      needs.approve-release.result == 'success' &&
+      needs.candidate-setup.outputs.assets == '' && needs.candidate-setup.outputs.build == ''
     runs-on: ubuntu-24.04
     environment: aws-release-candidate
     timeout-minutes: 85
@@ -182,6 +203,11 @@ jobs:
           aws-region: us-east-2
           allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
           unset-current-credentials: true
+      - name: Check candidate phase role access before provisioning
+        run: |
+          for phase in build copy share; do
+            bash platform/packer/aws/release-phase.sh check "$phase"
+          done
       - name: Provision the private Ohio build network
         env:
           SHIFTBOX_RELEASE_SOURCE_AMI: ${{ vars.SHIFTBOX_RELEASE_SOURCE_AMI }}
@@ -232,9 +258,9 @@ jobs:
 
   candidate-ami-copy:
     name: Copy the approved Ohio AMI
-    needs: [preflight, candidate-setup, candidate-ami-build]
+    needs: [preflight, approve-release, candidate-setup, candidate-ami-build]
     if: >-
-      !cancelled() && needs.candidate-setup.result == 'success' &&
+      !cancelled() && needs.approve-release.result == 'success' && needs.candidate-setup.result == 'success' &&
       needs.candidate-setup.outputs.assets == '' && needs.candidate-setup.outputs.copy == '' &&
       (needs.candidate-setup.outputs.build != '' || needs.candidate-ami-build.result == 'success')
     runs-on: ubuntu-latest
@@ -319,9 +345,9 @@ jobs:
 
   candidate-ami-share:
     name: Share the four approved AMIs
-    needs: [preflight, candidate-setup, candidate-ami-build, candidate-ami-copy]
+    needs: [preflight, approve-release, candidate-setup, candidate-ami-build, candidate-ami-copy]
     if: >-
-      !cancelled() && needs.candidate-setup.result == 'success' &&
+      !cancelled() && needs.approve-release.result == 'success' && needs.candidate-setup.result == 'success' &&
       needs.candidate-setup.outputs.assets == '' && needs.candidate-setup.outputs.share == '' &&
       (needs.candidate-setup.outputs.copy != '' || needs.candidate-ami-copy.result == 'success')
     runs-on: ubuntu-latest
@@ -405,9 +431,9 @@ jobs:
         run: bash platform/packer/aws/release-phase.sh close share
 
   candidate:
-    needs: [preflight, candidate-setup, candidate-ami-share]
+    needs: [preflight, approve-release, candidate-setup, candidate-ami-share]
     if: >-
-      !cancelled() && needs.candidate-setup.result == 'success' &&
+      !cancelled() && needs.approve-release.result == 'success' && needs.candidate-setup.result == 'success' &&
       (needs.candidate-setup.outputs.assets != '' || needs.candidate-setup.outputs.share != '' ||
        needs.candidate-ami-share.result == 'success')
     runs-on: ubuntu-latest
@@ -481,11 +507,20 @@ jobs:
           HOST_AMIS: ${{ vars.SHIFTBOX_RELEASE_HOST_AMIS }}
           POSTGRES_IMAGE: ${{ vars.SHIFTBOX_RELEASE_POSTGRES_IMAGE }}
         run: |
+          umask 077
           image=ghcr.io/jflatten/shiftbox
           registry_config=$(mktemp -d)
-          trap 'rm -rf -- "$registry_config"' EXIT
-          printf '%s\n' "$GH_TOKEN" | docker --config "$registry_config" login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          docker --config "$registry_config" buildx build --platform linux/amd64 \
+          export DOCKER_CONFIG="$registry_config" BUILDX_CONFIG="$registry_config/buildx"
+          builder="shiftbox-release-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          cleanup() {
+            docker buildx rm "$builder" >/dev/null 2>&1 || true
+            rm -rf -- "$registry_config"
+          }
+          trap cleanup EXIT
+          # Keep builder metadata and registry credentials in the same temporary Docker config.
+          docker buildx create --name "$builder" --driver docker-container --bootstrap
+          printf '%s\n' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker buildx build --builder "$builder" --platform linux/amd64 \
             --file platform/container/Dockerfile --build-arg "RELEASE_CANDIDATE=$RELEASE_TAG" \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \
@@ -538,8 +573,8 @@ jobs:
           docker --config "$anonymous_config" pull --platform linux/amd64 "$image@$digest"
 
   qualify-stable:
-    if: needs.preflight.outputs.channel == 'stable'
-    needs: preflight
+    if: needs.approve-release.result == 'success' && needs.preflight.outputs.channel == 'stable'
+    needs: [preflight, approve-release]
     runs-on: ubuntu-latest
     environment: aws-release-stable
     permissions:
@@ -598,8 +633,12 @@ jobs:
           overwrite: true
 
   publish:
-    needs: [preflight, candidate, qualify-stable]
-    if: always() && !cancelled() && needs.preflight.result == 'success' && ((needs.preflight.outputs.channel == 'rc' && needs.candidate.result == 'success') || (needs.preflight.outputs.channel == 'stable' && needs.qualify-stable.result == 'success'))
+    needs: [preflight, approve-release, candidate, qualify-stable]
+    if: >-
+      always() && !cancelled() && needs.preflight.result == 'success' &&
+      needs.approve-release.result == 'success' &&
+      ((needs.preflight.outputs.channel == 'rc' && needs.candidate.result == 'success') ||
+       (needs.preflight.outputs.channel == 'stable' && needs.qualify-stable.result == 'success'))
     runs-on: ubuntu-latest
     environment: ${{ needs.preflight.outputs.channel == 'rc' && 'aws-release-candidate' || 'aws-release-stable' }}
     permissions:
