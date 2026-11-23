@@ -50,6 +50,15 @@ jq -e '
 ' "$3" >/dev/null
 test -s "$(jq -er .build_private_key_file "$3")"
 touch "$FIXTURE_DIR/packer-called"
+if [[ "${FIXTURE_PACKER_FAIL:-}" == toolchain ]]; then
+    printf '%s\n' 'ShiftBox Packer checkpoint: packer-build' \
+        '    amazon-ebs.shiftbox: ShiftBox Packer checkpoint: guest-bootstrap' \
+        '    amazon-ebs.shiftbox: ShiftBox Packer checkpoint: guest-toolchain' \
+        '    amazon-ebs.shiftbox: ShiftBox Packer checkpoint: unexpected-secret-marker' \
+        'Do not copy this diagnostic including fixture-sensitive-value'
+    cat "$(jq -er .build_private_key_file "$3")"
+    exit 1
+fi
 printf '{"builds":[{}]}\n' > "$FIXTURE_DIR/manifest.json"
 printf 'AMI provenance manifest: %s\n' "$FIXTURE_DIR/manifest.json"
 PACKER
@@ -89,6 +98,12 @@ SHIFTBOX_RELEASE_BUILD_NETWORK=$approved_network
 hosted_build
 jq -e '.sanitized == true' "$RUNNER_TEMP/handoff.json" >/dev/null
 test -f "$fixture/packer-called"
+test "$(ls -A "$RUNNER_TEMP")" = handoff.json
+
+# A failed build reports only its last recognized stage and discards the private log and key.
+if FIXTURE_PACKER_FAIL=toolchain hosted_build >"$fixture/error" 2>&1; then exit 1; fi
+grep -Fxq 'Hosted Packer build: Packer failed at guest-toolchain. Check the scoped AWS attempt and reconcile any private artifacts before retrying.' "$fixture/error"
+test "$(wc -l < "$fixture/error" | tr -d ' ')" = 1
 test "$(ls -A "$RUNNER_TEMP")" = handoff.json
 
 # The normal release rejects a rehearsal network and the rehearsal produces only a private result receipt.

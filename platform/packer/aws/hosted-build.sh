@@ -95,7 +95,10 @@ jq --arg key "$key" --argjson port "$port" '
 ' "$network" > "$vars"
 if ! PUBLIC_AMI_BUILD=1 RELEASE_CANDIDATE="$tag" RELEASE_PUBLISHER_ACCOUNT_ID="$publisher" \
   "$here/build-image.sh" "$tag" "$guest_key" "$vars" > "$scratch/packer.log" 2>&1; then
-  fail 'Packer failed. Check the scoped AWS attempt and reconcile any private artifacts before retrying.'
+  # The public job may report these fixed stage names, never the underlying build log.
+  checkpoint=$(sed -nE 's/^([[:blank:]]*amazon-ebs\.shiftbox: )?ShiftBox Packer checkpoint: (publisher-preflight|guest-binary|recipe-validation|packer-build|guest-bootstrap|guest-toolchain|guest-agent|guest-seal|ami-creation|ami-verification)$/\2/p' \
+    "$scratch/packer.log" | tail -n 1)
+  fail "Packer failed at ${checkpoint:-startup}. Check the scoped AWS attempt and reconcile any private artifacts before retrying."
 fi
 manifest=$(sed -n 's/^AMI provenance manifest: //p' "$scratch/packer.log")
 if [[ $# == 5 ]]; then

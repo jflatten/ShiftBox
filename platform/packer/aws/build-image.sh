@@ -156,7 +156,9 @@ fi
 public_flag=false
 if [ "$public_build" -eq 1 ]; then
     export AWS_PAGER=''
+    echo 'ShiftBox Packer checkpoint: publisher-preflight'
     public_preflight
+    echo 'ShiftBox Packer checkpoint: guest-binary'
     public_flag=true
 fi
 
@@ -183,13 +185,17 @@ set -- \
     "$recipe_dir"
 
 if [ "$public_flag" = true ]; then
+    echo 'ShiftBox Packer checkpoint: recipe-validation'
     "${PACKER:-packer}" validate -evaluate-datasources=false "$@"
-fi
-"${PACKER:-packer}" build "$@"
-
-if [ "$public_build" -eq 1 ] && ! verify_public_output; then
-    echo 'Public build metadata is unverified. Keep the AMI private and inspect the local Packer output.' >&2
-    exit 1
+    echo 'ShiftBox Packer checkpoint: packer-build'
+    "${PACKER:-packer}" build -color=false "$@"
+    echo 'ShiftBox Packer checkpoint: ami-verification'
+    if ! verify_public_output; then
+        echo 'Public build metadata is unverified. Keep the AMI private and inspect the local Packer output.' >&2
+        exit 1
+    fi
+else
+    "${PACKER:-packer}" build "$@"
 fi
 
 echo "AMI provenance manifest: $build_dir/manifest.json"
