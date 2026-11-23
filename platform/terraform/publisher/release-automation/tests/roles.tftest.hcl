@@ -4,6 +4,43 @@ variables {
   publisher_account_id = "111122223333"
 }
 
+# The manual workflow identity cannot reach release journals, expiry names,
+# image mutation or the temporary identities that publish candidate artifacts.
+run "isolated_network_rehearsal" {
+  command = plan
+
+  assert {
+    condition = (
+      jsondecode(aws_iam_role.rehearsal.assume_role_policy).Statement[0].Condition.StringEquals == {
+        "token.actions.githubusercontent.com:aud"      = "sts.amazonaws.com"
+        "token.actions.githubusercontent.com:sub"      = "repo:jflatten@11561330/ShiftBox@1457179716:environment:aws-release-network-rehearsal"
+        "token.actions.githubusercontent.com:actor_id" = "11561330"
+        "token.actions.githubusercontent.com:ref"      = "refs/heads/main"
+        "token.actions.githubusercontent.com:workflow" = "Rehearse publisher build network"
+      } &&
+      jsondecode(aws_iam_role.rehearsal.assume_role_policy).Statement[0].Condition.StringLike["sts:RoleSessionName"] == "shiftbox-release-rehearsal-*-1"
+    )
+    error_message = "Only the named main rehearsal and maintainer may federate."
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_policy.rehearsal) == 3 &&
+      length(aws_iam_role_policy.rehearsal.policy) <= 10240 &&
+      alltrue([for policy in aws_iam_policy.rehearsal : length(policy.policy) <= 6144]) &&
+      alltrue([for statement in jsondecode(aws_iam_role_policy.rehearsal.policy).Statement :
+        alltrue([for resource in flatten([statement.Resource]) : strcontains(resource, "/release-builds/rehearsals/")])
+        if contains(["ReadAndWriteAttemptState", "ReleaseOnlyTerraformStateLocks", "ReadRehearsalRecords", "WriteRehearsalRecords"], try(statement.Sid, ""))
+      ]) &&
+      alltrue([for document in values(local.rehearsal_documents) :
+        !strcontains(document, "rel-??????????????") && !strcontains(document, "release-v*-rc.*") &&
+        !can(regex("(RunInstances|TerminateInstances|ModifyImageAttribute|CopyImage|CreateImage|RegisterImage|DeregisterImage|DeleteSnapshot|/phases/)", document))
+      ])
+    )
+    error_message = "The rehearsal must be confined to isolated network state and resources within the IAM size limits."
+  }
+}
+
 # Only the protected candidate workflow and maintainer may federate as the
 # network provisioner. Stable tags and ordinary branch events never match.
 run "protected_candidate_federation" {

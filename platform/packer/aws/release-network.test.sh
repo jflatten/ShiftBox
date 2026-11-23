@@ -75,6 +75,9 @@ case "$1 $2" in
       if [[ ${SHIFTBOX_RELEASE_RECOVERY:-} == true ]]; then
         role=shiftbox-publisher-release-network-cleanup
         session=shiftbox-release-cleanup
+      elif [[ ${SHIFTBOX_RELEASE_NETWORK_REHEARSAL:-} == true ]]; then
+        role=shiftbox-publisher-release-network-rehearsal
+        session=shiftbox-release-rehearsal
       else
         role=shiftbox-publisher-release-network
         session=shiftbox-release-network
@@ -166,6 +169,10 @@ case "$cmd" in
     grep -Eq 'use_lockfile[[:space:]]*=[[:space:]]*true' "$config"
     grep -Eq 'encrypt[[:space:]]*=[[:space:]]*true' "$config"
     key=$(sed -nE 's/^[[:space:]]*key[[:space:]]*=[[:space:]]*"([^"]+)"$/\1/p' "$config")
+    # Terraform's workspace discovery must stay inside the rehearsal role's S3 list grant.
+    if [[ "$key" == release-builds/rehearsals/* ]]; then
+      grep -Eq '^workspace_key_prefix[[:space:]]*= "release-builds/rehearsals"$' "$config"
+    fi
     printf '%s\n' "$key" > .fixture-state-key
     ;;
   plan)
@@ -216,7 +223,8 @@ case "$cmd" in
       account:.publisher_account_id, region:"us-east-2", attempt_id,candidate_tag,deadline:.expires_at,
       packer_key_pair:("shiftbox-publisher-"+.attempt_id+"-packer"),packer_public_key_sha256:$hash,
       builder_group_id:"sg-00000000000000004",subnet_id:"subnet-00000000000000002",
-      private_subnet_id:"subnet-00000000000000002",private_subnet_cidr:"10.98.0.64/26",
+      private_subnet_id:"subnet-00000000000000002",
+      private_subnet_cidr:(.variables.vpc_cidr | sub("[.]0/24$"; ".64/26")),
       vpc_id:"vpc-00000000000000001",endpoint_id:"eice-00000000000000003"
     }' "$lease" ;;
   force-unlock)
@@ -339,4 +347,27 @@ mkdir "$RUNNER_TEMP"
 run retire 10001 4
 test "$(grep -c '^unlock$' "$TRACE")" = 2
 test -f "$STORE/release-builds/10001/4/retired.json"
+
+# A manual rehearsal uses the same plans and state lock in an isolated namespace.
+# Only the protected main dispatch and the separate rehearsal AWS role are accepted.
+export SHIFTBOX_RELEASE_RECOVERY=false SHIFTBOX_RELEASE_NETWORK_REHEARSAL=true
+export RELEASE_TAG=v0.0.0-rc.1 GITHUB_RUN_ID=10003 GITHUB_RUN_ATTEMPT=1
+export GITHUB_REF=refs/heads/main GITHUB_EVENT_NAME=workflow_dispatch GITHUB_ACTOR_ID=11561330
+export GITHUB_WORKFLOW_REF=jflatten/ShiftBox/.github/workflows/rehearse-release-network.yml@refs/heads/main
+export RUNNER_TEMP="$scratch/network-rehearsal-runner"
+mkdir "$RUNNER_TEMP"
+reject env GITHUB_REF_PROTECTED=false bash "$here/release-network.sh" provision
+reject env GITHUB_TRIGGERING_ACTOR=other bash "$here/release-network.sh" provision
+reject env GITHUB_EVENT_NAME=push bash "$here/release-network.sh" provision
+reject env GITHUB_WORKFLOW_REF=unrelated bash "$here/release-network.sh" provision
+reject env AWS_TEST_ROLE=shiftbox-publisher-release-network bash "$here/release-network.sh" provision
+reject env RELEASE_TAG=v2.4.0-rc.2 bash "$here/release-network.sh" provision
+run provision
+rehearsal="$STORE/release-builds/rehearsals/10003/1"
+jq -e '.job_name=="Rehearse the private Ohio network" and .candidate_tag=="v0.0.0-rc.1" and
+  .variables.vpc_cidr=="10.98.1.0/24" and (.attempt_id|test("^rel-r[0-9a-f]{13}$"))' "$rehearsal/lease.json" >/dev/null
+test ! -e "$STORE/release-builds/10003/1"
+run retire 10003 1
+jq -e '.run_id=="10003" and (.attempt_id|startswith("rel-r"))' "$rehearsal/retired.json" >/dev/null
+test ! -e "$RUNNER_TEMP/shiftbox-publisher-network/packer"
 printf 'Release network lifecycle fixtures passed.\n'

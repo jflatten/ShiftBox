@@ -39,3 +39,33 @@ run "cross_account_boundary" {
   }
   expect_failures = [var.expiry_permissions_boundary_arn]
 }
+
+# The rehearsal resources use the same expiry engine but require its reserved
+# label and the production boundary. An ordinary RC cannot enter this namespace.
+run "bounded_network_rehearsal" {
+  command = plan
+  variables {
+    attempt_id                      = "rel-r0000000000001"
+    candidate_tag                   = "v0.0.0-rc.1"
+    expiry_permissions_boundary_arn = "arn:aws:iam::111122223333:policy/shiftbox-publisher-release-expiry-boundary"
+  }
+
+  assert {
+    condition = (
+      aws_iam_role.expiry.name == "shiftbox-publisher-rel-r0000000000001-expiry" &&
+      aws_iam_role.expiry.permissions_boundary == var.expiry_permissions_boundary_arn &&
+      local.tags.environment == "release-v0.0.0-rc.1"
+    )
+    error_message = "The nonpublishing attempt must stay in its own named namespace."
+  }
+}
+
+# A candidate label cannot be used to create rehearsal resources.
+run "reject_candidate_in_rehearsal_namespace" {
+  command = plan
+  variables {
+    attempt_id                      = "rel-r0000000000001"
+    expiry_permissions_boundary_arn = "arn:aws:iam::111122223333:policy/shiftbox-publisher-release-expiry-boundary"
+  }
+  expect_failures = [var.expiry_permissions_boundary_arn]
+}
