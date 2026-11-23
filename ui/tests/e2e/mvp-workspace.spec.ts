@@ -300,15 +300,17 @@ test('validates and launches the official AWS release image', async ({ page }) =
   await activate(page.getByRole('button', { name: 'New resource profile' }));
   const profile = page.getByRole('dialog', { name: 'New resource profile' });
   await enter(profile.getByRole('textbox', { name: 'Profile name' }), name);
-  await profile.getByRole('combobox', { name: 'AMI image' }).click();
+  await profile.getByRole('combobox', { name: 'AMI image' }).fill(fixture.releaseId);
   await page.getByRole('option', { name: fixture.releaseId, exact: true }).click();
-  await profile.getByRole('combobox', { name: 'EC2 instance type' }).click();
+  await profile.getByRole('combobox', { name: 'EC2 instance type' }).fill('t3.medium');
   await page.getByRole('option', { name: 't3.medium', exact: true }).click();
   await enter(profile.getByRole('textbox', { name: 'EBS disk (GiB)' }), '32');
   await activate(profile.getByRole('button', { name: 'Create resource profile' }));
   await expect(page.getByText('Resource profile created.')).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('table', { name: 'Resource profiles' }).getByRole('rowheader', { name })).toBeVisible();
+  const savedProfile = page.getByRole('table', { name: 'Resource profiles' }).getByRole('row')
+    .filter({ has: page.getByRole('rowheader', { name, exact: true }) });
+  await expect(savedProfile.getByRole('cell', { name: fixture.releaseId, exact: true })).toBeVisible();
 
   await page.goto(new URL('/templates/', origin).href);
   await activate(page.getByRole('button', { name: 'New project' }));
@@ -316,18 +318,24 @@ test('validates and launches the official AWS release image', async ({ page }) =
   await enter(project.getByRole('textbox', { name: /^Name(?:\s*\*)?$/ }), name);
   await enter(project.getByLabel('Repository URL'), fixture.repositoryURL);
   await enter(project.getByLabel('Dev Container configuration'), fixture.devcontainerPath);
+  // EC2 templates inherit the exact AMI from the resource profile.
   await project.getByRole('combobox', { name: 'Resource profile' }).selectOption({ label: name });
-  await project.getByRole('combobox', { name: 'Platform image' }).selectOption({ label: fixture.releaseId });
+  await expect(project.getByRole('combobox', { name: 'Platform image' })).toHaveCount(0);
   await activate(project.getByRole('button', { name: 'Create project' }));
   await expect(project).toBeHidden({ timeout: 15_000 });
   await page.reload();
-  await expect(page.getByText(name, { exact: true })).toBeVisible();
+  await page.getByRole('searchbox', { name: 'Search projects' }).fill(name);
+  await expect(page.getByRole('article', { name, exact: true }).getByText(fixture.releaseId, { exact: true })).toBeVisible();
 
   await page.goto(new URL('/workspaces/', origin).href);
   await activate(page.getByRole('link', { name: 'Launch Project' }));
+  await page.getByRole('searchbox', { name: 'Search projects' }).fill(name);
   await activate(page.getByRole('button', { name: `Launch workspace for ${name}` }), 'Space');
-  await enter(page.getByRole('textbox', { name: /workspace name/i }), name);
-  await activate(page.getByRole('dialog', { name: 'Review launch' }).getByRole('button', { name: 'Launch workspace', exact: true }));
+  const review = page.getByRole('dialog', { name: 'Review launch' });
+  await expect(review.getByText(name, { exact: true })).toBeVisible();
+  await expect(review.getByText(fixture.releaseId, { exact: true })).toBeVisible();
+  await enter(review.getByRole('textbox', { name: /workspace name/i }), name);
+  await activate(review.getByRole('button', { name: 'Launch workspace', exact: true }));
   await activate(page.getByRole('link', { name: 'View workspace' }));
   await expect(page.getByRole('button', { name: 'Open IDE', exact: true })).toBeVisible({ timeout: firstLaunchTimeout });
   await openIDE(page, 'Open IDE', origin);

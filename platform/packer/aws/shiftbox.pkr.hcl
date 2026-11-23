@@ -246,18 +246,23 @@ build {
   }
 
   provisioner "shell" {
-    inline = [
+    inline = compact([
+      var.public_build ? "echo 'ShiftBox Packer checkpoint: guest-bootstrap'" : "",
       "cloud-init status --wait",
+      var.public_build ? "echo 'ShiftBox Packer checkpoint: guest-toolchain'" : "",
       "sudo /bin/sh /tmp/shiftbox-install-tools amd64",
       "sudo apt-get install -y --no-install-recommends nftables",
+      var.public_build ? "echo 'ShiftBox Packer checkpoint: guest-agent'" : "",
       "sudo install -m 0755 /tmp/shiftbox-agent /usr/local/bin/shiftbox-agent",
       "sudo install -D -o root -g root -m 0644 /tmp/shiftbox-guest-update.pub /usr/local/share/shiftbox/guest-update.pub",
       "sudo ln -s /usr/local/bin/shiftbox-agent /usr/local/bin/shiftbox",
       "sudo install -D -m 0755 /tmp/shiftbox-start-agent /usr/local/libexec/shiftbox-start-agent",
       "sudo install -m 0644 /tmp/shiftbox-agent.service /etc/systemd/system/shiftbox-agent.service",
       "sudo systemctl enable shiftbox-agent.service",
+      var.public_build ? "echo 'ShiftBox Packer checkpoint: guest-seal'" : "",
       "sudo /bin/sh /tmp/shiftbox-seal-aws-image ${var.public_build ? "public" : "private"}",
-    ]
+      var.public_build ? "echo 'ShiftBox Packer checkpoint: ami-creation'" : "",
+    ])
   }
 
   post-processor "manifest" {
