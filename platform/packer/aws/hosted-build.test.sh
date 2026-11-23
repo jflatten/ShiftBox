@@ -53,8 +53,8 @@ touch "$FIXTURE_DIR/packer-called"
 if [[ "${FIXTURE_PACKER_FAIL:-}" == toolchain ]]; then
     printf '%s\n' 'ShiftBox Packer checkpoint: packer-build' \
         '    amazon-ebs.shiftbox: ShiftBox Packer checkpoint: guest-bootstrap' \
-        '    amazon-ebs.shiftbox: ShiftBox Packer checkpoint: guest-toolchain' \
-        '    amazon-ebs.shiftbox: ShiftBox Packer checkpoint: unexpected-secret-marker' \
+        '==> amazon-ebs.shiftbox: ShiftBox Packer checkpoint: guest-toolchain' \
+        '==> amazon-ebs.shiftbox: ShiftBox Packer checkpoint: unexpected-secret-marker' \
         'Do not copy this diagnostic including fixture-sensitive-value'
     cat "$(jq -er .build_private_key_file "$3")"
     exit 1
@@ -100,7 +100,8 @@ jq -e '.sanitized == true' "$RUNNER_TEMP/handoff.json" >/dev/null
 test -f "$fixture/packer-called"
 test "$(ls -A "$RUNNER_TEMP")" = handoff.json
 
-# A failed build reports only its last recognized stage and discards the private log and key.
+# Packer 1.14 prefixes guest stdout with an arrow. Use the last recognized stage
+# while discarding the raw diagnostic and the build key.
 if FIXTURE_PACKER_FAIL=toolchain hosted_build >"$fixture/error" 2>&1; then exit 1; fi
 grep -Fxq 'Hosted Packer build: Packer failed at guest-toolchain. Check the scoped AWS attempt and reconcile any private artifacts before retrying.' "$fixture/error"
 test "$(wc -l < "$fixture/error" | tr -d ' ')" = 1

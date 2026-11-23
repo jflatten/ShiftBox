@@ -166,6 +166,43 @@ if grep -Fq 'credential fixture' "$test_dir/seal.out"; then
     exit 1
 fi
 
+# Canonical's preinstalled SSM snap can write outside its snap data directory.
+# A public seal must stop and purge the snap before it removes that runtime state.
+rm -rf "$image_root/root/.aws"
+mkdir -p "$image_root/snap/amazon-ssm-agent/current" "$image_root/var/snap/amazon-ssm-agent" \
+    "$image_root/var/lib/amazon/ssm" "$image_root/var/log/amazon/ssm" "$image_root/etc/amazon/ssm"
+printf 'attempt-local state\n' > "$image_root/var/lib/amazon/ssm/registration"
+sed '/^mode=/,$d' "$recipe/seal-image.sh" > "$test_dir/seal-functions.sh"
+(
+    snap() { return 1; }
+    . "$test_dir/seal-functions.sh"
+    if scrub_public_ssm "$image_root"; then
+        echo 'Public seal accepted a failed purge of a running SSM agent.' >&2
+        exit 1
+    fi
+    test -f "$image_root/var/lib/amazon/ssm/registration"
+)
+(
+    snap() {
+        test "$*" = 'remove --purge amazon-ssm-agent' || return 1
+        test -f "$image_root/var/lib/amazon/ssm/registration" || return 1
+        rm -rf "$image_root/snap/amazon-ssm-agent" "$image_root/var/snap/amazon-ssm-agent"
+    }
+    . "$test_dir/seal-functions.sh"
+    scrub_public_ssm "$image_root"
+)
+sh "$recipe/seal-image.sh" verify-public "$image_root"
+
+# A leftover SSM log or snap data directory must fail even when runtime credentials are gone.
+for path in var/log/amazon/ssm var/snap/amazon-ssm-agent; do
+    mkdir -p "$image_root/$path"
+    if sh "$recipe/seal-image.sh" verify-public "$image_root" > "$test_dir/seal.out" 2>&1; then
+        echo "Verifier accepted leftover SSM state at $path." >&2
+        exit 1
+    fi
+    rmdir "$image_root/$path"
+done
+
 # A TLS-only builder must get HTTPS APT mirrors before installing packages.
 # The private AWS recipe must retain its original cloud-init configuration.
 python3 - "$recipe" <<'PY'
