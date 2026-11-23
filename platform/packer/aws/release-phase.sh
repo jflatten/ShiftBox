@@ -108,8 +108,9 @@ BACKEND
 verify_role() {
   jq -e --arg arn "$role_arn" --arg boundary "$boundary" --arg run "$run" --arg retry "$retry" \
     --arg tag "$tag" --arg phase "$phase" --slurpfile input "$scratch/phase.json" '
-    .Role | .Arn==$arn and .PermissionsBoundary.PermissionsBoundaryArn==$boundary and
+    .Role |
     (.Tags|map({key:.Key,value:.Value})|from_entries) as $tags |
+    .Arn==$arn and .PermissionsBoundary.PermissionsBoundaryArn==$boundary and
     $tags.project=="shiftbox" and $tags.cluster_name=="shiftbox-publisher" and
     $tags.release_run_id==$run and $tags.release_run_attempt==$retry and
     $tags.release_phase==$phase and $tags.environment==("release-"+$tag) and
