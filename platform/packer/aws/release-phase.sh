@@ -8,6 +8,8 @@ export TF_IN_AUTOMATION=1 TF_WORKSPACE=default
 
 fail() { printf 'Release AMI phase: %s\n' "$1" >&2; exit 1; }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=platform/packer/aws/terraform-workflow.sh
+source "$here/terraform-workflow.sh"
 repo=$(cd "$here/../../.." && pwd)
 cd "$repo"
 root=platform/terraform/publisher/candidate-phase
@@ -102,7 +104,7 @@ allowed_account_ids  = ["$account"]
 encrypt              = true
 use_lockfile         = true
 BACKEND
-  tf init -input=false -lockfile=readonly -no-color -backend-config="$scratch/backend.hcl" > "$scratch/init.log" 2>&1 ||
+  tf_logged init -input=false -lockfile=readonly -backend-config="$scratch/backend.hcl" ||
     fail 'could not initialize private phase state'
 }
 verify_role() {
@@ -126,7 +128,10 @@ read_role() {
     verify_role || fail 'live role is outside the exact phase'
     return 0
   fi
-  grep -q NoSuchEntity "$scratch/role.err" || fail 'could not read the exact role'
+  if ! grep -q NoSuchEntity "$scratch/role.err"; then
+    jq -Rr --arg tool AWS -f "$here/workflow-log.jq" "$scratch/role.err" >&2
+    fail 'could not read the exact role'
+  fi
   return 1
 }
 verify_journal() {
@@ -174,13 +179,13 @@ open_phase() {
   if has_key "$prefix/terraform.tfstate" || read_role; then fail 'phase state or role already exists'; fi
   write_key "$prefix/phase.json" "$scratch/phase.json" || fail 'could not reserve a new phase lease'
   init_state
-  tf plan -input=false -no-color -lock-timeout=2m -var-file="$scratch/phase.json" -out="$scratch/phase.tfplan" > "$scratch/plan.log"
+  tf_logged plan -input=false -lock-timeout=2m -var-file="$scratch/phase.json" -out="$scratch/phase.tfplan"
   tf show -json "$scratch/phase.tfplan" | jq -e --arg role "$role" --arg boundary "$boundary" '
     [.resource_changes[]|{address,actions:.change.actions}]==
      [{address:"aws_iam_role.ami_candidate",actions:["create"]},{address:"aws_iam_role_policy.ami_candidate",actions:["create"]}] and
     (.resource_changes[0].change.after|.name==$role and .path=="/shiftbox-release/" and .permissions_boundary==$boundary)
   ' >/dev/null || fail 'unexpected phase plan'
-  tf apply -input=false -no-color "$scratch/phase.tfplan" > "$scratch/apply.log"
+  tf_logged apply -input=false "$scratch/phase.tfplan"
   read_role || fail 'phase role is absent after apply'
   test "$(tf output -raw ami_candidate_role_arn)" = "$role_arn"
   printf '%s\n' "$role_arn"
@@ -202,31 +207,31 @@ close_phase() {
         (.Operation|IN("OperationTypePlan","OperationTypeApply"))) |
       .ID|select(test("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"))
     ' "$scratch/lock.json")
-    tf force-unlock -force "$lock_id" > "$scratch/unlock.log"
+    tf_logged force-unlock -force "$lock_id"
   fi
   if read_role; then
     # An interrupted provider response can leave a named role outside state.
     : > "$scratch/addresses.txt"
     if has_key "$prefix/terraform.tfstate"; then tf state list > "$scratch/addresses.txt"; fi
     if ! grep -Fxq aws_iam_role.ami_candidate "$scratch/addresses.txt"; then
-      tf import -input=false -var-file="$scratch/phase.json" aws_iam_role.ami_candidate "$role" > "$scratch/import-role.log"
+      tf_logged import -input=false -var-file="$scratch/phase.json" aws_iam_role.ami_candidate "$role"
     fi
     aws iam list-role-policies --role-name "$role" |
       jq -e '.PolicyNames|length<=1 and all(.[];.=="CandidateWorkspaceAMI")' > "$scratch/policy-check.txt"
     tf state list > "$scratch/addresses.txt"
     if ! grep -Fxq aws_iam_role_policy.ami_candidate "$scratch/addresses.txt" &&
       aws iam list-role-policies --role-name "$role" --query 'length(PolicyNames)' --output text | grep -qx 1; then
-      tf import -input=false -var-file="$scratch/phase.json" aws_iam_role_policy.ami_candidate "$role:CandidateWorkspaceAMI" > "$scratch/import-policy.log"
+      tf_logged import -input=false -var-file="$scratch/phase.json" aws_iam_role_policy.ami_candidate "$role:CandidateWorkspaceAMI"
     fi
   fi
-  tf plan -destroy -input=false -no-color -lock-timeout=2m -var-file="$scratch/phase.json" -out="$scratch/retire.tfplan" > "$scratch/retire.log"
+  tf_logged plan -destroy -input=false -lock-timeout=2m -var-file="$scratch/phase.json" -out="$scratch/retire.tfplan"
   tf show -json "$scratch/retire.tfplan" | jq -e --arg role "$role" --arg arn "$role_arn" '
     all(.resource_changes[]?;
       .change.actions==["delete"] and
       ((.address=="aws_iam_role.ami_candidate" and .change.before.arn==$arn) or
        (.address=="aws_iam_role_policy.ami_candidate" and .change.before.role==$role and .change.before.name=="CandidateWorkspaceAMI")))
   ' >/dev/null || fail 'unexpected resource in phase teardown'
-  tf apply -input=false -no-color "$scratch/retire.tfplan" > "$scratch/retire-apply.log"
+  tf_logged apply -input=false "$scratch/retire.tfplan"
   if read_role; then fail 'phase role still exists'; fi
   jq '{publisher_account_id,phase,candidate_tag,execution}' "$scratch/phase.json" > "$scratch/retired.json"
   if ! has_key "$prefix/phase-retired.json"; then write_key "$prefix/phase-retired.json" "$scratch/retired.json"; fi

@@ -218,6 +218,9 @@ case "$cmd" in
     key=$(cat .fixture-state-key)
     test -s "$STORE/${key%/*}/lease.json"
     plan=${*: -1}
+    # Progress contains a logical address alongside private provider values.
+    jq -nc '{type:"apply_progress",hook:{resource:{addr:"aws_vpc.build"},action:"create",elapsed_seconds:10,id_value:"PRIVATE_TERRAFORM_DIAGNOSTIC_FIXTURE"}}'
+    jq -nc '{type:"outputs",outputs:{private_value:{value:"PRIVATE_TERRAFORM_DIAGNOSTIC_FIXTURE"}}}' >&2
     if [[ "$(jq -r '.resource_changes[0].change.actions[0]' "$plan")" == create ]]; then
       printf 'apply create\n' >> "$TRACE"
       jq '{values:{root_module:{resources:[.resource_changes[]|{address,type,mode,values:.change.before}]}}}' "$plan" > "$STORE/$key"
@@ -290,7 +293,10 @@ test ! -s "$TRACE"
 
 # Persist only the public key and exact release identity before applying a saved
 # plan, with the private key available only in the current runner directory.
-run provision
+run provision > "$scratch/provision.out" 2> "$scratch/provision.log"
+grep -Fxq 'Terraform running create aws_vpc.build (10s)' "$scratch/provision.log"
+grep -Fxq 'Verified the private Ohio build network handoff.' "$scratch/provision.out"
+if grep -Fq 'PRIVATE_TERRAFORM_DIAGNOSTIC_FIXTURE' "$scratch/provision.log" "$scratch/provision.out"; then exit 1; fi
 lease="$STORE/release-builds/$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT/lease.json"
 jq -e --arg sha "$SOURCE_COMMIT" --arg tag "$RELEASE_TAG" '
   .schema == 1 and .source_commit == $sha and .candidate_tag == $tag and

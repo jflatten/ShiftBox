@@ -42,7 +42,7 @@ printf 'Candidate phase admission fixtures passed.\n'
 # private Git fixture and mocked AWS and Terraform commands.
 fixture="$scratch/repository"
 mkdir -p "$fixture/platform/packer/aws" "$fixture/platform/release" "$fixture/platform/terraform/publisher/candidate-phase"
-cp "$here/release-phase.sh" "$fixture/platform/packer/aws/"
+cp "$here"/{release-phase.sh,terraform-workflow.sh,workflow-log.jq} "$fixture/platform/packer/aws/"
 cp "$here"/../../release/{publish.sh,manifest.sh} "$fixture/platform/release/"
 printf 'terraform {}\n' > "$fixture/platform/terraform/publisher/candidate-phase/versions.tf"
 git -C "$fixture" init -q
@@ -115,7 +115,10 @@ case "$1" in
     config=${!#}
     grep -q "use_lockfile         = true" "${config#*=}"
     grep -q "encrypt              = true" "${config#*=}" ;;
-  plan) test "${2:-}" != -destroy || touch "$MOCK_ROOT/retire" ;;
+  plan)
+    [[ " $* " != *' -destroy '* ]] || touch "$MOCK_ROOT/retire"
+    # A plan sent to stderr still appears without exposing its arbitrary message.
+    printf '%s\n' '{"type":"planned_change","change":{"resource":{"addr":"aws_iam_role.ami_candidate"},"action":"create"},"@message":"PRIVATE_PHASE_MESSAGE"}' >&2 ;;
   show)
     if [[ -f "$MOCK_ROOT/retire" ]]; then
       jq -n --arg arn "$ROLE_ARN" --arg name "$ROLE_NAME" --arg bad "${FOREIGN_DESTROY:-}" '
@@ -152,7 +155,10 @@ case "$1" in
 esac
 TF
 chmod +x "$scratch/bin/terraform"
-test "$(bash "$fixture/platform/packer/aws/release-phase.sh" open build)" = "$ROLE_ARN"
+# Terraform progress reaches stderr without corrupting the ARN on stdout.
+test "$(bash "$fixture/platform/packer/aws/release-phase.sh" open build 2>"$scratch/phase.log")" = "$ROLE_ARN"
+grep -Fxq 'Terraform planned create aws_iam_role.ami_candidate' "$scratch/phase.log"
+if grep -Fq 'PRIVATE_PHASE_MESSAGE' "$scratch/phase.log"; then exit 1; fi
 if bash "$fixture/platform/packer/aws/release-phase.sh" open build >/dev/null 2>&1; then exit 1; fi
 
 # Even with an exact role and state, a destroy plan touching a foreign
