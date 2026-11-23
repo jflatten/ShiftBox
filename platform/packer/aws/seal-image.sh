@@ -7,7 +7,8 @@ verify_public_root() {
         /root/.git-credentials /root/.netrc /root/.bash_history \
         /home/ubuntu/.aws /home/ubuntu/.ssh /home/ubuntu/.docker/config.json /home/ubuntu/.config/gh/hosts.yml \
         /home/ubuntu/.git-credentials /home/ubuntu/.netrc /home/ubuntu/.bash_history \
-        /var/lib/cloud/instance /var/lib/shiftbox-agent /var/lib/amazon/ssm; do
+        /var/lib/cloud/instance /var/lib/shiftbox-agent /var/lib/amazon/ssm \
+        /var/log/amazon/ssm /etc/amazon/ssm /snap/amazon-ssm-agent/current /var/snap/amazon-ssm-agent; do
         if [ -e "$root$path" ] || [ -L "$root$path" ]; then
             echo "Unexpected builder state at $path. Stop and investigate before image capture." >&2
             return 1
@@ -38,6 +39,18 @@ verify_public_root() {
         echo 'The builder accounts must be locked before public capture.' >&2
         return 1
     fi
+}
+
+scrub_public_ssm() {
+    image_root=$1
+    ssm_snap="$image_root/snap/amazon-ssm-agent/current"
+    # The pinned Canonical builder starts this snap even without a workspace IAM profile.
+    # Purge it without a snap snapshot before removing its state outside snapd.
+    if [ -e "$ssm_snap" ] || [ -L "$ssm_snap" ]; then
+        snap remove --purge amazon-ssm-agent || return 1
+    fi
+    rm -rf -- "$image_root/var/lib/amazon/ssm" "$image_root/var/log/amazon/ssm" \
+        "$image_root/etc/amazon/ssm" "$image_root/var/snap/amazon-ssm-agent"
 }
 
 mode=${1:-private}
@@ -108,6 +121,7 @@ rm -f /tmp/shiftbox-agent /tmp/shiftbox-agent.service /tmp/shiftbox-start-agent
 rm -f /tmp/shiftbox-install-tools /tmp/shiftbox-code-server.env /tmp/shiftbox-guest-update.pub /tmp/shiftbox-seal-aws-image
 
 if [ "$mode" = public ]; then
+    scrub_public_ssm ''
     # The ephemeral builder writes only its public authorization key here.
     for directory in /home/ubuntu/.ssh /root/.ssh; do
         if [ -d "$directory" ]; then
