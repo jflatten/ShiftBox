@@ -63,6 +63,9 @@ jobs:
             --test-data platform/cloudformation/aws/tests/guard/template-tests.yaml
           bash platform/release/workflows.test.sh --workflows --aws-tooling
           bash platform/packer/aws/hosted-build.test.sh
+          bash platform/packer/aws/release-network.test.sh
+          bash platform/packer/aws/recover-release-network.test.sh
+          bash platform/packer/aws/release-phase.test.sh
           bash platform/packer/aws/rehearsal.test.sh
           bash platform/packer/aws/public-recipe.test.sh
           python3 platform/packer/aws/eice-socks.test.py
@@ -77,6 +80,14 @@ jobs:
         run: |
           terraform -chdir=platform/terraform/publisher init -backend=false -lockfile=readonly
           terraform -chdir=platform/terraform/publisher test
+      - name: Plan release automation state and roles offline
+        run: |
+          for root in platform/terraform/publisher/{release-automation,candidate-phase}; do
+            terraform -chdir="$root" fmt -check -recursive
+            terraform -chdir="$root" init -backend=false -lockfile=readonly
+            terraform -chdir="$root" validate
+            terraform -chdir="$root" test
+          done
       - name: Check the closed and bound Packer rehearsal role offline
         run: |
           root=platform/terraform/publisher/packer-rehearsal

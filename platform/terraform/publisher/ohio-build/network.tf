@@ -50,8 +50,8 @@ variable "candidate_tag" {
   type        = string
   description = "Protected candidate tag reviewed for this publisher."
   validation {
-    condition     = var.candidate_tag == "v1.0.0-rc.1"
-    error_message = "This publisher plan is for the selected first candidate v1.0.0-rc.1."
+    condition     = length(var.candidate_tag) <= 96 && can(regex("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)-rc\\.[1-9][0-9]*$", var.candidate_tag))
+    error_message = "Specify a canonical release candidate tag, such as v1.0.0-rc.1."
   }
 }
 

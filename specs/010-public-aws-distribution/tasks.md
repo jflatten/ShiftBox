@@ -130,6 +130,14 @@ description: "Implementation tasks for the first public AWS distribution"
 - [ ] T044 With authorized maintainer approval, push the protected stable tag for the exact qualified commit. Verify `.github/workflows/release.yml` reuses template bytes, original S3 versions/URLs, GHCR digest and AMIs. Verify default and explicit release links using `specs/010-public-aws-distribution/quickstart.md`.
 - [ ] T045 Refresh and verify Pages stable and pinned regional quick-create links independently through `.github/workflows/pages.yml` and `docs/site/tests/site.test.sh`. Record review URLs and private teardown evidence, preserving published S3 object versions and other assets still referenced.
 
+## Phase 8: Workflow-managed publisher build
+
+- [X] T046 [P] [US2] Add one-time Terraform bootstrap for the private encrypted production state backend and least-privilege publication and recovery identities. Test bucket protection, role trust and permission boundaries offline in `platform/terraform/publisher/release-automation/`.
+- [X] T047 [P] [US2] Implement the exact-run Ohio network lease, private Terraform state, approved plan application, one-time SSH handoff and exact-state teardown in `platform/packer/aws/`. Generalize the candidate input while preserving the existing nonpublishing rehearsal path. Test retries, account and ownership guards, partial failure and teardown.
+- [X] T048 [P] [US2] Implement independent cleanup for interrupted release builds. Use the exact run and durable state on protected main with a cleanup-only role. Verify cancellation, runner loss, live-run refusal, stale locks and preservation of publication artifacts.
+- [X] T049 [US2] Wire the protected publication job to the network lifecycle and scope AMI policy phases to the exact approved run and artifacts. Preserve tag and publication approvals, reuse resumable handoffs and eliminate per-version manual Terraform commands after one-time setup.
+- [ ] T050 [US2] Verify the complete automated release lifecycle using offline fixtures and a separately approved nonpublishing check. Document bootstrap, recovery and maintainer operation in `platform/release/README.md`. Confirm each temporary network is absent and release assets remain available.
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

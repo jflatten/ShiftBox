@@ -1,0 +1,59 @@
+name: Clean expired publisher build networks
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shiftbox-release-network-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: >-
+      github.repository == 'jflatten/ShiftBox' && github.ref == 'refs/heads/main' &&
+      github.ref_protected && vars.SHIFTBOX_RELEASE_CLEANUP_ENABLED == 'true' &&
+      (github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.actor == 'jflatten' &&
+      github.triggering_actor == 'jflatten'))
+    runs-on: ubuntu-24.04
+    environment: aws-release-cleanup
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-2
+      AWS_PAGER: ''
+      AWS_CLI_AUTO_PROMPT: 'off'
+      AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: 'true'
+      SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+      SHIFTBOX_RELEASE_STATE_BUCKET: ${{ vars.SHIFTBOX_RELEASE_STATE_BUCKET }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+          terraform_wrapper: false
+      - id: control
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_NETWORK_CLEANUP_ROLE_ARN }}
+          role-session-name: shiftbox-release-cleanup-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Reconcile finished, expired publisher builds
+        run: bash platform/packer/aws/recover-release-network.sh
+      - name: Retire expired, finished AMI phases
+        if: always() && steps.control.outcome == 'success'
+        run: bash platform/packer/aws/release-phase.sh sweep
