@@ -242,7 +242,13 @@ for name, operation in phases.items():
     assert job["permissions"] == {"contents": "read", "actions": "read", "id-token": "write"}
     assert "candidate-setup" in job["needs"] and operation in commands
     assert all(other not in commands for other in phases.values() if other != operation)
-    assert (name, "${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}") in aws_jobs
+    assert (name, "${{ vars.SHIFTBOX_RELEASE_NETWORK_ROLE_ARN }}") in aws_jobs
+    assert (name, "${{ steps.phase.outputs.role }}") in aws_jobs
+    open_index, = [index for index, step in enumerate(job["steps"]) if step.get("id") == "phase"]
+    action_index, = [index for index, step in enumerate(job["steps"]) if operation in step.get("run", "")]
+    close_index, = [index for index, step in enumerate(job["steps"]) if "release-phase.sh close" in step.get("run", "")]
+    assert open_index < action_index < close_index
+    assert "always()" in job["steps"][close_index]["if"]
     upload, = [step["with"] for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
     assert upload.get("overwrite", "false") == "false"
     if name != "candidate-ami-build":
@@ -250,23 +256,43 @@ for name, operation in phases.items():
         assert all(step["with"].get("artifact-ids") for step in job["steps"]
                    if step.get("uses", "").startswith("actions/download-artifact@"))
 
-# Only the protected build step gets the one-attempt SSH key and network inputs.
+# The protected build owns a disposable network and passes its runner-only key
+# to Packer. Both success and failure paths attempt to retire the exact state.
 assert jobs["candidate-ami-build"]["runs-on"] == "ubuntu-24.04"
-secret = "${{ secrets.SHIFTBOX_RELEASE_BUILD_SSH_KEY }}"
-key_steps = [(name, step) for name, job in jobs.items() for step in job["steps"]
-             if secret in step.get("env", {}).values()]
-assert len(key_steps) == 1 and key_steps[0][0] == "candidate-ami-build"
-key_step = key_steps[0][1]
-assert "hosted-build.sh" in key_step["run"]
-assert key_step["env"]["SHIFTBOX_RELEASE_BUILD_NETWORK"] == "${{ vars.SHIFTBOX_RELEASE_BUILD_NETWORK }}"
-assert all(secret not in job.get("env", {}).values() for job in jobs.values())
+build_steps = jobs["candidate-ami-build"]["steps"]
+provision_index, = [index for index, step in enumerate(build_steps) if "release-network.sh provision" in step.get("run", "")]
+build_index, = [index for index, step in enumerate(build_steps) if "hosted-build.sh" in step.get("run", "")]
+retire_index, = [index for index, step in enumerate(build_steps) if "release-network.sh retire" in step.get("run", "")]
+assert provision_index < build_index < retire_index
+assert "always()" in build_steps[retire_index]["if"]
+assert "shiftbox-publisher-network/packer" in build_steps[build_index]["run"]
+assert "secrets.SHIFTBOX_RELEASE_BUILD_SSH_KEY" not in (workflows / "release.yml").read_text()
 assert "SHIFTBOX_RELEASE_CANDIDATE_RUNNER" not in (workflows / "release.yml").read_text()
 assert "outputs.build == ''" in jobs["candidate-ami-build"]["if"]
 assert "candidate-ami-build" in jobs["candidate-ami-copy"]["needs"]
 assert "candidate-ami-copy" in jobs["candidate-ami-share"]["needs"]
 assert "candidate-ami-share" in jobs["candidate"]["needs"]
-assert ("candidate", "${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}") not in aws_jobs
+assert ("candidate", "${{ vars.SHIFTBOX_RELEASE_NETWORK_ROLE_ARN }}") not in aws_jobs
 assert jobs["candidate"]["runs-on"] == "ubuntu-latest"
+
+# An independent protected main workflow can recover expired state even if
+# the build runner disappeared or the release is waiting for another review.
+cleanup = workflow("cleanup-release-network.yml")
+assert set(cleanup["on"]) == {"schedule", "workflow_dispatch"}
+assert cleanup["concurrency"]["cancel-in-progress"] == "false"
+assert not writable(cleanup["permissions"])
+cleanup_job = cleanup["jobs"]["cleanup"]
+assert cleanup_job["environment"] == "aws-release-cleanup"
+assert cleanup_job["permissions"] == {"actions": "read", "contents": "read", "id-token": "write"}
+for gate in ("refs/heads/main", "SHIFTBOX_RELEASE_CLEANUP_ENABLED", "jflatten/ShiftBox", "jflatten"):
+    assert gate in cleanup_job["if"]
+cleanup_aws, = [step["with"] for step in cleanup_job["steps"]
+                if step.get("uses", "").startswith("aws-actions/configure-aws-credentials@")]
+assert cleanup_aws["role-to-assume"] == "${{ vars.SHIFTBOX_RELEASE_NETWORK_CLEANUP_ROLE_ARN }}"
+assert cleanup_aws["allowed-account-ids"] == "${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}"
+cleanup_commands = "\n".join(step.get("run", "") for step in cleanup_job["steps"])
+assert "recover-release-network.sh" in cleanup_commands and "release-phase.sh sweep" in cleanup_commands
+assert "hosted-build.sh" not in cleanup_commands
 
 # A first GHCR push can require a separate visibility approval. Freeze the
 # exact candidate before testing anonymous layers so its protected rerun can resume.

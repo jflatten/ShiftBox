@@ -1,3 +1,17 @@
+variable "expiry_permissions_boundary_arn" {
+  description = "Bootstrap boundary for the two automated expiry roles. Standalone rehearsals keep their existing role policies."
+  type        = string
+  default     = null
+
+  validation {
+    condition = startswith(var.attempt_id, "rel-") ? (
+      can(regex("^rel-[0-9a-f]{14}$", var.attempt_id)) &&
+      var.expiry_permissions_boundary_arn == "arn:aws:iam::${var.publisher_account_id}:policy/shiftbox-publisher-release-expiry-boundary"
+    ) : var.expiry_permissions_boundary_arn == null
+    error_message = "The automated release namespace requires its own publisher account's bootstrap expiry permissions boundary."
+  }
+}
+
 locals {
   expiry_name         = "${local.name}-expiry"
   expiry_group_name   = "${local.expiry_name}-group"
@@ -24,8 +38,9 @@ resource "aws_cloudwatch_log_group" "expiry" {
 }
 
 resource "aws_iam_role" "expiry" {
-  name = local.expiry_name
-  tags = local.tags
+  name                 = local.expiry_name
+  tags                 = local.tags
+  permissions_boundary = var.expiry_permissions_boundary_arn
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -158,8 +173,9 @@ resource "aws_scheduler_schedule_group" "expiry" {
 }
 
 resource "aws_iam_role" "expiry_scheduler" {
-  name = "${local.expiry_name}-invoke"
-  tags = local.tags
+  name                 = "${local.expiry_name}-invoke"
+  tags                 = local.tags
+  permissions_boundary = var.expiry_permissions_boundary_arn
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

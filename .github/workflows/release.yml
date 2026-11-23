@@ -104,13 +104,18 @@ jobs:
           HOST_AMIS: ${{ vars.SHIFTBOX_RELEASE_HOST_AMIS }}
           TEMPLATE_BUCKETS: ${{ vars.SHIFTBOX_RELEASE_TEMPLATE_BUCKETS }}
           POSTGRES_IMAGE: ${{ vars.SHIFTBOX_RELEASE_POSTGRES_IMAGE }}
-          AMI_ROLE: ${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}
+          NETWORK_ROLE: ${{ vars.SHIFTBOX_RELEASE_NETWORK_ROLE_ARN }}
+          STATE_BUCKET: ${{ vars.SHIFTBOX_RELEASE_STATE_BUCKET }}
+          SOURCE_AMI: ${{ vars.SHIFTBOX_RELEASE_SOURCE_AMI }}
+          CLEANUP_ENABLED: ${{ vars.SHIFTBOX_RELEASE_CLEANUP_ENABLED }}
           TEMPLATE_ROLE: ${{ vars.SHIFTBOX_RELEASE_TEMPLATE_ROLE_ARN }}
         run: |
           [[ "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
           role_prefix="arn:aws:iam::$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID:role/"
           if [[ -z "$SHARE_HANDOFF" ]]; then
-            [[ "$AMI_ROLE" == "${role_prefix}shiftbox-publisher-ami-candidate" ]]
+            [[ "$NETWORK_ROLE" == "${role_prefix}shiftbox-publisher-release-network" ]]
+            [[ "$STATE_BUCKET" == "shiftbox-release-state-$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID-us-east-2" ]]
+            [[ "$SOURCE_AMI" =~ ^ami-[0-9a-f]{17}$ && "$CLEANUP_ENABLED" == true ]]
           fi
           [[ "$TEMPLATE_ROLE" == "${role_prefix}shiftbox-publisher-templates-candidate" ]]
           [[ "$POSTGRES_IMAGE" =~ ^docker\.io/library/postgres:17(-bookworm|-trixie|-bullseye)?@sha256:[0-9a-f]{64}$ ]]
@@ -131,7 +136,7 @@ jobs:
     if: needs.candidate-setup.outputs.assets == '' && needs.candidate-setup.outputs.build == ''
     runs-on: ubuntu-24.04
     environment: aws-release-candidate
-    timeout-minutes: 50
+    timeout-minutes: 85
     permissions:
       contents: read
       actions: read
@@ -139,12 +144,14 @@ jobs:
     outputs:
       artifact: ${{ steps.upload.outputs.artifact-id }}
     env:
+      SHIFTBOX_RELEASE_STATE_BUCKET: ${{ vars.SHIFTBOX_RELEASE_STATE_BUCKET }}
       RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
       SOURCE_COMMIT: ${{ needs.preflight.outputs.source }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.preflight.outputs.source }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
@@ -163,19 +170,41 @@ jobs:
           unzip -q "$tools/packer.zip" packer -d "$tools"
           "$tools/packer" init platform/packer/aws
           printf '%s\n' "$tools" >> "$GITHUB_PATH"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        id: control
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_NETWORK_ROLE_ARN }}
+          role-session-name: shiftbox-release-network-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Provision the private Ohio build network
+        env:
+          SHIFTBOX_RELEASE_SOURCE_AMI: ${{ vars.SHIFTBOX_RELEASE_SOURCE_AMI }}
+        run: bash platform/packer/aws/release-network.sh provision
+      - name: Apply the exact candidate phase role
+        id: phase
+        run: |
+          role=$(bash platform/packer/aws/release-phase.sh open build)
+          printf 'role=%s\n' "$role" >> "$GITHUB_OUTPUT"
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}
+          role-to-assume: ${{ steps.phase.outputs.role }}
           role-session-name: shiftbox-ami-build-${{ github.run_id }}-${{ github.run_attempt }}
           aws-region: us-east-2
           allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
           unset-current-credentials: true
       - name: Build and freeze the Packer manifest
         env:
-          SHIFTBOX_RELEASE_BUILD_NETWORK: ${{ vars.SHIFTBOX_RELEASE_BUILD_NETWORK }}
-          SHIFTBOX_RELEASE_BUILD_SSH_KEY: ${{ secrets.SHIFTBOX_RELEASE_BUILD_SSH_KEY }}
           SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY: ${{ vars.SHIFTBOX_RELEASE_GUEST_SIGNING_PUBLIC_KEY }}
         run: |
+          SHIFTBOX_RELEASE_BUILD_NETWORK=$(cat "$RUNNER_TEMP/shiftbox-publisher-network/network.json")
+          SHIFTBOX_RELEASE_BUILD_SSH_KEY=$(cat "$RUNNER_TEMP/shiftbox-publisher-network/packer")
+          export SHIFTBOX_RELEASE_BUILD_NETWORK SHIFTBOX_RELEASE_BUILD_SSH_KEY
           platform/packer/aws/hosted-build.sh "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" "$RUNNER_TEMP/packer.json"
           jq -r '"Review the private Ohio build before granting copy: " + .builds[0].artifact_id' \
             "$RUNNER_TEMP/packer.json" >> "$GITHUB_STEP_SUMMARY"
@@ -185,6 +214,21 @@ jobs:
           name: ami-build-${{ needs.preflight.outputs.tag }}
           path: ${{ runner.temp }}/packer.json
           if-no-files-found: error
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        if: always() && steps.control.outcome == 'success'
+        id: cleanup-control
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_NETWORK_ROLE_ARN }}
+          role-session-name: shiftbox-release-network-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Retire the temporary AMI role
+        if: always() && steps.cleanup-control.outcome == 'success'
+        run: bash platform/packer/aws/release-phase.sh close build
+      - name: Retire the Ohio network and one-time SSH key
+        if: always() && steps.cleanup-control.outcome == 'success'
+        run: bash platform/packer/aws/release-network.sh retire "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
 
   candidate-ami-copy:
     name: Copy the approved Ohio AMI
@@ -203,6 +247,7 @@ jobs:
     outputs:
       artifact: ${{ steps.upload.outputs.artifact-id }}
     env:
+      SHIFTBOX_RELEASE_STATE_BUCKET: ${{ vars.SHIFTBOX_RELEASE_STATE_BUCKET }}
       RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
       SOURCE_COMMIT: ${{ needs.preflight.outputs.source }}
       BUILD_ARTIFACT: ${{ needs.candidate-setup.outputs.build || needs.candidate-ami-build.outputs.artifact }}
@@ -210,6 +255,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.preflight.outputs.source }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Require the immutable Ohio build handoff
         run: '[[ "$BUILD_ARTIFACT" =~ ^[1-9][0-9]*$ ]]'
@@ -217,9 +263,26 @@ jobs:
         with:
           artifact-ids: ${{ needs.candidate-setup.outputs.build || needs.candidate-ami-build.outputs.artifact }}
           path: ${{ runner.temp }}/ami-build
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        id: control
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_NETWORK_ROLE_ARN }}
+          role-session-name: shiftbox-release-network-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Apply the exact candidate phase role
+        id: phase
+        run: |
+          role=$(bash platform/packer/aws/release-phase.sh open copy "$RUNNER_TEMP/ami-build/packer.json")
+          printf 'role=%s\n' "$role" >> "$GITHUB_OUTPUT"
       - uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
-          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}
+          role-to-assume: ${{ steps.phase.outputs.role }}
           role-session-name: shiftbox-ami-copy-${{ github.run_id }}-${{ github.run_attempt }}
           aws-region: us-east-2
           allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
@@ -241,6 +304,18 @@ jobs:
             ${{ runner.temp }}/ami-copy/catalog/*.json
           include-hidden-files: true
           if-no-files-found: error
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        if: always() && steps.control.outcome == 'success'
+        id: cleanup-control
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_NETWORK_ROLE_ARN }}
+          role-session-name: shiftbox-release-network-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Retire the temporary AMI role
+        if: always() && steps.cleanup-control.outcome == 'success'
+        run: bash platform/packer/aws/release-phase.sh close copy
 
   candidate-ami-share:
     name: Share the four approved AMIs
@@ -259,6 +334,7 @@ jobs:
     outputs:
       artifact: ${{ steps.upload.outputs.artifact-id }}
     env:
+      SHIFTBOX_RELEASE_STATE_BUCKET: ${{ vars.SHIFTBOX_RELEASE_STATE_BUCKET }}
       RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
       SOURCE_COMMIT: ${{ needs.preflight.outputs.source }}
       BUILD_ARTIFACT: ${{ needs.candidate-setup.outputs.build || needs.candidate-ami-build.outputs.artifact }}
@@ -267,6 +343,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.preflight.outputs.source }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Require both immutable AMI handoffs
         run: '[[ "$BUILD_ARTIFACT" =~ ^[1-9][0-9]*$ && "$COPY_ARTIFACT" =~ ^[1-9][0-9]*$ ]]'
@@ -278,9 +355,26 @@ jobs:
         with:
           artifact-ids: ${{ needs.candidate-setup.outputs.copy || needs.candidate-ami-copy.outputs.artifact }}
           path: ${{ runner.temp }}/ami-copy
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        id: control
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_NETWORK_ROLE_ARN }}
+          role-session-name: shiftbox-release-network-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Apply the exact candidate phase role
+        id: phase
+        run: |
+          role=$(bash platform/packer/aws/release-phase.sh open share "$RUNNER_TEMP/ami-build/packer.json" "$RUNNER_TEMP/ami-copy")
+          printf 'role=%s\n' "$role" >> "$GITHUB_OUTPUT"
       - uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
-          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_AMI_ROLE_ARN }}
+          role-to-assume: ${{ steps.phase.outputs.role }}
           role-session-name: shiftbox-ami-share-${{ github.run_id }}-${{ github.run_attempt }}
           aws-region: us-east-2
           allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
@@ -297,6 +391,18 @@ jobs:
             ${{ runner.temp }}/ami-copy/workspace-images.json
             ${{ runner.temp }}/ami-copy/catalog/*.json
           if-no-files-found: error
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        if: always() && steps.control.outcome == 'success'
+        id: cleanup-control
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_NETWORK_ROLE_ARN }}
+          role-session-name: shiftbox-release-network-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Retire the temporary AMI role
+        if: always() && steps.cleanup-control.outcome == 'success'
+        run: bash platform/packer/aws/release-phase.sh close share
 
   candidate:
     needs: [preflight, candidate-setup, candidate-ami-share]

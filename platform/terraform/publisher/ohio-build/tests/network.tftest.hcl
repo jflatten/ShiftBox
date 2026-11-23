@@ -74,6 +74,19 @@ run "wrong_target" {
   expect_failures = [var.candidate_tag, var.availability_zone_id]
 }
 
+# The production workflow may plan later protected RCs with the same private topology.
+run "later_candidate" {
+  command = plan
+  variables {
+    candidate_tag = "v2.4.0-rc.2"
+  }
+
+  assert {
+    condition     = output.attempt.candidate_tag == "v2.4.0-rc.2" && local.tags.environment == "release-v2.4.0-rc.2"
+    error_message = "The network must preserve the exact selected RC in its handoff and tags."
+  }
+}
+
 # A stale deadline cannot justify any build-network resource.
 run "past_deadline" {
   command = plan
