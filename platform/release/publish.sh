@@ -187,7 +187,10 @@ prepare_draft() (
   ' "$scratch/current.json" >/dev/null; then
     local id
     id=$(jq -er '.id' "$scratch/current.json") || exit 1
-    jq -n --arg marker "$identity" --rawfile notes "$notes" '{body:($notes+"\n\n"+$marker+"\n")}' |
+    # A draft notes update can detach the existing tag unless it is sent explicitly.
+    jq -n --arg tag "$tag" --arg source "$source" --arg marker "$identity" --rawfile notes "$notes" '
+      {tag_name:$tag,target_commitish:$source,draft:true,prerelease:true,body:($notes+"\n\n"+$marker+"\n")}
+    ' |
       gh api --method PATCH "repos/$repository/releases/$id" --input - >"$scratch/current.json" || exit 1
   fi
   current="$scratch/current.json"
