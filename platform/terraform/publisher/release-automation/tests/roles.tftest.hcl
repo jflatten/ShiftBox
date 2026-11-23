@@ -35,6 +35,29 @@ run "network_provider_api_dependencies" {
   }
 }
 
+# The pinned provider reads versions and code signing when refreshing the
+# unqualified ZIP expiry function, including when it prepares a destroy plan.
+run "refresh_zip_expiry_function" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for scope, document in {
+        provision = aws_iam_role_policy.provision.policy
+        cleanup   = aws_iam_role_policy.cleanup.policy
+        rehearsal = aws_iam_role_policy.rehearsal.policy
+      } :
+      alltrue([
+        for action in ["lambda:GetFunctionCodeSigningConfig", "lambda:ListVersionsByFunction"] :
+        try(one([for grant in jsondecode(document).Statement : grant if contains(flatten([grant.Action]), action)]).Resource, "") == (
+          scope == "rehearsal" ? replace(local.expiry_function, "rel-??????????????", "rel-r?????????????") : local.expiry_function
+        )
+      ])
+    ])
+    error_message = "All network roles must refresh the bounded ZIP expiry function without broader Lambda access."
+  }
+}
+
 # The manual workflow identity cannot reach release journals, expiry names,
 # image mutation or the temporary identities that publish candidate artifacts.
 run "isolated_network_rehearsal" {

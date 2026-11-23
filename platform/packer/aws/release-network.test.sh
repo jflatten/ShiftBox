@@ -226,7 +226,12 @@ case "$cmd" in
         jq 'del(.values.root_module.resources[]|select(.address=="aws_ec2_instance_connect_endpoint.builder"))' "$STORE/$key" > "$STORE/$key.tmp"
         mv "$STORE/$key.tmp" "$STORE/$key"
       fi
-      [[ ${PARTIAL_APPLY:-} != true ]]
+      if [[ ${PARTIAL_APPLY:-} == true ]]; then
+        # The raw Terraform diagnostic contains private values in addition to
+        # the AWS service and operation that the public log can report.
+        jq -nc '{type:"diagnostic",diagnostic:{severity:"error",summary:"reading expiry function: operation error Lambda: ListVersionsByFunction, api error AccessDeniedException: missing access",detail:"PRIVATE_TERRAFORM_DIAGNOSTIC_FIXTURE"}}'
+        exit 1
+      fi
     else
       printf 'apply delete\n' >> "$TRACE"
       echo '{"values":{"root_module":{"resources":[]}}}' > "$STORE/$key"
@@ -321,6 +326,9 @@ test "$(grep -c 'apply delete' "$TRACE")" = 1
 export GITHUB_RUN_ATTEMPT=2 RUNNER_TEMP="$scratch/retry-runner"
 mkdir "$RUNNER_TEMP"
 reject env PARTIAL_APPLY=true bash "$here/release-network.sh" provision
+grep -F 'Terraform AWS diagnostic: Lambda ListVersionsByFunction' "$scratch/rejected.log" >/dev/null
+grep -F 'Terraform AWS diagnostic: AccessDeniedException' "$scratch/rejected.log" >/dev/null
+if grep -q 'PRIVATE_TERRAFORM_DIAGNOSTIC_FIXTURE' "$scratch/rejected.log"; then exit 1; fi
 test -f "$STORE/release-builds/10001/2/terraform.tfstate"
 test ! -e "$RUNNER_TEMP/shiftbox-publisher-network/packer"
 reject env FOREIGN_PLAN=true bash "$here/release-network.sh" retire 10001 2

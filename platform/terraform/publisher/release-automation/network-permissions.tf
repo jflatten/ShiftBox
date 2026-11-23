@@ -98,9 +98,14 @@ locals {
       Resource = local.expiry_role_arns
     },
     {
-      Sid       = "ReadExpiryFunctionState"
-      Effect    = "Allow"
-      Action    = ["lambda:GetFunction", "lambda:GetFunctionConfiguration", "lambda:GetFunctionEventInvokeConfig", "lambda:ListTags"]
+      Sid    = "ReadExpiryFunctionState"
+      Effect = "Allow"
+      # The pinned provider reads the latest version and ZIP code signing
+      # configuration even though this function publishes no versions.
+      Action = [
+        "lambda:GetFunction", "lambda:GetFunctionCodeSigningConfig", "lambda:GetFunctionConfiguration",
+        "lambda:GetFunctionEventInvokeConfig", "lambda:ListTags", "lambda:ListVersionsByFunction",
+      ]
       Resource  = local.expiry_function
       Condition = local.region_condition
     },
