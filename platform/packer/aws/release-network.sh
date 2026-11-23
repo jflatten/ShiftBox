@@ -8,6 +8,8 @@ export TF_IN_AUTOMATION=1 TF_WORKSPACE=default
 
 fail() { printf 'Release network: %s\n' "$1" >&2; exit 1; }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=platform/packer/aws/terraform-workflow.sh
+source "$here/terraform-workflow.sh"
 repo=$(cd -- "$here/../../.." && pwd)
 cd "$repo"
 
@@ -168,27 +170,10 @@ allowed_account_ids  = ["$account"]
 encrypt              = true
 use_lockfile         = true
 BACKEND
-    tf init -input=false -no-color -lockfile=readonly -backend-config="$scratch/backend.hcl" > "$scratch/init.log" 2>&1 ||
+    tf_logged init -input=false -lockfile=readonly -backend-config="$scratch/backend.hcl" ||
         fail 'could not initialize the leased Terraform backend'
 }
 tf() { terraform -chdir="$tf_root" "$@"; }
-
-tf_checked() {
-    local log="$scratch/$1.jsonl" failure=$2 command=$3
-    shift 3
-    if tf "$command" -json "$@" > "$log" 2>&1; then return 0; fi
-    # Terraform's raw diagnostics may include state, paths and request data.
-    # Emit only structured AWS operation, IAM action and error identifiers.
-    jq -Rnr '
-      [inputs | fromjson? | select(.type=="diagnostic" and .diagnostic.severity=="error") |
-        [.diagnostic.summary // "", .diagnostic.detail // ""] | join("\n") |
-        (scan("operation error (EC2|IAM|Lambda|CloudWatch Logs|Scheduler|S3|STS): ([A-Z][A-Za-z0-9]{1,63})[, ]") | join(" ")),
-        (scan("not authorized to perform: ((?:ec2|iam|lambda|logs|scheduler|s3|sts):[A-Z][A-Za-z0-9]{1,63}) ") | .[0]),
-        (scan("api error ([A-Za-z][A-Za-z0-9.]{1,63}):") | .[0])
-      ] | unique | .[:12][] | "Terraform AWS diagnostic: \(.)"
-    ' "$log" >&2 || :
-    fail "$failure"
-}
 
 # Audit both the plan and any interrupted state against the network root's
 # resource inventory. Nothing in this set is a release artifact or bucket.
@@ -303,16 +288,16 @@ PY
     verified_lease || fail 'could not verify the durable release lease'
     create_object "$lease_key" "$lease" || fail 'could not reserve and persist the exact workflow attempt'
     init_terraform
-    tf_checked plan 'Terraform could not plan the network' \
-        plan -input=false -lock-timeout=60s -var-file="$inputs" -out="$scratch/create.tfplan"
+    tf_logged plan -input=false -lock-timeout=60s -var-file="$inputs" -out="$scratch/create.tfplan" ||
+        fail 'Terraform could not plan the network'
     tf show -json "$scratch/create.tfplan" > "$scratch/plan.json"
     jq -e --rawfile expected "$scratch/addresses" --slurpfile vars "$inputs" '
       (.variables | map_values(.value))==$vars[0] and
       (.resource_changes | map(.address)|sort)==($expected|split("\n")|map(select(length>0))|sort) and
       all(.resource_changes[]; .mode=="managed" and .change.actions==["create"])
     ' "$scratch/plan.json" >/dev/null || fail 'the saved plan would change resources outside this network'
-    tf_checked apply 'network application failed, retain the lease for recovery' \
-        apply -input=false -lock-timeout=60s "$scratch/create.tfplan"
+    tf_logged apply -input=false -lock-timeout=60s "$scratch/create.tfplan" ||
+        fail 'network application failed, retain the lease for recovery'
     finalize_handoff
     printf 'Verified the private Ohio build network handoff.\n'
 }
@@ -334,7 +319,7 @@ unlock_expired_state() {
         (.Operation | IN("OperationTypePlan","OperationTypeApply")) and
         (.ID|test("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"))) | .ID
     ' "$scratch/lock.json") || fail 'refusing to unlock a new, unrelated, or still-leased state lock'
-    tf force-unlock -force "$id" > "$scratch/unlock.log" 2>&1 || fail 'failed to remove the expired Terraform lock'
+    tf_logged force-unlock -force "$id" || fail 'failed to remove the expired Terraform lock'
 }
 check_build_stopped() {
     local filter="Name=tag:publisher_attempt,Values=$attempt"
@@ -393,7 +378,7 @@ adopt_failed_endpoint() {
         else empty end
       ') || fail 'could not prove ownership of the untracked endpoint'
     [[ -n "$endpoint" ]] || return 0
-    tf import -input=false -no-color -lock-timeout=60s -var-file="$inputs" "$endpoint_address" "$endpoint" > "$scratch/import.log" 2>&1 ||
+    tf_logged import -input=false -lock-timeout=60s -var-file="$inputs" "$endpoint_address" "$endpoint" ||
         fail 'could not adopt the owned endpoint for retirement'
     tf show -json > "$scratch/prior.json"
     verify_attempt_state
@@ -436,8 +421,8 @@ retire() {
         check_build_stopped || fail 'builder compute remains, keep the lease for independent cleanup'
         adopt_failed_endpoint
         if jq -e '(.values.root_module.resources // [])|length>0' "$scratch/prior.json" >/dev/null; then
-            tf_checked plan 'could not plan network retirement' \
-                plan -destroy -input=false -lock-timeout=60s -var-file="$inputs" -out="$scratch/destroy.tfplan"
+            tf_logged plan -destroy -input=false -lock-timeout=60s -var-file="$inputs" -out="$scratch/destroy.tfplan" ||
+                fail 'could not plan network retirement'
             tf show -json "$scratch/destroy.tfplan" > "$scratch/plan.json"
             jq -e --slurpfile prior "$scratch/prior.json" --slurpfile vars "$inputs" '
               (.variables | map_values(.value))==$vars[0] and
@@ -445,8 +430,8 @@ retire() {
                 any($prior[0].values.root_module.resources[];
                   .address==$change.address and .type==$change.type and .values.id==$change.change.before.id))
             ' "$scratch/plan.json" >/dev/null || fail 'retirement plan is outside the verified network state'
-            tf_checked apply 'network retirement failed, retain the lease for recovery' \
-                apply -input=false -lock-timeout=60s "$scratch/destroy.tfplan"
+            tf_logged apply -input=false -lock-timeout=60s "$scratch/destroy.tfplan" ||
+                fail 'network retirement failed, retain the lease for recovery'
             tf show -json | jq -e '(.values.root_module.resources // [])==[]' >/dev/null ||
                 fail 'network state still contains resources'
         fi

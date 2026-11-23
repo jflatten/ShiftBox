@@ -94,10 +94,11 @@ jq --arg key "$key" --argjson port "$port" '
    build_ssh_proxy_host:"127.0.0.1",build_ssh_proxy_port:$port}
 ' "$network" > "$vars"
 if ! PUBLIC_AMI_BUILD=1 RELEASE_CANDIDATE="$tag" RELEASE_PUBLISHER_ACCOUNT_ID="$publisher" \
-  "$here/build-image.sh" "$tag" "$guest_key" "$vars" > "$scratch/packer.log" 2>&1; then
-  # The public job may report these fixed stage names, never the underlying build log.
-  checkpoint=$(sed -nE 's/^((==>[[:blank:]]+)?[[:blank:]]*amazon-ebs\.shiftbox: )?ShiftBox Packer checkpoint: (publisher-preflight|guest-binary|recipe-validation|packer-build|guest-bootstrap|guest-toolchain|guest-agent|guest-seal|ami-creation|ami-verification)$/\3/p' \
-    "$scratch/packer.log" | tail -n 1)
+  "$here/build-image.sh" "$tag" "$guest_key" "$vars" 2>&1 |
+  tee "$scratch/packer.log" |
+  jq --unbuffered -Rr --arg tool Packer -f "$here/workflow-log.jq" |
+  tee "$scratch/packer-progress.log" >&2; then
+  checkpoint=$(sed -n 's/^ShiftBox Packer checkpoint: //p' "$scratch/packer-progress.log" | tail -n 1)
   fail "Packer failed at ${checkpoint:-startup}. Check the scoped AWS attempt and reconcile any private artifacts before retrying."
 fi
 manifest=$(sed -n 's/^AMI provenance manifest: //p' "$scratch/packer.log")

@@ -104,6 +104,11 @@ marker, the empty Terraform state and the absence of the tagged test resources.
 Preserve the state journal and existing release assets. A repeat rehearsal uses
 a new dispatch so it receives a fresh state key. It does not qualify an RC.
 
+Expand the failed step in GitHub Actions to see Terraform resource progress,
+change counts and AWS error identifiers. Hosted Packer steps show their
+checkpoints as the build runs. The public logs omit raw plans, Terraform
+outputs, provider request details, and raw guest or Packer output.
+
 ## Run a protected release
 
 Run Checks on the exact main SHA, then create the protected RC tag at that

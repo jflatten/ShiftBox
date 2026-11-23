@@ -6,7 +6,7 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 fixture=$(mktemp -d)
 trap 'rm -rf -- "$fixture"' EXIT
 mkdir -p "$fixture/platform/packer/aws" "$fixture/platform/release" "$fixture/job"
-cp "$here/hosted-build.sh" "$fixture/platform/packer/aws/"
+cp "$here"/{hosted-build.sh,workflow-log.jq} "$fixture/platform/packer/aws/"
 export RUNNER_TEMP="$fixture/job" FIXTURE_DIR="$fixture"
 ssh-keygen -q -t ed25519 -N '' -f "$fixture/build-key"
 export SHIFTBOX_RELEASE_BUILD_SSH_KEY
@@ -50,12 +50,15 @@ jq -e '
 ' "$3" >/dev/null
 test -s "$(jq -er .build_private_key_file "$3")"
 touch "$FIXTURE_DIR/packer-called"
+printf '%s\n' 'ShiftBox Packer checkpoint: publisher-preflight'
+printf '%s\n' 'ShiftBox Packer checkpoint: guest-binary' >&2
 if [[ "${FIXTURE_PACKER_FAIL:-}" == toolchain ]]; then
     printf '%s\n' 'ShiftBox Packer checkpoint: packer-build' \
         '    amazon-ebs.shiftbox: ShiftBox Packer checkpoint: guest-bootstrap' \
         '==> amazon-ebs.shiftbox: ShiftBox Packer checkpoint: guest-toolchain' \
         '==> amazon-ebs.shiftbox: ShiftBox Packer checkpoint: unexpected-secret-marker' \
         'Do not copy this diagnostic including fixture-sensitive-value'
+    printf '%s\n' 'An error occurred (UnauthorizedOperation) when calling the RunInstances operation: fixture-sensitive-value' >&2
     cat "$(jq -er .build_private_key_file "$3")"
     exit 1
 fi
@@ -95,7 +98,10 @@ done
 # An approved nonproduction account and Terraform-shaped CIDR round-trip to the bridge.
 # The build emits only sanitized metadata and removes the secrets and bridge.
 SHIFTBOX_RELEASE_BUILD_NETWORK=$approved_network
-hosted_build
+hosted_build >"$fixture/success" 2>&1
+grep -Fxq 'ShiftBox Packer checkpoint: publisher-preflight' "$fixture/success"
+grep -Fxq 'ShiftBox Packer checkpoint: guest-binary' "$fixture/success"
+if grep -Fq 'AMI provenance manifest:' "$fixture/success"; then exit 1; fi
 jq -e '.sanitized == true' "$RUNNER_TEMP/handoff.json" >/dev/null
 test -f "$fixture/packer-called"
 test "$(ls -A "$RUNNER_TEMP")" = handoff.json
@@ -104,7 +110,9 @@ test "$(ls -A "$RUNNER_TEMP")" = handoff.json
 # while discarding the raw diagnostic and the build key.
 if FIXTURE_PACKER_FAIL=toolchain hosted_build >"$fixture/error" 2>&1; then exit 1; fi
 grep -Fxq 'Hosted Packer build: Packer failed at guest-toolchain. Check the scoped AWS attempt and reconcile any private artifacts before retrying.' "$fixture/error"
-test "$(wc -l < "$fixture/error" | tr -d ' ')" = 1
+grep -Fxq 'ShiftBox Packer checkpoint: guest-toolchain' "$fixture/error"
+grep -Fxq 'Packer AWS diagnostic: RunInstances UnauthorizedOperation' "$fixture/error"
+if grep -Eq 'fixture-sensitive-value|BEGIN OPENSSH PRIVATE KEY|unexpected-secret-marker' "$fixture/error"; then exit 1; fi
 test "$(ls -A "$RUNNER_TEMP")" = handoff.json
 
 # The normal release rejects a rehearsal network and the rehearsal produces only a private result receipt.
