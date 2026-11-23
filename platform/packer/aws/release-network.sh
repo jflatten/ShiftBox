@@ -173,6 +173,23 @@ BACKEND
 }
 tf() { terraform -chdir="$tf_root" "$@"; }
 
+tf_checked() {
+    local log="$scratch/$1.jsonl" failure=$2 command=$3
+    shift 3
+    if tf "$command" -json "$@" > "$log" 2>&1; then return 0; fi
+    # Terraform's raw diagnostics may include state, paths and request data.
+    # Emit only structured AWS operation, IAM action and error identifiers.
+    jq -Rnr '
+      [inputs | fromjson? | select(.type=="diagnostic" and .diagnostic.severity=="error") |
+        [.diagnostic.summary // "", .diagnostic.detail // ""] | join("\n") |
+        (scan("operation error (EC2|IAM|Lambda|CloudWatch Logs|Scheduler|S3|STS): ([A-Z][A-Za-z0-9]{1,63})[, ]") | join(" ")),
+        (scan("not authorized to perform: ((?:ec2|iam|lambda|logs|scheduler|s3|sts):[A-Z][A-Za-z0-9]{1,63}) ") | .[0]),
+        (scan("api error ([A-Za-z][A-Za-z0-9.]{1,63}):") | .[0])
+      ] | unique | .[:12][] | "Terraform AWS diagnostic: \(.)"
+    ' "$log" >&2 || :
+    fail "$failure"
+}
+
 # Audit both the plan and any interrupted state against the network root's
 # resource inventory. Nothing in this set is a release artifact or bucket.
 network_addresses() {
@@ -286,16 +303,16 @@ PY
     verified_lease || fail 'could not verify the durable release lease'
     create_object "$lease_key" "$lease" || fail 'could not reserve and persist the exact workflow attempt'
     init_terraform
-    tf plan -input=false -no-color -lock-timeout=60s -var-file="$inputs" -out="$scratch/create.tfplan" > "$scratch/plan.log" 2>&1 ||
-        fail 'Terraform could not plan the network'
+    tf_checked plan 'Terraform could not plan the network' \
+        plan -input=false -lock-timeout=60s -var-file="$inputs" -out="$scratch/create.tfplan"
     tf show -json "$scratch/create.tfplan" > "$scratch/plan.json"
     jq -e --rawfile expected "$scratch/addresses" --slurpfile vars "$inputs" '
       (.variables | map_values(.value))==$vars[0] and
       (.resource_changes | map(.address)|sort)==($expected|split("\n")|map(select(length>0))|sort) and
       all(.resource_changes[]; .mode=="managed" and .change.actions==["create"])
     ' "$scratch/plan.json" >/dev/null || fail 'the saved plan would change resources outside this network'
-    tf apply -input=false -no-color -lock-timeout=60s "$scratch/create.tfplan" > "$scratch/apply.log" 2>&1 ||
-        fail 'network application failed, retain the lease for recovery'
+    tf_checked apply 'network application failed, retain the lease for recovery' \
+        apply -input=false -lock-timeout=60s "$scratch/create.tfplan"
     finalize_handoff
     printf 'Verified the private Ohio build network handoff.\n'
 }
@@ -419,8 +436,8 @@ retire() {
         check_build_stopped || fail 'builder compute remains, keep the lease for independent cleanup'
         adopt_failed_endpoint
         if jq -e '(.values.root_module.resources // [])|length>0' "$scratch/prior.json" >/dev/null; then
-            tf plan -destroy -input=false -no-color -lock-timeout=60s -var-file="$inputs" \
-                -out="$scratch/destroy.tfplan" > "$scratch/plan.log" 2>&1 || fail 'could not plan network retirement'
+            tf_checked plan 'could not plan network retirement' \
+                plan -destroy -input=false -lock-timeout=60s -var-file="$inputs" -out="$scratch/destroy.tfplan"
             tf show -json "$scratch/destroy.tfplan" > "$scratch/plan.json"
             jq -e --slurpfile prior "$scratch/prior.json" --slurpfile vars "$inputs" '
               (.variables | map_values(.value))==$vars[0] and
@@ -428,8 +445,8 @@ retire() {
                 any($prior[0].values.root_module.resources[];
                   .address==$change.address and .type==$change.type and .values.id==$change.change.before.id))
             ' "$scratch/plan.json" >/dev/null || fail 'retirement plan is outside the verified network state'
-            tf apply -input=false -no-color -lock-timeout=60s "$scratch/destroy.tfplan" > "$scratch/apply.log" 2>&1 ||
-                fail 'network retirement failed, retain the lease for recovery'
+            tf_checked apply 'network retirement failed, retain the lease for recovery' \
+                apply -input=false -lock-timeout=60s "$scratch/destroy.tfplan"
             tf show -json | jq -e '(.values.root_module.resources // [])==[]' >/dev/null ||
                 fail 'network state still contains resources'
         fi
