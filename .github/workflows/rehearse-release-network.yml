@@ -1,0 +1,86 @@
+name: Rehearse publisher build network
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Full main SHA with passing Checks
+        type: string
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: shiftbox-release-network-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  network:
+    name: Rehearse the private Ohio network
+    if: >-
+      github.repository == 'jflatten/ShiftBox' && github.repository_id == '1457179716' &&
+      github.repository_owner_id == '11561330' && github.ref == 'refs/heads/main' && github.ref_protected &&
+      github.actor_id == '11561330' && github.triggering_actor == 'jflatten' && github.run_attempt == '1'
+    runs-on: ubuntu-24.04
+    environment: aws-release-network-rehearsal
+    timeout-minutes: 35
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      # A reserved resource label, never a Git tag or a GitHub release.
+      RELEASE_TAG: v0.0.0-rc.1
+      SHIFTBOX_RELEASE_NETWORK_REHEARSAL: 'true'
+      SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+      SHIFTBOX_RELEASE_STATE_BUCKET: ${{ vars.SHIFTBOX_RELEASE_STATE_BUCKET }}
+      SHIFTBOX_RELEASE_SOURCE_AMI: ${{ vars.SHIFTBOX_RELEASE_SOURCE_AMI }}
+      AWS_REGION: us-east-2
+      AWS_PAGER: ''
+      AWS_CLI_AUTO_PROMPT: 'off'
+      AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: 'true'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify the reviewed main SHA and rehearsal inputs
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NETWORK_ROLE: ${{ vars.SHIFTBOX_RELEASE_NETWORK_REHEARSAL_ROLE_ARN }}
+          CLEANUP_ENABLED: ${{ vars.SHIFTBOX_RELEASE_CLEANUP_ENABLED }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ && "$SOURCE_COMMIT" == "$GITHUB_SHA" ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          [[ "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" == 668112512962 && "$CLEANUP_ENABLED" == true ]]
+          [[ "$SHIFTBOX_RELEASE_STATE_BUCKET" == "shiftbox-release-state-$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID-us-east-2" ]]
+          [[ "$NETWORK_ROLE" == "arn:aws:iam::$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID:role/shiftbox-publisher-release-network-rehearsal" ]]
+          [[ "$SHIFTBOX_RELEASE_SOURCE_AMI" =~ ^ami-[0-9a-f]{17}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SOURCE_COMMIT&per_page=100" |
+            jq -e --arg sha "$SOURCE_COMMIT" 'any(.workflow_runs[];
+              .head_sha==$sha and .head_branch=="main" and .event=="workflow_dispatch" and .conclusion=="success")' >/dev/null
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        id: aws
+        with:
+          role-to-assume: ${{ vars.SHIFTBOX_RELEASE_NETWORK_REHEARSAL_ROLE_ARN }}
+          role-session-name: shiftbox-release-rehearsal-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 3600
+          aws-region: us-east-2
+          allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
+          unset-current-credentials: true
+      - name: Provision and verify the release build network
+        id: provision
+        timeout-minutes: 17
+        run: bash platform/packer/aws/release-network.sh provision
+      - name: Retire the network and verify the attempt inventory is empty
+        if: always() && steps.aws.outcome == 'success'
+        id: retire
+        timeout-minutes: 14
+        run: bash platform/packer/aws/release-network.sh retire "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"

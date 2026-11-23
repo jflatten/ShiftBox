@@ -18,12 +18,20 @@ tag=${RELEASE_TAG:-}
 source_commit=${SOURCE_COMMIT:-}
 cidr=10.98.0.0/24
 job='Build the private Ohio AMI'
+namespace=release-builds
+rehearsal=${SHIFTBOX_RELEASE_NETWORK_REHEARSAL:-false}
 tf_rel=platform/terraform/publisher/ohio-build
 tag_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.[1-9][0-9]*$'
 [[ "$account" =~ ^[0-9]{12}$ && "$account" != 524941137496 && "$account" != 888293065132 &&
    "$bucket" == "shiftbox-release-state-$account-us-east-2" ]] || fail 'use the dedicated production state bucket'
 [[ "$tag" =~ $tag_pattern && ${#tag} -le 96 && "$source_commit" =~ ^[0-9a-f]{40}$ ]] ||
     fail 'provide the exact protected RC tag and source'
+if [[ "$rehearsal" == true ]]; then
+    [[ "$tag" == v0.0.0-rc.1 ]] || fail 'use the reserved rehearsal resource label'
+    job='Rehearse the private Ohio network'
+    namespace=release-builds/rehearsals
+    cidr=10.98.1.0/24
+fi
 [[ "${GITHUB_REPOSITORY:-}" == jflatten/ShiftBox && "${GITHUB_REPOSITORY_ID:-}" == 1457179716 &&
    "${GITHUB_REPOSITORY_OWNER_ID:-}" == 11561330 ]] || fail 'use the verified publisher repository'
 [[ -d "${RUNNER_TEMP:-}" && "$RUNNER_TEMP" == /* ]] || fail 'use a private runner temporary directory'
@@ -43,12 +51,22 @@ esac
 
 if [[ "$operation" == provision || "${SHIFTBOX_RELEASE_RECOVERY:-}" != true ]]; then
     [[ "$run" == "${GITHUB_RUN_ID:-}" && "$retry" == "${GITHUB_RUN_ATTEMPT:-}" &&
-       "${GITHUB_REF:-}" == "refs/tags/$tag" && "${GITHUB_SHA:-}" == "$source_commit" ]] ||
+       "${GITHUB_SHA:-}" == "$source_commit" && "$(git rev-parse HEAD)" == "$source_commit" ]] ||
         fail 'the active release cannot operate on another workflow attempt'
-    [[ "$("$repo/platform/release/publish.sh" check-event)" == rc ]] &&
-        [[ "$("$repo/platform/release/publish.sh" check-source "$tag" "$source_commit")" == "$source_commit" ]] &&
-        [[ "$(git rev-parse HEAD)" == "$source_commit" ]] || fail 'the current checkout is outside the protected RC'
-    expected_session="shiftbox-publisher-release-network/shiftbox-release-network-$run-$retry"
+    if [[ "$rehearsal" == true ]]; then
+        [[ "${GITHUB_EVENT_NAME:-}" == workflow_dispatch && "${GITHUB_REF:-}" == refs/heads/main &&
+           "${GITHUB_REF_PROTECTED:-}" == true && "$retry" == 1 &&
+           "${GITHUB_ACTOR_ID:-}" == 11561330 && "${GITHUB_TRIGGERING_ACTOR:-}" == jflatten &&
+           "${GITHUB_WORKFLOW_REF:-}" == jflatten/ShiftBox/.github/workflows/rehearse-release-network.yml@refs/heads/main ]] ||
+            fail 'the rehearsal must be a maintainer dispatch on protected main'
+        expected_session="shiftbox-publisher-release-network-rehearsal/shiftbox-release-rehearsal-$run-$retry"
+    else
+        [[ "${GITHUB_REF:-}" == "refs/tags/$tag" &&
+           "$("$repo/platform/release/publish.sh" check-event)" == rc &&
+           "$("$repo/platform/release/publish.sh" check-source "$tag" "$source_commit")" == "$source_commit" ]] ||
+            fail 'the current checkout is outside the protected RC'
+        expected_session="shiftbox-publisher-release-network/shiftbox-release-network-$run-$retry"
+    fi
 else
     [[ "${GITHUB_REF:-}" == refs/heads/main &&
        "${GITHUB_REF_PROTECTED:-}" == true &&
@@ -67,8 +85,10 @@ fi
 [[ "$(aws sts get-caller-identity --query Arn --output text)" == "arn:aws:sts::$account:assumed-role/$expected_session" ]] ||
     fail 'AWS caller is outside the workflow attempt session'
 
-attempt="rel-$(printf %s "$run/$retry" | shasum -a 256 | cut -c1-14)"
-prefix="release-builds/$run/$retry"
+attempt_hash=$(printf %s "$run/$retry" | shasum -a 256 | cut -c1-14)
+attempt="rel-$attempt_hash"
+if [[ "$rehearsal" == true ]]; then attempt="rel-r${attempt_hash:0:13}"; fi
+prefix="$namespace/$run/$retry"
 state_key="$prefix/terraform.tfstate"
 lease_key="$prefix/lease.json"
 retired_key="$prefix/retired.json"
@@ -143,7 +163,7 @@ init_terraform() {
 bucket               = "$bucket"
 key                  = "$state_key"
 region               = "us-east-2"
-workspace_key_prefix = "release-builds"
+workspace_key_prefix = "$namespace"
 allowed_account_ids  = ["$account"]
 encrypt              = true
 use_lockfile         = true
@@ -197,12 +217,12 @@ finalize_handoff() {
     local pin
     pin=$(cut -d ' ' -f 2 < "$private_key.pub" | tr -d '\n' | shasum -a 256 | cut -c1-64)
     tf output -json attempt > "$scratch/outputs.json"
-    jq -e --arg pin "$pin" --arg ami "$ami" --slurpfile lease "$lease" '
+    jq -e --arg pin "$pin" --arg ami "$ami" --arg private_cidr "${cidr%.0/24}.64/26" --slurpfile lease "$lease" '
       $lease[0] as $l |
       select(.account==$l.publisher_account_id and .region=="us-east-2" and .candidate_tag==$l.candidate_tag and
         .attempt_id==$l.attempt_id and .deadline==$l.expires_at and
         ((.deadline | fromdateiso8601)-now >= 3000) and .packer_public_key_sha256==$pin and
-        .packer_key_pair==("shiftbox-publisher-"+$l.attempt_id+"-packer") and .private_subnet_cidr=="10.98.0.64/26" and
+        .packer_key_pair==("shiftbox-publisher-"+$l.attempt_id+"-packer") and .private_subnet_cidr==$private_cidr and
         (.vpc_id|test("^vpc-[0-9a-f]{17}$")) and (.private_subnet_id|test("^subnet-[0-9a-f]{17}$")) and
         (.builder_group_id|test("^sg-[0-9a-f]{17}$")) and (.endpoint_id|test("^eice-[0-9a-f]{17}$"))) |
       {account,attempt_id,builder_group_id,candidate_tag,deadline,endpoint_id,packer_key_pair,packer_public_key_sha256,

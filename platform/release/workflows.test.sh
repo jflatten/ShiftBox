@@ -278,6 +278,27 @@ assert jobs["candidate"]["runs-on"] == "ubuntu-latest"
 # An independent protected main workflow can recover expired state even if
 # the build runner disappeared or the release is waiting for another review.
 cleanup = workflow("cleanup-release-network.yml")
+
+# The live rehearsal has one protected job that shares the release Terraform
+# engine, retains its always-run teardown, and has no publication permission.
+rehearsal = workflow("rehearse-release-network.yml")
+assert set(rehearsal["on"]) == {"workflow_dispatch"}
+assert rehearsal["permissions"] == {}
+assert set(rehearsal["jobs"]) == {"network"}
+network = rehearsal["jobs"]["network"]
+assert network["environment"] == "aws-release-network-rehearsal"
+assert network["permissions"] == {"actions": "read", "contents": "read", "id-token": "write"}
+assert rehearsal["concurrency"]["group"] == "shiftbox-release-network-rehearsal"
+assert rehearsal["concurrency"]["cancel-in-progress"] == "false"
+assert "github.ref_protected" in network["if"] and "github.run_attempt == '1'" in network["if"]
+commands = "\n".join(step.get("run", "") for step in network["steps"])
+assert "release-network.sh provision" in commands and "release-network.sh retire" in commands
+assert not any(command in commands for command in ("publish.sh", "hosted-build.sh", "release-phase.sh", "amis.sh"))
+audit, oidc, provision, retire = [next(i for i, step in enumerate(network["steps"]) if step.get("id") == id)
+                                  for id in ("preflight", "aws", "provision", "retire")]
+assert audit < oidc < provision < retire
+assert network["steps"][retire]["if"] == "always() && steps.aws.outcome == 'success'"
+assert not any("secrets." in str(step) for step in network["steps"])
 assert set(cleanup["on"]) == {"schedule", "workflow_dispatch"}
 assert cleanup["concurrency"]["cancel-in-progress"] == "false"
 assert not writable(cleanup["permissions"])

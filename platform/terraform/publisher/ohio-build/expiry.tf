@@ -5,7 +5,8 @@ variable "expiry_permissions_boundary_arn" {
 
   validation {
     condition = startswith(var.attempt_id, "rel-") ? (
-      can(regex("^rel-[0-9a-f]{14}$", var.attempt_id)) &&
+      (can(regex("^rel-[0-9a-f]{14}$", var.attempt_id)) ||
+      (can(regex("^rel-r[0-9a-f]{13}$", var.attempt_id)) && var.candidate_tag == "v0.0.0-rc.1")) &&
       var.expiry_permissions_boundary_arn == "arn:aws:iam::${var.publisher_account_id}:policy/shiftbox-publisher-release-expiry-boundary"
     ) : var.expiry_permissions_boundary_arn == null
     error_message = "The automated release namespace requires its own publisher account's bootstrap expiry permissions boundary."

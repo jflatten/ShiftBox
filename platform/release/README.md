@@ -80,6 +80,30 @@ PostgreSQL digest before tags. Rotate those inputs when their upstream pins
 change. The settings token requires repository Administration read and
 belongs in each release environment.
 
+### Rehearse the build network
+
+Use **Rehearse publisher build network** on protected `main` with the full
+commit SHA after Checks succeeds on that SHA. The `aws-release-network-rehearsal`
+environment admits only `main` and requires the release maintainer's review.
+Set `SHIFTBOX_RELEASE_NETWORK_REHEARSAL_ROLE_ARN` from the Terraform output
+and set `SHIFTBOX_RELEASE_SOURCE_AMI` to the verified Canonical Ohio image in
+that environment. The production account and state bucket are repository
+variables. Configure and verify the protected `aws-release-cleanup` environment
+and enable `SHIFTBOX_RELEASE_CLEANUP_ENABLED` before dispatch.
+
+The single approved job provisions and validates the same Ohio Terraform
+topology, then retires it even if provisioning fails. Its `rel-r` resources,
+`10.98.1.0/24` CIDR and `release-builds/rehearsals/` state prefix isolate it
+from release attempts. `v0.0.0-rc.1` is the reserved resource label. The job
+has read-only GitHub repository access and its AWS role has no image build,
+copy or sharing permissions. The normal expiry schedule and protected main
+cleanup job handle a lost runner.
+
+Verify the job's provision and retire steps, the exact encrypted retirement
+marker, the empty Terraform state and the absence of the tagged test resources.
+Preserve the state journal and existing release assets. A repeat rehearsal uses
+a new dispatch so it receives a fresh state key. It does not qualify an RC.
+
 ## Run a protected release
 
 Run Checks on the exact main SHA, then create the protected RC tag at that

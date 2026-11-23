@@ -10,8 +10,7 @@ workflow="$repo/.github/workflows/cleanup-release-network.yml@refs/heads/main"
 publisher=${SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID:-}
 bucket=${SHIFTBOX_RELEASE_STATE_BUCKET:-}
 region=us-east-2
-job_name='Build the private Ohio AMI'
-lease_pattern='^release-builds/[1-9][0-9]{0,19}/[1-9][0-9]{0,5}/lease[.]json\z'
+lease_pattern='^release-builds/(rehearsals/)?[1-9][0-9]{0,19}/[1-9][0-9]{0,5}/lease[.]json\z'
 candidate_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.[1-9][0-9]*\z'
 export AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true AWS_PAGER='' AWS_CLI_AUTO_PROMPT=off
 
@@ -33,7 +32,18 @@ read_object() {
 recover() {
   local key=$1 run=$2 attempt=$3 lease="$scratch/lease.json" marker="$scratch/retired.json"
   local marker_key="${key%/lease.json}/retired.json" tag source api job attempt_id
+  local rehearsal=false job_name='Build the private Ohio AMI' run_name='Public AWS release'
+  local event=push path=.github/workflows/release.yml head_branch ref
   attempt_id=$(printf '%s' "$run/$attempt" | shasum -a 256 | cut -c1-14) || return
+  if [[ "$key" == release-builds/rehearsals/* ]]; then
+    [[ "$attempt" == 1 ]] || return 1
+    rehearsal=true
+    job_name='Rehearse the private Ohio network'
+    run_name='Rehearse publisher build network'
+    event=workflow_dispatch
+    path=.github/workflows/rehearse-release-network.yml
+    attempt_id="r${attempt_id:0:13}"
+  fi
   read_object "$key" "$lease" || return
   jq -se --arg run "$run" --arg attempt "$attempt" --arg publisher "$publisher" --arg id "rel-$attempt_id" \
     --arg job "$job_name" --arg candidate "$candidate_pattern" '
@@ -44,6 +54,13 @@ recover() {
     (.source_commit|strings|test("^[0-9a-f]{40}\\z")) and
     (.expires_at|strings|try (fromdateiso8601|type=="number") catch false))
   ' "$lease" >/dev/null || return
+  tag=$(jq -er '.candidate_tag' "$lease") || return
+  if [[ "$rehearsal" == true ]]; then
+    [[ "$tag" == v0.0.0-rc.1 ]] || return 1
+    head_branch=main ref=refs/heads/main
+  else
+    head_branch=$tag ref="refs/tags/$tag"
+  fi
   if jq -e --arg key "$marker_key" 'index($key)!=null' <<<"$keys" >/dev/null; then
     read_object "$marker_key" "$marker" || return
     jq -se --slurpfile lease "$lease" '
@@ -54,15 +71,15 @@ recover() {
   # The normal job owns cleanup during the lease, even if GitHub status lags.
   jq -e '(.expires_at|fromdateiso8601)<=now' "$lease" >/dev/null || return 0
 
-  tag=$(jq -er '.candidate_tag' "$lease") || return
   source=$(jq -er '.source_commit' "$lease") || return
   git merge-base --is-ancestor "$source" "$GITHUB_SHA" || return
   api="repos/$repo/actions/runs/$run/attempts/$attempt"
   gh api "$api" |
-    jq -e --arg run "$run" --arg attempt "$attempt" --arg tag "$tag" --arg source "$source" '
+    jq -e --arg run "$run" --arg attempt "$attempt" --arg source "$source" \
+      --arg name "$run_name" --arg event "$event" --arg branch "$head_branch" --arg path "$path" --arg ref "$ref" '
       (.id|tostring)==$run and (.run_attempt|tostring)==$attempt and
-      .name=="Public AWS release" and .event=="push" and .head_branch==$tag and .head_sha==$source and
-      (.path==".github/workflows/release.yml" or .path==(".github/workflows/release.yml@refs/tags/"+$tag)) and
+      .name==$name and .event==$event and .head_branch==$branch and .head_sha==$source and
+      (.path==$path or .path==($path+"@"+$ref)) and
       .actor.id==11561330 and .triggering_actor.id==11561330 and
       .repository.id==1457179716 and .head_repository.id==1457179716
     ' >/dev/null || return
@@ -85,7 +102,7 @@ recover() {
     (.completed_at|fromdateiso8601) <= now
   ' <<<"$job" >/dev/null || return
 
-  SHIFTBOX_RELEASE_RECOVERY=true SOURCE_COMMIT="$source" RELEASE_TAG="$tag" \
+  SHIFTBOX_RELEASE_RECOVERY=true SHIFTBOX_RELEASE_NETWORK_REHEARSAL="$rehearsal" SOURCE_COMMIT="$source" RELEASE_TAG="$tag" \
     bash "$here/release-network.sh" retire "$run" "$attempt"
 }
 
@@ -126,9 +143,13 @@ if ! jq -e --arg pattern "$lease_pattern" '
   result=1
 fi
 leases=$(jq -r --arg pattern "$lease_pattern" '.[]|select(test($pattern))' <<<"$keys")
-while IFS=/ read -r prefix run attempt filename; do
-  [[ -n "$run" ]] || continue
-  if ! recover "$prefix/$run/$attempt/$filename" "$run" "$attempt"; then
+while IFS= read -r key; do
+  [[ -n "$key" ]] || continue
+  attempt_path=${key%/lease.json}
+  attempt=${attempt_path##*/}
+  run_path=${attempt_path%/*}
+  run=${run_path##*/}
+  if ! recover "$key" "$run" "$attempt"; then
     printf 'Publisher network recovery: could not verify or retire run %s attempt %s.\n' "$run" "$attempt" >&2
     result=1
   fi
