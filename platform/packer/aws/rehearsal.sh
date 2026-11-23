@@ -81,7 +81,8 @@ case "${1:-}" in
       fi
       if [[ -n "$image" ]]; then
         jq -e --arg snapshot "$snapshot" '
-          [.Images[0].BlockDeviceMappings[].Ebs.SnapshotId] == [$snapshot] and $snapshot!=""
+          .Images[0] | .RootDeviceName=="/dev/sda1" and $snapshot!="" and
+          [.BlockDeviceMappings[] | select(.Ebs!=null) | [.DeviceName,.Ebs.SnapshotId]] == [[.RootDeviceName,$snapshot]]
         ' "$scratch/images.json" >/dev/null || fail 'the image root snapshot is outside the verified inventory'
         aws --region "$region" ec2 describe-image-attribute --image-id "$image" --attribute launchPermission |
           jq -e '.LaunchPermissions == []' >/dev/null || fail 'the image has unexpected sharing permissions'

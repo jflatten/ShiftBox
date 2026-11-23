@@ -64,13 +64,31 @@ if IMAGES='{"Images":[{"ImageId":"ami-00000000000000001","OwnerId":"111122223333
 fi
 test ! -s "$MUTATION_TRACE"
 
-# Read a finalized private AMI and its linked snapshot, reject reuse, then remove only those artifacts.
+# The Canonical source has two instance-store mappings. Only its root mapping
+# represents a snapshot. Cleanup can delete the AMI and that exact snapshot.
 tags='[{"Key":"project","Value":"shiftbox"},{"Key":"cluster_name","Value":"shiftbox-publisher"},{"Key":"environment","Value":"release-v1.0.0-rc.1"},{"Key":"publisher_attempt","Value":"rehearsal-fixture"},{"Key":"ShiftBoxArtifact","Value":"packer-rehearsal"},{"Key":"ShiftBoxRelease","Value":"rehearsal-fixture"}]'
 export IMAGES SNAPSHOTS
-IMAGES=$(jq -cn --argjson tags "$tags" '{Images:[{ImageId:"ami-00000000000000001",Name:"shiftbox-rehearsal-fixture-amd64",OwnerId:"111122223333",Public:false,Tags:$tags,BlockDeviceMappings:[{Ebs:{SnapshotId:"snap-00000000000000002"}}]}]}')
+IMAGES=$(jq -cn --argjson tags "$tags" '{Images:[{ImageId:"ami-00000000000000001",Name:"shiftbox-rehearsal-fixture-amd64",OwnerId:"111122223333",Public:false,Tags:$tags,
+  RootDeviceName:"/dev/sda1",BlockDeviceMappings:[
+    {DeviceName:"/dev/sda1",Ebs:{SnapshotId:"snap-00000000000000002"}},
+    {DeviceName:"/dev/sdb",VirtualName:"ephemeral0"},
+    {DeviceName:"/dev/sdc",VirtualName:"ephemeral1"}
+  ]}]}')
 SNAPSHOTS=$(jq -cn --argjson tags "$tags" '{Snapshots:[{SnapshotId:"snap-00000000000000002",OwnerId:"111122223333",VolumeSize:32,Tags:$tags}]}')
 if bash "$here/rehearsal.sh" empty >/dev/null 2>&1; then exit 1; fi
 test ! -s "$MUTATION_TRACE"
+
+# A mismatched root or a second EBS mapping still blocks all deletions.
+for edit in '.Images[0].BlockDeviceMappings[0].DeviceName="/dev/sdz"' \
+    '.Images[0].BlockDeviceMappings[0].Ebs.SnapshotId="snap-00000000000000003"' \
+    '.Images[0].BlockDeviceMappings += [{DeviceName:"/dev/sdd",Ebs:{SnapshotId:"snap-00000000000000003"}}]'; do
+    if IMAGES=$(jq -c "$edit" <<< "$IMAGES") bash "$here/rehearsal.sh" cleanup >/dev/null 2>&1; then
+        printf 'Rehearsal cleanup accepted an unexpected EBS mapping: %s\n' "$edit" >&2
+        exit 1
+    fi
+    test ! -s "$MUTATION_TRACE"
+done
+
 bash "$here/rehearsal.sh" cleanup
 diff -u <(printf '%s\n' 'ec2 deregister-image' 'ec2 delete-snapshot') "$MUTATION_TRACE"
 printf 'Packer rehearsal authority and cleanup isolation fixtures passed.\n'
