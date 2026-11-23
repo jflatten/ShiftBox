@@ -486,11 +486,20 @@ jobs:
           HOST_AMIS: ${{ vars.SHIFTBOX_RELEASE_HOST_AMIS }}
           POSTGRES_IMAGE: ${{ vars.SHIFTBOX_RELEASE_POSTGRES_IMAGE }}
         run: |
+          umask 077
           image=ghcr.io/jflatten/shiftbox
           registry_config=$(mktemp -d)
-          trap 'rm -rf -- "$registry_config"' EXIT
-          printf '%s\n' "$GH_TOKEN" | docker --config "$registry_config" login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          docker --config "$registry_config" buildx build --platform linux/amd64 \
+          export DOCKER_CONFIG="$registry_config" BUILDX_CONFIG="$registry_config/buildx"
+          builder="shiftbox-release-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          cleanup() {
+            docker buildx rm "$builder" >/dev/null 2>&1 || true
+            rm -rf -- "$registry_config"
+          }
+          trap cleanup EXIT
+          # Keep builder metadata and registry credentials in the same temporary Docker config.
+          docker buildx create --name "$builder" --driver docker-container --bootstrap
+          printf '%s\n' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker buildx build --builder "$builder" --platform linux/amd64 \
             --file platform/container/Dockerfile --build-arg "RELEASE_CANDIDATE=$RELEASE_TAG" \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \

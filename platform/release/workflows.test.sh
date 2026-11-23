@@ -322,6 +322,18 @@ assert "hosted-build.sh" not in cleanup_commands
 # A first GHCR push can require a separate visibility approval. Freeze the
 # exact candidate before testing anonymous layers so its protected rerun can resume.
 candidate_steps = release["jobs"]["candidate"]["steps"]
+# Digest-only pushing requires an explicit container builder in the same
+# temporary Docker configuration as the authenticated registry export.
+controller, = [step for step in candidate_steps
+               if step.get("name") == "Build the full controller and record its registry digest"]
+controller_commands = controller["run"]
+assert controller["if"] == "steps.restore.outputs.assets == ''"
+assert 'export DOCKER_CONFIG="$registry_config" BUILDX_CONFIG="$registry_config/buildx"' in controller_commands
+create_builder = 'docker buildx create --name "$builder" --driver docker-container --bootstrap'
+push_digest = 'docker buildx build --builder "$builder" --platform linux/amd64'
+assert controller_commands.index(create_builder) < controller_commands.index(push_digest)
+assert 'docker buildx rm "$builder"' in controller_commands and 'trap cleanup EXIT' in controller_commands
+assert 'push-by-digest=true,name-canonical=true,push=true' in controller_commands
 stage_index, = [index for index, step in enumerate(candidate_steps)
                 if step.get("uses", "").startswith("actions/upload-artifact@")]
 registry_index, = [index for index, step in enumerate(candidate_steps)
