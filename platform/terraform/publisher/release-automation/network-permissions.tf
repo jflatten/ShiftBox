@@ -92,9 +92,12 @@ locals {
       Condition = local.owned_region
     },
     {
-      Sid      = "ReadExpiryRoleState"
-      Effect   = "Allow"
-      Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListRolePolicies", "iam:ListRoleTags", "iam:ListAttachedRolePolicies"]
+      Sid    = "ReadExpiryRoleState"
+      Effect = "Allow"
+      Action = [
+        "iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole",
+        "iam:ListRolePolicies", "iam:ListRoleTags",
+      ]
       Resource = local.expiry_role_arns
     },
     {

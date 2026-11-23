@@ -4,6 +4,27 @@ variables {
   publisher_account_id = "111122223333"
 }
 
+# IAM role retirement needs to inventory the expiry role's instance profiles.
+# A broad Elastic IP disassociation grant would let a failed cleanup reach
+# outside this attempt, so the network roles must keep that action unavailable.
+run "expiry_role_cleanup_reads_are_scoped" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for scope, document in {
+        cleanup   = aws_iam_role_policy.cleanup.policy
+        provision = aws_iam_role_policy.provision.policy
+        rehearsal = aws_iam_role_policy.rehearsal.policy
+      } :
+      try(one([for grant in jsondecode(document).Statement : grant if contains(flatten([grant.Action]), "iam:ListInstanceProfilesForRole")]).Resource, []) == (
+        scope == "rehearsal" ? [for arn in local.expiry_role_arns : replace(arn, "rel-??????????????", "rel-r?????????????")] : local.expiry_role_arns
+      ) && !contains(flatten([for grant in jsondecode(document).Statement : grant.Action]), "ec2:DisassociateAddress")
+    ])
+    error_message = "Network roles may inspect only their own expiry profiles and must release detached addresses."
+  }
+}
+
 # Live Terraform TAG-on-create and resource refresh need these narrow grants.
 run "network_provider_api_dependencies" {
   command = plan
