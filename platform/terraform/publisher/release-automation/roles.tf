@@ -15,12 +15,17 @@ locals {
     })
   }
   iam_expiry_tag = {
-    Sid      = "TagNewExpiryRolesOnly"
+    Sid      = "TagOwnedExpiryRolesOnly"
     Effect   = "Allow"
     Action   = ["iam:TagRole"]
     Resource = local.expiry_role_arns
     Condition = merge(local.request_condition, {
-      Null = { "aws:ResourceTag/publisher_attempt" = "true" }
+      # IAM evaluates TagRole during CreateRole with the incoming tags already
+      # available as resource tags. Existing roles must keep all ownership tags.
+      StringEqualsIfExists = {
+        for tag in concat(keys(local.owned_network_tags), keys(local.release_network_tags)) :
+        "aws:ResourceTag/${tag}" => "$${aws:RequestTag/${tag}}"
+      }
     })
   }
   iam_expiry_policy = {
