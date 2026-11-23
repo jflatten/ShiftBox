@@ -182,6 +182,11 @@ jobs:
           aws-region: us-east-2
           allowed-account-ids: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
           unset-current-credentials: true
+      - name: Check candidate phase role access before provisioning
+        run: |
+          for phase in build copy share; do
+            bash platform/packer/aws/release-phase.sh check "$phase"
+          done
       - name: Provision the private Ohio build network
         env:
           SHIFTBOX_RELEASE_SOURCE_AMI: ${{ vars.SHIFTBOX_RELEASE_SOURCE_AMI }}

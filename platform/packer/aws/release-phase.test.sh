@@ -97,6 +97,10 @@ case "$1 $2" in
     fi
     printf '%s\n' '{"ServerSideEncryption":"AES256","VersionId":"fixture-version"}' ;;
   'iam get-role')
+    if [[ ${DENY_PHASE_LOOKUP:-} == true ]]; then
+      printf 'An error occurred (AccessDenied) when calling the GetRole operation\n' >&2
+      exit 254
+    fi
     if [[ -f "$MOCK_ROOT/role.json" ]]; then cat "$MOCK_ROOT/role.json"
     else printf '%s\n' NoSuchEntity >&2; exit 254; fi ;;
   'iam list-role-policies')
@@ -155,6 +159,22 @@ case "$1" in
 esac
 TF
 chmod +x "$scratch/bin/terraform"
+# The workflow's preflight must detect missing lookups without reserving any
+# state or creating a role. A successful lookup of an existing role also blocks.
+for phase in build copy share; do
+  mkdir -p "$MOCK_ROOT/release-builds/123456/1/phases/$phase"
+  bash "$fixture/platform/packer/aws/release-phase.sh" check "$phase"
+  test ! -e "$MOCK_ROOT/release-builds/123456/1/phases/$phase/phase.json"
+done
+if DENY_PHASE_LOOKUP=true bash "$fixture/platform/packer/aws/release-phase.sh" check build >"$scratch/lookup.log" 2>&1; then
+  exit 1
+fi
+grep -Fxq 'AWS diagnostic: GetRole AccessDenied' "$scratch/lookup.log"
+test ! -e "$MOCK_ROOT/$PHASE_PREFIX/phase.json"
+printf '{}\n' > "$MOCK_ROOT/role.json"
+if bash "$fixture/platform/packer/aws/release-phase.sh" check build >/dev/null 2>&1; then exit 1; fi
+rm "$MOCK_ROOT/role.json"
+
 # Terraform progress reaches stderr without corrupting the ARN on stdout.
 test "$(bash "$fixture/platform/packer/aws/release-phase.sh" open build 2>"$scratch/phase.log")" = "$ROLE_ARN"
 grep -Fxq 'Terraform planned create aws_iam_role.ami_candidate' "$scratch/phase.log"

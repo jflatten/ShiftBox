@@ -120,7 +120,8 @@ This lets you validate a policy change before merging it or dispatching GitHub.
 
 Run Checks on the exact main SHA, then create the protected RC tag at that
 commit. Approve the candidate setup job to reserve a private draft. The build
-job's approval covers the leased Ohio Terraform plan, which the workflow
+job checks all three temporary role names and their state before provisioning.
+Its approval covers the leased Ohio Terraform plan, which the workflow
 checks and applies before Packer starts. The only EC2 builder is private and
 uses the scoped EC2 Instance Connect endpoint. The build saves the immutable
 AMI handoff, closes its temporary AWS role, and retires the network and key.

@@ -260,10 +260,14 @@ for name, operation in phases.items():
 # to Packer. Both success and failure paths attempt to retire the exact state.
 assert jobs["candidate-ami-build"]["runs-on"] == "ubuntu-24.04"
 build_steps = jobs["candidate-ami-build"]["steps"]
+phase_check_index, = [index for index, step in enumerate(build_steps) if "release-phase.sh check" in step.get("run", "")]
 provision_index, = [index for index, step in enumerate(build_steps) if "release-network.sh provision" in step.get("run", "")]
 build_index, = [index for index, step in enumerate(build_steps) if "hosted-build.sh" in step.get("run", "")]
 retire_index, = [index for index, step in enumerate(build_steps) if "release-network.sh retire" in step.get("run", "")]
-assert provision_index < build_index < retire_index
+# Check every delegated role name with the control session before creating egress.
+control_index, = [index for index, step in enumerate(build_steps) if step.get("id") == "control"]
+assert control_index < phase_check_index < provision_index < build_index < retire_index
+assert "for phase in build copy share" in build_steps[phase_check_index]["run"]
 assert "always()" in build_steps[retire_index]["if"]
 assert "shiftbox-publisher-network/packer" in build_steps[build_index]["run"]
 assert "secrets.SHIFTBOX_RELEASE_BUILD_SSH_KEY" not in (workflows / "release.yml").read_text()

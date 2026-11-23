@@ -16,6 +16,7 @@ locals {
     "aws:RequestTag/project"      = "shiftbox"
     "aws:RequestTag/cluster_name" = "shiftbox-publisher"
   }
+  phase_role_tag_keys = concat(keys(local.tags), ["environment", "release_run_id", "release_run_attempt", "release_phase"])
 
   # These identities can only create new bounded roles. They cannot pass a
   # phase role to an AWS service or edit its trust or permissions boundary.
@@ -48,12 +49,28 @@ locals {
       Resource = values(local.phase_role_arns)
       Condition = {
         StringEquals = local.phase_request_tags
-        Null         = { "aws:ResourceTag/release_phase" = "true" }
+        # CreateRole also authorizes TagRole with the incoming tags as
+        # resource tags. An existing ownership value must match the request.
+        StringEqualsIfExists = {
+          for tag in local.phase_role_tag_keys : "aws:ResourceTag/${tag}" => "$${aws:RequestTag/${tag}}"
+        }
+        "ForAllValues:StringEquals" = { "aws:TagKeys" = local.phase_role_tag_keys }
+        Null = merge({ "aws:TagKeys" = "false" }, {
+          for tag in local.phase_role_tag_keys : "aws:RequestTag/${tag}" => "false"
+        })
       }
     }],
     local.candidate_cleanup_access
   )
   candidate_cleanup_access = [
+    {
+      # IAM authorizes GetRole by its pathless name while a role is absent.
+      # Real role reads and all mutations still require the reserved path.
+      Sid      = "CheckUncreatedPhaseRoles"
+      Effect   = "Allow"
+      Action   = ["iam:GetRole"]
+      Resource = [for phase in local.phase_names : "arn:aws:iam::${var.publisher_account_id}:role/shiftbox-publisher-release-${phase}-????????????????"]
+    },
     {
       Sid    = "ReadPhaseRoleForTerraform"
       Effect = "Allow"
