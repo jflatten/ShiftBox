@@ -4,18 +4,24 @@ title: Private connectivity and browser trust
 permalink: /private-access/
 ---
 
-# Configure private access
+# Connect to ShiftBox privately
 
-Management, IDE, preview and repair origins share the selected private service subnet. ShiftBox creates its installation security groups and private DNS records in the selected VPC. The operator provides routing, outbound connectivity and DNS forwarding.
+Connect your computer to the AWS network before opening ShiftBox. Your organization may use a VPN, an existing Tailscale router, or another private connection.
 
-Configure forward and return routes to the selected service subnet through your existing Tailscale subnet router, VPN, Direct Connect or equivalent. Verify the source IPv4 CIDR that the service sees and supply it as `OperatorCidr` to allow TCP 8443. Leave the parameter blank while browser ingress should be closed. For Tailscale, approve the service subnet route on your existing router and scope the grant to intended clients.
+## Route and resolve ShiftBox
 
-Forward the installation suffix to a reachable VPC-side resolver through your private connection. With Tailscale, the operator can configure split DNS using a restricted nameserver reachable through that connection. Confirm that the management origin and IDE, preview and repair names resolve to private addresses.
+Ask your network administrator to confirm these settings.
 
-The temporary setup page uses local SSM forwarding on TCP 8444. PostgreSQL uses TCP 5432 inside the service network. Guest registration and tunnels use TCP 19443–19447 from the workspace security group. Preserve each path's scoped source rule.
+1. Your computer can reach the subnet that runs ShiftBox over HTTPS on port 8443.
+2. The source IPv4 address range that AWS sees for that connection matches the range entered in **Inbound security group rule for UI access**.
+3. Your network sends requests for the ShiftBox DNS suffix, such as `shiftbox-team.internal`, to a DNS resolver that can look up private names in the VPC. The same setup lets your browser find ShiftBox, workspace IDEs, and previews. [AWS private DNS forwarding](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver-forwarding-inbound-queries.html), [Tailscale subnet routing](https://tailscale.com/docs/features/subnet-routers)
 
-## Browser and database trust
+## Trust the browser certificate
 
-For a no-domain installation, create a private browser CA for this installation. Verify its fingerprint and import it once into each participating client's trust store. The browser certificate needs SANs for `shiftbox.<suffix>`, `*.ide.<suffix>`, `*.preview.<suffix>` and `*.repair.<suffix>`. The support archive's operator guide includes commands for a no-domain certificate. Supply the leaf certificate and key through the protected wizard. Keep the issuer key in protected operator custody for renewal and remove trust when you retire the installation.
+Use the `shiftbox-ca.crt` file you saved from the **BrowserCaSecretArn** secret for your stack. A certificate authority (CA) certificate lets your browser verify the identity of your private ShiftBox site. Import it on each computer that will use ShiftBox, or ask your IT team to distribute it.
 
-Use a separate certificate and CA for `postgres.<suffix>`. Put database TLS private material in its scoped Secrets Manager secret. The guest trust authority and the fingerprint-verified temporary wizard certificate have separate lifecycles.
+* **Mac.** Open **Keychain Access** and import the file into your login keychain. Open the imported certificate, expand **Trust**, and set **When using this certificate** to **Always Trust**. [Change certificate trust in Keychain Access](https://support.apple.com/en-ca/guide/keychain-access/kyca11871/mac)
+* **Windows.** Open the file and select **Install Certificate**. Choose **Current User**, then **Place all certificates in the following store** and select **Trusted Root Certification Authorities**. [Import a trusted root certificate on Windows](https://learn.microsoft.com/en-us/skype-sdk/sdn/articles/installing-the-trusted-root-certificate)
+* **Other devices or managed computers.** Ask your IT team how to add the certificate to the trust store used by your browser.
+
+Open **ManagementOrigin** from the CloudFormation stack’s **Outputs** tab. Your browser should show ShiftBox over a trusted HTTPS connection. [Troubleshoot access]({{ '/troubleshooting/' | relative_url }})

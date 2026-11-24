@@ -190,6 +190,6 @@ for single-approval publication.
 Before authorizing Docs deployment, set the GitHub Pages publishing source to
 **GitHub Actions** and set the `github-pages` environment deployment policy to
 protected `main`. The Pages workflow runs independently from package
-publication. Refresh it from verified `main` after promoting stable. Review the
-landing page, installed-version guide and exact region links against the
-published GitHub Release. Pages needs no AWS or package publication permissions.
+publication and builds the public guides from `main`. Review the landing page and
+installation guide against the current CloudFormation template. Pages needs no
+AWS or package publication permissions.

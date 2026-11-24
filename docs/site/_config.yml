@@ -1,6 +1,5 @@
 title: ShiftBox
 url: https://jflatten.github.io
 baseurl: /ShiftBox
-releases_url: https://github.com/jflatten/ShiftBox/releases
 markdown: kramdown
 strict_front_matter: true

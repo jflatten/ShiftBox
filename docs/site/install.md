@@ -1,45 +1,70 @@
 ---
 layout: default
-title: Install ShiftBox
+title: Install ShiftBox on AWS
 permalink: /install/
-show_release_links: true
 ---
 
-# Install ShiftBox and open a workspace
+# Install ShiftBox in an existing AWS VPC
 
-You need an authenticated AWS account with permission to deploy CloudFormation and acknowledge named IAM resources, one of the four supported commercial regions, existing private service and workspace subnets in one VPC, and a private route for browser access. Use AWS CLI v2 and the local Session Manager plugin for the protected setup tunnel. Review EC2, volumes, outbound data, DNS and workspace costs before launching.
+Use the AWS Console to create ShiftBox in your private network, then finish setup in your browser. When you’re done, you can sign in as the first administrator and launch a workspace.
 
-## Launch from the AWS Console
+## Before you begin
 
-Choose the region on the official release. Open the quick-create link, confirm your AWS account, and verify the region and exact versioned S3 template URL. Inspect the template using **View template**, or download the YAML and compare it with the SHA-256 published in the release manifest.
+* **AWS access.** You need permission to create a CloudFormation stack, let it create the roles it needs, and read the two setup values in AWS Secrets Manager. If someone else manages your AWS account or network, ask them to help with these parts.
+* **An existing network.** Choose a virtual private cloud (VPC) and two private subnets in it. One subnet runs the ShiftBox application and its database. The other runs your workspaces. You’ll connect to ShiftBox through your VPN, Tailscale, or another private connection.
+* **AWS costs.** The stack adds an EC2 server, disks, and private DNS records. Each workspace adds its own server and disk.
 
-1. Create the foundation with a new deployment name and private DNS suffix. Select your existing VPC, service subnet and workspace subnet. Select the service subnet’s Availability Zone for the retained volume. Supply an approved browser source CIDR when the private route is ready. Keep `RoleBoundaryMode=managed` for quick-create. Review and acknowledge the named IAM roles and their permissions boundaries. The role and profile names include your deployment name and region. Enable termination protection and apply the stack policy from the support archive. Keep your deployment name, zone and retained EBS volume.
-2. On the same stack, review and execute `Phase=dns-zones`. Verify the private hosted zones belong to the installation VPC and the Cloud Map namespace uses your private suffix. Review and execute `Phase=dns-services`, then verify the `postgres` and `shiftbox` services are in that namespace. The support archive's operator guide identifies the outputs to check at each phase.
-3. Add the PostgreSQL TLS certificate and key to the scoped Secrets Manager secret named by the stack output. Preview a change set for `Phase=database` with the public DB CA. Review it and wait for PostgreSQL while the normal controller stays stopped.
-4. Configure your [private network and browser trust]({{ '/private-access/' | relative_url }}). Run the release archive's `setup.sh` from your local terminal with the exact stack ID, region and expected AWS account. Verify the loopback setup fingerprint before opening the wizard.
-5. Create and secure the first administrator, select the verified database, configure the browser leaf certificate and key, select workspace capacity and activate. After the helper verifies activation and setup task stop, review `Phase=active` on the same stack and start the controller.
+## Prepare your VPC and subnets
 
-The version-matched support archive includes the stack policy, setup helper and operator guide. The download-and-inspect route uses the same template, release checksum and change-set review.
+1. In the AWS Console, open **VPC → Your VPCs**. Select your VPC and confirm **DNS resolution** and **DNS hostnames** are enabled. Note its VPC ID. [AWS VPC DNS settings](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-dns-updating.html)
+2. Open **Subnets** and select two private subnets in that VPC. Note both subnet IDs and the **Availability Zone** of the subnet you’ll use for the ShiftBox application.
+3. Ask your network administrator to confirm that both subnets can reach AWS services and download container images. The workspace subnet also needs access to GitHub and any package sources your project uses.
+4. Choose a private name ending for this installation, such as `shiftbox-team.internal`. Ask your network administrator to set up DNS for it and give you the IPv4 address range allowed to reach ShiftBox from your private connection. [Private routing and DNS]({{ '/private-access/' | relative_url }})
 
-## Use the guided CLI
+## Get the installation files
 
-For stable, use the installer linked from the [latest stable release](https://github.com/jflatten/ShiftBox/releases/latest).
+Open the newest package on the ShiftBox downloads page and choose **Launch in** for the AWS Region that contains your VPC. This opens CloudFormation with the template already selected. If your organization requires you to upload it yourself, download `shiftbox-aws-cloudformation.yaml` from **Assets** on the same page. [ShiftBox downloads](https://github.com/jflatten/ShiftBox/releases)
 
-```sh
-curl -fsSL https://github.com/jflatten/ShiftBox/releases/latest/download/install.sh | bash -s --
-```
+## Create the CloudFormation stack
 
-For a specific release, replace the example tag in both places with the exact published stable or RC tag.
+1. Confirm that the AWS Console shows the account and Region where your VPC lives. If you downloaded the template, open **CloudFormation → Create stack → With new resources (standard)** and choose **Upload a template file**. [Create a stack in the AWS Console](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-create-stack.html)
+2. Name the stack and fill in the installation and network fields.
 
-```sh
-curl -fsSL https://github.com/jflatten/ShiftBox/releases/download/v1.0.0-rc.1/install.sh |
-  bash -s -- --version v1.0.0-rc.1
-```
+   | Field | What to enter |
+   | --- | --- |
+   | **DeploymentName** | A unique name in lowercase, such as `shiftbox-team`. |
+   | **VpcId** | The ID of your existing VPC. |
+   | **ServiceSubnet** | The subnet ID for the ShiftBox application and database. |
+   | **WorkspaceSubnet** | The subnet ID for workspaces. |
+   | **AvailabilityZone** | The Availability Zone of the service subnet. |
+   | **DnsSuffix** | The private name ending you chose. |
+   | **Inbound security group rule for UI access** | The IPv4 address range from your network administrator. AWS uses it to allow browser access on port 8443. |
+   | **OCI image cache size (GiB)** | Start with the default of 20 GiB for a small team. The disk stores copies of container images so workspaces can reuse them. |
 
-Download and inspect `install.sh` before execution if you prefer a local copy. Verify it against the distribution manifest. The CLI confirms AWS identity and artifacts, asks for `CAPABILITY_NAMED_IAM`, and asks you to approve each change set after review. Continue an interrupted CLI install with the same `--work-dir` and `--resume`. Before the first stable release, choose an explicitly announced RC from [Releases](https://github.com/jflatten/ShiftBox/releases).
+3. Review the stack details and acknowledge the named IAM resources. Create the stack and wait for **CREATE_COMPLETE**. To protect it from accidental deletion, turn on termination protection under **Stack actions**.
 
-## Open the first workspace
+## Retrieve the certificate and admin claim
 
-Sign in over your private connection using the `ManagementOrigin` stack output. In **Administration → Infrastructure → Platform**, import the selected region's official catalog file from the verified support archive. Wait for the validation canary to complete and its resources to be cleaned up.
+1. Open the stack’s **Outputs** tab. Keep it open so you can refer to **BrowserCaSecretArn**, **SetupClaimSecretArn**, and **ManagementOrigin**.
+2. Open **Secrets Manager** in the same AWS Region. Find the secret whose ARN matches **BrowserCaSecretArn** and select **Retrieve secret value**. Copy the full certificate, including the `BEGIN CERTIFICATE` and `END CERTIFICATE` lines. Save it as a plain-text file named `shiftbox-ca.crt`, then [trust this certificate on your computer]({{ '/private-access/' | relative_url }}#trust-the-browser-certificate).
+3. Find the secret whose ARN matches **SetupClaimSecretArn** and select **Retrieve secret value**. Copy the claim code for the next step. Treat it like a password and keep it out of URLs, chat, and screenshots. [View a secret in the AWS Console](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets-console.html)
 
-Create a named resource profile pinned to the validated image. Choose it in an authorized project template. For a repository-backed workspace, configure your operator-owned GitHub App separately and connect the workspace owner's GitHub account. Select a repository and devcontainer they are authorized to use, launch the workspace and open the IDE. Public release assets remain available anonymously.
+## Finish setup in ShiftBox
+
+1. Connect to your private network and open the address listed under **ManagementOrigin**. On **Set up ShiftBox**, paste the claim code, enter your email, and choose a password. Select **Create administrator**.
+
+   ![The ShiftBox setup form with fields for the setup claim code, administrator email, and new password.]({{ '/assets/setup-administrator.png' | relative_url }})
+
+2. Sign in with the email and password you just entered.
+3. Select **Validate database**, then **Validate certificate** on the next screen. ShiftBox checks the database and certificate it already set up.
+4. Select **Save capacity** after reviewing the workspace limits. On **Activate installation**, confirm that you’re ready to sign in again, then select **Activate installation**.
+
+   ![The final ShiftBox setup screen with the sign-in confirmation checkbox and Activate installation button.]({{ '/assets/setup-activate.png' | relative_url }})
+
+5. Wait for **ShiftBox is online**, then sign in again at the same address. [Launch your first workspace]({{ '/first-workspace/' | relative_url }})
+
+## Clean up a trial installation
+
+Push any workspace changes you want to keep. Delete the trial workspaces in ShiftBox first, then back up any settings or data you need. In CloudFormation, verify that you selected the trial stack before turning off termination protection and deleting it. Review its retained volume and secrets separately, and remove the trial certificate from your computer’s trust settings. [Backup and recovery]({{ '/upgrade-recovery/' | relative_url }})
+
+For templates that ask for an installation phase, see [Set up ShiftBox with the setup helper]({{ '/install/setup-helper/' | relative_url }}).

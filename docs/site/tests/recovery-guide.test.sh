@@ -36,11 +36,11 @@ for term in ("all-retained-workspaces-current", "retained EBS volume", "stack po
 # Recovery reuses the archive identity and requires review before ordinary authority resumes.
 recovery = sections[required[2]]
 for term in (
-    "matching release", "empty replacement PostgreSQL", "configuration.json", "administrator",
+    "matching controller image", "empty replacement PostgreSQL", "configuration.json", "administrator",
     "provider", "authorization and retention", "fresh sign-in", "sessions", "grants"
 ):
     assert term.casefold() in recovery.casefold(), f"Missing recovery check for {term}"
-for term in ("first stable", "same-release", "prior public stable"):
+for term in ("disposable installation", "same controller build", "migration gates"):
     assert term.casefold() in sections[required[3]].casefold(), f"Missing rehearsal scope for {term}"
 
 # Verify the documented ShiftBox commands use flags accepted by the actual CLI.

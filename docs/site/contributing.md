@@ -17,6 +17,10 @@ make fmt-check vet test race
 make ui-test build
 ```
 
-Use the Go version in `go.mod` and the Node release family in `ui/package.json`. The build exports and embeds the UI in the Go controller. See the repository's Makefile and fixture setup for integration and browser checks. The internal AWS demo and native UTM setup have separate validation environments.
+Use the Go version in `go.mod` and the Node version in `ui/package.json`. The build exports and embeds the UI in the Go controller. See the repository's Makefile and fixture setup for integration and browser checks.
 
-Branches and pull requests use normal CI. Protected version tags control prebuilt public RC and stable packages. See the repository's [contributing and architecture sources](https://github.com/jflatten/ShiftBox) and [official releases](https://github.com/jflatten/ShiftBox/releases).
+For AWS development, render a CloudFormation template from `main` with the approved image inputs. The development template uses existing subnets and supports first-run setup over private HTTPS. [AWS development workflow](https://github.com/jflatten/ShiftBox/tree/main/platform/development)
+
+For templates with manual deployment phases, follow the [setup helper guide]({{ '/install/setup-helper/' | relative_url }}).
+
+Branches and pull requests use normal CI. [ShiftBox architecture on main](https://github.com/jflatten/ShiftBox/blob/main/documentation/architecture/design-readback.md)

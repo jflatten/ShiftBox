@@ -8,16 +8,14 @@
     :root { font-family: system-ui, sans-serif; color: #191821; background: #fff; }
     body { margin: 0; line-height: 1.6; }
     a { color: #4834f5; text-underline-offset: .16em; }
-    a:focus-visible, summary:focus-visible { outline: 2px solid #4834f5; outline-offset: 3px; }
+    a:focus-visible { outline: 2px solid #4834f5; outline-offset: 3px; }
     header { border-bottom: 1px solid #e0e0e0; }
     .site-header, main { max-width: 54rem; margin: auto; padding: 1rem clamp(1rem, 4vw, 2rem); }
-    .site-header, nav, .region-links { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1rem; }
+    .site-header, nav { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1rem; }
     .brand img { display: block; }
     main { padding-block: 2rem 4rem; }
+    main img { display: block; box-sizing: border-box; max-width: 100%; height: auto; padding: .75rem; border: 1px solid #e0e0e0; }
     h1, h2, h3 { line-height: 1.25; }
-    .region-links, .versions { list-style: none; padding: 0; }
-    details { margin-block: .7rem; }
-    summary { cursor: pointer; }
     pre { background: #f4f4f4; overflow: auto; padding: 1rem; }
     table { border-collapse: collapse; display: block; overflow: auto; }
     th, td { border-bottom: 1px solid #e0e0e0; padding: .45rem .7rem; text-align: left; }
@@ -33,6 +31,7 @@
       <nav aria-label="Documentation">
         <a href="{{ '/install/' | relative_url }}">Install</a>
         <a href="{{ '/private-access/' | relative_url }}">Private access</a>
+        <a href="{{ '/first-workspace/' | relative_url }}">First workspace</a>
         <a href="{{ '/troubleshooting/' | relative_url }}">Troubleshoot</a>
         <a href="{{ '/upgrade-recovery/' | relative_url }}">Upgrade and recover</a>
         <a href="{{ '/contributing/' | relative_url }}">Contribute</a>
@@ -41,43 +40,6 @@
   </header>
   <main id="main">
     {{ content }}
-    {% if page.show_release_links %}
-    <section aria-labelledby="releases-heading">
-      <h2 id="releases-heading">Launch in AWS</h2>
-      {% assign stable = site.data.releases.stable %}
-      {% if stable %}
-        <p>Latest stable <a href="{{ stable.url | escape }}">{{ stable.tag | escape }}</a></p>
-        {% if stable.regions.size > 0 %}
-          <ul class="region-links" aria-label="Latest stable launch regions">
-            {% for location in stable.regions %}
-              <li><a href="{{ location.url | escape }}">Launch in {{ location.region | escape }}</a></li>
-            {% endfor %}
-          </ul>
-        {% endif %}
-      {% else %}
-        <p><a href="{{ site.releases_url | escape }}">View published releases on GitHub</a></p>
-      {% endif %}
-      {% if site.data.releases.versions.size > 0 %}
-        <details>
-          <summary>Release candidates and pinned versions</summary>
-          <ul class="versions">
-            {% for version in site.data.releases.versions %}
-              <li>
-                <a href="{{ version.url | escape }}">{{ version.tag | escape }}</a>{% if version.prerelease %} (release candidate){% endif %}
-                {% if version.regions.size > 0 %}
-                  <ul class="region-links" aria-label="Launch regions for {{ version.tag | escape }}">
-                    {% for location in version.regions %}
-                      <li><a href="{{ location.url | escape }}">Launch in {{ location.region | escape }}</a></li>
-                    {% endfor %}
-                  </ul>
-                {% endif %}
-              </li>
-            {% endfor %}
-          </ul>
-        </details>
-      {% endif %}
-    </section>
-    {% endif %}
   </main>
 </body>
 </html>
