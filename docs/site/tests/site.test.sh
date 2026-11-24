@@ -19,20 +19,9 @@ cp -R "$site/_layouts" "$fixture_site/"
 cp "$root/platform/release/manifest.sh" "$fixture/platform/release/"
 cp "$root/branding/png/shiftbox-logo-light-1600.png" "$fixture/branding/png/"
 
-# Only the named guides and selected branding may enter the published site.
-for guide in index install contributing private-access troubleshooting upgrade-recovery; do
-    permalink="/$guide/"
-    if [[ "$guide" == index ]]; then permalink='/'; fi
-    cat >"$fixture_site/$guide.md" <<PAGE
----
-title: $guide fixture
-layout: default
-permalink: $permalink
-show_release_links: true
----
-
-Public fixture $guide content.
-PAGE
+# Build the real public guides without exposing neighboring files or branding.
+for guide in index install first-workspace contributing private-access troubleshooting upgrade-recovery; do
+    cp "$site/$guide.md" "$fixture_site/$guide.md"
 done
 printf 'PRIVATE_FIXTURE_SENTINEL account record\n' >"$fixture_site/private-evidence.md"
 printf 'PRIVATE_FIXTURE_SENTINEL deployment state\n' >"$fixture_site/deploy.tfstate"
@@ -122,9 +111,18 @@ test ! -e "$scratch/ready/branding/secret.txt"
 if grep -RFq 'PRIVATE_FIXTURE_SENTINEL' "$scratch/ready"; then exit 1; fi
 if grep -Fq "$draft" "$scratch/ready/index.html"; then exit 1; fi
 
+# Operators can move from prerequisites to regional launch, private access and the IDE guide.
+test -f "$scratch/ready/first-workspace/index.html"
+grep -Fq 'href="#releases-heading"' "$scratch/ready/install/index.html"
+grep -Fq 'href="/ShiftBox/private-access/#connect-with-tailscale"' "$scratch/ready/install/index.html"
+grep -Fq 'href="/ShiftBox/first-workspace/"' "$scratch/ready/install/index.html"
+grep -Fq 'id="connect-with-tailscale"' "$scratch/ready/private-access/index.html"
+grep -Fq 'id="connect-your-github-account"' "$scratch/ready/first-workspace/index.html"
+
 # Before stable, explicit RC links remain available without claiming a default.
 mv "$PAGES_TEST_FEED/latest.json" "$scratch/stable.json"
 render pre-stable
+grep -Fq '<details open>' "$scratch/pre-stable/index.html"
 grep -Fq "https://github.com/jflatten/ShiftBox/releases/tag/$candidate" "$scratch/pre-stable/index.html"
 if grep -Fq 'Latest stable' "$scratch/pre-stable/index.html"; then exit 1; fi
 mv "$scratch/stable.json" "$PAGES_TEST_FEED/latest.json"

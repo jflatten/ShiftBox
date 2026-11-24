@@ -6,18 +6,36 @@ permalink: /troubleshooting/
 
 # Troubleshoot an AWS installation
 
-| Symptom | Check |
+Start with the first step that failed. Use the same AWS account, region, stack and release when you retry.
+
+## Stack and setup problems
+
+| Symptom | What to check |
 | --- | --- |
-| No stable download | Open the official releases list and choose an explicitly published RC if one is available. |
-| Launch link opens the wrong region | Compare the console region and S3 object URL and version against the specific release manifest. Use the link for your planned region. |
-| Change set fails or shows replacement | Check the account, region, IAM capability, AZ, quotas and service-side validation findings. Retain the stack and the original installation volume. Review a new change set after changing inputs. |
-| Controller stays stopped | Check that PostgreSQL is healthy, the retained encrypted volume is mounted, and the protected setup wizard durably activated and stopped its one-off task. |
-| Setup tunnel won't connect | Check the AWS CLI and Session Manager plugin, the scoped bootstrap policy, the exact stack ID and ECS setup task. Resume using the recorded installation instead of creating another stack. |
-| A private hostname fails | Confirm the client route and DNS suffix, route approvals, reachable resolver and security group sources. Resolve the private address before opening the browser. |
-| The browser reports an untrusted certificate | Check the issuer fingerprint, trust store, hostname and certificate validity. Correct the trust chain or install a valid certificate for the intended names. |
-| Official image won't validate | Confirm the manifest is from the installed release and region, the AMI is available and the workspace instance type is compatible with amd64. Review the canary operation status. |
-| Checkout fails after workspace launch | Verify the repository, project devcontainer configuration and workspace owner's GitHub App authorization. |
+| No stable download appears | Choose a published release candidate explicitly. Get the installer, template and support archive from that release. [ShiftBox releases](https://github.com/jflatten/ShiftBox/releases) |
+| A change set fails or replaces a persistent resource | Review the CloudFormation **Events** tab and the change set. Check the selected account, region, Availability Zone and permissions for named IAM resources. Resolve unexpected replacements before executing the change set. |
+| PostgreSQL does not start | In ECS, check service events and PostgreSQL task logs. Verify the installation volume mounted, the TLS secret has the expected certificate and key, and the public CA in `PostgresCaPem` matches the database certificate. |
+| The setup tunnel does not open | Check the local Session Manager plugin, stack read access and the bootstrap policy identified by `SetupOperatorPolicyArn`. Confirm PostgreSQL is ready and port 8444 is available locally. |
+| The controller stays stopped | Confirm the helper verified activation and stopped the setup task. Check that the stack reached `Phase=active`, then look at controller service events and task logs in ECS. |
 
-Use CloudFormation operation events for validation and diagnosis. On supported AWS CLI v2, run `aws cloudformation describe-events --stack-name "$stack_id" --region "$region" --filters FailedEvents=true`. Review stack events, task state and applicable logs with the authorized AWS session. Keep private URLs, identifiers and credentials out of public reports.
+With an authorized AWS CLI session, you can list failed CloudFormation events. Set `STACK_ID` and `AWS_REGION` to your stack ID and region.
 
-[Upgrade and recovery]({{ '/upgrade-recovery/' | relative_url }})
+```sh
+aws cloudformation describe-events --stack-name "$STACK_ID" \
+  --region "$AWS_REGION" --filters FailedEvents=true
+```
+
+For an interrupted guided install, [resume from the same work directory]({{ '/install/' | relative_url }}#use-the-guided-cli). Before changing release or replacing storage, follow the [upgrade and recovery guide]({{ '/upgrade-recovery/' | relative_url }}).
+
+## Browser and workspace problems
+
+| Symptom | What to check |
+| --- | --- |
+| The management or IDE hostname does not resolve | Verify the client is on the private network and the installation suffix is forwarded to a resolver in the VPC. With Tailscale, check the restricted nameserver and its route. [Private DNS and routing]({{ '/private-access/' | relative_url }}) |
+| The hostname resolves but the browser times out | Verify the client accepts the private subnet route and can reach the service subnet on TCP 8443. Check the route approval, source CIDR or tailnet access policy. |
+| The browser reports an untrusted certificate | Check the hostname, validity and issuer. For a private CA, verify the fingerprint and import the browser CA on that client. The protected loopback setup uses a separate certificate. |
+| The official AMI does not validate | Check that the catalog JSON matches the installed release and region. Review the validation operation and its temporary EC2 instance. Check EC2 capacity and network egress in the workspace subnet. |
+| Repository authorization or checkout fails | Check that both the GitHub App installation and the workspace owner's connected account cover the repository. Check the ref and Dev Container file path in the project. [GitHub and project setup]({{ '/first-workspace/' | relative_url }}) |
+| The workspace cannot build or start | Open the workspace and inspect its build or lifecycle logs. Check whether the devcontainer's images and dependencies are reachable from the workspace subnet. |
+
+When reporting a problem, include the ShiftBox version, region, failing phase and relevant error text. Remove private hostnames, account and resource identifiers, and credentials before posting publicly. [ShiftBox issues](https://github.com/jflatten/ShiftBox/issues)
