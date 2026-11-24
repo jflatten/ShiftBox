@@ -27,6 +27,60 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
+// The admin starts registration with one ShiftBox action, then sees the
+// persisted installation state on returning from GitHub and after a reload.
+test('sets up a GitHub App from Administration Settings', async () => {
+  const endpoint = '/api/v1/admin/settings/github-app';
+  let state: 'not_configured' | 'installation_pending' | 'ready' = 'not_configured';
+  const submit = jest.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {
+    expect(this.method).toBe('post');
+    expect(this.action).toBe('https://github.com/organizations/sample-org/settings/apps/new?state=fixture');
+    expect(new FormData(this).get('manifest')).toBe('{"public":false}');
+    state = 'installation_pending';
+  });
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/admin/infrastructure') return json({ conditions: [] });
+    if (input === endpoint && init?.method === 'POST') return json({
+      action: 'https://github.com/organizations/sample-org/settings/apps/new?state=fixture',
+      manifest: '{"public":false}',
+    });
+    if (input === endpoint+'/verify') {
+      state = 'ready';
+      return json({ state, appName: 'ShiftBox Example', owner: 'sample-org', repositorySelection: 'selected' });
+    }
+    if (input === endpoint) return json({ state, appName: 'ShiftBox Example', owner: 'sample-org' });
+    if (input === '/api/v1/admin/settings/session') return json({ value: 30, unit: 'minutes', version: 1 });
+    if (String(input).startsWith('/api/v1/secrets?')) return json([]);
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  try {
+    const startPage = render(<Providers><AdministrationSettings /></Providers>);
+    await user.click(await screen.findByRole('tab', { name: 'GitHub App' }));
+    await user.type(await screen.findByRole('textbox', { name: 'GitHub organization' }), 'sample-org');
+    await user.click(screen.getByRole('button', { name: 'Set up GitHub App' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+    expect(fetch).toHaveBeenCalledWith(endpoint, expect.objectContaining({
+      method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'fixture' }),
+      body: JSON.stringify({ organization: 'sample-org', restart: false }),
+    }));
+    startPage.unmount();
+    window.history.replaceState(null, '', '/settings/?section=github-app&github-install=1');
+    const returnPage = render(<Providers><AdministrationSettings /></Providers>);
+    expect(await screen.findByText('Workspace users can now connect their GitHub accounts.')).toBeVisible();
+    expect(fetch).toHaveBeenCalledWith(endpoint+'/verify', expect.objectContaining({ method: 'POST' }));
+    returnPage.unmount();
+    window.history.replaceState(null, '', '/settings/?section=github-app');
+    render(<Providers><AdministrationSettings /></Providers>);
+    expect(await screen.findByText('Workspace users can now connect their GitHub accounts.')).toBeVisible();
+    expect(fetch.mock.calls.some(([input]) => input === '/api/v1/git/authorization')).toBe(false);
+  } finally {
+    submit.mockRestore();
+  }
+});
+
 // The number and selected unit survive a fresh page mount after saving.
 test('validates, saves, and reloads the administration session timeout', async () => {
   const endpoint = '/api/v1/admin/settings/session';

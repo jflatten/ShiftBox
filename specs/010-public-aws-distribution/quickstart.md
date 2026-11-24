@@ -9,7 +9,7 @@ Use these steps after implementation in authorized settings. The illustrative RC
 | Local fixtures and normal CI | Implementers run unit, contract and template checks and remove local fixtures. Record skipped external cases with their required inputs. |
 | Shared private `shiftbox-demo` | The demo operator owns the Terraform state, existing deployment and any reviewed rollout. The implementer removes only disposable records and resources created for the check. The [private AWS runbook](../002-aws-ec2-provider/quickstart.md) and historical demo reports establish the regression baseline. |
 | Public publisher and rehearsal context | The release maintainer owns the staged release assets and temporary publisher fixtures. Preserve any AMI, snapshot or S3 object version referenced by a release. Use an approved rehearsal context for test writes. |
-| Separate disposable customer accounts | The qualification operator confirms account separation from the publisher and demo, creates the test stacks and workspaces, and verifies cleanup of owned compute, networking, retained EBS and secrets, and the test tailnet device. Keep account IDs and inventory privately. |
+| Separate disposable customer accounts | The qualification operator confirms account separation from the publisher and demo, creates the test stacks and workspaces, and verifies cleanup of owned compute, application security groups, retained EBS and secrets. Keep account IDs and inventory privately. |
 
 The November 21, 2026 inventory reviewed the repository's recorded evidence. A read-only retry verified the default AWS profile in the approved demo account and both ECS services reported one running task and a completed rollout. This worktree has no local demo deployment files. The disposable customer accounts and public RC remain unverified. Before changing an environment, verify the approved account and region, the required state or stack inputs, and who owns cleanup. A release maintainer reviews any missing or failed gate against the exact candidate. Keep that gate pending until the required evidence is recorded.
 
@@ -70,10 +70,21 @@ prices the run, verifies the public RC and regional probes, and provides
 an independently cleaned Ohio window in the dedicated testing account.
 Its automation evidence keeps the manual browser, CLI and recovery gates
 pending. Confirm actual aggregate budget and Ohio capacity before dispatch.
+For the staffed workflow, use its runbook to select existing Ohio subnets
+and arrange operator-managed private routing, DNS and optional GitHub App
+credentials.
 
 Use an authenticated Ohio customer-like account with capacity, a tailnet, no domain/certificate, and an operator-owned GitHub App and known-good repository for the later checkout. Start at the candidate's Ohio Console link with no existing stack or GitHub artifact credentials.
 
-1. Verify account, region, template/version, required parameters and `CAPABILITY_NAMED_IAM` acknowledgement. Launch the foundation with retained encrypted EBS and scoped secrets. Use the shipped stack policy and termination protection. Verify that DNS and the normal controller are absent. Review and execute `dns-zones`, verify both private zone and namespace identities against the VPC, then review and execute `dns-services` and verify both service IDs in that namespace. Populate DB TLS via the scoped secret, verify outputs contain public trust and references only, then review the alias records and execute the database/setup change set.
+For pre-RC development, use the [single-stack private UI procedure](../../platform/development/README.md#install-once-and-finish-in-the-private-ui).
+Select supplied Ohio subnets, provide outbound access and confirm private
+DNS and routing from the browser. Confirm the change set has no NAT or shared
+network changes. Retrieve the CA and initial claim through the stack's AWS
+references, exercise the private wizard through activation, and verify a
+fresh sign-in and repeat startup before testing the pinned workspace image.
+The published RC3 uses its original staged procedure below.
+
+1. Verify account, region, template/version, required parameters and `CAPABILITY_NAMED_IAM` acknowledgement. Select the existing VPC, private service and workspace subnets and service Availability Zone. Launch the foundation with retained encrypted EBS and scoped secrets. Use the shipped stack policy and termination protection. Verify that DNS and the normal controller are absent. Review and execute `dns-zones`, verify both private zone and namespace identities against the VPC, then review and execute `dns-services` and verify both service IDs in that namespace. Populate DB TLS via the scoped secret, verify outputs contain public trust and references only, then review the alias records and execute the database/setup change set.
 2. Confirm the setup definition and later controller pull the RC image digest anonymously. Verify PostgreSQL uses its pinned image, mounts the retained EBS volume and uses verified TLS and scoped credentials. Test denied access to setup.
 3. Follow the documented local AWS/SSM client into the fingerprint-verified setup wizard. Verify durable activation and no remaining setup task, then review and execute the controller activation change set. Sign in fresh. Verify private Tailscale routing, split DNS, HTTPS for management and workspace names and failed access from outside the private connection. Exercise wrong DNS/route and untrusted certificate.
 4. Use the admin catalog to validate the official image and observe canary cleanup. Save and reload a named pinned profile and permitted template. Authorize the workspace owner's repository access and open the IDE. Confirm exact AMI and encrypted root.
@@ -92,7 +103,7 @@ curl -fsSL https://github.com/jflatten/ShiftBox/releases/download/v1.0.0-rc.1/in
   bash -s -- --version v1.0.0-rc.1 --work-dir "$validation_dir"
 ```
 
-Keep evidence privately. Delete disposable workspaces through normal product controls. In the authorized test account, disable termination protection, delete the disposable stack and verify dependent services, network, NAT/IP, router and DNS cleanup. Verify retained EBS and secrets survive as designed, then remove only the identified test remnants after review. Remove the test tailnet device. Keep publisher assets and demo state.
+Keep evidence privately. Delete disposable workspaces through normal product controls. In the authorized test account, disable termination protection, delete the disposable stack and verify dependent services, application security groups and DNS cleanup. Verify retained EBS and secrets survive as designed, then remove only the identified test remnants after review. Verify the selected subnets, routes and router remain available. Keep publisher assets and demo state.
 
 ## 5. Reuse the applicable product gates
 

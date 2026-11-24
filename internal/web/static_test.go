@@ -11,7 +11,7 @@ import (
 // boundaries around API routes, directories, and unsupported methods.
 func TestStaticExport(t *testing.T) {
 	files := fstest.MapFS{
-		"_shiftbox/ShiftBox-Local-Helper.zip": {Data: []byte("private helper")},
+		"_shiftbox/ShiftBox-Local-Helper.dmg": {Data: []byte("private helper")},
 		"index.html":                          {Data: []byte("<h1>ShiftBox</h1>")},
 		"setup/index.html":                    {Data: []byte("<h1>Setup</h1>")},
 		"_next/static/a.js":                   {Data: []byte("const fixture = true;")},
@@ -36,7 +36,7 @@ func TestStaticExport(t *testing.T) {
 		{"HEAD", "/brand/favicon.ico", "", "no-cache", 200},
 		{"POST", "/", "", "", 405},
 		{"GET", "/api/v1/", "", "", 404},
-		{"GET", "/_shiftbox/ShiftBox-Local-Helper.zip", "", "", 404},
+		{"GET", "/_shiftbox/ShiftBox-Local-Helper.dmg", "", "", 404},
 		{"GET", "/brand/", "", "", 404},
 		{"GET", "/.hidden/", "", "", 404},
 		{"GET", "/missing/", "", "", 404},

@@ -69,7 +69,7 @@ var (
 // NewWorkspaceSSHAPI mounts workstation access and browser pairing at the
 // management origin. Downloads and pairing approval require a browser session.
 func NewWorkspaceSSHAPI(db *sql.DB, registry *proxy.Registry, journal *operation.Journal,
-	open func(context.Context, string, int64, string) (net.Conn, string, error), now func() time.Time, origin string, archive []byte,
+	open func(context.Context, string, int64, string) (net.Conn, string, error), now func() time.Time, origin string, helperImage []byte,
 ) http.Handler {
 	ssh := workspaceSSH{db: db, registry: registry, journal: journal, open: open, now: now}
 	pairing := &helperPairing{db: db, origin: origin, now: now, pending: make(map[string]pairingApproval)}
@@ -84,7 +84,7 @@ func NewWorkspaceSSHAPI(db *sql.DB, registry *proxy.Registry, journal *operation
 		case "connectWorkspaceSSH":
 			mux.Handle(pattern, ssh.authenticated(ssh.connect))
 		case "downloadWorkspaceSSHHelper":
-			mux.Handle(pattern, helperDownloadHandler(db, origin, now, route, archive))
+			mux.Handle(pattern, helperDownloadHandler(db, origin, now, route, helperImage))
 		case "approveWorkspaceSSHHelper":
 			mux.HandleFunc(pattern, pairing.approve)
 		case "exchangeWorkspaceSSHHelper":

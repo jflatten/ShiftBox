@@ -6,6 +6,10 @@ destination=$2
 initialize=$3
 attempts=${4:-120}
 case "$volume_id" in vol-*) ;; *) echo 'Expected an EBS volume ID' >&2; exit 1 ;; esac
+case "$initialize" in
+    true|false|auto) ;;
+    *) echo 'Expected cache initialization mode true, false, or auto' >&2; exit 1 ;;
+esac
 serial="vol${volume_id#vol-}"
 
 device_for_serial() {
@@ -45,7 +49,7 @@ if [ -z "$mounted" ]; then
         fi
     else
         status=$?
-        if [ "$status" -ne 2 ] || [ "$initialize" != true ] ||
+        if [ "$status" -ne 2 ] || [ "$initialize" = false ] ||
             [ "$(lsblk -nrpo TYPE "$device")" != disk ]; then
             echo 'Registry cache filesystem is unavailable or not confirmed blank' >&2
             exit 1
@@ -64,6 +68,12 @@ fi
 if [ "$(readlink -f "$mounted")" != "$(readlink -f "$device")" ]; then
     echo 'Registry cache mount belongs to a different volume' >&2
     exit 1
+fi
+
+# CloudFormation owns this disk and can increase its size between host boots.
+# Grow only after verifying the mounted device so the change exposes the new capacity.
+if [ "$initialize" = auto ]; then
+    xfs_growfs "$destination"
 fi
 
 install -d -m 0700 -o 10001 -g 10001 "$destination/cache"

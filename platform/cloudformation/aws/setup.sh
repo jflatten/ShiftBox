@@ -99,7 +99,7 @@ if [ -z "$task" ]; then
     if launched=$(aws ecs run-task --region "$region" --cluster "$cluster" --launch-type EC2 \
         --task-definition "$definition" --enable-execute-command --propagate-tags TASK_DEFINITION \
         --network-configuration "awsvpcConfiguration={subnets=[$subnet],securityGroups=[$group],assignPublicIp=DISABLED}" \
-        --tags "key=ShiftBoxBootstrap,value=$tag" --client-token "$token" --output json); then
+        --tags "key=shiftbox-bootstrap,value=$tag" --client-token "$token" --output json); then
         task=$(printf '%s\n' "$launched" | jq -er --arg prefix "$task_prefix" '
             select((.failures | length) == 0 and (.tasks | length) == 1) |
             .tasks[0].taskArn | select(startswith($prefix) and (ltrimstr($prefix) | test("\\A[a-f0-9]{32}\\z")))') ||
@@ -118,7 +118,7 @@ task_state() {
             if (.tasks | length) == 0 and all(.failures[]?; .reason == "MISSING") then {} else
                 .tasks | select(length == 1) | .[0] |
                 select(.taskArn == $task and .taskDefinitionArn == $definition and .clusterArn == $cluster) |
-                select([.tags[]? | select(.key == "ShiftBoxBootstrap") | .value] == [$tag])
+                select([.tags[]? | select(.key == "shiftbox-bootstrap") | .value] == [$tag])
             end'
 }
 

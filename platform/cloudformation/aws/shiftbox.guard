@@ -3,12 +3,24 @@ let secrets = Resources.*[ Type == 'AWS::SecretsManager::Secret' ]
 let ingress = Resources.*[ Type == 'AWS::EC2::SecurityGroupIngress' ]
 let runtime_roles = Resources.*[ Type == 'AWS::IAM::Role' ]
 
-rule retained_volume when %volumes !empty {
-    %volumes {
+rule retained_volume when Resources.InstallationVolume exists {
+    Resources.InstallationVolume {
         DeletionPolicy == 'Retain'
         UpdateReplacePolicy == 'Retain'
         Properties.Encrypted == true
     }
+}
+
+rule disposable_cache_volume when Resources.RegistryCacheVolume exists {
+    Resources.RegistryCacheVolume {
+        DeletionPolicy == 'Delete'
+        UpdateReplacePolicy == 'Delete'
+        Properties.Encrypted == true
+    }
+}
+
+rule encrypted_volumes when %volumes !empty {
+    %volumes.Properties.Encrypted == true
 }
 
 rule retained_secrets when %secrets !empty {

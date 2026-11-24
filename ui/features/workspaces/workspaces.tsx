@@ -16,7 +16,7 @@ import { LaunchFlow } from './launch-flow';
 import { WorkspaceDetail } from './workspace-detail';
 import { WorkspaceInventoryRow } from './workspace-inventory-row';
 
-import { workspaceMilestones, workspaceState, type Workspace } from './workspace';
+import { workspaceMilestones, workspaceState, workspaceURL, type Workspace } from './workspace';
 
 export function Workspaces({ workspaceId, ownerId, launch = false }: {
   workspaceId: string | null;
@@ -142,7 +142,7 @@ function WorkspaceList({ ownerId, csrfToken, accountId }: { ownerId?: string | n
                 </Table.Tr></Table.Thead>
                 <Table.Tbody>
                   {data.items.map(workspace => (
-                    <WorkspaceInventoryRow key={workspace.id} row={workspace} href={workspaceURL(workspace)} csrfToken={csrfToken} accountId={accountId} />
+                    <WorkspaceInventoryRow key={workspace.id} row={workspace} href={workspaceURL(workspace.id)} csrfToken={csrfToken} accountId={accountId} />
                   ))}
                 </Table.Tbody>
               </Table>
@@ -163,8 +163,4 @@ function WorkspaceList({ ownerId, csrfToken, accountId }: { ownerId?: string | n
       </Paper>
     </Stack>
   );
-}
-
-function workspaceURL(workspace: Workspace) {
-  return `/workspaces/?id=${encodeURIComponent(workspace.id)}`;
 }

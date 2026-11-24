@@ -433,11 +433,11 @@ test('workspace launch picker reflows and shares table and card search', async (
 });
 
 for (const failed of [false, true]) {
-  // Keyboard launch keeps the Stepper visible and puts a failed step's
-  // server-provided explanation in an inline warning.
+  // Keyboard launch opens the selected workspace and shows the same workflow
+  // and failure details as a direct visit to that workspace.
   test(failed ? 'workspace launch failure warning' : 'workspace launch progress', async ({ page }) => {
     const labels: [string, string, string] = ['Provision workspace', 'Enroll guest', 'Verify IDE'];
-    const progress = operation(labels);
+    const progress = { ...operation(labels), type: 'provision' };
     const snapshot = failed ? { ...progress, status: 'failed', steps: progress.steps.map(step =>
       step.status === 'active' ? { ...step, status: 'failed', detail: 'The guest could not enroll.' } : step,
     ) } : progress;
@@ -446,6 +446,11 @@ for (const failed of [false, true]) {
       if (path.endsWith('/templates')) return route.fulfill({ json: { items: [{ id: templateID, name: 'Keyboard project', currentRevision: 1,
         repositoryUrl: 'https://github.com/example/project', platformArtifactId: 'Ubuntu', resourceProfileId: 'Small' }], nextCursor: null } });
       if (path.endsWith('/workspaces') && route.request().method() === 'POST') return route.fulfill({ status: 202, json: { id: operationID, workspaceId: workspaceID } });
+      if (path === `/api/v1/workspaces/${workspaceID}`) return route.fulfill({ json: {
+        id: workspaceID, name: 'Keyboard workspace', ownerId: 'admin', resources, desiredState: 'running',
+        observedState: failed ? 'failed' : 'starting', currentOperationId: failed ? null : operationID,
+        lifecycle: workspaceLifecycle('provisioned', failed ? 'failed' : 'vm-running', operationID),
+      } });
     }, snapshot);
     await page.goto('/templates/');
     await activate(page, page.getByRole('button', { name: 'Launch workspace for Keyboard project' }), 'Space');
@@ -454,7 +459,8 @@ for (const failed of [false, true]) {
     await tabTo(page, page.getByRole('textbox', { name: 'Workspace name' }));
     await page.keyboard.insertText('Keyboard workspace');
     await activate(page, review.getByRole('button', { name: 'Launch workspace', exact: true }));
-    await expect(page.getByRole('heading', { name: 'Launch workspace', exact: true })).toBeFocused();
+    await expect(page).toHaveURL(`/workspaces/?id=${workspaceID}`);
+    await expect(page.getByRole('heading', { name: 'Keyboard workspace', exact: true })).toBeFocused();
     if (failed) {
       const warning = page.getByRole('alert', { name: 'Workspace launch failed' });
       await expect(warning).toContainText('The guest could not enroll.');

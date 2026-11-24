@@ -37,6 +37,7 @@ type ControllerState struct {
 	retentionStatus    atomic.Pointer[retentionSnapshot]
 	imageCache         *imageCacheRuntime
 	workspaceLogs      workspacelog.Store
+	githubAppSetup     *githubAppSetup
 }
 
 // Close releases the authoritative database on shutdown or failed composition.

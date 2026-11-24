@@ -8,7 +8,7 @@ import { WorkflowStepper } from '../../components/workflow-stepper';
 import { ControllerUnavailableError, readProblem } from '../../lib/api-problem';
 import { providerLabel } from '../../lib/provider-label';
 import { useOperation } from '../../lib/use-operation';
-import { workspaceName, workspaceState, type Workspace } from './workspace';
+import { consumeWorkspaceLaunchFocus, workspaceName, workspaceState, type Workspace } from './workspace';
 import { WorkspaceLifecycleStatus, WorkspaceStatus, WorkspaceTime } from './workspace-summary';
 import { RetentionWarning } from './retention';
 import { WorkspaceConnectionGrants } from './connection-grants';
@@ -29,6 +29,7 @@ export function WorkspaceDetail({ id, userId, csrfToken, admin }: { id: string; 
   const [operationId, setOperationId] = useState<string>();
   const [operationBusy, setOperationBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const workspaceHeading = useRef<HTMLHeadingElement>(null);
   const progressHeading = useRef<HTMLHeadingElement>(null);
   const progressFocus = useRef<{ id: string; trigger: Element | null }>(undefined);
   const recordedWorkflow = data?.lifecycle.workflowOperationId;
@@ -51,6 +52,15 @@ export function WorkspaceDetail({ id, userId, csrfToken, admin }: { id: string; 
   const canViewLogs = !!data && data.ownerId === userId && data.desiredState !== 'deleted';
   const hasPreviews = data?.canOpenPreviews || data?.canEditPreviewPorts;
   const hasKeepAlive = !!data?.keepAlivePolicy && data.keepAliveMinutes !== undefined;
+  const loadedWorkspaceId = data?.id;
+
+  useEffect(() => {
+    // Continue keyboard navigation from the launched workspace's heading.
+    // Preserve any focus the user chose while the workspace loaded.
+    if (loadedWorkspaceId && consumeWorkspaceLaunchFocus(loadedWorkspaceId) && document.activeElement === document.body) {
+      workspaceHeading.current?.focus();
+    }
+  }, [loadedWorkspaceId]);
 
   useEffect(() => {
     const handoff = progressFocus.current;
@@ -67,7 +77,9 @@ export function WorkspaceDetail({ id, userId, csrfToken, admin }: { id: string; 
     <div style={{ display: 'contents' }} inert={readUnavailable && !unavailable}>
       <Anchor href="/workspaces/">All workspaces</Anchor>
       <Group justify="space-between" align="flex-start">
-        <Title order={1} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{data ? workspaceName(data) : 'Workspace'}</Title>
+        <Title order={1} ref={workspaceHeading} tabIndex={-1} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+          {data ? workspaceName(data) : 'Workspace'}
+        </Title>
         <Button variant="default" onClick={() => void workspace.refetch()}>Refresh</Button>
       </Group>
       {workspace.isError && !readUnavailable ? <Stack align="flex-start">

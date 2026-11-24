@@ -38,22 +38,25 @@ variable "host_ami_id" {
   }
 }
 
-variable "router_ami_id" {
-  type        = string
-  description = "Exact Ohio Arm AL2023 router AMI verified against the reviewed template default."
-  validation {
-    condition     = can(regex("^ami-[0-9a-f]{17}$", var.router_ami_id)) && var.router_ami_id != var.host_ami_id
-    error_message = "Supply an exact router AMI ID distinct from the ECS host."
-  }
-}
-
 variable "verified_vpc_id" {
   type        = string
   default     = null
-  description = "Optional physical VPC ID verified to belong to this run before enabling DNS creation."
+  description = "Existing Ohio VPC verified to contain the operator-selected private subnets."
   validation {
     condition     = var.verified_vpc_id == null || can(regex("^vpc-[0-9a-f]{17}$", var.verified_vpc_id))
     error_message = "Supply a single verified Ohio VPC ID."
+  }
+}
+
+variable "verified_service_subnet_id" {
+  type        = string
+  default     = null
+  description = "Existing Ohio service subnet independently verified to belong to the selected VPC."
+  validation {
+    condition = var.verified_service_subnet_id == null || (
+      var.verified_vpc_id != null && can(regex("^subnet-[0-9a-f]{17}$", var.verified_service_subnet_id))
+    )
+    error_message = "Supply an exact service subnet only with its verified VPC."
   }
 }
 

@@ -29,6 +29,8 @@ func run(ctx context.Context, args []string, out, status io.Writer) error {
 		switch args[0] {
 		case "setup":
 			return runSetup(ctx, args[1:], out, status)
+		case "one-pass":
+			return runOnePass(ctx, args[1:], out, status)
 		case "serve":
 			return runServe(ctx, args[1:])
 		case "recover-admin":

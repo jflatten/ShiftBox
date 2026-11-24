@@ -21,7 +21,7 @@ type cloudEC2 struct {
 func newCloudEC2(ctx context.Context, settings config.EC2Runtime, store *release.Store) (*cloudEC2, error) {
 	machines, err := ec2.New(ctx, ec2.Config{Region: settings.Region, AccountID: settings.AccountID, SubnetID: settings.SubnetID,
 		SecurityGroupID: settings.SecurityGroupID, Deployment: settings.Deployment, Environment: settings.Environment,
-		OfficialImage: settings.OfficialImage},
+		NamespacedTags: settings.NamespacedTags, OfficialImage: settings.OfficialImage},
 		func(ctx context.Context, id, releaseID string) (ec2.Image, error) {
 			image, err := store.EC2Image(ctx, id, settings.Region, settings.AccountID)
 			if err != nil {

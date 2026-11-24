@@ -63,14 +63,14 @@ class QualificationWorkflow(unittest.TestCase):
         self.assertIn("SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN", staffed["env"])
         self.assertNotIn("execute-change-set", staffed["run"])
 
-    def test_tailnet_credentials_are_only_available_to_cleanup_steps(self):
-        """The dedicated fixture tailnet is swept even if AWS teardown failed."""
-        jobs = self.workflow["jobs"]
-        for key, mode in (("sweep", "sweep"), ("cleanup", "run")):
-            step = next(s for s in jobs[key]["steps"] if f"tailnet.py {mode}" in s.get("run", ""))
-            self.assertIn("always()", step["if"])
-            self.assertIn("secrets.SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_SECRET", str(step))
-        self.assertNotIn("secrets.SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_SECRET", str(jobs["qualify"]))
+    def test_permanent_fixtures_are_outside_workflow_authority(self):
+        """Admission and teardown never consume credentials for operator-owned fixtures."""
+        workflow = str(self.workflow)
+        for setting in ("TAILNET_READY", "SHIFTBOX_QUALIFICATION_TAILNET_", "tailnet.py",
+                        "GitHubAppSecretArn", "get-secret-value"):
+            self.assertNotIn(setting, workflow)
+        self.assertIn("SHIFTBOX_QUALIFICATION_SUBNETS", workflow)
+        self.assertNotIn("AccessMode=", workflow)
 
     def test_no_privileged_default_tokens(self):
         """The qualification workflow has no repository or package publishing authority."""

@@ -78,6 +78,15 @@ install_preview() {
         map(select(dns_resource)) | only_adds({PrivateRecords:"AWS::Route53::RecordSetGroup"})
       elif $phase == "active" then
         all(.[]; dns_resource | not)
+      elif $phase == "one-pass" then
+        all(.[]; .Action == "Add" and
+          (.ResourceType | IN("AWS::EC2::VPC", "AWS::EC2::Subnet", "AWS::EC2::RouteTable",
+            "AWS::EC2::Route", "AWS::EC2::SubnetRouteTableAssociation", "AWS::EC2::NatGateway",
+            "AWS::EC2::InternetGateway", "AWS::EC2::VPCGatewayAttachment", "AWS::EC2::EIP") | not)) and
+        (map({key:.LogicalResourceId,value:.ResourceType}) | from_entries |
+          .ControllerService == "AWS::ECS::Service" and .PostgresService == "AWS::ECS::Service" and
+          .InstallationVolume == "AWS::EC2::Volume" and
+          .SetupClaim == "AWS::SecretsManager::Secret" and .BrowserTrust == "AWS::SecretsManager::Secret")
       else false end)
   ' <"$changes" >/dev/null; then
     install_fail "the $phase change set is unavailable, lacks named IAM acknowledgement, or contains unexpected changes"
@@ -127,7 +136,11 @@ install_tag_commit() {
 
 install_require_tools() {
   local tool
-  for tool in curl jq openssl tar aws session-manager-plugin; do
+  local tools=(jq openssl aws)
+  if [ "${1:-}" != one-pass ]; then
+    tools+=(curl tar session-manager-plugin)
+  fi
+  for tool in "${tools[@]}"; do
     if ! command -v "$tool" >/dev/null 2>&1; then
       install_fail "required tool '$tool' is missing"
       return 1
@@ -251,10 +264,10 @@ install_change() {
   changes="$scratch/change-set.json"
   events="$scratch/change-events.json"
   jq --arg phase "$phase" '
-    .parameters + {Phase:$phase} |
+    .parameters + (if $phase == "one-pass" then {} else {Phase:$phase} end) |
     to_entries | map({ParameterKey:.key,ParameterValue:(.value | tostring)})
   ' <"$state" >"$desired" || return 1
-  digest=$({ cat "$desired"; jq -er '.manifestSha256' <"$state"; } | openssl dgst -sha256 -r) || return 1
+  digest=$({ cat "$desired"; jq -er '.templateSha256 // .manifestSha256' <"$state"; } | openssl dgst -sha256 -r) || return 1
   digest=${digest%% *}
   change_name="shiftbox-$phase-${digest:0:24}"
   phase_record="ShiftBox reviewed $phase parameters sha256:$digest"
@@ -277,11 +290,15 @@ install_change() {
       return 1
     fi
     install_current_account "$account" "$region" || return 1
+    local template_input=(--template-body "file://$scratch/template.yaml")
+    if [ "$phase" != one-pass ]; then
+      template_input=(--template-url "$(jq -er '.templateUrl' <"$state")")
+    fi
     aws --region "$region" cloudformation create-change-set \
       --stack-name "${stack:-$name}" --change-set-name "$change_name" --change-set-type "$type" \
       --description "$phase_record" --client-token "$change_name" --capabilities CAPABILITY_NAMED_IAM \
-      --template-url "$(jq -er '.templateUrl' <"$state")" --parameters "file://$desired" \
-      --tags "Key=project,Value=shiftbox" "Key=cluster_name,Value=$name" --output json >"$scratch/change-result" || return 1
+      "${template_input[@]}" --parameters "file://$desired" \
+      --tags "Key=shiftbox-project,Value=shiftbox" "Key=shiftbox-cluster-name,Value=$name" --output json >"$scratch/change-result" || return 1
     stack_id=$(jq -er '.StackId' <"$scratch/change-result") || return 1
     install_bind_stack "$state" "$stack_id" || return 1
   fi
@@ -424,45 +441,60 @@ install_database_tls() (
 )
 
 install_prompt_parameters() {
-  local state=$1 region=$2 name zone mode suffix cidr vpc github
+  local state=$1 region=$2 name zone suffix cidr vpc service workspace network
+  local mode=${3:-staged}
+  local subnet_query='Subnets[?State==`available` && MapPublicIpOnLaunch==`false`].[SubnetId,VpcId,AvailabilityZone,CidrBlock]'
   install_prompt 'Enter a new lowercase deployment name (2–32 characters):' || return 1
   name=$REPLY
   [[ "$name" =~ ^[a-z][a-z0-9-]{0,30}[a-z0-9]$ ]] || return 1
-  aws --region "$region" ec2 describe-availability-zones --query 'AvailabilityZones[?State==`available`].ZoneName' --output text || return 1
-  install_prompt 'Choose an available Availability Zone:' || return 1
-  zone=$REPLY
-  if ! [[ "$zone" =~ ^${region}[a-z]$ ]]; then return 1; fi
-  install_prompt 'Enter a nonoverlapping VPC CIDR [10.63.0.0/16]:' || return 1
-  vpc=${REPLY:-10.63.0.0/16}
-  install_prompt 'Choose private access mode [tailscale] or private-link:' || return 1
-  mode=${REPLY:-tailscale}
-  cidr=''
-  if [ "$mode" = tailscale ]; then
-    suffix="sb-$(openssl rand -hex 8).internal"
-  elif [ "$mode" = private-link ]; then
-    install_prompt 'Enter the private DNS suffix:' || return 1
-    suffix=$REPLY
-    install_prompt 'Enter the approved IPv4 source CIDR for browser access:' || return 1
-    cidr=$REPLY
-    if ! [[ "$cidr" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([1-9]|[12][0-9]|3[0-2])$ ]]; then return 1; fi
-  else
-    return 1
+  if [ "$mode" = one-pass ]; then
+    subnet_query='Subnets[?State==`available`].[SubnetId,VpcId,AvailabilityZone,CidrBlock,MapPublicIpOnLaunch]'
   fi
-  if ! [[ "$suffix" =~ ^[a-z0-9][a-z0-9.-]+[a-z0-9]$ ]]; then return 1; fi
+  aws --region "$region" ec2 describe-subnets --query "$subnet_query" --output table || return 1
+  install_prompt 'Enter the existing service subnet ID:' || return 1
+  service=$REPLY
+  install_prompt 'Enter the existing workspace subnet ID:' || return 1
+  workspace=$REPLY
+  if ! [[ $service =~ ^subnet-([0-9a-f]{8}|[0-9a-f]{17})$ &&
+    $workspace =~ ^subnet-([0-9a-f]{8}|[0-9a-f]{17})$ ]]; then return 1; fi
+  network=$(aws --region "$region" ec2 describe-subnets --subnet-ids "$service" "$workspace" --output json |
+    jq -ce --arg service "$service" --arg workspace "$workspace" --arg region "$region" --arg mode "$mode" '
+      def selected($id):
+        [.Subnets[] | select(.SubnetId == $id and .State == "available" and
+          ($mode == "one-pass" or .MapPublicIpOnLaunch == false))] |
+        select(length == 1) | .[0];
+      selected($service) as $host | selected($workspace) as $guest |
+      select($host.VpcId == $guest.VpcId and ($host.VpcId | test("^vpc-([0-9a-f]{8}|[0-9a-f]{17})$")) and
+        ($host.AvailabilityZone | test("^" + $region + "[a-z]$"))) |
+      {vpc:$host.VpcId,zone:$host.AvailabilityZone}
+    ') || { install_fail 'select two available subnets in the same VPC and a supported service AZ'; return 1; }
+  vpc=$(jq -er '.vpc' <<<"$network") || return 1
+  zone=$(jq -er '.zone' <<<"$network") || return 1
+  printf 'Using VPC %s and service Availability Zone %s. Configure private routing, outbound access and DNS in your network.\n' "$vpc" "$zone"
+  install_prompt "Enter the private DNS suffix [$name.internal]:" || return 1
+  suffix=${REPLY:-$name.internal}
+  if ! [[ $suffix =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ && ${#suffix} -ge 4 &&
+    ${#suffix} -le 200 ]]; then return 1; fi
+  if [ "$mode" = one-pass ]; then
+    install_prompt 'Enter the IPv4 range allowed to open the ShiftBox UI (use /32 for one address):' || return 1
+    [ -n "$REPLY" ] || { install_fail 'an IPv4 range for UI access is required'; return 1; }
+  else
+    install_prompt 'Enter the optional approved IPv4 source CIDR for browser access [closed]:' || return 1
+  fi
+  cidr=$REPLY
+  if ! [[ -z $cidr || $cidr =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([1-9]|[12][0-9]|3[0-2])$ ]]; then return 1; fi
   printf 'Management origin after setup: https://shiftbox.%s:8443\n' "$suffix"
-  install_prompt 'Enter the optional operator-owned GitHub App credentials secret ARN [none]:' || return 1
-  github=$REPLY
   install_store "$state" --arg name "$name" --arg zone "$zone" --arg vpc "$vpc" --arg suffix "$suffix" \
-    --arg mode "$mode" --arg cidr "$cidr" --arg github "$github" '
-    .stackName = $name | .parameters = {DeploymentName:$name,AvailabilityZone:$zone,VpcCidr:$vpc,
-      DnsSuffix:$suffix,AccessMode:$mode,GitHubAppSecretArn:$github,RoleBoundaryMode:"managed"} |
-    if $mode == "private-link" then .parameters.OperatorCidr = $cidr else . end'
+    --arg service "$service" --arg workspace "$workspace" --arg cidr "$cidr" --arg mode "$mode" '
+    .stackName = $name | .parameters = {DeploymentName:$name,AvailabilityZone:$zone,VpcId:$vpc,
+      ServiceSubnet:$service,WorkspaceSubnet:$workspace,DnsSuffix:$suffix,OperatorCidr:$cidr}
+      + (if $mode == "one-pass" then {} else {RoleBoundaryMode:"managed"} end)'
 }
 
 install_record_stage() {
   local state=$1 stack_file=$2 expected=${3:-} stack record
   stack=$(jq -er '.stack' <"$state") || return 1
-  record=$(jq -ce --arg stack "$stack" --arg expected "$expected" '
+  record=$(jq -ce --arg stack "$stack" --arg expected "$expected" --slurpfile saved "$state" '
     def output($outputs; $key; $pattern):
       [$outputs[] | select(.OutputKey == $key) | .OutputValue] |
       if length == 1 and (.[0] | type == "string" and test($pattern)) then .[0]
@@ -475,6 +507,12 @@ install_record_stage() {
     output($outputs; "Phase"; "^(foundation|dns-zones|dns-services|database|active)\\z") as $phase |
     select($expected == "" or $phase == $expected) |
     "([0-9a-f]{8}|[0-9a-f]{17})\\z" as $ec2_id |
+    ($saved[0].parameters // {}) as $selected |
+    if $selected.ServiceSubnet then
+      select(output($outputs; "VpcId"; "^vpc-" + $ec2_id) == $selected.VpcId and
+        output($outputs; "ServiceSubnetId"; "^subnet-" + $ec2_id) == $selected.ServiceSubnet and
+        output($outputs; "WorkspaceSubnetId"; "^subnet-" + $ec2_id) == $selected.WorkspaceSubnet)
+    else . end |
     {phase:$phase, vpc:output($outputs; "VpcId"; "^vpc-" + $ec2_id),
       volume:output($outputs; "InstallationVolumeId"; "^vol-" + $ec2_id),
       dns:(
@@ -511,18 +549,14 @@ install_advance() {
   install_record_stage "$state" "$stack_file" "$phase"
 }
 
-install_run_stages() (
-  set -euo pipefail
-  local state=$1 work=$2 scratch=$3 phase stack status support account region release dns mode
-  local stack_file="$scratch/stack.json" protection="$scratch/support/stack-policy.json"
+install_establish_stack() {
+  local state=$1 work=$2 scratch=$3 first_phase=$4
+  local account region release stack status stack_file="$scratch/stack.json"
   account=$(jq -er '.account' <"$state")
   region=$(jq -er '.region' <"$state")
   release=$(jq -er '.release' <"$state")
   stack=$(jq -er '.stack' <"$state")
   install_current_account "$account" "$region"
-  mkdir -- "$scratch/support"
-  support="$work/release/shiftbox-aws-support.tar.gz"
-  tar -xzf - -C "$scratch/support" <"$support"
 
   if [ -z "$stack" ]; then
     local name allow_submit=true
@@ -542,20 +576,33 @@ install_run_stages() (
       return 1
     fi
     : >"$work/create-requested"
-    install_change "$state" foundation CREATE "$scratch" "$allow_submit"
+    install_change "$state" "$first_phase" CREATE "$scratch" "$allow_submit"
     stack=$(jq -er '.stack' <"$state")
   fi
   install_describe_stack "$region" "$stack" "$stack_file"
   install_identity "$state" "$account" "$region" "$(jq -er '.Stacks[0].StackId' <"$stack_file")" "$release"
   status=$(jq -er '.Stacks[0].StackStatus' <"$stack_file")
   case "$status" in
-    REVIEW_IN_PROGRESS) install_change "$state" foundation CREATE "$scratch" ;;
+    REVIEW_IN_PROGRESS) install_change "$state" "$first_phase" CREATE "$scratch" ;;
     CREATE_IN_PROGRESS) install_wait_status "$region" "$stack" stack-create ;;
     UPDATE_IN_PROGRESS|UPDATE_COMPLETE_CLEANUP_IN_PROGRESS) install_wait_status "$region" "$stack" stack-update ;;
     CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE) ;;
     *) install_fail "stack is $status. Inspect CloudFormation events before resuming."; return 1 ;;
   esac
   install_describe_stack "$region" "$stack" "$stack_file"
+}
+
+install_run_stages() (
+  set -euo pipefail
+  local state=$1 work=$2 scratch=$3 phase stack support account region dns
+  local stack_file="$scratch/stack.json" protection="$scratch/support/stack-policy.json"
+  account=$(jq -er '.account' <"$state")
+  region=$(jq -er '.region' <"$state")
+  mkdir -- "$scratch/support"
+  support="$work/release/shiftbox-aws-support.tar.gz"
+  tar -xzf - -C "$scratch/support" <"$support"
+  install_establish_stack "$state" "$work" "$scratch" foundation
+  stack=$(jq -er '.stack' <"$state")
   phase=$(install_record_stage "$state" "$stack_file")
   install_protect_stack "$account" "$region" "$stack" "$stack_file" "$protection"
   if [ "$phase" = foundation ]; then
@@ -570,23 +617,12 @@ install_run_stages() (
   fi
   if [ "$phase" = database ]; then
     dns=$(jq -er '.parameters.DnsSuffix' <"$state")
-    mode=$(jq -er '.parameters.AccessMode' <"$state")
-    if [ "$mode" = tailscale ]; then
-      local router route
-      router=$(install_output "$stack_file" TailscaleRouterInstanceId)
-      route=$(install_output "$stack_file" TailscaleAdvertisedRoute)
-      printf 'Open a router session with aws --region %s ssm start-session --target %s.\n' "$region" "$router"
-      printf 'On the router run sudo tailscale up --accept-dns=false --advertise-routes=%s.\n' "$route"
-      printf 'Approve that service route in your tailnet. Use the router tailnet IP as a restricted nameserver for %s.\n' "$dns"
-      printf 'Allow TCP/UDP 53 to the router and TCP 8443 to the service subnet for intended clients.\n'
-      install_certificate "$work/browser-tls" 'ShiftBox Browser CA' "shiftbox.$dns" \
-        "DNS:shiftbox.$dns,DNS:*.ide.$dns,DNS:*.preview.$dns,DNS:*.repair.$dns"
-      openssl x509 -noout -sha256 -fingerprint -in "$work/browser-tls/ca.pem"
-      printf 'Trust %s once, then supply %s and %s through the protected browser setup.\n' \
-        "$work/browser-tls/ca.pem" "$work/browser-tls/leaf.pem" "$work/browser-tls/leaf.key"
-    else
-      printf 'Configure approved private routing, DNS for %s and trusted browser leaf/key.\n' "$dns"
-    fi
+    printf 'Configure approved private routing and DNS for %s. Use your existing trusted browser certificate or this local fixture.\n' "$dns"
+    install_certificate "$work/browser-tls" 'ShiftBox Browser CA' "shiftbox.$dns" \
+      "DNS:shiftbox.$dns,DNS:*.ide.$dns,DNS:*.preview.$dns,DNS:*.repair.$dns"
+    openssl x509 -noout -sha256 -fingerprint -in "$work/browser-tls/ca.pem"
+    printf 'For this local issuer, trust %s once and supply %s and %s through the protected setup.\n' \
+      "$work/browser-tls/ca.pem" "$work/browser-tls/leaf.pem" "$work/browser-tls/leaf.key"
     printf 'The authorized bootstrap identity needs this scoped setup policy: %s\n' \
       "$(install_output "$stack_file" SetupOperatorPolicyArn)"
     install_current_account "$account" "$region"

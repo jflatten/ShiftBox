@@ -8,6 +8,7 @@ import { useSession } from '../../lib/use-session';
 import { Secrets } from '../secrets/secrets';
 import { SignInChoices } from '../session/sign-in';
 import { BrowserCertificate } from './browser-certificate';
+import { GitHubAppSettings } from './github-app';
 import { SessionTimeoutEditor } from './session-timeout';
 
 export function AdministrationSettings() {
@@ -25,7 +26,7 @@ export function AdministrationSettings() {
     window.addEventListener('popstate', fromURL);
     return () => window.removeEventListener('popstate', fromURL);
   }, []);
-  const sections = [...(canManage ? ['session', 'certificates'] : []), ...(organization ? ['secrets'] : [])];
+  const sections = [...(canManage ? ['session', 'certificates', 'github-app'] : []), ...(organization ? ['secrets'] : [])];
   const active = section && sections.includes(section) ? section : sections[0];
   const selectSection = (value: string | null) => {
     if (!value) return;
@@ -46,6 +47,7 @@ export function AdministrationSettings() {
         {canManage ? <>
           <Tabs.Tab value="session">Sessions</Tabs.Tab>
           <Tabs.Tab value="certificates">Certificates</Tabs.Tab>
+          <Tabs.Tab value="github-app">GitHub App</Tabs.Tab>
         </> : null}
         {organization ? <Tabs.Tab value="secrets">Secrets</Tabs.Tab> : null}
       </Tabs.List>
@@ -58,6 +60,12 @@ export function AdministrationSettings() {
         <Tabs.Panel value="certificates" pt="lg">
           <BrowserCertificate key={current.user.id} userId={current.user.id} active={active === 'certificates'}
             csrfToken={current.csrfToken} refresh={status.refetch} />
+        </Tabs.Panel>
+        <Tabs.Panel value="github-app" pt="lg">
+          <Paper component="section" aria-labelledby="github-app-settings-heading" withBorder radius="md" p="lg">
+            <GitHubAppSettings key={current.user.id} userId={current.user.id} active={active === 'github-app'}
+              csrfToken={current.csrfToken} />
+          </Paper>
         </Tabs.Panel>
       </> : null}
       {organization ? <Tabs.Panel value="secrets" pt="lg">

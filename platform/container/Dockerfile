@@ -1,4 +1,8 @@
 # syntax=docker/dockerfile:1
+# A named build context supplies the native archive. The empty fallback makes
+# a missing context fail at COPY instead of resolving an external image.
+FROM scratch AS macos-helper
+
 # The exported browser assets are platform independent.
 FROM --platform=$BUILDPLATFORM node:26.13.0-trixie-slim AS browser
 WORKDIR /src/ui
@@ -21,6 +25,7 @@ COPY LICENSE ./
 COPY scripts/stage-controller-licenses.sh ./scripts/
 COPY ui/export.go ./ui/
 COPY --from=browser /src/ui/out/ ./ui/out/
+COPY --from=macos-helper /ShiftBox-Local-Helper.dmg ./ui/out/_shiftbox/ShiftBox-Local-Helper.dmg
 # Go test links this package under its import path while go build links main.
 RUN set -eu; \
     if [ -n "$RELEASE_CANDIDATE" ]; then \
@@ -34,9 +39,9 @@ RUN set -eu; \
     fi; \
     controller_release=${RELEASE_CANDIDATE:-development}; \
     test_ldflags="-X github.com/jflatten/ShiftBox/cmd/shiftbox.controllerRelease=$controller_release"; \
-    SHIFTBOX_EXPECT_CONTROLLER_RELEASE="$controller_release" CGO_ENABLED=0 \
+    SHIFTBOX_EXPECT_CONTROLLER_RELEASE="$controller_release" SHIFTBOX_REQUIRE_MACOS_HELPER=1 CGO_ENABLED=0 \
         go test -tags shiftbox_ui -ldflags "$test_ldflags" ./cmd/shiftbox \
-        -run '^Test(EmbeddedBrowserAssets|ControllerReleaseMatchesBuild)$' -count=1; \
+        -run '^Test(EmbeddedBrowserAssets|EmbeddedMacOSHelper|ControllerReleaseMatchesBuild)$' -count=1; \
     CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
         go build -trimpath -tags shiftbox_ui -ldflags "-X main.controllerRelease=$controller_release" -o /release/shiftbox ./cmd/shiftbox; \
     sh scripts/stage-controller-licenses.sh /release/shiftbox /release/licenses

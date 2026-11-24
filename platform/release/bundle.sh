@@ -130,8 +130,8 @@ def render_template():
         "CONTROLLER_IMAGE": f"{release['controller']['repository']}@{release['controller']['digest']}",
         "POSTGRES_IMAGE": release["postgresImage"],
         "MOUNT_DATA_SCRIPT": read_regular(terraform / "host/mount-data.sh").decode(),
+        "MOUNT_CACHE_SCRIPT": read_regular(terraform / "host/mount-registry-cache.sh").decode(),
         "POSTGRES_START_SCRIPT": read_regular(terraform / "postgres/start.sh").decode(),
-        "TAILSCALE_USER_DATA": read_regular(terraform / "tailscale/user-data.sh.tftpl").decode(),
     }
     source = read_regular(cloudformation / "template.yaml").decode()
     boundary_renderer = runpy.run_path(str(cloudformation / "render_boundaries.py"))["render_task_boundaries"]

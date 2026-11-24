@@ -4,11 +4,18 @@ set -eu
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 image=${1:-shiftbox-controller:smoke}
 dockerfile="$root/platform/container/Dockerfile"
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+helper=${2:-"$scratch/helper"}
+if [ "$#" -lt 2 ]; then
+    sh "$root/platform/helper/macos/package.sh" --portable "$helper"
+fi
 
 # Exercise the release image from a clean context and check that the runtime can
 # invoke its managed identity helper and PostgreSQL backup tools as a non-root user.
 test -f "$dockerfile"
-docker build --platform linux/amd64 --file "$dockerfile" --tag "$image" "$root"
+docker buildx build --load --platform linux/amd64 --file "$dockerfile" \
+    --build-context "macos-helper=$helper" --tag "$image" "$root"
 docker run --rm --platform linux/amd64 --entrypoint /bin/sh "$image" -ec '
     test "$(uname -m)" = x86_64
     test "$(id -u):$(id -g)" = 10001:10001

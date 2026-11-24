@@ -809,6 +809,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/settings/github-app": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read GitHub App registration and installation progress. */
+        get: operations["getGitHubAppSetup"];
+        put?: never;
+        /** @description Prepare the GitHub App manifest and bind its return state to the administrator session. */
+        post: operations["beginGitHubAppSetup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/settings/github-app/return": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Forward the GitHub browser return to the settings page without exchanging credentials. */
+        get: operations["returnGitHubAppRegistration"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/settings/github-app/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Exchange the registration code from the authenticated initiating admin session. */
+        post: operations["completeGitHubAppRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/settings/github-app/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Verify repository installation with GitHub and enable independent user authorization. */
+        post: operations["verifyGitHubAppInstallation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/image-cache": {
         parameters: {
             query?: never;
@@ -994,6 +1063,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        GitHubAppSetupStatus: {
+            /** @enum {string} */
+            state: "not_configured" | "registering" | "exchanging" | "installation_pending" | "ready" | "file_managed" | "recovery_required";
+            appName?: string;
+            owner?: string;
+            /** Format: uri */
+            installUrl?: string;
+            /** Format: uri */
+            manageUrl?: string;
+            /** @enum {string} */
+            repositorySelection?: "selected" | "all";
+        };
         SessionTimeout: {
             /** @description A duration of up to 400 days in the selected unit. */
             value: number;
@@ -1030,6 +1111,7 @@ export interface components {
         SetupStatus: {
             /** @enum {string} */
             state: "bootstrap" | "configuring" | "active" | "recovery" | "blocked";
+            /** @description False for setup at the private AWS management origin. */
             localOnly: boolean;
             completedSteps: string[];
             availableSteps: string[];
@@ -1731,7 +1813,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Current locally reachable setup gate */
+            /** @description Current setup gate on the protected bootstrap origin */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1756,11 +1838,17 @@ export interface operations {
                 "application/json": {
                     /** Format: email */
                     email: string;
+                    /** @description Required for private AWS first login. */
+                    claimCode?: string;
+                    /** @description The administrator password chosen during private AWS setup. */
+                    initialPassword?: string;
+                    /** @description Must match the chosen administrator password. */
+                    confirmPassword?: string;
                 };
             };
         };
         responses: {
-            /** @description Restricted administrator created; temporary password is shown once */
+            /** @description Restricted administrator created. Loopback setup returns a one-time temporary password. */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -1769,7 +1857,7 @@ export interface operations {
                     "application/json": {
                         /** Format: uuid */
                         administratorId: string;
-                        temporaryPassword: string;
+                        temporaryPassword?: string;
                         operation: components["schemas"]["Operation"];
                     };
                 };
@@ -1810,8 +1898,9 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    certificateChainPem: string;
-                    privateKeyPem: string;
+                    /** @description Supply with the key for loopback setup. Omit for private AWS first login. */
+                    certificateChainPem?: string;
+                    privateKeyPem?: string;
                     /** Format: uri */
                     managementOrigin: string;
                     ideHostPattern: string;
@@ -1968,13 +2057,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Signed internal macOS app archive for the current installation */
+            /** @description macOS disk image containing the signed helper app */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/zip": string;
+                    "application/x-apple-diskimage": string;
                 };
             };
             default: components["responses"]["Error"];
@@ -3375,6 +3464,138 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getGitHubAppSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Setup progress and safe application metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppSetupStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    beginGitHubAppSetup: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Leave empty for a personal GitHub account. */
+                    organization?: string;
+                    /** @description Explicitly start over after an interrupted registration. */
+                    restart?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Form action and JSON manifest to submit to GitHub */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uri */
+                        action: string;
+                        manifest: string;
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    returnGitHubAppRegistration: {
+        parameters: {
+            query: {
+                code: string;
+                state: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Same-origin settings navigation */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    completeGitHubAppRegistration: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    code: string;
+                    state: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Registered application pending repository installation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppSetupStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    verifyGitHubAppInstallation: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current verified installation progress */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppSetupStatus"];
+                };
             };
             default: components["responses"]["Error"];
         };

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
@@ -41,6 +42,23 @@ type githubService struct {
 type GitHub struct {
 	service githubService
 	http    githubHTTP
+	active  *atomic.Pointer[GitHub]
+}
+
+// NewGitHubRuntime gives the already-wired HTTP and guest handlers access to an
+// installation that may be configured after controller startup.
+func NewGitHubRuntime(initial *GitHub) (*GitHub, func(*GitHub)) {
+	current := new(atomic.Pointer[GitHub])
+	current.Store(initial)
+	return &GitHub{active: current}, current.Store
+}
+
+// Active returns an immutable configured client, including for file-based setups.
+func (g *GitHub) Active() *GitHub {
+	if g != nil && g.active != nil {
+		return g.active.Load()
+	}
+	return g
 }
 
 // NewGitHub binds credential storage to the installation key and GitHub App.
@@ -60,6 +78,10 @@ func NewGitHub(db *sql.DB, key *cryptostore.Store, clientID, clientSecret string
 
 // AccessToken returns the current owner token after checking repository coverage.
 func (g *GitHub) AccessToken(ctx context.Context, owner, repository string) (string, error) {
+	g = g.Active()
+	if g == nil {
+		return "", ErrGitHubReconnect
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*githubRefreshTimeout)
 	defer cancel()
 	return g.service.accessToken(ctx, owner, repository)

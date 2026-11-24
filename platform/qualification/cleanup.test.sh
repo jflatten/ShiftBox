@@ -16,7 +16,7 @@ account=111122223333
 arn="arn:aws:cloudformation:$region:$account:stack/$stack/1234-abcd"
 volume="arn:aws:ec2:$region:$account:volume/vol-1234567890abcdef0"
 secret="arn:aws:secretsmanager:$region:$account:secret:$stack-PostgresAdminSecret-aabbccddeeff"
-if [[ $region == us-east-2 && ${CASE:-none} =~ ^(owned|foreign|stale-dns|restore|foreign-restore)$ &&
+if [[ $region == us-east-2 && ${CASE:-none} =~ ^(owned|foreign|stale-dns|restore|foreign-restore|existing-network)$ &&
   ! -e "$CLEANUP_FIXTURE/stack-deleted" ]]; then
   present=true
 else
@@ -41,18 +41,28 @@ case "$service:$action" in
     ;;
   cloudformation:describe-stacks)
     if [[ ${CASE:-none} == foreign ]]; then tags='[]'; fi
-    jq -cn --arg name "$stack" --arg id "$arn" --argjson tags "$tags" '{Stacks:[{StackName:$name,StackId:$id,StackStatus:"CREATE_COMPLETE",EnableTerminationProtection:true,Tags:$tags}]}'
+    jq -cn --arg name "$stack" --arg id "$arn" --argjson tags "$tags" --arg scenario "${CASE:-none}" '
+      {Stacks:[{StackName:$name,StackId:$id,StackStatus:"CREATE_COMPLETE",EnableTerminationProtection:true,Tags:$tags} +
+        (if $scenario == "existing-network" then {Parameters:[{ParameterKey:"VpcId",ParameterValue:"vpc-abcd"}],
+          Outputs:[{OutputKey:"VpcId",OutputValue:"vpc-abcd"}]} else {} end)]}'
     ;;
   cloudformation:list-stack-resources)
-    jq -cn --arg dnsState "$([[ ${CASE:-none} == stale-dns ]] && echo DELETE_SKIPPED || echo DELETE_COMPLETE)" '
+    jq -cn --arg dnsState "$([[ ${CASE:-none} == stale-dns ]] && echo DELETE_SKIPPED || echo DELETE_COMPLETE)" \
+      --arg scenario "${CASE:-none}" '
       {StackResourceSummaries:[
         {ResourceType:"AWS::EC2::VPC",LogicalResourceId:"Vpc",PhysicalResourceId:"vpc-abcd",ResourceStatus:"DELETE_COMPLETE"},
         {ResourceType:"AWS::EC2::NatGateway",PhysicalResourceId:"nat-abcd",ResourceStatus:"DELETE_COMPLETE"},
         {ResourceType:"AWS::Route53::HostedZone",PhysicalResourceId:"Z123ABC",ResourceStatus:$dnsState},
         {ResourceType:"AWS::EC2::Volume",LogicalResourceId:"InstallationVolume",PhysicalResourceId:"vol-1234",ResourceStatus:"DELETE_SKIPPED"}
-      ]}' ;;
+      ] | map(select($scenario != "existing-network" or .LogicalResourceId != "Vpc"))}' ;;
   resourcegroupstaggingapi:get-resources)
-    if [[ $region == us-east-2 && ${CASE:-none} == owned && $* != *"-p"* ]]; then
+    if [[ $region == us-east-2 && ${CASE:-none} == permanent-fixtures && $* != *"Key=cluster_name"* ]]; then
+      jq -cn --arg region "$region" --arg account "$account" '
+        [{ResourceARN:"arn:aws:ec2:\($region):\($account):instance/i-abcd"},
+         {ResourceARN:"arn:aws:secretsmanager:\($region):\($account):secret:github-app-permanent-ABC123"}] |
+        {ResourceTagMappingList:map(. + {Tags:[{Key:"project",Value:"shiftbox"},
+          {Key:"cluster_name",Value:"shiftbox-private-access"}]})}'
+    elif [[ $region == us-east-2 && ${CASE:-none} == owned && $* != *"-p"* ]]; then
       jq -cn --arg volume "$volume" --arg secret "$secret" --argjson tags "$tags" \
         --argjson volumeGone "$([[ -e "$CLEANUP_FIXTURE/volume-deleted" ]] && echo true || echo false)" \
         --argjson secretGone "$([[ -e "$CLEANUP_FIXTURE/secret-deleted" ]] && echo true || echo false)" '
@@ -69,7 +79,7 @@ case "$service:$action" in
     if "$probe" && [[ ! -e "$CLEANUP_FIXTURE/instance-terminated" ]]; then
       jq -cn --arg account "$account" --argjson tags "$tags" '
         {Reservations:[{OwnerId:$account,Instances:[{InstanceId:"i-abcd",VpcId:"vpc-abcd",State:{Name:"running"},Tags:$tags}]}]}'
-    elif "$present" && [[ ${CASE:-none} =~ ^(restore|foreign-restore)$ && $* == *"$stack"* && $* != *"$stack-p"* ]]; then
+    elif "$present" && [[ ${CASE:-none} =~ ^(restore|foreign-restore|existing-network)$ && $* == *"$stack"* && $* != *"$stack-p"* ]]; then
       jq -cn --arg account "$account" --argjson tags "$tags" \
         --arg vpc "$([[ ${CASE:-none} == foreign-restore ]] && echo vpc-dcba || echo vpc-abcd)" \
         --argjson restoreGone "$([[ -e "$CLEANUP_FIXTURE/instance-terminated" ]] && echo true || echo false)" '
@@ -81,6 +91,7 @@ case "$service:$action" in
       printf '{"Reservations":[]}\n'
     fi ;;
   ec2:describe-vpcs)
+    if [[ ${CASE:-none} == existing-network ]]; then tags='[]'; fi
     jq -cn --arg account "$account" --argjson tags "$tags" \
       --argjson isDefault "$([[ ${CASE:-none} == default-vpc ]] && echo true || echo false)" '
       {Vpcs:[{VpcId:"vpc-abcd",OwnerId:$account,IsDefault:$isDefault,Tags:$tags}]}'
@@ -169,6 +180,11 @@ if CASE=owned bash "$here/cleanup.sh" empty >"$tmp/occupied" 2>&1; then exit 1; 
 grep -q 'qualification resources remain' "$tmp/occupied"
 test ! -e "$tmp/writes"
 
+# The operator's permanent, non-run-tagged router and App secret are ignored.
+CASE=permanent-fixtures bash "$here/cleanup.sh" empty
+CASE=permanent-fixtures bash "$here/cleanup.sh" sweep
+test ! -e "$tmp/writes"
+
 # A cancelled, aged-out run is reaped even when the original runner is gone.
 CASE=owned bash "$here/cleanup.sh" sweep
 grep -q '^cloudformation:update-termination-protection us-east-2 ' "$tmp/writes"
@@ -213,5 +229,13 @@ if grep -q '^ec2:terminate-instances us-east-2' "$tmp/writes"; then exit 1; fi
 CASE=restore RUN_STATE=in_progress bash "$here/cleanup.sh" run
 grep -q '^ec2:terminate-instances us-east-2 --instance-ids i-abcd ' "$tmp/writes"
 if grep -q '^ec2:terminate-instances us-east-2 .* i-dddd ' "$tmp/writes"; then exit 1; fi
+
+# A run-owned restore target can be drained from the selected pre-existing VPC
+# without teaching cleanup to delete the VPC or any of its shared subnets.
+rm -- "$tmp/stack-deleted" "$tmp/instance-terminated"
+: >"$tmp/writes"
+CASE=existing-network RUN_STATE=in_progress bash "$here/cleanup.sh" run
+grep -q '^ec2:terminate-instances us-east-2 --instance-ids i-abcd ' "$tmp/writes"
+if grep -Eq '^ec2:(delete-vpc|delete-subnet)' "$tmp/writes"; then exit 1; fi
 
 printf 'Qualification cleanup fixtures passed.\n'

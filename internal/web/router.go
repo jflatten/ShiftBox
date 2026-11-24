@@ -34,6 +34,9 @@ func newManagementRouter(routes []ManagementRoute, session *SessionHandler, hand
 		if route.OperationID == "getSession" || route.OperationID == "logout" {
 			continue
 		}
+		if route.OperationID == "returnGitHubAppRegistration" {
+			continue
+		}
 		if route.OperationID == "completeGitAuthorization" {
 			if githubCallback == nil {
 				return nil, errors.New("GitHub authorization callback is incompletely wired")
@@ -63,6 +66,10 @@ func newManagementRouter(routes []ManagementRoute, session *SessionHandler, hand
 		}
 		if route.OperationID == "completeGitAuthorization" {
 			mux.Handle(pattern, githubCallback)
+			continue
+		}
+		if route.OperationID == "returnGitHubAppRegistration" {
+			mux.Handle(pattern, GitHubAppReturn(session.Origin))
 			continue
 		}
 		handler := handlers[route.OperationID]

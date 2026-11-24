@@ -58,3 +58,23 @@ export function workspaceState(value: string) {
 export function workspaceName(workspace: Workspace) {
   return workspace.name && workspace.name !== workspace.id ? workspace.name : 'Unnamed workspace';
 }
+
+export function workspaceURL(id: string) {
+  return `/workspaces/?id=${encodeURIComponent(id)}`;
+}
+
+const launchFocusKey = 'shiftbox.workspace.launch-focus';
+
+export function markWorkspaceLaunch(id: string) {
+  try { window.sessionStorage.setItem(launchFocusKey, id); } catch { /* Navigation still works. */ }
+}
+
+export function consumeWorkspaceLaunchFocus(id: string) {
+  try {
+    if (window.sessionStorage.getItem(launchFocusKey) !== id) return false;
+    window.sessionStorage.removeItem(launchFocusKey);
+    return true;
+  } catch {
+    return false;
+  }
+}

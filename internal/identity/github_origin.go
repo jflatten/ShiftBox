@@ -77,6 +77,10 @@ func CanonicalGitHubRepository(repository string) (string, bool) {
 // AuthorizeProjectSource verifies live owner coverage for the repository and
 // returns the version of the authorization that permitted access.
 func (g *GitHub) AuthorizeProjectSource(ctx context.Context, owner, repository string) (int64, error) {
+	g = g.Active()
+	if g == nil {
+		return 0, ErrGitHubReconnect
+	}
 	canonical, ok := CanonicalGitHubRepository(repository)
 	if !ok {
 		return 0, ErrGitHubRepositoryDenied
@@ -93,6 +97,10 @@ func (g *GitHub) AuthorizeProjectSource(ctx context.Context, owner, repository s
 // ReadProjectConfig hashes the exact config blob at the current configured
 // ref using the workspace owner's live GitHub authorization.
 func (g *GitHub) ReadProjectConfig(ctx context.Context, owner, repository, ref, configPath string) (GitHubOriginConfig, error) {
+	g = g.Active()
+	if g == nil {
+		return GitHubOriginConfig{}, ErrGitHubReconnect
+	}
 	canonical, ok := CanonicalGitHubRepository(repository)
 	if !ok {
 		return GitHubOriginConfig{}, ErrGitHubRepositoryDenied

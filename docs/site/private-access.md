@@ -6,17 +6,11 @@ permalink: /private-access/
 
 # Configure private access
 
-Management, IDE, preview and repair origins share the private service network. Use the Tailscale subnet router or your organization's existing private routing and DNS.
+Management, IDE, preview and repair origins share the selected private service subnet. ShiftBox creates its installation security groups and private DNS records in the selected VPC. The operator provides routing, outbound connectivity and DNS forwarding.
 
-## Tailscale
+Configure forward and return routes to the selected service subnet through your existing Tailscale subnet router, VPN, Direct Connect or equivalent. Verify the source IPv4 CIDR that the service sees and supply it as `OperatorCidr` to allow TCP 8443. Leave the parameter blank while browser ingress should be closed. For Tailscale, approve the service subnet route on your existing router and scope the grant to intended clients.
 
-From the authorized AWS session, use the SSM client to connect to the `TailscaleRouterInstanceId` stack output. On that instance run `sudo tailscale up --accept-dns=false --advertise-routes=<service-cidr>` using the `TailscaleAdvertisedRoute` output. Authorize the device, approve the advertised route, and grant the intended clients access. Allow TCP and UDP 53 to the router and TCP 8443 to the service subnet. Keep the router's outbound HTTPS and discovery connectivity available to the tailnet.
-
-Use the router's Tailscale IP as a restricted DNS nameserver for the chosen suffix. Enable acceptance of the service route and split DNS on participating clients. A suffix such as `sb-<random>.internal` works without a registered domain.
-
-## Existing private routes
-
-For a VPN or Direct Connect path, configure forward and return routes to the VPC and specify the approved client source CIDR for TCP 8443. Forward queries for the deployment suffix to a reachable VPC-side resolver, such as a Route 53 Resolver inbound endpoint configured by your operator. Confirm that the management origin and IDE, preview and repair names resolve to private addresses.
+Forward the installation suffix to a reachable VPC-side resolver through your private connection. With Tailscale, the operator can configure split DNS using a restricted nameserver reachable through that connection. Confirm that the management origin and IDE, preview and repair names resolve to private addresses.
 
 The temporary setup page uses local SSM forwarding on TCP 8444. PostgreSQL uses TCP 5432 inside the service network. Guest registration and tunnels use TCP 19443–19447 from the workspace security group. Preserve each path's scoped source rule.
 

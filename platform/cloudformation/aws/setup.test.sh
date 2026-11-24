@@ -76,7 +76,7 @@ case "$1 $2" in
             --arg account "$FIXTURE_ACCOUNT" --arg region "$FIXTURE_REGION" --arg tag "$tag" --arg status "$status" '
             {tasks:[{taskArn:$task,clusterArn:("arn:aws:ecs:"+$region+":"+$account+":cluster/shiftbox-fixture"),
                      taskDefinitionArn:$definition, desiredStatus:$status, lastStatus:$status,
-                     tags:[{key:"ShiftBoxBootstrap",value:$tag}],
+                     tags:[{key:"shiftbox-bootstrap",value:$tag}],
                      containers:[{name:"setup",runtimeId:"fixture-runtime",
                                   managedAgents:[{name:"ExecuteCommandAgent",lastStatus:"RUNNING"}]}]}],failures:[]}'
         ;;

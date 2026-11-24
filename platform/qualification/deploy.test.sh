@@ -14,6 +14,7 @@ printf '# Fixture\n' >"$fixture/support/docs/install.md"
 printf '#!/bin/bash\n' >"$fixture/support/setup.sh"
 cp "$here/../cloudformation/aws/stack-policy.json" "$fixture/support/stack-policy.json"
 regions=(us-east-1 us-east-2 us-west-1 us-west-2)
+export SHIFTBOX_QUALIFICATION_SUBNETS='{"us-east-1":{"service":"subnet-00000000000000001","workspace":"subnet-00000000000000002"},"us-east-2":{"service":"subnet-00000000000000001","workspace":"subnet-00000000000000002"},"us-west-1":{"service":"subnet-00000000000000001","workspace":"subnet-00000000000000002"},"us-west-2":{"service":"subnet-00000000000000001","workspace":"subnet-00000000000000002"}}'
 for region in "${regions[@]}"; do
   printf '%s\n' "$region" >"$fixture/support/catalog/$region.json"
 done
@@ -65,8 +66,16 @@ root=$(jq -r .rootDeviceName <<<"$workspace")
 snapshot=$(jq -r .rootSnapshotId <<<"$workspace")
 case "$service:$operation" in
   sts:get-caller-identity) printf '%s\n' "${MOCK_ACCOUNT:-$account}" ;;
+  ec2:describe-subnets)
+    jq -n --arg region "$region" --arg account "$account" \
+      --arg owner "${MOCK_SUBNET_OWNER:-$account}" '
+      {Subnets:[{SubnetId:"subnet-00000000000000001",VpcId:"vpc-00000000000000001",OwnerId:$account,
+        AvailabilityZone:($region+"a"),State:"available",MapPublicIpOnLaunch:false},
+        {SubnetId:"subnet-00000000000000002",VpcId:"vpc-00000000000000001",OwnerId:$owner,
+        AvailabilityZone:($region+"b"),State:"available",MapPublicIpOnLaunch:false}]}' ;;
   ec2:describe-instance-type-offerings)
-    printf '{"InstanceTypeOfferings":[{"Location":"%sa","InstanceType":"t3.medium"},{"Location":"%sa","InstanceType":"t4g.micro"}]}\n' "$region" "$region"
+    [[ $(flags --filters) == 'Name=instance-type,Values=t3.medium' ]]
+    printf '{"InstanceTypeOfferings":[{"Location":"%sa","InstanceType":"t3.medium"}]}\n' "$region"
     ;;
   ec2:describe-images)
     if [[ $(flags --owners) = amazon ]]; then
@@ -109,6 +118,11 @@ case "$service:$operation" in
     cp "${parameters#file://}" "$file"
     jq -e --arg phase "${name#"$run-"}" '
       any(.[]; .ParameterKey == "RoleBoundaryMode" and .ParameterValue == "external") and
+      any(.[]; .ParameterKey == "VpcId" and .ParameterValue == "vpc-00000000000000001") and
+      any(.[]; .ParameterKey == "ServiceSubnet" and .ParameterValue == "subnet-00000000000000001") and
+      any(.[]; .ParameterKey == "WorkspaceSubnet" and .ParameterValue == "subnet-00000000000000002") and
+      all(.[]; .ParameterKey != "AccessMode" and .ParameterKey != "CreateNatGateway") and
+      all(.[]; .ParameterKey != "GitHubAppSecretArn") and
       any(.[]; .ParameterKey == "Phase" and .ParameterValue == $phase)' "$file" >/dev/null
     jq -n --arg stack "$stack" --arg change "$change" '{StackId:$stack,Id:$change}'
     ;;
@@ -141,12 +155,17 @@ case "$service:$operation" in
     ;;
   cloudformation:describe-stacks)
     if [[ ${MOCK_STAFFED_STACK:-false} == true ]]; then
-      jq -n --arg stack "$stack" --arg run "$run" --arg role "$SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN" '
+      jq -n --arg stack "$stack" --arg run "$run" --arg role "$SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN" \
+        --arg service "${MOCK_SERVICE_SUBNET:-subnet-00000000000000001}" '
         {Stacks:[{StackId:$stack,StackName:$run,StackStatus:"UPDATE_COMPLETE",EnableTerminationProtection:true,RoleARN:$role,
           Capabilities:["CAPABILITY_NAMED_IAM"],
           Tags:[{Key:"project",Value:"shiftbox"},{Key:"cluster_name",Value:$run},{Key:"shiftbox_qualification_run",Value:$run}],
-          Parameters:[{ParameterKey:"RoleBoundaryMode",ParameterValue:"managed"},{ParameterKey:"DnsSuffix",ParameterValue:($run+".internal")}],
-          Outputs:({Phase:"active",VpcId:"vpc-00000000000000001",PrivateZoneId:"Z0PRIVATE",
+          Parameters:[{ParameterKey:"RoleBoundaryMode",ParameterValue:"managed"},{ParameterKey:"DnsSuffix",ParameterValue:($run+".internal")},
+            {ParameterKey:"VpcId",ParameterValue:"vpc-00000000000000001"},{ParameterKey:"ServiceSubnet",ParameterValue:$service},
+            {ParameterKey:"WorkspaceSubnet",ParameterValue:"subnet-00000000000000002"},
+            {ParameterKey:"AvailabilityZone",ParameterValue:"us-east-2a"}],
+          Outputs:({Phase:"active",VpcId:"vpc-00000000000000001",ServiceSubnetId:$service,
+            WorkspaceSubnetId:"subnet-00000000000000002",PrivateZoneId:"Z0PRIVATE",
             DiscoveryNamespaceId:"ns-abcdefghijklmnop",DiscoveryHostedZoneId:"Z0DISCOVERY",
             PostgresDiscoveryServiceId:"srv-abcdefghijklmnop",ControllerDiscoveryServiceId:"srv-0123456789abcdef"}
             | to_entries | map({OutputKey:.key,OutputValue:.value}))}]}'
@@ -159,23 +178,26 @@ case "$service:$operation" in
       {Stacks:[{StackId:$stack,StackName:$run,StackStatus:"CREATE_COMPLETE",EnableTerminationProtection:true,RoleARN:$role,
         Tags:[{Key:"project",Value:"shiftbox"},{Key:"cluster_name",Value:$run},{Key:"shiftbox_qualification_run",Value:$run}],
         Outputs:[{OutputKey:"Phase",OutputValue:"foundation"},{OutputKey:"InstallationVolumeId",OutputValue:"vol-00000000000000001"},
-          {OutputKey:"VpcId",OutputValue:"vpc-00000000000000001"}]}]}'
+          {OutputKey:"VpcId",OutputValue:"vpc-00000000000000001"},
+          {OutputKey:"ServiceSubnetId",OutputValue:"subnet-00000000000000001"},
+          {OutputKey:"WorkspaceSubnetId",OutputValue:"subnet-00000000000000002"}]}]}'
     ;;
   cloudformation:list-stack-resources)
     if [[ ${MOCK_STAFFED_STACK:-false} == true ]]; then
-      jq -n --arg service "${MOCK_DISCOVERY_SERVICE:-srv-0123456789abcdef}" '
+      jq -n --arg service "${MOCK_DISCOVERY_SERVICE:-srv-0123456789abcdef}" \
+        --arg router "${MOCK_ROUTER_RESOURCE:-false}" '
         def r($type; $id): {ResourceType:$type,PhysicalResourceId:$id,ResourceStatus:"CREATE_COMPLETE"};
-        {StackResourceSummaries:({
-          Vpc:r("AWS::EC2::VPC";"vpc-00000000000000001"),
+        {StackResourceSummaries:(({
           PrivateZone:r("AWS::Route53::HostedZone";"Z0PRIVATE"),
           PrivateRecords:r("AWS::Route53::RecordSetGroup";"Z0PRIVATE"),
           DiscoveryNamespace:r("AWS::ServiceDiscovery::PrivateDnsNamespace";"ns-abcdefghijklmnop"),
           PostgresDiscovery:r("AWS::ServiceDiscovery::Service";"srv-abcdefghijklmnop"),
           ControllerDiscovery:r("AWS::ServiceDiscovery::Service";$service)
-        } | to_entries | map(.value + {LogicalResourceId:.key}))}'
+        } | to_entries | map(.value + {LogicalResourceId:.key})) +
+          (if $router == "true" then [r("AWS::EC2::Instance";"i-00000000000000001") + {LogicalResourceId:"TailscaleRouter"}] else [] end))}'
       exit
     fi
-    printf '{"StackResourceSummaries":[{"LogicalResourceId":"InstallationVolume","PhysicalResourceId":"vol-00000000000000001"},{"LogicalResourceId":"Vpc","PhysicalResourceId":"vpc-00000000000000001","ResourceType":"AWS::EC2::VPC"}]}\n'
+    printf '{"StackResourceSummaries":[{"LogicalResourceId":"InstallationVolume","PhysicalResourceId":"vol-00000000000000001"}]}\n'
     ;;
   cloudformation:set-stack-policy)
     policy=$(flags --stack-policy-body)
@@ -237,6 +259,12 @@ if grep -q 'execute-change-set' "$fixture/aws.log"; then exit 1; fi
 reject env MOCK_BOOT_FAILED=true bash "$here/deploy.sh" "$fixture/manifest.json" "$fixture/assets" sbq-123-1 "$fixture/evidence"
 grep -q 'apply .* destroy.tfplan' "$fixture/terraform.log"
 [[ ! -e "$fixture/evidence/automated.json" ]]
+# An unowned subnet prevents all CloudFormation change sets and probe launches.
+: >"$fixture/aws.log"
+reject env MOCK_SUBNET_OWNER=444455556666 bash "$here/deploy.sh" "$fixture/manifest.json" "$fixture/assets" sbq-123-1 "$fixture/evidence"
+grep -q 'requires existing private subnets' "$fixture/rejected.log"
+if grep -q 'create-change-set' "$fixture/aws.log"; then exit 1; fi
+
 # Successful fixtures run precisely four isolated regional probes, remove review stacks, and execute only the Ohio foundation.
 : >"$fixture/aws.log"
 : >"$fixture/terraform.log"
@@ -283,6 +311,11 @@ check_staffed() {
 }
 : >"$fixture/aws.log"
 MOCK_DISCOVERY_SERVICE=srv-0000000000000000 reject check_staffed
+# Reject a subnet other than the admitted choice and any stack-created router.
+MOCK_SERVICE_SUBNET=subnet-00000000000000003 reject check_staffed
+grep -q 'reviewed role, parameters or ownership' "$fixture/rejected.log"
+MOCK_ROUTER_RESOURCE=true reject check_staffed
+grep -q 'does not expose the verified staged DNS inventory' "$fixture/rejected.log"
 jq -e 'has("staffedDnsInventoryVerified") | not' "$fixture/evidence/automated.json" >/dev/null
 check_staffed
 jq -e '.staffedDnsInventoryVerified and .manualGatesPending and (.dnsBootstrapExecuted | not)' "$fixture/evidence/automated.json" >/dev/null

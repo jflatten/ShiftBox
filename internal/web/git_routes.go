@@ -25,18 +25,19 @@ func GitAuthorizationHandlers(db *sql.DB, origin string, now func() time.Time, g
 					return AuthorizationTarget{Action: "git.manage", Resource: auth.Resource{Type: "user", ID: principal.User.ID}}, nil
 				},
 				Apply: func(ctx context.Context, tx *sql.Tx, _ *http.Request, principal auth.Principal, _ AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
-					if github == nil {
+					active := github.Active()
+					if active == nil {
 						return nil, gitNotConfigured()
 					}
 					var result any
 					var err error
 					switch route.Method {
 					case http.MethodGet:
-						result, err = github.AuthorizationViewInTx(ctx, tx, principal.User.ID)
+						result, err = active.AuthorizationViewInTx(ctx, tx, principal.User.ID)
 					case http.MethodPost:
-						result, err = github.BeginAuthorizationInTx(ctx, tx, principal.User.ID, origin)
+						result, err = active.BeginAuthorizationInTx(ctx, tx, principal.User.ID, origin)
 					case http.MethodDelete:
-						err = github.RevokeAuthorizationInTx(ctx, tx, principal.User.ID)
+						err = active.RevokeAuthorizationInTx(ctx, tx, principal.User.ID)
 					}
 					if err != nil {
 						return nil, gitProblem(err)
@@ -59,12 +60,13 @@ func GitAuthorizationHandlers(db *sql.DB, origin string, now func() time.Time, g
 // GitAuthorizationCallback handles the OAuth redirect using one-use state
 // authority. It is restricted to the configured management HTTPS host.
 func GitAuthorizationCallback(origin string, github *identity.GitHub) http.Handler {
-	if github == nil {
-		return gitAuthorizationCallback(origin, func(context.Context, string, string, string) error {
+	return gitAuthorizationCallback(origin, func(ctx context.Context, state, code, origin string) error {
+		active := github.Active()
+		if active == nil {
 			return gitNotConfigured()
-		})
-	}
-	return gitAuthorizationCallback(origin, github.CompleteAuthorization)
+		}
+		return active.CompleteAuthorization(ctx, state, code, origin)
+	})
 }
 
 func gitNotConfigured() Problem {

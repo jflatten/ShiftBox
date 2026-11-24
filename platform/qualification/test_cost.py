@@ -48,6 +48,24 @@ def test_estimate_reports_the_full_and_automated_scenarios_separately():
     assert Decimal(report["publisher"]["retention_per_month_usd"]) > 0
 
 
+def test_permanent_fixtures_are_outside_the_incremental_run():
+    # The staffed model retains private DNS and bills just the four stack secrets.
+    report = json.loads(run_calculator().stdout)["qualification"]
+    for breakdown in ("breakdown_usd", "ceiling_breakdown_usd"):
+        assert "tailscale_router_ec2" not in report[breakdown]
+        assert "nat_gateway" not in report[breakdown]
+        assert "nat_public_ipv4" not in report[breakdown]
+    assert report["breakdown_usd"]["secrets_storage_and_calls"] == "0.01"
+    assert report["estimate_usd"] == "1.02"
+
+
+def test_estimate_includes_the_default_image_cache_disk():
+    # Both qualification modes create the 20 GiB cache as part of foundation.
+    report = json.loads(run_calculator().stdout)["qualification"]
+    assert report["assumptions"]["oci_image_cache_gib"] == 20
+    assert report["automated_only"]["assumptions"]["oci_image_cache_gib"] == 20
+
+
 def test_insufficient_headroom_fails_closed_with_the_cost_report():
     # A maintainer-supplied balance below the buffered estimate must not
     # authorize a run, even when the expected bill might otherwise fit.

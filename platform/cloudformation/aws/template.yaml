@@ -3,13 +3,16 @@ Description: ShiftBox private AWS deployment with reviewed database and controll
 
 Metadata:
   AWS::CloudFormation::Interface:
+    ParameterLabels:
+      OperatorCidr: {default: Inbound security group rule for UI access}
+      OciImageCacheSizeGiB: {default: OCI image cache size (GiB)}
     ParameterGroups:
       - Label: {default: Installation}
-        Parameters: [DeploymentName, Phase, AvailabilityZone, VpcCidr, DataVolumeSizeGiB, InitializeDataVolume]
-      - Label: {default: Private connectivity}
-        Parameters: [DnsSuffix, AccessMode, OperatorCidr, CreateNatGateway]
-      - Label: {default: Database trust and optional GitHub App}
-        Parameters: [PostgresCaPem, GitHubAppSecretArn]
+        Parameters: [DeploymentName, Phase, DataVolumeSizeGiB, OciImageCacheSizeGiB, InitializeDataVolume]
+      - Label: {default: Existing private network}
+        Parameters: [VpcId, ServiceSubnet, WorkspaceSubnet, AvailabilityZone, DnsSuffix, OperatorCidr]
+      - Label: {default: Database trust}
+        Parameters: [PostgresCaPem]
       - Label: {default: Qualification IAM}
         Parameters: [RoleBoundaryMode]
 
@@ -29,41 +32,47 @@ Parameters:
     Default: managed
     AllowedValues: [managed, external]
     Description: Use managed for a public installation. External is for qualification with pre-approved run-specific boundaries and a separate setup operator. Keep this mode unchanged after installation.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC containing both selected subnets. ShiftBox does not modify the VPC or its routes.
+  ServiceSubnet:
+    Type: AWS::EC2::Subnet::Id
+    Description: Existing private subnet for the ECS host, controller, PostgreSQL and setup.
+  WorkspaceSubnet:
+    Type: AWS::EC2::Subnet::Id
+    Description: Existing private subnet for workspace instances in the same VPC.
   AvailabilityZone:
     Type: AWS::EC2::AvailabilityZone::Name
-    Description: Availability Zone for both private subnets, EC2 and installation storage. Keep it unchanged.
-  VpcCidr:
-    Type: String
-    Default: 10.63.0.0/16
-    AllowedPattern: '([0-9]{1,3}\.){3}[0-9]{1,3}/(1[6-9]|2[0-4])'
-    Description: Nonoverlapping IPv4 CIDR from /16 through /24. A /23 or /24 VPC uses smaller subnets to fit the deployment.
+    Description: Availability Zone of the service subnet for the retained installation volume. Keep it unchanged.
   DnsSuffix:
     Type: String
     MinLength: 4
     MaxLength: 200
     AllowedPattern: '([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
-    Description: Unique private DNS suffix, kept unchanged after setup. For Tailscale use a unique name under .internal.
-  AccessMode:
-    Type: String
-    Default: tailscale
-    AllowedValues: [tailscale, private-link]
-    Description: Tailscale subnet router or an existing operator-managed private route and DNS.
+    Description: Unique private DNS suffix, kept unchanged after setup.
   OperatorCidr:
     Type: String
-    Default: 192.0.2.255/32
-    AllowedPattern: '([0-9]{1,3}\.){3}[0-9]{1,3}/([1-9]|[12][0-9]|3[0-2])'
-    Description: Approved operator IPv4 source CIDR when using a private link. Leave the default for Tailscale.
-  CreateNatGateway:
-    Type: String
-    Default: 'true'
-    AllowedValues: ['true', 'false']
-    Description: Create one outbound NAT gateway. When false, provide existing outbound connectivity before starting services.
+    Default: ''
+    AllowedPattern: '(|([0-9]{1,3}\.){3}[0-9]{1,3}/([1-9]|[12][0-9]|3[0-2]))'
+    Description: >-
+      This inbound rule controls who can open the ShiftBox UI over HTTPS on port 8443.
+      Enter an IPv4 range, or use /32 for one address, such as 172.31.12.34/32.
+      Leave blank to keep browser access closed.
   DataVolumeSizeGiB:
     Type: Number
     Default: 32
     MinValue: 20
     MaxValue: 16384
     Description: Size of the retained encrypted installation and database volume.
+  OciImageCacheSizeGiB:
+    Type: Number
+    Default: 20
+    MinValue: 1
+    MaxValue: 16384
+    Description: >-
+      Size of the shared OCI image cache volume in whole GiB. Start with 20 GiB for up to 5 active users,
+      50 GiB for 6 to 20, or 100 GiB for 21 to 50. Allow more for larger teams or many large, distinct
+      devcontainer images. For a larger disk, review the storage budget under Administration > Infrastructure > Cache.
   InitializeDataVolume:
     Type: String
     Default: 'true'
@@ -74,18 +83,14 @@ Parameters:
     Default: ''
     AllowedPattern: '(|-----BEGIN CERTIFICATE-----(\r?\n|\|)[A-Za-z0-9+/=\r\n|]+-----END CERTIFICATE-----[\r\n|]*)'
     Description: Public PostgreSQL CA certificate. For one-line entry use | between PEM lines. Required for database or active phases.
-  GitHubAppSecretArn:
-    Type: String
-    Default: ''
-    AllowedPattern: '(|arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+)'
-    Description: Optional Secrets Manager ARN containing the operator-owned GitHub App credentials.
 
 Rules:
-  PrivateLinkCidrRequired:
-    RuleCondition: !Equals [!Ref AccessMode, private-link]
+  SubnetsInSelectedVpc:
     Assertions:
-      - Assert: !Not [!Equals [!Ref OperatorCidr, 192.0.2.255/32]]
-        AssertDescription: Enter the source CIDR of the approved private link.
+      - Assert: !EachMemberEquals [[!ValueOf [ServiceSubnet, VpcId], !ValueOf [WorkspaceSubnet, VpcId]], !Ref VpcId]
+        AssertDescription: Both subnets must be in the selected VPC.
+      - Assert: !EachMemberEquals [[!ValueOf [ServiceSubnet, AvailabilityZone]], !Ref AvailabilityZone]
+        AssertDescription: Select the service subnet's Availability Zone for the installation volume.
   DatabaseTrustRequired:
     RuleCondition: !Or [!Equals [!Ref Phase, database], !Equals [!Ref Phase, active]]
     Assertions:
@@ -102,175 +107,49 @@ Conditions:
   ControllerEnabled: !Equals [!Ref Phase, active]
   UseExternalBoundaries: !Equals [!Ref RoleBoundaryMode, external]
   UseManagedBoundaries: !Not [!Condition UseExternalBoundaries]
-  UseManagedRouterBoundary: !And [!Condition UseManagedBoundaries, !Condition UseTailnet]
   UseManagedTaskBoundaries: !And [!Condition UseManagedBoundaries, !Condition DatabaseEnabled]
   ManageSetupOperatorPolicy: !And [!Condition UseManagedBoundaries, !Condition DatabaseEnabled]
-  # The foundation allows the operator to establish existing outbound routing
-  # before the router's bootstrap downloads its packages.
-  UseTailnet: !And [!Equals [!Ref AccessMode, tailscale], !Condition DatabaseEnabled]
-  UsePrivateLink: !Equals [!Ref AccessMode, private-link]
-  UseNat: !Equals [!Ref CreateNatGateway, 'true']
-  HasGitHubApp: !Not [!Equals [!Ref GitHubAppSecretArn, '']]
-  VpcPrefix23: !Equals [!Select [1, !Split ['/', !Ref VpcCidr]], '23']
-  VpcPrefix24: !Equals [!Select [1, !Split ['/', !Ref VpcCidr]], '24']
+  AllowOperatorIngress: !Not [!Equals [!Ref OperatorCidr, '']]
 
 Resources:
-  Vpc:
-    Type: AWS::EC2::VPC
-    Properties:
-      CidrBlock: !Ref VpcCidr
-      EnableDnsSupport: true
-      EnableDnsHostnames: true
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
-
-  ServiceSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      AvailabilityZone: !Ref AvailabilityZone
-      VpcId: !Ref Vpc
-      # Three nonoverlapping subnets need two prefix bits beyond the VPC prefix.
-      CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 3, !If [VpcPrefix24, 6, !If [VpcPrefix23, 7, 8]]]]
-      MapPublicIpOnLaunch: false
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
-
-  WorkspaceSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      AvailabilityZone: !Ref AvailabilityZone
-      VpcId: !Ref Vpc
-      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 3, !If [VpcPrefix24, 6, !If [VpcPrefix23, 7, 8]]]]
-      MapPublicIpOnLaunch: false
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
-
-  PrivateRoutes:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref Vpc
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
-
-  ServiceRoutes:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref ServiceSubnet
-      RouteTableId: !Ref PrivateRoutes
-
-  WorkspaceRoutes:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref WorkspaceSubnet
-      RouteTableId: !Ref PrivateRoutes
-
-  # The public subnet contains the outbound NAT gateway only.
-  EgressSubnet:
-    Type: AWS::EC2::Subnet
-    Condition: UseNat
-    Properties:
-      AvailabilityZone: !Ref AvailabilityZone
-      VpcId: !Ref Vpc
-      CidrBlock: !Select [2, !Cidr [!Ref VpcCidr, 3, !If [VpcPrefix24, 6, !If [VpcPrefix23, 7, 8]]]]
-      MapPublicIpOnLaunch: false
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
-
-  EgressGateway:
-    Type: AWS::EC2::InternetGateway
-    Condition: UseNat
-    Properties:
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
-
-  EgressGatewayAttachment:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Condition: UseNat
-    Properties:
-      VpcId: !Ref Vpc
-      InternetGatewayId: !Ref EgressGateway
-
-  EgressRoutes:
-    Type: AWS::EC2::RouteTable
-    Condition: UseNat
-    Properties:
-      VpcId: !Ref Vpc
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
-
-  EgressRouteAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Condition: UseNat
-    Properties:
-      SubnetId: !Ref EgressSubnet
-      RouteTableId: !Ref EgressRoutes
-
-  EgressDefaultRoute:
-    Type: AWS::EC2::Route
-    Condition: UseNat
-    DependsOn: EgressGatewayAttachment
-    Properties:
-      RouteTableId: !Ref EgressRoutes
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref EgressGateway
-
-  NatAddress:
-    Type: AWS::EC2::EIP
-    Condition: UseNat
-    DependsOn: EgressGatewayAttachment
-    Properties:
-      Domain: vpc
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
-
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    Condition: UseNat
-    DependsOn: [EgressDefaultRoute, EgressRouteAssociation]
-    Properties:
-      ConnectivityType: public
-      SubnetId: !Ref EgressSubnet
-      AllocationId: !GetAtt NatAddress.AllocationId
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
-
-  NatRoute:
-    Type: AWS::EC2::Route
-    Condition: UseNat
-    Properties:
-      RouteTableId: !Ref PrivateRoutes
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
-
   HostGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Private ECS host with outbound access and no ingress
-      VpcId: !Ref Vpc
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      VpcId: !Ref VpcId
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   ControllerGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Controller entry for approved operators and the workspace subnet
-      VpcId: !Ref Vpc
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      VpcId: !Ref VpcId
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   WorkspaceGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Private workspaces with outbound access and no ingress
-      VpcId: !Ref Vpc
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      VpcId: !Ref VpcId
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   SetupGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Setup task with access through the Session Manager tunnel only
-      VpcId: !Ref Vpc
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      VpcId: !Ref VpcId
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   PostgresGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: PostgreSQL reachable only from controller and setup tasks
-      VpcId: !Ref Vpc
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      VpcId: !Ref VpcId
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   OperatorIngress:
     Type: AWS::EC2::SecurityGroupIngress
-    Condition: UsePrivateLink
+    Condition: AllowOperatorIngress
     Properties:
       GroupId: !Ref ControllerGroup
       IpProtocol: tcp
@@ -314,7 +193,21 @@ Resources:
       Encrypted: true
       Size: !Ref DataVolumeSizeGiB
       VolumeType: gp3
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
+
+  RegistryCacheVolume:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      Encrypted: true
+      Size: !Ref OciImageCacheSizeGiB
+      VolumeType: gp3
+      Tags:
+        - {Key: shiftbox-project, Value: shiftbox}
+        - {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}
+        - {Key: shiftbox-volume-purpose, Value: oci-image-cache}
 
   # Customer installs create their own boundary policies. The qualification
   # service role instead references policies owned by a separate operator.
@@ -353,42 +246,6 @@ Resources:
           - Effect: Allow
             Action: [logs:CreateLogStream, logs:PutLogEvents]
             Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ServicesLogGroup}:log-stream:ecs/*'
-
-  RouterRoleBoundary:
-    Type: AWS::IAM::ManagedPolicy
-    Condition: UseManagedRouterBoundary
-    Properties:
-      Path: !Sub '/shiftbox-boundaries/${AWS::Region}/${DeploymentName}/'
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Action:
-              - ssm:DescribeAssociation
-              - ssm:DescribeDocument
-              - ssm:GetDeployablePatchSnapshotForInstance
-              - ssm:GetDocument
-              - ssm:GetManifest
-              - ssm:ListAssociations
-              - ssm:ListInstanceAssociations
-              - ssm:PutComplianceItems
-              - ssm:PutConfigurePackageResult
-              - ssm:PutInventory
-              - ssm:UpdateAssociationStatus
-              - ssm:UpdateInstanceAssociationStatus
-              - ssm:UpdateInstanceInformation
-              - ssmmessages:CreateControlChannel
-              - ssmmessages:CreateDataChannel
-              - ssmmessages:OpenControlChannel
-              - ssmmessages:OpenDataChannel
-              - ec2messages:AcknowledgeMessage
-              - ec2messages:DeleteMessage
-              - ec2messages:FailMessage
-              - ec2messages:GetEndpoint
-              - ec2messages:GetMessages
-              - ec2messages:SendReply
-            Resource: '*'
-            Condition: {StringEquals: {'aws:RequestedRegion': !Ref 'AWS::Region'}}
 
   # The bundle renderer copies each task boundary document from the role's
   # inline policy below so the authorization and its ceiling stay in sync.
@@ -449,7 +306,7 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role'
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   HostProfile:
     Type: AWS::IAM::InstanceProfile
@@ -462,11 +319,10 @@ Resources:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: !Ref DeploymentName
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   EcsHost:
     Type: AWS::EC2::Instance
-    DependsOn: ServiceRoutes
     Properties:
       ImageId: !FindInMap [ReleaseRegions, !Ref 'AWS::Region', HostAmi]
       InstanceType: t3.medium
@@ -484,18 +340,17 @@ Resources:
         - DeviceName: /dev/xvda
           Ebs: {Encrypted: true, VolumeType: gp3, VolumeSize: 30, DeleteOnTermination: true}
       PropagateTagsToVolumeOnCreation: true
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
       UserData:
         Fn::Base64: !Sub
           - |
             #!/bin/sh
             set -eu
 
-            # CloudFormation prepares the managed outbound route first: ${OutboundRoute}
             install -d -m 0755 /etc/ecs /usr/local/libexec
             cat > /etc/ecs/ecs.config <<'AGENT'
             ECS_CLUSTER=${Cluster}
-            ECS_CONTAINER_INSTANCE_TAGS={"cluster_name":"${DeploymentName}","project":"shiftbox"}
+            ECS_CONTAINER_INSTANCE_TAGS={"shiftbox-cluster-name":"${DeploymentName}","shiftbox-project":"shiftbox"}
             ECS_AWSVPC_BLOCK_IMDS=true
             ECS_ENABLE_AWSLOGS_EXECUTIONROLE_OVERRIDE=true
             AGENT
@@ -503,7 +358,10 @@ Resources:
             cat > /usr/local/libexec/shiftbox-mount-data <<'MOUNT_SCRIPT'
             ${MountScript}
             MOUNT_SCRIPT
-            chmod 0755 /usr/local/libexec/shiftbox-mount-data
+            cat > /usr/local/libexec/shiftbox-mount-registry-cache <<'CACHE_SCRIPT'
+            ${MountCacheScript}
+            CACHE_SCRIPT
+            chmod 0755 /usr/local/libexec/shiftbox-mount-data /usr/local/libexec/shiftbox-mount-registry-cache
             volume_serial=$(printf '%s' '${InstallationVolume}' | tr -d '-')
 
             cat > /etc/systemd/system/shiftbox-data.service <<DATA_UNIT
@@ -519,6 +377,18 @@ Resources:
             TimeoutStartSec=300
             DATA_UNIT
 
+            cat > /etc/systemd/system/shiftbox-cache.service <<'CACHE_UNIT'
+            [Unit]
+            Description=Mount the dedicated ShiftBox OCI image cache
+            After=cloud-final.service
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/local/libexec/shiftbox-mount-registry-cache ${RegistryCacheVolume} /var/lib/shiftbox-registry-cache auto
+            RemainAfterExit=yes
+            TimeoutStartSec=300
+            CACHE_UNIT
+
             for service in docker ecs; do
                 install -d -m 0755 "/etc/systemd/system/$service.service.d"
                 cat > "/etc/systemd/system/$service.service.d/shiftbox-data.conf" <<'DEPENDENCY'
@@ -527,11 +397,16 @@ Resources:
             After=shiftbox-data.service
             DEPENDENCY
             done
+            cat > /etc/systemd/system/ecs.service.d/shiftbox-cache.conf <<'CACHE_DEPENDENCY'
+            [Unit]
+            Wants=shiftbox-cache.service
+            After=shiftbox-cache.service
+            CACHE_DEPENDENCY
 
             systemctl daemon-reload
             systemctl enable --now --no-block ecs.service
           - MountScript: @@MOUNT_DATA_SCRIPT@@
-            OutboundRoute: !If [UseNat, !Ref NatRoute, operator-managed]
+            MountCacheScript: @@MOUNT_CACHE_SCRIPT@@
 
   DataAttachment:
     Type: AWS::EC2::VolumeAttachment
@@ -540,94 +415,12 @@ Resources:
       InstanceId: !Ref EcsHost
       VolumeId: !Ref InstallationVolume
 
-  RouterRole:
-    Type: AWS::IAM::Role
-    Condition: UseTailnet
+  RegistryCacheAttachment:
+    Type: AWS::EC2::VolumeAttachment
     Properties:
-      RoleName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-RouterRole', !Sub '${DeploymentName}-${AWS::Region}-router']
-      Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
-      PermissionsBoundary: !If
-        - UseExternalBoundaries
-        - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/shiftbox-qualification-boundaries/${DeploymentName}-RouterRole'
-        - !Ref RouterRoleBoundary
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal: {Service: ec2.amazonaws.com}
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
-
-  RouterProfile:
-    Type: AWS::IAM::InstanceProfile
-    Condition: UseTailnet
-    Properties:
-      InstanceProfileName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-RouterProfile', !Sub '${DeploymentName}-${AWS::Region}-router']
-      Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
-      Roles: [!Ref RouterRole]
-
-  RouterGroup:
-    Type: AWS::EC2::SecurityGroup
-    Condition: UseTailnet
-    Properties:
-      GroupDescription: Tailscale router without VPC ingress
-      VpcId: !Ref Vpc
-      SecurityGroupEgress:
-        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}
-        - {IpProtocol: udp, FromPort: 3478, ToPort: 3478, CidrIp: 0.0.0.0/0}
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
-
-  RouterIngress:
-    Type: AWS::EC2::SecurityGroupIngress
-    Condition: UseTailnet
-    Properties:
-      GroupId: !Ref ControllerGroup
-      IpProtocol: tcp
-      FromPort: 8443
-      ToPort: 8443
-      SourceSecurityGroupId: !Ref RouterGroup
-
-  RouterBrowserEgress:
-    Type: AWS::EC2::SecurityGroupEgress
-    Condition: UseTailnet
-    Properties:
-      GroupId: !Ref RouterGroup
-      IpProtocol: tcp
-      FromPort: 8443
-      ToPort: 8443
-      DestinationSecurityGroupId: !Ref ControllerGroup
-
-  TailscaleRouter:
-    Type: AWS::EC2::Instance
-    Condition: UseTailnet
-    DependsOn: ServiceRoutes
-    Properties:
-      ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64}}'
-      InstanceType: t4g.micro
-      IamInstanceProfile: !Ref RouterProfile
-      SourceDestCheck: false
-      NetworkInterfaces:
-        - DeviceIndex: '0'
-          AssociatePublicIpAddress: false
-          DeleteOnTermination: true
-          SubnetId: !Ref ServiceSubnet
-          GroupSet: [!Ref RouterGroup]
-      MetadataOptions:
-        HttpTokens: required
-        HttpPutResponseHopLimit: 1
-      BlockDeviceMappings:
-        - DeviceName: /dev/xvda
-          Ebs: {Encrypted: true, VolumeType: gp3, VolumeSize: 8, DeleteOnTermination: true}
-      PropagateTagsToVolumeOnCreation: true
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
-      UserData:
-        Fn::Base64: !Sub
-          - @@TAILSCALE_USER_DATA@@
-          - dns_suffix: !Ref DnsSuffix
-            subnet_cidr: !GetAtt ServiceSubnet.CidrBlock
-            browser_port: '8443'
+      Device: /dev/sdg
+      InstanceId: !Ref EcsHost
+      VolumeId: !Ref RegistryCacheVolume
 
   PostgresAdminSecret:
     Type: AWS::SecretsManager::Secret
@@ -637,7 +430,7 @@ Resources:
       Name: !If [UseExternalBoundaries, !Sub '${DeploymentName}-PostgresAdminSecret', !Ref 'AWS::NoValue']
       Description: PostgreSQL initialization owner credential
       GenerateSecretString: {PasswordLength: 40, ExcludePunctuation: true}
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   PostgresAppSecret:
     Type: AWS::SecretsManager::Secret
@@ -647,7 +440,7 @@ Resources:
       Name: !If [UseExternalBoundaries, !Sub '${DeploymentName}-PostgresAppSecret', !Ref 'AWS::NoValue']
       Description: Scoped PostgreSQL ShiftBox role credential
       GenerateSecretString: {PasswordLength: 40, ExcludePunctuation: true}
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   PostgresDexSecret:
     Type: AWS::SecretsManager::Secret
@@ -657,7 +450,7 @@ Resources:
       Name: !If [UseExternalBoundaries, !Sub '${DeploymentName}-PostgresDexSecret', !Ref 'AWS::NoValue']
       Description: Scoped PostgreSQL Dex role credential
       GenerateSecretString: {PasswordLength: 40, ExcludePunctuation: true}
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   PostgresTlsSecret:
     Type: AWS::SecretsManager::Secret
@@ -666,15 +459,15 @@ Resources:
     Properties:
       Name: !If [UseExternalBoundaries, !Sub '${DeploymentName}-PostgresTlsSecret', !Ref 'AWS::NoValue']
       Description: Populate with certificate and private_key JSON values before starting PostgreSQL.
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   DiscoveryNamespace:
     Type: AWS::ServiceDiscovery::PrivateDnsNamespace
     Condition: DnsZonesEnabled
     Properties:
       Name: !Sub 'services.${DnsSuffix}'
-      Vpc: !Ref Vpc
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Vpc: !Ref VpcId
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   PostgresDiscovery:
     Type: AWS::ServiceDiscovery::Service
@@ -685,7 +478,7 @@ Resources:
         NamespaceId: !Ref DiscoveryNamespace
         RoutingPolicy: MULTIVALUE
         DnsRecords: [{Type: A, TTL: 10}]
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   ControllerDiscovery:
     Type: AWS::ServiceDiscovery::Service
@@ -696,15 +489,15 @@ Resources:
         NamespaceId: !Ref DiscoveryNamespace
         RoutingPolicy: MULTIVALUE
         DnsRecords: [{Type: A, TTL: 10}]
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   PrivateZone:
     Type: AWS::Route53::HostedZone
     Condition: DnsZonesEnabled
     Properties:
       Name: !Ref DnsSuffix
-      VPCs: [{VPCId: !Ref Vpc, VPCRegion: !Ref 'AWS::Region'}]
-      HostedZoneTags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      VPCs: [{VPCId: !Ref VpcId, VPCRegion: !Ref 'AWS::Region'}]
+      HostedZoneTags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   PrivateRecords:
     Type: AWS::Route53::RecordSetGroup
@@ -724,7 +517,7 @@ Resources:
     Properties:
       LogGroupName: !Sub '/shiftbox/${DeploymentName}/ecs'
       RetentionInDays: 14
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   PostgresExecutionRole:
     Type: AWS::IAM::Role
@@ -756,7 +549,7 @@ Resources:
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ServicesLogGroup}:log-stream:ecs/postgres/*'
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   SetupExecutionRole:
     Type: AWS::IAM::Role
@@ -788,7 +581,7 @@ Resources:
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ServicesLogGroup}:log-stream:ecs/setup/*'
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   ControllerExecutionRole:
     Type: AWS::IAM::Role
@@ -816,13 +609,11 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
-                Resource:
-                  - !Ref PostgresAppSecret
-                  - !If [HasGitHubApp, !Ref GitHubAppSecretArn, !Ref 'AWS::NoValue']
+                Resource: [!Ref PostgresAppSecret]
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ServicesLogGroup}:log-stream:ecs/controller/*'
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   SetupTaskRole:
     Type: AWS::IAM::Role
@@ -855,7 +646,7 @@ Resources:
                   - ssmmessages:CreateDataChannel
                   - ssmmessages:OpenDataChannel
                 Resource: '*'
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   ControllerTaskRole:
     Type: AWS::IAM::Role
@@ -968,7 +759,7 @@ Resources:
                 Resource: !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*'
                 Condition:
                   StringEquals: {'aws:ResourceTag/ShiftBoxWorkspaceDeployment': !Ref DeploymentName}
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   PostgresTask:
     Type: AWS::ECS::TaskDefinition
@@ -1014,7 +805,7 @@ Resources:
               awslogs-region: !Ref 'AWS::Region'
               awslogs-stream-prefix: ecs
           PortMappings: [{ContainerPort: 5432, Protocol: tcp}]
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   SetupTask:
     Type: AWS::ECS::TaskDefinition
@@ -1076,9 +867,9 @@ Resources:
               awslogs-region: !Ref 'AWS::Region'
               awslogs-stream-prefix: ecs
       Tags:
-        - {Key: project, Value: shiftbox}
-        - {Key: cluster_name, Value: !Ref DeploymentName}
-        - {Key: ShiftBoxBootstrap, Value: !Ref DeploymentName}
+        - {Key: shiftbox-project, Value: shiftbox}
+        - {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}
+        - {Key: shiftbox-bootstrap, Value: !Ref DeploymentName}
 
   ControllerTask:
     Type: AWS::ECS::TaskDefinition
@@ -1093,6 +884,8 @@ Resources:
       Volumes:
         - Name: installation
           Host: {SourcePath: /var/lib/shiftbox-data/shiftbox}
+        - Name: registry-cache
+          Host: {SourcePath: /var/lib/shiftbox-registry-cache}
       ContainerDefinitions:
         - Name: controller
           Image: @@CONTROLLER_IMAGE@@
@@ -1102,7 +895,9 @@ Resources:
           Command: [serve]
           MountPoints:
             - {SourceVolume: installation, ContainerPath: /var/lib/shiftbox}
+            - {SourceVolume: registry-cache, ContainerPath: /var/lib/shiftbox-registry-cache}
           Environment:
+            - {Name: SHIFTBOX_IMAGE_CACHE_VOLUME_ID, Value: !Ref RegistryCacheVolume}
             - {Name: SHIFTBOX_DB_HOST, Value: !Sub 'postgres.${DnsSuffix}'}
             - {Name: SHIFTBOX_DB_CA, Value: !Join ["\n", !Split ['|', !Ref PostgresCaPem]]}
             - Name: SHIFTBOX_CLOUD_CONFIG
@@ -1131,7 +926,6 @@ Resources:
                   CatalogSHA256: !FindInMap [ReleaseRegions, !Ref 'AWS::Region', WorkspaceCatalogSHA256]
           Secrets:
             - {Name: SHIFTBOX_APP_PASSWORD, ValueFrom: !Ref PostgresAppSecret}
-            - !If [HasGitHubApp, {Name: SHIFTBOX_GITHUB_APP, ValueFrom: !Ref GitHubAppSecretArn}, !Ref 'AWS::NoValue']
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -1145,7 +939,7 @@ Resources:
             - {ContainerPort: 19445, Protocol: tcp}
             - {ContainerPort: 19446, Protocol: tcp}
             - {ContainerPort: 19447, Protocol: tcp}
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   PostgresService:
     Type: AWS::ECS::Service
@@ -1165,12 +959,12 @@ Resources:
           SecurityGroups: [!Ref PostgresGroup]
       ServiceRegistries: [{RegistryArn: !GetAtt PostgresDiscovery.Arn}]
       PropagateTags: TASK_DEFINITION
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   ControllerService:
     Type: AWS::ECS::Service
     Condition: DatabaseEnabled
-    DependsOn: PostgresService
+    DependsOn: [PostgresService, RegistryCacheAttachment]
     Properties:
       ServiceName: controller
       Cluster: !Ref Cluster
@@ -1185,7 +979,7 @@ Resources:
           SecurityGroups: [!Ref ControllerGroup]
       ServiceRegistries: [{RegistryArn: !GetAtt ControllerDiscovery.Arn}]
       PropagateTags: TASK_DEFINITION
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   SetupSession:
     Type: AWS::SSM::Document
@@ -1202,7 +996,7 @@ Resources:
           portNumber: '8444'
           localPortNumber: '8444'
           type: LocalPortForwarding
-      Tags: [{Key: project, Value: shiftbox}, {Key: cluster_name, Value: !Ref DeploymentName}]
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   SetupOperatorPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -1217,14 +1011,14 @@ Resources:
             Resource: !Ref SetupTask
             Condition:
               ArnEquals: {'ecs:cluster': !GetAtt Cluster.Arn}
-              StringEquals: {'aws:RequestTag/ShiftBoxBootstrap': !Ref DeploymentName}
+              StringEquals: {'aws:RequestTag/shiftbox-bootstrap': !Ref DeploymentName}
           - Effect: Allow
             Action: ecs:TagResource
             Resource: !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${Cluster}/*'
             Condition:
               StringEquals:
                 'ecs:CreateAction': RunTask
-                'aws:RequestTag/ShiftBoxBootstrap': !Ref DeploymentName
+                'aws:RequestTag/shiftbox-bootstrap': !Ref DeploymentName
           - Effect: Allow
             Action: iam:PassRole
             Resource: [!GetAtt SetupExecutionRole.Arn, !GetAtt SetupTaskRole.Arn]
@@ -1239,12 +1033,12 @@ Resources:
             Action: [ecs:DescribeTasks, ecs:StopTask]
             Resource: !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${Cluster}/*'
             Condition:
-              StringEquals: {'aws:ResourceTag/ShiftBoxBootstrap': !Ref DeploymentName}
+              StringEquals: {'aws:ResourceTag/shiftbox-bootstrap': !Ref DeploymentName}
           - Effect: Allow
             Action: ssm:StartSession
             Resource: !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${Cluster}/*'
             Condition:
-              StringEquals: {'aws:ResourceTag/ShiftBoxBootstrap': !Ref DeploymentName}
+              StringEquals: {'aws:ResourceTag/shiftbox-bootstrap': !Ref DeploymentName}
               BoolIfExists: {'ssm:SessionDocumentAccessCheck': 'true'}
           - Effect: Allow
             Action: [ssm:StartSession, ssm:GetDocument]
@@ -1262,15 +1056,13 @@ Outputs:
   Phase:
     Value: !Ref Phase
   VpcId:
-    Value: !Ref Vpc
+    Value: !Ref VpcId
   ServiceSubnetId:
     Value: !Ref ServiceSubnet
   WorkspaceSubnetId:
     Value: !Ref WorkspaceSubnet
   WorkspaceSecurityGroupId:
     Value: !Ref WorkspaceGroup
-  PrivateRouteTableId:
-    Value: !Ref PrivateRoutes
   DnsSuffix:
     Value: !Ref DnsSuffix
   PrivateZoneId:
@@ -1308,9 +1100,3 @@ Outputs:
   ManagementOrigin:
     Condition: ControllerEnabled
     Value: !Sub 'https://shiftbox.${DnsSuffix}:8443'
-  TailscaleRouterInstanceId:
-    Condition: UseTailnet
-    Value: !Ref TailscaleRouter
-  TailscaleAdvertisedRoute:
-    Condition: UseTailnet
-    Value: !GetAtt ServiceSubnet.CidrBlock

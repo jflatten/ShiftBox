@@ -43,7 +43,6 @@ def draft(**inputs):
         "publisher_account_id": "444455556666",
         "run_name": run,
         "host_ami_id": template["Mappings"]["ReleaseRegions"][region]["HostAmi"],
-        "router_ami_id": "ami-00000000000000099",
         **inputs,
     }
     command = ["terraform", f"-chdir={module}", "console", "-no-color"]
@@ -72,7 +71,7 @@ def resolve(expression, phase, mode="external"):
     """Resolve the subset of intrinsics used for phase guards and IAM names."""
     params = {
         "Phase": phase, "RoleBoundaryMode": mode, "DeploymentName": run,
-        "AccessMode": "tailscale", "AWS::Partition": "aws",
+        "AWS::Partition": "aws",
         "AWS::AccountId": account, "AWS::Region": region, "DnsSuffix": f"{run}.internal",
     }
     if not isinstance(expression, dict):
@@ -111,7 +110,24 @@ def present(resource, phase, mode="external"):
 # Role creation and inline updates are bound to the same exact role and boundary
 # even though CloudFormation resolves the name and ARN independently.
 foundation = draft()
-roles = {name: spec for name, spec in resources.items() if spec["Type"] == "AWS::IAM::Role"}
+# The execution role can delete the disposable run cache, while the
+# installation volume remains protected by the absence of the cache tag.
+cache_size = template["Parameters"]["OciImageCacheSizeGiB"]["Default"]
+cache = resources["RegistryCacheVolume"]
+assert cache_size == 20 and present(cache, "foundation")
+assert any(s["Condition"]["NumericLessThanEquals"]["ec2:VolumeSize"] >= cache_size
+           for s in statements(foundation, "ec2:CreateVolume"))
+delete_cache, = statements(foundation, "ec2:DeleteVolume")
+assert delete_cache["Resource"] == [f"arn:aws:ec2:{region}:{account}:volume/*"]
+assert delete_cache["Condition"]["StringEquals"] == {
+    "aws:RequestedRegion": region, "aws:ResourceTag/project": "shiftbox",
+    "aws:ResourceTag/cluster_name": run, "aws:ResourceTag/shiftbox_qualification_run": run,
+    "aws:ResourceTag/shiftbox-volume-purpose": "oci-image-cache",
+}
+assert {"Key": "shiftbox-volume-purpose", "Value": "oci-image-cache"} in cache["Properties"]["Tags"]
+assert all(tag["Key"] != "shiftbox-volume-purpose" for tag in resources["InstallationVolume"]["Properties"]["Tags"])
+roles = {name: spec for name, spec in resources.items()
+         if spec["Type"] == "AWS::IAM::Role" and present(spec, "database")}
 assert roles.keys() == foundation["boundaries"].keys()
 for name, spec in roles.items():
     properties = spec["Properties"]
@@ -133,11 +149,11 @@ assert not statements(foundation, "iam:CreatePolicy")
 assert not any(present(s, "database") for s in resources.values() if s["Type"] == "AWS::IAM::ManagedPolicy")
 assert present(resources["SetupOperatorPolicy"], "database", "managed")
 profile_grant, = statements(foundation, "iam:CreateInstanceProfile")
-for name in ("HostProfile", "RouterProfile"):
-    props = resources[name]["Properties"]
-    path = resolve(props["Path"], "database")
-    profile = resolve(props["InstanceProfileName"], "database")
-    assert f"arn:aws:iam::{account}:instance-profile{path}{profile}" in profile_grant["Resource"]
+props = resources["HostProfile"]["Properties"]
+path = resolve(props["Path"], "database")
+profile = resolve(props["InstanceProfileName"], "database")
+assert profile_grant["Resource"] == [f"arn:aws:iam::{account}:instance-profile{path}{profile}"]
+assert "RouterProfile" not in resources
 
 # The four retained names are writable at creation, with value reads outside the execution role.
 secret_grant = {arn for s in statements(foundation, "secretsmanager:CreateSecret") for arn in s["Resource"]}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"math"
 	"net"
 	"os"
@@ -85,12 +86,21 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if active.RecoveryReviewID != "" {
 		return serveRecoveryController(ctx, cfg, state, binary, assets, machines)
 	}
+	github, err = state.ConfigureGitHubAppSetup(ctx, github, time.Now)
+	if err != nil {
+		return err
+	}
 	caps, err := machines.Capabilities(ctx)
 	if err != nil {
 		return errors.New("cannot verify UTM capabilities; check the supported UTM version and macOS automation access")
 	}
 	if settings.Provider != "ec2" && (!caps.Create || !caps.Start || !caps.Stop || !caps.Delete) {
 		return errors.New("UTM lacks required workspace lifecycle capabilities")
+	}
+	if cloud != nil {
+		if err := cloud.seedStarterProfiles(ctx, state.DB, active, caps, time.Now(), cloud.InspectOfficialImage); err != nil {
+			slog.Warn("Could not initialize starter workspace profiles", "error", err)
+		}
 	}
 	checkpoint := &backup.WriteFence{}
 	journal := operation.NewJournal(state.DB, time.Now, uuid.NewString)
@@ -198,11 +208,11 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	if err != nil {
 		return err
 	}
-	archive, err := helperArchive()
+	helperImage, err := helperDiskImage()
 	if err != nil {
 		return err
 	}
-	workstation := web.NewWorkspaceSSHAPI(state.DB, tunnels.Registry, journal, tunnels.OpenSSH, time.Now, origin, archive)
+	workstation := web.NewWorkspaceSSHAPI(state.DB, tunnels.Registry, journal, tunnels.OpenSSH, time.Now, origin, helperImage)
 	site, err := app.NewManagementSite(api, signIn, dex, assets, workstation)
 	if err != nil {
 		return err

@@ -114,7 +114,7 @@ function suffixError(value: string, max: number) {
     ? null : 'Enter a lowercase DNS suffix.';
 }
 
-export function CertificateForm(props: SetupFormProps & { cloud?: CloudSetupNames }) {
+export function CertificateForm(props: SetupFormProps & { cloud?: CloudSetupNames; deployed?: boolean }) {
   const submission = useSetupSave('/api/v1/setup/certificate', props);
   const form = useForm({
     mode: 'uncontrolled',
@@ -130,22 +130,22 @@ export function CertificateForm(props: SetupFormProps & { cloud?: CloudSetupName
       managementOrigin: value => validOrigin(value.trim()) ? null : 'Enter an HTTPS origin without a path.',
       ideSuffix: value => suffixError(value.trim(), 216),
       previewSuffix: value => suffixError(value.trim(), 189),
-      chain: pemFileError,
-      key: pemFileError,
+      chain: value => props.deployed ? null : pemFileError(value),
+      key: value => props.deployed ? null : pemFileError(value),
     },
   });
   return (
     <form noValidate onSubmit={form.onSubmit(
       ({ managementOrigin, ideSuffix, previewSuffix, chain, key }) => submission.save(async () => {
-        if (!chain || !key) throw new Error('certificate files missing');
-        const [certificateChainPem, privateKeyPem] = await Promise.all([chain.text(), key.text()]);
-        return {
+        const names = {
           managementOrigin: managementOrigin.trim(),
           ideHostPattern: `{workspace}.${ideSuffix.trim()}`,
           previewHostPattern: `{service}--{workspace}.${previewSuffix.trim()}`,
-          certificateChainPem,
-          privateKeyPem,
         };
+        if (props.deployed) return names;
+        if (!chain || !key) throw new Error('certificate files missing');
+        const [certificateChainPem, privateKeyPem] = await Promise.all([chain.text(), key.text()]);
+        return { ...names, certificateChainPem, privateKeyPem };
       }, form.reset),
       errors => form.getInputNode(Object.keys(errors)[0])?.focus(),
     )}>
@@ -157,11 +157,15 @@ export function CertificateForm(props: SetupFormProps & { cloud?: CloudSetupName
           key={form.key('ideSuffix')} {...form.getInputProps('ideSuffix')} />
         <TextInput readOnly={!!props.cloud} label="Preview domain suffix" placeholder="preview.example.com" required
           key={form.key('previewSuffix')} {...form.getInputProps('previewSuffix')} />
-        <Text size="sm">Use a trusted certificate covering the management address and the IDE, preview, and repair wildcards. For ide.example.com, the repair wildcard is *.repair.example.com.</Text>
-        <FileInput label="Certificate chain" accept=".pem,.crt" withAsterisk
-          key={form.key('chain')} {...form.getInputProps('chain')} />
-        <FileInput label="Private key" accept=".pem,.key" withAsterisk
-          key={form.key('key')} {...form.getInputProps('key')} />
+        {props.deployed ? <Text size="sm">Validate the installation certificate for the private service names.</Text> : (
+          <>
+            <Text size="sm">Use a trusted certificate covering the management address and the IDE, preview, and repair wildcards. For ide.example.com, the repair wildcard is *.repair.example.com.</Text>
+            <FileInput label="Certificate chain" accept=".pem,.crt" withAsterisk
+              key={form.key('chain')} {...form.getInputProps('chain')} />
+            <FileInput label="Private key" accept=".pem,.key" withAsterisk
+              key={form.key('key')} {...form.getInputProps('key')} />
+          </>
+        )}
         {submission.error !== undefined ? <APIProblemView error={submission.error} /> : null}
         <Button type="submit" loading={form.submitting} style={{ alignSelf: 'flex-start' }}>Validate certificate</Button>
       </Stack>

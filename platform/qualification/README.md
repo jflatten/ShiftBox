@@ -12,29 +12,29 @@ The phase-zero estimate runs locally with no AWS credentials or billing API.
 
 ```sh
 python3 platform/qualification/cost.py
-python3 platform/qualification/cost.py --mode staffed --headroom-usd 7.00
+python3 platform/qualification/cost.py --mode staffed --headroom-usd 6.00
 ```
 
 The second command demonstrates the admission boundary with an example
 amount. A maintainer must substitute verified aggregate monthly headroom
 under the **$30 AWS cap**. Deduct the month-to-date spend, expected remaining
-demo and other recurring spend, and existing or planned publisher retention
+demo and other recurring spend, the operator's permanent router and App secret,
+and existing or planned publisher retention
 before admitting a qualification window. Check payer coverage and delayed
 charges. Actual aggregate headroom has not been verified.
 
 | Scenario | Estimated incremental AWS cost | Planning ceiling |
 | --- | ---: | ---: |
-| Four isolated regional AMI boots and hosted change sets plus Ohio foundation only | $0.54 | $5.00 |
-| Same regional probes plus one staffed Ohio console-to-IDE install and scoped recovery target | $1.21 | $7.00 |
+| Four isolated regional AMI boots and hosted change sets plus Ohio foundation only | $0.49 | $5.00 |
+| Same regional probes plus one staffed Ohio console-to-IDE install and scoped recovery target | $1.01 | $6.00 |
 
 The full model allocates 15 minutes to each standalone private probe, up to
 two hours for Ohio resources including teardown, and one hour for a separate
 private recovery target. The workflow limits automated deployment and probes
 to 45 minutes combined, the staffed operator window to 60 minutes, and the
 immediate cleanup step to 15 minutes. The price estimate includes $0.15 for
-all four probes, Ohio ECS host, router, workspace and restore compute, paid
-gp3 storage, CPU credit allowance, NAT and its public IPv4, 5 GiB of NAT
-processing, CloudWatch, private DNS, Cloud Map, and Secrets Manager. It uses
+all four probes, Ohio ECS host, workspace and restore compute, paid
+gp3 storage, CPU credit allowance, 5 GiB of processing through existing egress, CloudWatch, private DNS, Cloud Map, and Secrets Manager. It uses
 public list rates without relying on credits. The ceiling adds two hours of
 running orphan allowance, 24 hours of retained storage and secrets, increased
 traffic and logs, and hosted zone charges if teardown misses the AWS grace
@@ -42,9 +42,9 @@ period. It is an admission reserve. Billing may exceed it if a resource
 cannot be deleted, data transfer exceeds the assumptions, or a run is
 repeated. Reconcile the change after AWS posts the bill.
 
-NAT exists only while the Ohio stack needs approved outbound access. The
-probes use a private VPC with no NAT and no public IP. There is no always-on
-AWS validation stack, scheduler, runner, or lock service. The separate
+The Ohio stack uses existing outbound connectivity. The separate AMI probes
+use their own disposable private VPC with no NAT and no public IP. The operator owns the
+permanent router and GitHub App secret outside this estimate and workflow. The separate
 publisher model estimates up to $6.57 per month per retained RC, assuming
 four 32 GiB of billed standard snapshot data and four small versioned
 template objects. Its estimated build and copy allowance is $3.03 before
@@ -93,24 +93,25 @@ assets. The cost calculator contains dated catalog links and line items.
    role variables scoped to their environments. Keep AWS access keys,
    Identity Center tokens, private CA keys, and browser state out of
    GitHub variables and artifacts.
-5. For staffed runs, prepare the dedicated disposable tailnet, protected
-   cleanup OAuth client, local browser/SSM client, operator-owned GitHub
-   App and test repository, and the private test-account SSO permission set.
-   See the operator workflow below. The Ohio preflight found five Standard
-   On-Demand vCPUs under EC2 quota `L-1216C47A`. The staffed path needs six.
-   Verify quota and zero running or pending test-account EC2 instances
-   before paying. Complete the catalog canary before starting the first
-   workspace. Stop the
+5. Configure `SHIFTBOX_QUALIFICATION_SUBNETS` in the qualification environment
+   as a JSON object keyed by the four release regions. Set each entry's
+   `service` and `workspace` members to existing private subnet IDs owned
+   by the testing account and in the same VPC. For example, one entry has the
+   shape `"us-east-2":{"service":"subnet-0123456789abcdef0","workspace":"subnet-0123456789abcdef1"}`.
+   The workflow verifies the IDs and derives the VPC and service AZ before
+   creating any change sets. The automated review holds browser ingress closed.
+   For staffed runs, prepare the operator-managed private route and DNS,
+   local browser/SSM client, GitHub App and permanent secret, private test
+   repository, and testing-account SSO permission set. The workflow needs
+   four available Standard On-Demand vCPUs in Ohio under quota `L-1216C47A`,
+   after allowing for existing EC2 instances' default vCPU counts. Verify
+   headroom under that quota before paying. Complete the catalog canary before
+   starting the first workspace. Stop the
    workspace during the separate two-vCPU recovery target's residency and
    remove the restore target before restarting the workspace. The standalone
-   regional probes are sequential and require two vCPUs in each region. Set
-   the exact fixture tailnet ID in `SHIFTBOX_QUALIFICATION_TAILNET_ID`. In
-   the cleanup environment alone, set
-   `SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_ID` and
-   `SHIFTBOX_QUALIFICATION_TAILNET_CLIENT_SECRET` for a fixture-only client
-   restricted to the `devices:core` scope and
-   `tag:shiftbox-qualification`. Confirm the read and deletion scopes in
-   the fixture before enabling `SHIFTBOX_QUALIFICATION_TAILNET_ENABLED`.
+   regional probes are sequential and require two available vCPUs in each region.
+   Keep the permanent router, secret and their dependent resources outside the
+   reserved `sbq-<run-id>-<attempt>` names and ownership tags.
 6. Keep `SHIFTBOX_QUALIFICATION_ENABLED` off until the exact RC, quota,
    verified budget headroom, and private fixtures are ready. Configure
    `SHIFTBOX_QUALIFICATION_SWEEP_ENABLED` independently so halting new runs
@@ -154,6 +155,14 @@ existing local `shiftbox-testing` SSO profile and the exact Ohio Console
 template. Set both the stack name and `DeploymentName` to the job summary's
 name. Use that name plus `.internal` as the DNS suffix and leave
 `RoleBoundaryMode=managed` to exercise the public installation path.
+Use the verified Ohio VPC and subnet choices from admission. Set
+`OperatorCidr` to the verified source the service sees if private browser
+access is ready. The operator manages routing
+to the disposable VPC, split DNS for the run suffix, and private browser
+access on TCP 8443. Supply the operator-managed GitHub App secret ARN directly
+on the staffed database change set. The controller execution role may read
+that exact secret for the install. GitHub Actions takes no App or Tailscale
+credential inputs.
 Before enabling the staffed lane, configure
 `SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN` in the qualification
 environment with the separately reviewed
@@ -175,18 +184,15 @@ tags. Verify the six aliases during the subsequent `database` change set.
 Record each change-set ID and these results in private evidence. Follow the
 [validation quickstart](../../specs/010-public-aws-distribution/quickstart.md)
 for PostgreSQL TLS, protected SSM bootstrap, browser trust and the first IDE.
-Use a single-use ephemeral key restricted to `tag:shiftbox-qualification`
-and a disposable browser profile. Set the router hostname to `<name>-router`
-while enrolling it. Use the operator's scoped tailnet session or a separate
-tag-scoped auth-key client to mint that key. Keep the auth key out of logs and
-GitHub. Cleanup verifies the sole tag, exact hostname, device ID and creation
-within the matching workflow attempt before it removes the node.
+Use a disposable browser profile on the approved private route.
 Run the reviewed recovery within the same stack's budget and window with
 a separate empty scoped TLS PostgreSQL target. Tag its exact-owned private
 EC2 instance, encrypted disk and attached resources with `project=shiftbox`,
 `cluster_name=<name>`, and `shiftbox_qualification_component=restore`.
-Avoid a second NAT or a persistent database. At the end of the window,
-stop work so the workflow can read back the exact staffed stack and check its
+Use the existing private route and avoid a persistent recovery database. At the end of the window,
+remove this run's external DNS forwarding and any temporary access entries
+you added for it. Stop work so the workflow
+can read back the exact staffed stack and check its
 DNS outputs against the CloudFormation inventory. The independent cleanup
 job then deletes the disposable stack. Verify teardown even if a gate remains
 incomplete.
@@ -194,7 +200,7 @@ incomplete.
 The automation artifact is sanitized foundation or console-handoff evidence.
 Staffed DNS readback confirms CloudFormation inventory and the candidate
 template. The operator evidence covers the DNS stage order and live service
-configuration, the browser, OIDC and Git checkout, tailnet DNS and
+configuration, the browser, OIDC and Git checkout, operator-managed DNS and
 private access, CLI resume, recovery, or completed teardown. Keep those
 verified receipts in private operator evidence and combine them with the
 selected candidate only after the approved review. A staffed session can
@@ -225,9 +231,8 @@ prove ownership fail the check. Resolve the reported resource on its original
 stack or approved private test scope. Cleanup does not select the default
 VPC, shared resources, GitHub App secret, public AMIs, or release buckets.
 
-The independent tailnet check verifies removal of the owned router or its
-ephemeral expiry. The staffed operator removes the exact restricted tailnet
-DNS entry and client trust and records logout and route removal. Existing
-GitHub App and repository fixtures remain scoped to the operator. Review
-actual absence before writing an exact-release qualification record.
-[Tailscale ephemeral nodes](https://tailscale.com/docs/features/ephemeral-nodes) · [OAuth scopes](https://tailscale.com/docs/reference/trust-credentials)
+The staffed operator records removal of run-specific routes, DNS and client
+trust, then verifies the permanent router and App secret remain available.
+Record private route, split-DNS, browser trust and denied public-access evidence
+for the operator-managed connection. Release qualification remains open until
+the exact release's acceptance checks and teardown are complete.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
 	"errors"
@@ -43,8 +44,18 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	configPath := flags.String("config", "", "")
 	platformFolder := flags.String("platform-folder", "", "")
 	reset := flags.Bool("reset-temporary-password", false, "")
+	privateClaimPath := flags.String("private-claim-file", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(*dir) {
 		return errors.New("setup requires an absolute installation directory and administrator email")
+	}
+	private := *privateClaimPath != ""
+	var claim *app.PrivateSetupClaim
+	if private {
+		var err error
+		claim, err = readPrivateSetupClaim(*privateClaimPath)
+		if err != nil {
+			return err
+		}
 	}
 	normalized := strings.ToLower(strings.TrimSpace(*email))
 	addr, err := mail.ParseAddress(normalized)
@@ -73,6 +84,9 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	if platform != nil {
 		cloud = platform.cloud
 	}
+	if private && cloud == nil {
+		return errors.New("private first login requires the EC2 deployment configuration")
+	}
 	if cloud != nil {
 		if normalized != "" || *reset || *postgresPath == "" {
 			return errors.New("EC2 setup requires the scoped PostgreSQL configuration and creates the administrator in the browser")
@@ -99,10 +113,6 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	if err != nil {
 		return err
 	}
-	cert, err := app.EnsureBootstrapCertificate(filepath.Join(*dir, "bootstrap-tls.pem"), time.Now())
-	if err != nil {
-		return err
-	}
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
 	roots, err := x509.SystemCertPool()
@@ -117,18 +127,30 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 		_, err := fmt.Fprintln(status, postgresActivatedStatus)
 		return err
 	}
+	var cert tls.Certificate
+	if private {
+		cert, err = loadPrivateSetup(cloud, roots, claim)
+	} else {
+		cert, err = app.EnsureBootstrapCertificate(filepath.Join(*dir, "bootstrap-tls.pem"), time.Now())
+	}
+	if err != nil {
+		return err
+	}
 	if cloud != nil {
 		cloud.OnActivated = func() {
 			// A closed status stream cannot undo a committed database cutover.
 			// Restarting the setup task can verify its durable receipt again.
 			_, _ = fmt.Fprintln(status, postgresActivatedStatus)
+			if private {
+				stop()
+			}
 		}
 	}
 	var setup app.SetupHTTP
 	var dexDone <-chan struct{}
 	closeDex := func() {}
 	defer func() { closeDex() }()
-	server, err := app.ListenBootstrap(address, cert, func(origin string) (http.Handler, error) {
+	handler := func(origin string) (http.Handler, error) {
 		db, id, err := database.OpenBootstrap(ctx, filepath.Join(*dir, "bootstrap.db"), database.BootstrapSeed{
 			ID: uuid.NewString(), Organization: "ShiftBox", Origin: origin,
 			IDEPattern: "{workspace}.ide.invalid", PreviewPattern: "{service}--{workspace}.preview.invalid",
@@ -145,6 +167,9 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 		if cloud != nil {
 			mode = forwardedSetupDex
 		}
+		if private {
+			mode = privateSetupDex
+		}
 		admin, login, dexWeb, done, cleanup, err := startDex(ctx, *dir, *dex, origin, cert, nil, mode)
 		if err != nil {
 			db.Close()
@@ -157,7 +182,11 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 			setup.Platform = platform.validator(db, id)
 		}
 		setup = setup.WithPostgresTransfer(func(ctx context.Context, storage identity.DexPostgres, email, userID string) error {
-			target, _, _, cleanup, err := startSetupDex(ctx, *dir, *dex, origin, cert, &storage)
+			transferMode := localSetupDex
+			if private {
+				transferMode = privateSetupDex
+			}
+			target, _, _, _, cleanup, err := startDex(ctx, *dir, *dex, origin, cert, &storage, transferMode)
 			if err != nil {
 				return err
 			}
@@ -169,7 +198,13 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 			db.Close()
 		}
 		return handler, err
-	})
+	}
+	var server *app.BootstrapServer
+	if private {
+		server, err = app.ListenPrivateBootstrap(platform.runtime.BrowserAddress, cloud.ManagementOrigin, cert, handler)
+	} else {
+		server, err = app.ListenBootstrap(address, cert, handler)
+	}
 	if err != nil {
 		return errors.New("cannot open local setup; check installation state and database")
 	}
@@ -187,7 +222,12 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	if assets != nil {
 		destination = "/setup/"
 	}
-	if _, err := fmt.Fprintf(status, "Local setup: %s\nVerify the setup certificate SHA-256 fingerprint: %x\nOpen: %s%s\n", server.Origin, sha256.Sum256(cert.Certificate[0]), server.Origin, destination); err != nil {
+	if private {
+		_, err = fmt.Fprintf(status, "Private setup ready at %s%s\n", server.Origin, destination)
+	} else {
+		_, err = fmt.Fprintf(status, "Local setup: %s\nVerify the setup certificate SHA-256 fingerprint: %x\nOpen: %s%s\n", server.Origin, sha256.Sum256(cert.Certificate[0]), server.Origin, destination)
+	}
+	if err != nil {
 		stop()
 		<-served
 		return errors.New("cannot write local setup status")

@@ -654,7 +654,8 @@ test('shows the saved workspace state and workflow', async () => {
       steps: [
         { key: 'boot', index: 0, label: 'Boot workspace', status: 'succeeded' },
         { key: 'configure', index: 1, label: 'Configure development container', status: 'failed',
-          detail: 'The guest could not prepare the repository.' },
+          detail: 'The guest could not prepare the repository.',
+          problem: { title: 'Repository preparation failed', detail: 'Check the GitHub connection and retry.' } },
         { key: 'verify', index: 2, label: 'Verify IDE', status: 'pending' },
       ],
     });
@@ -670,6 +671,9 @@ test('shows the saved workspace state and workflow', async () => {
   const warning = await screen.findByRole('alert', { name: 'Workspace launch failed' });
   expect(warning).toHaveTextContent('Configure development container');
   expect(warning).toHaveTextContent('The guest could not prepare the repository.');
+  expect(warning).toHaveTextContent('Repository preparation failed');
+  expect(warning).toHaveTextContent('Check the GitHub connection and retry.');
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
   expect(screen.getByRole('button', { name: 'Boot workspace: Completed' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Configure development container: Failed' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Verify IDE: Pending' })).toBeDisabled();
@@ -1002,42 +1006,6 @@ test('reviews a project revision and reports a capacity refusal', async () => {
   expect(submitted[1][1]?.headers).toEqual(submitted[0][1]?.headers);
 });
 
-// A failed launch explains the server's failure in a warning and keeps the
-// completed and pending workflow steps available for inspection.
-test('shows an inline warning and the Stepper after a workspace launch fails', async () => {
-  globalThis.fetch = jest.fn(async (input, init) => {
-    if (input === '/api/v1/session') return json(session);
-    if (input === '/api/v1/templates') return json({ items: [launchTemplate], nextCursor: null });
-    if (input === '/api/v1/workspaces' && init?.method === 'POST') return json({ id: 'launch-op', workspaceId: workspace.id });
-    if (input === '/api/v1/operations/launch-op') return json({
-      id: 'launch-op', version: 2, status: 'failed', currentStep: 'configure',
-      steps: [
-        { key: 'boot', index: 0, label: 'Boot workspace', status: 'succeeded' },
-        { key: 'configure', index: 1, label: 'Configure the development container', status: 'failed',
-          detail: 'The guest could not prepare the repository with the owner’s Git authorization.',
-          problem: { title: 'Repository preparation failed', detail: 'Check the GitHub connection and retry.' } },
-        { key: 'verify', index: 2, label: 'Verify the browser IDE', status: 'pending' },
-      ],
-    });
-    throw new Error('unexpected request');
-  });
-  const user = userEvent.setup();
-  render(<Providers><Workspaces workspaceId={null} launch /></Providers>);
-  await user.click(await screen.findByRole('button', { name: 'Launch workspace for Example project' }));
-  await user.type(await screen.findByRole('textbox', { name: /workspace name/i }), 'My development workspace');
-  await user.click(screen.getByRole('button', { name: 'Launch workspace' }));
-  const warning = await screen.findByRole('alert', { name: 'Workspace launch failed' });
-  expect(warning).toHaveTextContent('Configure the development container');
-  expect(warning).toHaveTextContent('The guest could not prepare the repository with the owner’s Git authorization.');
-  expect(warning).toHaveTextContent('Repository preparation failed');
-  expect(warning).toHaveTextContent('Check the GitHub connection and retry.');
-  expect(screen.getAllByRole('alert')).toHaveLength(1);
-  expect(screen.getByRole('button', { name: 'Boot workspace: Completed' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Configure the development container: Failed' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Verify the browser IDE: Pending' })).toBeDisabled();
-  expect(screen.getByRole('link', { name: 'View workspace' })).toHaveAttribute('href', '/workspaces/?id=workspace-one');
-});
-
 // Slow grants must not lose the click's permission to open a service tab.
 test.each([
   { button: 'Open IDE', service: 'ide', readiness: { canOpenIde: true } },
@@ -1304,6 +1272,7 @@ test.each(['transitioning', 'timed_out'])('stops an active deployment in the %s 
   await userEvent.setup().click(await screen.findByRole('button', { name: 'Stop deployment' }));
   expect(await screen.findByRole('button', { name: 'Stop workspace: In progress' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Stop deployment' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Enroll the guest: In progress' })).not.toBeInTheDocument();
   if (mode === 'transitioning') {
     const requests = fetcher.mock.calls.filter(([, init]) => init?.method === 'POST').map(([, init]) => new Headers(init?.headers));
     expect(requests.map(headers => headers.get('If-Match'))).toEqual(['"4"', '"5"']);
@@ -1348,44 +1317,4 @@ test('switches inventory progress to shutdown when a deployment is stopped', asy
   await user.click(stop);
   const workflow = within(await screen.findByRole('dialog', { name: 'Workspace operation' }));
   expect(await workflow.findByRole('button', { name: 'Stop workspace: In progress' })).toBeVisible();
-});
-
-// A newly launched workspace offers shutdown directly on its launch progress page.
-test('hands off launch progress to shutdown without leaving Projects', async () => {
-  class OperationStream extends EventTarget { close() {} }
-  Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: OperationStream });
-  const launchId = 'project-launch';
-  const stopId = 'project-stop';
-  let stopping = false;
-  globalThis.fetch = jest.fn(async (input, init) => {
-    if (input === '/api/v1/session') return json(session);
-    if (input === '/api/v1/templates') return json({ items: [launchTemplate], nextCursor: null });
-    if (input === '/api/v1/workspaces' && init?.method === 'POST') return json({ id: launchId, workspaceId: workspace.id });
-    if (input === `/api/v1/workspaces/${workspace.id}`) return json({
-      ...workspace, desiredState: stopping ? 'stopped' : 'running', observedState: 'starting',
-      currentOperationId: stopping ? stopId : launchId, canInterruptDeployment: !stopping,
-      lifecycle: stopping ? lifecycle('provisioned', 'stopped', stopId) : lifecycle('provisioned', 'vm-running', launchId),
-    });
-    if (input === `/api/v1/workspaces/${workspace.id}/actions/stop` && init?.method === 'POST') {
-      stopping = true;
-      return json({ id: stopId });
-    }
-    if (input === `/api/v1/operations/${launchId}`) return json({
-      id: launchId, version: 1, status: 'running', currentStep: 'enroll',
-      steps: [{ key: 'enroll', index: 0, label: 'Enroll the guest', status: 'active' }],
-    });
-    if (input === `/api/v1/operations/${stopId}`) return json({
-      id: stopId, version: 1, status: 'running', currentStep: 'stop',
-      steps: [{ key: 'stop', index: 0, label: 'Stop workspace', status: 'active' }],
-    });
-    throw new Error(`unexpected request: ${input}`);
-  });
-  const user = userEvent.setup();
-  render(<Providers><Workspaces workspaceId={null} launch /></Providers>);
-  await user.click(await screen.findByRole('button', { name: 'Launch workspace for Example project' }));
-  await user.type(await screen.findByRole('textbox', { name: 'Workspace name' }), 'Disposable workspace');
-  await user.click(screen.getByRole('button', { name: 'Launch workspace' }));
-  await user.click(await screen.findByRole('button', { name: 'Stop deployment' }));
-  expect(await screen.findByRole('button', { name: 'Stop workspace: In progress' })).toBeVisible();
-  expect(screen.queryByRole('button', { name: 'Enroll the guest: In progress' })).not.toBeInTheDocument();
 });

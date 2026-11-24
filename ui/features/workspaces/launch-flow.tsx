@@ -1,35 +1,25 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Anchor, Button, Group, Modal, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
+import { useRef, useState, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
+import { Button, Group, Modal, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
 import { APIProblemView } from '../../components/api-problem';
-import { LaunchPerformance } from './launch-performance';
-import { WorkflowStepper } from '../../components/workflow-stepper';
+import type { operations } from '../../lib/api-types';
 import { readProblem } from '../../lib/api-problem';
 import { providerLabel } from '../../lib/provider-label';
-import { useOperation } from '../../lib/use-operation';
 import type { TemplateRevision } from '../templates/use-templates';
-import { useWorkspaceCommand, useWorkspaceDetail } from './workspace-commands';
-import { WorkspaceImageCache } from './workspace-image-cache';
+import { markWorkspaceLaunch, workspaceURL } from './workspace';
 
-interface AcceptedLaunch {
-  id: string;
-  workspaceId: string;
-}
+type AcceptedLaunch = operations['launchWorkspace']['responses'][202]['content']['application/json'];
 
 export function LaunchFlow({ csrfToken, children }: {
   csrfToken: string;
   children: (onReview: (project: TemplateRevision) => void) => ReactNode;
 }) {
+  const router = useRouter();
   const [name, setName] = useState('');
   const [review, setReview] = useState<TemplateRevision>();
-  const [accepted, setAccepted] = useState<AcceptedLaunch>();
   const [error, setError] = useState<unknown>();
   const [submitting, setSubmitting] = useState(false);
   const requestKeys = useRef(new Map<string, string>());
-  const progressHeading = useRef<HTMLHeadingElement>(null);
-
-  useEffect(() => {
-    if (accepted) progressHeading.current?.focus();
-  }, [accepted]);
 
   function closeReview() {
     if (submitting) return;
@@ -51,22 +41,20 @@ export function LaunchFlow({ csrfToken, children }: {
         body: JSON.stringify({ templateId: review.id, templateRevision: review.currentRevision, name: name.trim() }),
       });
       if (!response.ok) throw await readProblem(response);
-      setAccepted(await response.json());
+      const { workspaceId }: AcceptedLaunch = await response.json();
+      if (!workspaceId) throw new Error('The launch response did not include a workspace ID.');
+      markWorkspaceLaunch(workspaceId);
+      router.push(workspaceURL(workspaceId));
     } catch (error) {
       setError(error);
-    } finally {
       setSubmitting(false);
     }
   };
 
   return (
     <>
-      {accepted ? <>
-        <Anchor href="/workspaces/">All workspaces</Anchor>
-        <Title order={1} ref={progressHeading} tabIndex={-1}>Launch workspace</Title>
-        <LaunchProgress accepted={accepted} csrfToken={csrfToken} focusHeading={() => progressHeading.current?.focus()} />
-      </> : children(setReview)}
-      <Modal opened={!!review && !accepted} onClose={closeReview} title="Review launch" centered size="lg" padding="lg"
+      {children(setReview)}
+      <Modal opened={!!review} onClose={closeReview} title="Review launch" centered size="lg" padding="lg"
         styles={{ title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' }, body: { paddingBottom: 0 } }}
         closeOnClickOutside={false} closeOnEscape={!submitting} closeButtonProps={{ 'aria-label': 'Close launch review', disabled: submitting }}>
         {review ? (
@@ -106,34 +94,4 @@ function LaunchDetail({ label, value }: { label: string; value: string }) {
 
 function templateKey(template: TemplateRevision) {
   return `${template.id}/${template.currentRevision}`;
-}
-
-function LaunchProgress({ accepted, csrfToken, focusHeading }: { accepted: AcceptedLaunch; csrfToken: string; focusHeading: () => void }) {
-  const [stopId, setStopId] = useState<string>();
-  const workspace = useWorkspaceDetail(accepted.workspaceId);
-  const data = workspace.isError ? undefined : workspace.data;
-  const workflow = data?.desiredState === 'stopped' ? data.lifecycle.workflowOperationId : null;
-  const operationId = stopId ?? workflow ?? accepted.id;
-  const operation = useOperation(operationId);
-  const command = useWorkspaceCommand(data, csrfToken, workspace.refetch, (_action, id) => {
-    setStopId(id);
-    focusHeading();
-  });
-  if (operation.accessDenied) return <Text role="alert">You no longer have access to this operation.</Text>;
-  return (
-    <Stack align="flex-start">
-      {operation.isError ? <APIProblemView error={operation.error} /> : null}
-      {operation.isPending ? <Text role="status">Loading workspace progress…</Text> : null}
-      {operation.data ? <WorkflowStepper operation={operation.data}
-        failureTitle={operationId === accepted.id ? 'Workspace launch failed' : 'Workspace shutdown failed'} /> : null}
-      {operation.data?.launchPerformance ? <LaunchPerformance performance={operation.data.launchPerformance} /> : null}
-      {data?.canInterruptDeployment && !stopId && operationId === accepted.id ? (
-        <Button variant="default" loading={command.submitting === 'stop'}
-          onClick={() => void command.run('stop')}>Stop deployment</Button>
-      ) : null}
-      {command.error !== undefined ? <APIProblemView error={command.error} /> : null}
-      <WorkspaceImageCache cache={workspace.isError ? undefined : workspace.data?.imageCache} />
-      <Anchor href={`/workspaces/?id=${encodeURIComponent(accepted.workspaceId)}`}>View workspace</Anchor>
-    </Stack>
-  );
 }

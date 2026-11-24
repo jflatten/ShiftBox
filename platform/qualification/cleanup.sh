@@ -119,7 +119,7 @@ verify_stack_deleted() {
 }
 
 # Before the CloudFormation delete, drain only the out-of-stack workspaces
-# and the staffed disposable restore target. CFN owns the ECS host and router.
+# and the staffed disposable restore target. CloudFormation owns the ECS host.
 live_instances() {
   local region=$1 name=$2 workspace_only=$3
   local -a filters=("Name=tag:project,Values=shiftbox" "Name=tag:cluster_name,Values=$name"
@@ -145,13 +145,13 @@ verify_nat_deleted() {
 }
 
 assert_vpc() {
-  local region=$1 name=$2 vpc=$3 response
+  local region=$1 name=$2 vpc=$3 existing=${4:-false} response
   [[ $vpc =~ ^vpc-[a-f0-9]+$ ]] || return 1
   response=$(aws_read "$region" ec2 describe-vpcs --vpc-ids "$vpc") || return
-  jq -e --arg name "$name" --arg id "$vpc" --arg account "$account" '
+  jq -e --arg name "$name" --arg id "$vpc" --arg account "$account" --argjson existing "$existing" '
     def tag($key): [.Tags[] | select(.Key == $key) | .Value];
     .Vpcs | length == 1 and (.[0] | .VpcId == $id and .OwnerId == $account and
-      .IsDefault == false and tag("project") == ["shiftbox"] and tag("cluster_name") == [$name])' \
+      ($existing or (.IsDefault == false and tag("project") == ["shiftbox"] and tag("cluster_name") == [$name])))' \
     <<<"$response" >/dev/null || fail "refusing to touch an unverified or default VPC for $name in $region"
 }
 
@@ -252,7 +252,7 @@ orphan_pass() {
 clean_scope() {
   local region=$1 name=$2 stacks_json stack_id stack='null' status inventory nodes instance vpc resources stack_vpc
   local verified_stack_id=''
-  local workspace_only issued=false
+  local workspace_only existing_network issued=false
   while (( SECONDS < deadline )); do
     stacks_json=$(stacks "$region") || return
     stack_id=$(jq -r --arg name "$name" '
@@ -266,11 +266,21 @@ clean_scope() {
     fi
     nodes=$(live_instances "$region" "$name" "$workspace_only") || return
     if jq -e 'length != 0' <<<"$nodes" >/dev/null; then
+      existing_network=false
       if "$workspace_only"; then
-        resources=$(stack_resources "$region" "$stack_id") || return
-        stack_vpc=$(jq -er 'map(select(.LogicalResourceId == "Vpc" and .ResourceType == "AWS::EC2::VPC"))
-          | select(length == 1) | .[0].PhysicalResourceId | select(test("^vpc-[a-f0-9]+$"))' <<<"$resources") ||
-          { fail "could not verify the qualification stack VPC for $name in $region"; return 1; }
+        if jq -e 'any(.Parameters[]?; .ParameterKey == "VpcId")' <<<"$stack" >/dev/null; then
+          stack_vpc=$(jq -er '
+            [.Parameters[] | select(.ParameterKey == "VpcId") | .ParameterValue] as $vpc |
+            select($vpc == [.Outputs[] | select(.OutputKey == "VpcId") | .OutputValue]) |
+            $vpc | select(length == 1) | .[0] | select(test("^vpc-[a-f0-9]+$"))' <<<"$stack") ||
+            { fail "could not verify the selected VPC for $name in $region"; return 1; }
+          existing_network=true
+        else
+          resources=$(stack_resources "$region" "$stack_id") || return
+          stack_vpc=$(jq -er 'map(select(.LogicalResourceId == "Vpc" and .ResourceType == "AWS::EC2::VPC"))
+            | select(length == 1) | .[0].PhysicalResourceId | select(test("^vpc-[a-f0-9]+$"))' <<<"$resources") ||
+            { fail "could not verify the qualification stack VPC for $name in $region"; return 1; }
+        fi
       fi
       while IFS=$'\t' read -r instance vpc; do
         [[ -n $instance ]] || continue
@@ -278,7 +288,7 @@ clean_scope() {
           fail "out-of-stack instance does not belong to the qualification VPC for $name in $region"
           return 1
         fi
-        assert_vpc "$region" "$name" "$vpc" || return
+        assert_vpc "$region" "$name" "$vpc" "$existing_network" || return
         aws_read "$region" ec2 terminate-instances --instance-ids "$instance" >/dev/null || return
       done < <(jq -r '.[] | select(.State.Name != "shutting-down") | [.InstanceId, .VpcId] | @tsv' <<<"$nodes")
     elif [[ -n $stack_id ]]; then

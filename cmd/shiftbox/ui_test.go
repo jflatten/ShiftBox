@@ -3,11 +3,34 @@
 package main
 
 import (
+	"encoding/binary"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
+
+// TestEmbeddedMacOSHelper makes the container build reject an absent or
+// malformed disk image before the controller image is published. The native
+// packaging test mounts the installer to verify its contents and signature.
+func TestEmbeddedMacOSHelper(t *testing.T) {
+	if os.Getenv("SHIFTBOX_REQUIRE_MACOS_HELPER") != "1" {
+		t.Skip("the container build supplies the native macOS helper disk image")
+	}
+	data, err := helperDiskImage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const trailerSize = 512
+	if len(data) <= trailerSize {
+		t.Fatalf("embedded macOS helper DMG missing or truncated (%d bytes)", len(data))
+	}
+	trailer := data[len(data)-trailerSize:]
+	if string(trailer[:4]) != "koly" || binary.BigEndian.Uint32(trailer[8:12]) != trailerSize {
+		t.Fatal("embedded macOS helper has no valid UDIF disk image trailer")
+	}
+}
 
 // TestEmbeddedBrowserAssets checks that the release build serves the actual
 // generated application and a script referenced by its HTML.
