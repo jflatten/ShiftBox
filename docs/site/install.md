@@ -7,14 +7,19 @@ show_release_links: true
 
 # Install ShiftBox and open a workspace
 
-Deploy ShiftBox in your AWS account, create the first administrator, and sign in over private HTTPS. The steps below use the published `v1.0.0-rc.3` release candidate. For another version, use the installer, template and support archive from that version's release. [ShiftBox releases](https://github.com/jflatten/ShiftBox/releases)
+Deploy ShiftBox in your AWS account, create the first administrator, and sign in over private HTTPS.
 
-## Before you begin
+## Choose your deployment
+
+* **Current AWS template from source.** Supply an existing VPC and two private subnets in that VPC, one for ShiftBox services and one for workspaces. Use the service subnet's Availability Zone for the installation volume. Provide outbound connectivity, private browser routing and DNS forwarding. The stack adds workload security groups and private DNS records. [Current CloudFormation operator guide](https://github.com/jflatten/ShiftBox/tree/main/platform/cloudformation/aws)
+* **Published `v1.0.0-rc.3` release candidate.** The RC3 template provisions its own network. Use the steps below with the RC3 installer, template and support archive. For another release, use that version's assets and guide. [ShiftBox releases](https://github.com/jflatten/ShiftBox/releases)
+
+## Before you begin with RC3
 
 * **AWS account and region.** Choose `us-east-1` (N. Virginia), `us-east-2` (Ohio), `us-west-1` (N. California), or `us-west-2` (Oregon). You need permission to deploy the CloudFormation stack and its named IAM resources, and to use a scoped policy for the setup session.
 * **Private access.** For a first install, use the release's Tailscale router if you can approve subnet routes and configure DNS in your tailnet. You can also bring a private connection such as a VPN or Direct Connect. Choose a VPC address range that does not overlap networks your clients already use. [Private access options]({{ '/private-access/' | relative_url }})
 * **Local tools.** Install AWS CLI v2 and the Session Manager plugin. The guided installer also needs Bash, `curl`, `jq`, OpenSSL and `tar`. Use a local terminal on the computer where you'll open setup. [AWS CLI installation](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html), [Session Manager plugin installation](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
-* **AWS costs.** The stack creates a VPC with private subnets, an EC2 host for the ShiftBox controller and PostgreSQL, encrypted EBS storage, private DNS and an outbound NAT gateway by default. Tailscale adds a router instance. Each running workspace adds a separate EC2 instance and disk.
+* **AWS costs.** Plan for an EC2 host for the ShiftBox controller and PostgreSQL, encrypted EBS storage, private DNS, and a separate EC2 instance and disk for each running workspace. The RC3 template creates a VPC with private subnets and an outbound NAT gateway by default. Selecting Tailscale on RC3 adds a router instance.
 
 Confirm your terminal is using the account you intend to deploy into. If you use a named AWS CLI profile, set `AWS_PROFILE` and sign in with it first.
 

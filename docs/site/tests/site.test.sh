@@ -119,6 +119,11 @@ grep -Fq 'href="/ShiftBox/first-workspace/"' "$scratch/ready/install/index.html"
 grep -Fq 'id="connect-with-tailscale"' "$scratch/ready/private-access/index.html"
 grep -Fq 'id="connect-your-github-account"' "$scratch/ready/first-workspace/index.html"
 
+# The install page labels current-source networking separately from the RC3 procedure.
+grep -Fq 'id="choose-your-deployment"' "$scratch/ready/install/index.html"
+grep -Fq 'href="https://github.com/jflatten/ShiftBox/tree/main/platform/cloudformation/aws"' "$scratch/ready/install/index.html"
+grep -Fq 'id="before-you-begin-with-rc3"' "$scratch/ready/install/index.html"
+
 # Before stable, explicit RC links remain available without claiming a default.
 mv "$PAGES_TEST_FEED/latest.json" "$scratch/stable.json"
 render pre-stable

@@ -6,9 +6,11 @@ permalink: /private-access/
 
 # Configure private access
 
-Your browser needs a private route to the ShiftBox service subnet, DNS for the installation suffix, and trust in the HTTPS certificate. The management console, IDE, previews and repair pages all use TCP 8443. The temporary setup wizard uses a separate local Session Manager tunnel on TCP 8444.
+Your browser needs a private route to the ShiftBox service subnet, DNS for the installation suffix, and trust in the HTTPS certificate. The management console, IDE, previews and repair pages all use TCP 8443.
 
-These steps match the published RC3 template. It creates private service and workspace subnets and configures the workload security groups and private DNS records.
+The current AWS template uses an existing VPC and subnets. Provide the private route and DNS forwarding through your own router or VPN. [Current CloudFormation operator guide](https://github.com/jflatten/ShiftBox/tree/main/platform/cloudformation/aws#connect-privately-and-complete-the-wizard)
+
+The steps below apply to published RC3, which provisions its own service and workspace subnets. Its temporary setup wizard uses a separate local Session Manager tunnel on TCP 8444.
 
 ## Connect with Tailscale
 
