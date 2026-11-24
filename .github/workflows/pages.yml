@@ -4,18 +4,14 @@ name: Documentation site
     paths:
       - 'docs/site/**'
       - 'branding/png/shiftbox-logo-light-1600.png'
-      - 'platform/release/manifest.sh'
       - 'platform/release/pages-workflow.test.sh'
-      - 'platform/release/tests/distribution-fixture.jq'
       - '.github/workflows/pages.yml'
   push:
     branches: [main]
     paths:
       - 'docs/site/**'
       - 'branding/png/shiftbox-logo-light-1600.png'
-      - 'platform/release/manifest.sh'
       - 'platform/release/pages-workflow.test.sh'
-      - 'platform/release/tests/distribution-fixture.jq'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -46,8 +42,6 @@ jobs:
           platform/release/pages-workflow.test.sh
           docs/site/tests/site.test.sh
       - name: Build documentation
-        env:
-          SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID: ${{ vars.SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID }}
         run: docs/site/build.sh "$RUNNER_TEMP/shiftbox-pages"
       - name: Stage site artifact
         if: github.repository == 'jflatten/ShiftBox' && github.ref == 'refs/heads/main' && github.ref_protected && github.event_name != 'pull_request'

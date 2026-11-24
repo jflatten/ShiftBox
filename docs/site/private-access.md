@@ -6,40 +6,19 @@ permalink: /private-access/
 
 # Configure private access
 
-Your browser needs a private route to the ShiftBox service subnet, DNS for the installation suffix, and trust in the HTTPS certificate. The management console, IDE, previews and repair pages all use TCP 8443.
+Your browser needs a route to the existing service subnet, DNS for the ShiftBox installation suffix, and trust in the browser certificate. The management console, IDE, previews, and repair pages all use HTTPS on TCP 8443. The staged setup wizard uses a separate local Session Manager tunnel on TCP 8444.
 
-The current AWS template uses an existing VPC and subnets. Provide the private route and DNS forwarding through your own router or VPN. [Current CloudFormation operator guide](https://github.com/jflatten/ShiftBox/tree/main/platform/cloudformation/aws#connect-privately-and-complete-the-wizard)
+## Route and resolve ShiftBox
 
-The steps below apply to published RC3, which provisions its own service and workspace subnets. Its temporary setup wizard uses a separate local Session Manager tunnel on TCP 8444.
-
-## Connect with Tailscale
-
-1. Choose `AccessMode=tailscale` when installing. After the `database` phase, find `TailscaleRouterInstanceId`, `TailscaleAdvertisedRoute` and `DnsSuffix` on the stack's **Outputs** tab.
-2. Open a Session Manager shell on the router with an AWS identity authorized to start that session. Replace `ROUTER_INSTANCE_ID` with the output value and `AWS_REGION` with the stack's region.
-
-   ```sh
-   aws ssm start-session --target ROUTER_INSTANCE_ID --region AWS_REGION
-   ```
-
-3. Run the following on the router. Replace `SERVICE_SUBNET_CIDR` with `TailscaleAdvertisedRoute`. Use the authorization link to join the router to your tailnet.
-
-   ```sh
-   sudo tailscale up --accept-dns=false --advertise-routes=SERVICE_SUBNET_CIDR
-   ```
-
-4. Approve the advertised service subnet route in the Tailscale admin console. Make sure your client accepts subnet routes. Limit access to the intended users and allow them TCP 8443 to the service subnet and TCP and UDP 53 to the router. [Tailscale subnet routing](https://tailscale.com/docs/features/subnet-routers)
-5. Under **DNS**, add the router's Tailscale IPv4 address as a nameserver restricted to the stack's `DnsSuffix`. This forwards queries for ShiftBox to the VPC while your client keeps its normal settings for other names. [Tailscale DNS](https://tailscale.com/docs/reference/dns-in-tailscale)
-
-## Use an existing private connection
-
-Choose `AccessMode=private-link` and set `OperatorCidr` to the approved IPv4 source range the service sees. Arrange forward and return routes between your clients and the new service subnet through your VPN, Direct Connect or other private connection. Forward your installation suffix to a reachable Route 53 Resolver inbound endpoint or equivalent VPC-side resolver. This covers the management hostname and the per-workspace hostnames. [Route 53 inbound DNS forwarding](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver-forwarding-inbound-queries.html)
+1. Connect your computer to the VPC through your VPN, Direct Connect connection, or existing Tailscale subnet router. Confirm the service subnet has a return path to the client. For Tailscale, advertise and approve the service subnet's route on your existing router. [Tailscale subnet routing](https://tailscale.com/docs/features/subnet-routers)
+2. Set `OperatorCidr` to the IPv4 source CIDR AWS sees for those browser connections. Limit access over the private connection to the clients that need TCP 8443. Check that network ACLs allow the traffic and its return path.
+3. Forward queries for `DnsSuffix` to a VPC-side resolver your clients can reach. You can use a Route 53 Resolver inbound endpoint or an existing DNS forwarder in the VPC. With Tailscale, use a restricted nameserver for the installation suffix on a reachable DNS forwarder. [Route 53 inbound DNS forwarding](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver-forwarding-inbound-queries.html), [Tailscale DNS](https://tailscale.com/docs/reference/dns-in-tailscale)
+4. After activation, look up the hostname from `ManagementOrigin` on your client. It should resolve to a private address. The same DNS forwarding serves the per-workspace IDE, preview, and repair names.
 
 ## Trust the browser certificate
 
-Use a certificate that covers `shiftbox.<suffix>`, `*.ide.<suffix>`, `*.preview.<suffix>` and `*.repair.<suffix>`. For a private suffix you can use an installation-specific certificate authority (CA). The guided RC3 installer creates one for Tailscale under `browser-tls/`. For a console install, use the release's certificate commands or certificates from your organization. [RC3 browser certificate commands](https://github.com/jflatten/ShiftBox/blob/v1.0.0-rc.3/platform/cloudformation/aws/README.md#connect-privately-and-complete-the-wizard)
+For staged setup, use a certificate covering `shiftbox.<suffix>`, `*.ide.<suffix>`, `*.preview.<suffix>`, and `*.repair.<suffix>`. Use a certificate trusted by your clients or issue one from a private browser CA. Upload the browser certificate and leaf key in the protected setup wizard. PostgreSQL uses separate trust material. [Certificate commands](https://github.com/jflatten/ShiftBox/blob/main/platform/cloudformation/aws/README.md#connect-privately-and-complete-the-wizard)
 
-1. Compare the public CA certificate's SHA-256 fingerprint with the fingerprint from your installer or certificate administrator.
-2. Import the public browser CA certificate, `ca.pem` on the guided path, into the OS or browser trust store on each participating device.
-3. Upload the browser leaf certificate and key through the protected setup wizard. Keep the issuer key in protected storage for renewal. PostgreSQL uses a separate CA, and the loopback wizard uses its own fingerprint-verified certificate.
+For the one-pass development template, use the public CA in the secret identified by `BrowserCaSecretArn`. Verify the public CA certificate's SHA-256 fingerprint against the value from your trusted operator before importing it. Add the CA to the OS or browser trust store of each participating device.
 
-When the controller is active, open `ManagementOrigin` from the same client. The name should resolve to a private address and your browser should show the ShiftBox sign-in page over trusted HTTPS. [Troubleshoot access]({{ '/troubleshooting/' | relative_url }})
+Open `ManagementOrigin` from the connected client. Verify that the browser shows the ShiftBox sign-in page over trusted HTTPS. [Troubleshoot access]({{ '/troubleshooting/' | relative_url }})

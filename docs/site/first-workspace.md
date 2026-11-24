@@ -6,7 +6,7 @@ permalink: /first-workspace/
 
 # Launch your first workspace
 
-Open a GitHub repository in ShiftBox and start VS Code in your browser. These steps use the published RC3 release. If your administrator has already created a project and configured its GitHub App, start by [connecting your GitHub account](#connect-your-github-account).
+Open a GitHub repository in ShiftBox and start VS Code in your browser. If your administrator has already created a project and configured its GitHub App, start by [connecting your GitHub account](#connect-your-github-account).
 
 ## Before you begin
 
@@ -16,20 +16,19 @@ Open a GitHub repository in ShiftBox and start VS Code in your browser. These st
 
 ## Validate the AWS workspace image
 
-1. Open **Administration → Infrastructure → Platform**. Under **Official AWS release**, confirm the release and region match your installation.
-2. Extract `shiftbox-aws-support.tar.gz` from the installed release. The guided installer saved a verified copy in the `release/` folder of its work directory. For an Ohio install, select `catalog/us-east-2.json` in **Official AMI catalog manifest**. Use the corresponding JSON file for any other region.
-3. Select **Validate official AMI**. ShiftBox launches a temporary EC2 instance to verify that the image can enroll. Wait for **Validated** and confirm the validation operation completed and cleaned up the temporary resources.
-4. Go to **Administration → Infrastructure → Resources** and select **New resource profile**. Give the profile a name, select the validated release under **AMI image**, and choose an instance type offered in your workspace Availability Zone. For example, if offered, `t3.medium` has 2 vCPUs and 4 GiB of memory. Set **EBS disk (GiB)** to at least 32 GiB for RC3 and save the profile.
+If setup supplied **Small**, **Medium**, and **Large** resource profiles, choose one for your project. You can review the profiles under **Administration → Infrastructure → Resources**. For a staged installation without a profile, follow these steps.
+
+1. Open **Administration → Infrastructure → Platform**. Select your deployment's regional JSON file under **Official AMI catalog manifest**.
+2. Select **Validate official AMI**. ShiftBox launches a temporary EC2 instance to verify that the image can enroll. Wait for **Validated** and confirm the validation operation completed and cleaned up the temporary resources.
+3. Go to **Administration → Infrastructure → Resources** and select **New resource profile**. Give the profile a name and select the validated **AMI image**. Choose an instance type offered in the workspace subnet's Availability Zone and an **EBS disk (GiB)** size at or above the displayed minimum. Save the profile.
 
 ## Configure the GitHub App
 
-On RC3, the controller reads GitHub App credentials from the stack's `GitHubAppSecretArn` parameter. Complete these steps once per installation.
+A ShiftBox administrator completes this step once per installation. You need permission to register and install the app on the GitHub account that owns the repository.
 
-1. Register a GitHub App under the account that owns the repository. Use the stack's `ManagementOrigin` as the homepage URL. For the **Callback URL**, append `/api/v1/git/authorization/callback` to that origin, including its HTTPS port. The user's browser follows this callback over the private connection. [Registering a GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app)
-2. Disable **Webhook active**. Grant repository **Contents** read access for checkout. For teams that need to push code or work with pull requests and workflows, ShiftBox supports read and write access to **Contents** and **Pull requests**, write access to **Workflows**, and read access to **Metadata**, **Checks** and **Commit statuses**.
-3. Install the app on the account that owns the project and grant access to the selected repository. On GitHub, find the numeric installation ID in the URL for that installation's settings. This ID identifies the installation of the app on the account.
-4. Generate a client secret in the app's settings. In Secrets Manager in the stack's account and region, store a JSON object with `clientId` and `clientSecret` as strings and `installationId` as a number. Keep the secret value in Secrets Manager.
-5. Create a CloudFormation update change set on the same stack and versioned template. Set `GitHubAppSecretArn` to the new secret's ARN and keep `Phase=active` and the other parameters unchanged. Review that the change preserves the installation volume and networking before executing it. Wait for the controller service to come back online and sign in again.
+1. Open **Administration → Settings → GitHub App**. Enter the GitHub organization that owns the repositories, or leave the field blank for a personal account.
+2. Select **Set up GitHub App** and confirm the prefilled registration on GitHub. During installation, grant the app access to the intended repositories.
+3. Keep your private connection open so your browser can return to ShiftBox. If an organization administrator approves the installation later, return to ShiftBox and select **Check installation**.
 
 ## Connect your GitHub account
 
