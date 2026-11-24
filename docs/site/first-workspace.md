@@ -11,16 +11,12 @@ Open a GitHub repository in ShiftBox and start VS Code in your browser. If your 
 ## Before you begin
 
 * Connect to your private ShiftBox installation and sign in.
-* Choose a GitHub repository you can access with an amd64-compatible Dev Container configuration, such as `.devcontainer/devcontainer.json`. ShiftBox reads the file from the repository and ref you select.
-* To configure the workspace image or create a project, sign in as a ShiftBox administrator or use an account with the relevant permissions. To set up the GitHub App, you also need permission to register and install it for the account that owns the repository.
+* Choose a GitHub repository you can access that already includes a Dev Container configuration for x86-64. The configuration usually lives at `.devcontainer/devcontainer.json` and tells ShiftBox which tools to install.
+* To create a project, sign in with an account that has permission to create one. To set up the GitHub App, you also need permission to register and install it for the account that owns the repository.
 
-## Validate the AWS workspace image
+## Choose a workspace size
 
-If setup supplied **Small**, **Medium**, and **Large** resource profiles, choose one for your project. You can review the profiles under **Administration → Infrastructure → Resources**. For a staged installation without a profile, follow these steps.
-
-1. Open **Administration → Infrastructure → Platform**. Select your deployment's regional JSON file under **Official AMI catalog manifest**.
-2. Select **Validate official AMI**. ShiftBox launches a temporary EC2 instance to verify that the image can enroll. Wait for **Validated** and confirm the validation operation completed and cleaned up the temporary resources.
-3. Go to **Administration → Infrastructure → Resources** and select **New resource profile**. Give the profile a name and select the validated **AMI image**. Choose an instance type offered in the workspace subnet's Availability Zone and an **EBS disk (GiB)** size at or above the displayed minimum. Save the profile.
+Choose a **Small**, **Medium**, or **Large** resource profile when you create a project. A resource profile determines the amount of computing power, memory, and disk space a workspace receives. Start with **Small** for editing and light builds. An administrator can review the available sizes under **Administration → Infrastructure → Resources**.
 
 ## Configure the GitHub App
 
@@ -38,8 +34,8 @@ A ShiftBox administrator completes this step once per installation. You need per
 
 ## Create a project and open the IDE
 
-1. Go to **Projects → New project**. Enter a name and the GitHub **Repository URL**. Set **Repository ref** if you want a specific branch or tag. Enter the repository-relative file path in **Dev Container configuration**.
-2. Choose the **Resource profile** you saved and select **Create project**. If an administrator has already created the project for you, open **Projects** and find it there.
+1. Go to **Projects → New project**. Enter a name and the GitHub **Repository URL**. Use **Repository ref** to choose a specific branch or tag, or leave it blank to use the repository’s default branch. Enter the repository-relative file path in **Dev Container configuration**.
+2. Choose a **Resource profile** and select **Create project**. If an administrator has already created the project for you, open **Projects** and find it there.
 3. Select **Launch workspace** on the project's row. Enter a workspace name, review the source and resources, and confirm with **Launch workspace**.
 4. Open the workspace under **Workspaces** and follow its build progress. When **Open IDE** becomes available, open it. You should see VS Code in your browser with the repository files and a terminal running in the project's devcontainer.
 

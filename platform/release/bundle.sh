@@ -51,7 +51,7 @@ release = json.loads(pins.read_text())
 cloudformation = root / "platform/cloudformation/aws"
 terraform = root / "platform/terraform/aws"
 regions = ("us-east-1", "us-east-2", "us-west-1", "us-west-2")
-guides = ("contributing", "first-workspace", "install", "private-access", "troubleshooting", "upgrade-recovery")
+guides = ("contributing", "first-workspace", "install", "private-access", "setup-helper", "troubleshooting", "upgrade-recovery")
 
 
 def read_regular(path):

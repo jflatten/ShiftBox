@@ -18,9 +18,9 @@ When an agent edits a file or runs a test, you can pick up the work in the same 
 
 ## Start small, stay self-hosted
 
-Deploy ShiftBox into an existing VPC and private subnets using the CloudFormation template from `main`. The installation guide walks you through preparing your network, deploying the stack, and creating the first administrator. [Install ShiftBox on AWS](https://jflatten.github.io/ShiftBox/install/)
+Deploy ShiftBox into an existing VPC and private subnets using the published CloudFormation template. The installation guide walks you through preparing your network, deploying the stack, and creating the first administrator. [Install ShiftBox on AWS](https://jflatten.github.io/ShiftBox/install/)
 
-Once you can sign in, validate the workspace image, connect GitHub and open your project in the browser IDE. [Launch your first workspace](https://jflatten.github.io/ShiftBox/first-workspace/)
+Once you can sign in, choose a workspace size, connect GitHub and open your project in the browser IDE. [Launch your first workspace](https://jflatten.github.io/ShiftBox/first-workspace/)
 
 ## Development prerequisites
 

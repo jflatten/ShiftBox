@@ -23,11 +23,14 @@ copy_public() {
     cp -- "$1" "$2"
 }
 
-for guide in index install private-access first-workspace troubleshooting upgrade-recovery contributing; do
+for guide in index install setup-helper private-access first-workspace troubleshooting upgrade-recovery contributing; do
     copy_public "$site/$guide.md" "$source_dir/$guide.md"
 done
 copy_public "$site/_layouts/default.html" "$source_dir/_layouts/default.html"
 copy_public "$root/branding/png/shiftbox-logo-light-1600.png" "$source_dir/assets/shiftbox-logo.png"
+for screenshot in setup-administrator.png setup-activate.png; do
+    copy_public "$site/assets/$screenshot" "$source_dir/assets/$screenshot"
+done
 
 export BUNDLE_GEMFILE=${BUNDLE_GEMFILE:-"$site/Gemfile"}
 bundle exec jekyll build --source "$source_dir" --config "$site/_config.yml" --destination "$scratch/site"

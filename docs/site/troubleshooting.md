@@ -4,38 +4,29 @@ title: Troubleshoot an AWS installation
 permalink: /troubleshooting/
 ---
 
-# Troubleshoot an AWS installation
+# Troubleshoot ShiftBox on AWS
 
-Start with the first step that failed. Use the same AWS account, region, stack, and rendered template when you retry.
+Start with the first step that failed. Keep the CloudFormation stack open so you can check its **Events** and **Outputs**.
 
 ## Stack and setup problems
 
-| Symptom | What to check |
+| What you see | What to check |
 | --- | --- |
-| A change set fails or replaces a persistent resource | Review the CloudFormation **Events** tab and the change set. Check the selected account, region, Availability Zone and permissions for named IAM resources. Resolve unexpected replacements before executing the change set. |
-| PostgreSQL does not start | In ECS, check service events and PostgreSQL task logs. Verify the installation volume mounted, the TLS secret has the expected certificate and key, and the public CA in `PostgresCaPem` matches the database certificate. |
-| The setup tunnel does not open | Check the local Session Manager plugin, stack read access and the bootstrap policy identified by `SetupOperatorPolicyArn`. Confirm PostgreSQL is ready and port 8444 is available locally. |
-| The one-pass setup claim fails | Read the claim from `SetupClaimSecretArn` for the correct stack. If account creation was interrupted, retry with the same email and password. After account creation, sign in with those credentials. |
-| The controller stays stopped | Confirm the helper verified activation and stopped the setup task. Check that the stack reached `Phase=active`, then look at controller service events and task logs in ECS. |
-
-With an authorized AWS CLI session, you can list failed CloudFormation events. Set `STACK_ID` and `AWS_REGION` to your stack ID and region.
-
-```sh
-aws cloudformation describe-events --stack-name "$STACK_ID" \
-  --region "$AWS_REGION" --filters FailedEvents=true
-```
-
-For interrupted staged setup, [run the helper again for the same stack]({{ '/install/' | relative_url }}#complete-the-protected-browser-setup). Before changing the controller build or replacing storage, follow the [upgrade and recovery guide]({{ '/upgrade-recovery/' | relative_url }}).
+| CloudFormation cannot create the stack | Open **Events** and read the first error. Confirm the AWS account and Region, that both subnets belong to your VPC, and that you chose the service subnet’s Availability Zone. Ask your AWS administrator to check permissions for named IAM resources. |
+| Secrets Manager denies access | Confirm you selected the same AWS account and Region as the stack. Give your AWS administrator the two secret references from **Outputs** so they can grant you permission to read them. |
+| The secret for the browser certificate has no value yet | Confirm the stack reached **CREATE_COMPLETE**. Ask your AWS administrator to check whether the ShiftBox server and its services started. |
+| ShiftBox rejects the setup claim | Copy the complete value from the secret listed under **SetupClaimSecretArn**. If account creation was interrupted, retry with the same email and password. If the account was created, sign in with those credentials. |
+| **Validate database** fails | Ask your AWS administrator to check the PostgreSQL service events and logs in Amazon ECS. The setup screen checks the database created by the stack. |
+| ShiftBox is still starting after activation | Keep the setup tab open. Ask your AWS administrator to check the controller service in Amazon ECS if the status does not change. |
 
 ## Browser and workspace problems
 
-| Symptom | What to check |
+| What you see | What to check |
 | --- | --- |
-| The management or IDE hostname does not resolve | Verify the client is on the private network and the installation suffix is forwarded to a resolver in the VPC. With Tailscale, check the restricted nameserver and its route. [Private DNS and routing]({{ '/private-access/' | relative_url }}) |
-| The hostname resolves but the browser times out | Verify the client accepts the private subnet route and can reach the service subnet on TCP 8443. Check the route approval, source CIDR or tailnet access policy. |
-| The browser reports an untrusted certificate | Check the hostname, validity and issuer. For a private CA, verify the fingerprint and import the browser CA on that client. The protected loopback setup uses a separate certificate. |
-| The official AMI does not validate | Check that the catalog JSON matches the image configured in the template and the stack Region. Review the validation operation and its temporary EC2 instance. Check EC2 capacity and network egress in the workspace subnet. |
-| Repository authorization or checkout fails | Check that both the GitHub App installation and the workspace owner's connected account cover the repository. Check the ref and Dev Container file path in the project. [GitHub and project setup]({{ '/first-workspace/' | relative_url }}) |
-| The workspace cannot build or start | Open the workspace and inspect its build or lifecycle logs. Check whether the devcontainer's images and dependencies are reachable from the workspace subnet. |
+| The browser cannot find the ShiftBox address | Connect to your private network. Ask your network administrator to check the DNS settings for your installation’s name. [Private routing and DNS]({{ '/private-access/' | relative_url }}) |
+| The browser finds the address but times out | Ask your network administrator to check the route to the service subnet and access to port 8443 from your computer. |
+| The browser reports an untrusted certificate | Check that you imported the certificate for this stack on this computer. Reopen your browser and use the exact address in **ManagementOrigin**. [Trust the browser certificate]({{ '/private-access/' | relative_url }}#trust-the-browser-certificate) |
+| ShiftBox cannot open the GitHub repository | Check that the GitHub App has access to the repository and that you connected the right GitHub account. Verify the branch and Dev Container file in the ShiftBox project. [GitHub and project setup]({{ '/first-workspace/' | relative_url }}) |
+| A workspace cannot build or start | Open the workspace and read its build or startup log. Ask your network administrator to check that the workspace subnet can reach the project’s image and package sources. |
 
-When reporting a problem, include the ShiftBox commit or controller image digest, AWS Region, failing phase and relevant error text. Remove private hostnames, account and resource identifiers, and credentials before posting publicly. [ShiftBox issues](https://github.com/jflatten/ShiftBox/issues)
+When reporting a problem, include your ShiftBox version, AWS Region, the step that failed, and the error message. Remove private URLs, account and resource identifiers, and credentials before posting publicly. [ShiftBox issues](https://github.com/jflatten/ShiftBox/issues)

@@ -21,4 +21,6 @@ Use the Go version in `go.mod` and the Node version in `ui/package.json`. The bu
 
 For AWS development, render a CloudFormation template from `main` with the approved image inputs. The development template uses existing subnets and supports first-run setup over private HTTPS. [AWS development workflow](https://github.com/jflatten/ShiftBox/tree/main/platform/development)
 
+For templates with manual deployment phases, follow the [setup helper guide]({{ '/install/setup-helper/' | relative_url }}).
+
 Branches and pull requests use normal CI. [ShiftBox architecture on main](https://github.com/jflatten/ShiftBox/blob/main/documentation/architecture/design-readback.md)

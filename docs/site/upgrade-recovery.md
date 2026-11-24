@@ -21,7 +21,7 @@ Plan a maintenance window and keep the existing CloudFormation stack, Availabili
 
 ## Review the upgrade change set
 
-1. Review the changes between the installed revision and the target commit on `main`. Verify the rendered template checksum, exact regional AMI, controller image digest, and guest compatibility. Check PostgreSQL ownership and TLS, compatible backup/restore tools, writable retained storage, encryption key availability, and expiry of the browser certificate and guest CA. Before irreversible schema changes, satisfy the all-retained-workspaces-current gate. Resolve any stopped, unreachable or unverified workspace reported by that gate.
+1. Review the changes between the installed revision and the version you plan to install. Verify the rendered template checksum, exact regional AMI, controller image digest, and guest compatibility. Check PostgreSQL ownership and TLS, compatible backup/restore tools, writable retained storage, encryption key availability, and expiry of the browser certificate and guest CA. Before irreversible schema changes, satisfy the all-retained-workspaces-current gate. Resolve any stopped, unreachable or unverified workspace reported by that gate.
 2. Use the same stack and the verified target template to create an update change set. Keep termination protection and the stack policy. Confirm that the retained EBS volume, its Availability Zone, account, installation identity and PostgreSQL secret references stay correct. Stop for replacement of the volume, secret or host, unexpected networking/IAM changes or a stale change set. Review those changes separately before attempting them.
 3. Read the changes and validation findings before executing the reviewed change set. Compare with the live stack and create a fresh change set if inputs or stack state changed.
 
@@ -60,4 +60,4 @@ If you need to diagnose a blocked rollout, collect redacted CloudFormation opera
 
 ## Rehearse the recovery path
 
-Rehearse a restore on a disposable installation with the same controller build as the backup. Exercise the upgrade from your installed build to the target commit on `main`, including the migration gates and fresh administrator review. Record the exact controller digest and archive used. [Install ShiftBox]({{ '/install/' | relative_url }})
+Rehearse a restore on a disposable installation with the same controller build as the backup. Exercise the upgrade on a trial stack with the version you plan to install, including the migration gates and fresh administrator review. Record the exact controller digest and archive used. [Install ShiftBox]({{ '/install/' | relative_url }})

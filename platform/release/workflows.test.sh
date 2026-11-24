@@ -47,7 +47,7 @@ for region in "${regions[@]}"; do
     }]}
   ' >"$catalog/$region.json"
 done
-for guide in install first-workspace private-access troubleshooting contributing upgrade-recovery; do
+for guide in install setup-helper first-workspace private-access troubleshooting contributing upgrade-recovery; do
   printf '# Public %s fixture\n' "$guide" >"$guides/$guide.md"
 done
 printf 'Never include this file in release artifacts.\n' >"$guides/private-evidence.md"
@@ -90,6 +90,7 @@ docs/contributing.md
 docs/first-workspace.md
 docs/install.md
 docs/private-access.md
+docs/setup-helper.md
 docs/troubleshooting.md
 docs/upgrade-recovery.md
 setup.sh
