@@ -21,7 +21,33 @@ const (
 	tagProvision    = "ShiftBoxProvisionOperation"
 	tagArtifact     = "ShiftBoxArtifact"
 	tagRelease      = "ShiftBoxRelease"
+	tagProject      = "project"
+	tagEnvironment  = "environment"
+	tagCluster      = "cluster_name"
 )
+
+var namespacedWorkspaceTags = map[string]string{
+	tagDeployment:   "shiftbox-workspace-deployment",
+	tagInstallation: "shiftbox-installation",
+	tagWorkspace:    "shiftbox-workspace",
+	tagGeneration:   "shiftbox-generation",
+	tagOwner:        "shiftbox-ownership",
+	tagProvision:    "shiftbox-provision-operation",
+	tagArtifact:     "shiftbox-artifact",
+	tagRelease:      "shiftbox-release",
+	tagProject:      "shiftbox-project",
+	tagEnvironment:  "shiftbox-environment",
+	tagCluster:      "shiftbox-cluster-name",
+}
+
+// workspaceTag selects the key contract for workspace resources. Image
+// provenance is verified separately against the immutable AMI metadata.
+func (p *Provider) workspaceTag(key string) string {
+	if p.cfg.NamespacedTags {
+		return namespacedWorkspaceTags[key]
+	}
+	return key
+}
 
 func validRef(ref provider.WorkspaceRef) bool {
 	return ref.InstallationID != "" && ref.WorkspaceID != "" && ref.Generation > 0 && ref.OwnershipMarker != ""
@@ -29,11 +55,11 @@ func validRef(ref provider.WorkspaceRef) bool {
 
 func (p *Provider) ownershipTags(ref provider.WorkspaceRef) []types.Tag {
 	return []types.Tag{
-		{Key: aws.String(tagDeployment), Value: aws.String(p.cfg.Deployment)},
-		{Key: aws.String(tagInstallation), Value: aws.String(ref.InstallationID)},
-		{Key: aws.String(tagWorkspace), Value: aws.String(ref.WorkspaceID)},
-		{Key: aws.String(tagGeneration), Value: aws.String(strconv.FormatInt(ref.Generation, 10))},
-		{Key: aws.String(tagOwner), Value: aws.String(ref.OwnershipMarker)},
+		{Key: aws.String(p.workspaceTag(tagDeployment)), Value: aws.String(p.cfg.Deployment)},
+		{Key: aws.String(p.workspaceTag(tagInstallation)), Value: aws.String(ref.InstallationID)},
+		{Key: aws.String(p.workspaceTag(tagWorkspace)), Value: aws.String(ref.WorkspaceID)},
+		{Key: aws.String(p.workspaceTag(tagGeneration)), Value: aws.String(strconv.FormatInt(ref.Generation, 10))},
+		{Key: aws.String(p.workspaceTag(tagOwner)), Value: aws.String(ref.OwnershipMarker)},
 	}
 }
 
@@ -175,11 +201,12 @@ func (p *Provider) Inspect(ctx context.Context, ref provider.WorkspaceRef) (prov
 func (p *Provider) inventory(ctx context.Context, ref provider.WorkspaceRef, instance types.Instance) (provider.Inventory, error) {
 	ref.InstanceID = aws.ToString(instance.InstanceId)
 	tags := tagValues(instance.Tags)
-	if tags[tagArtifact] == "" || tags[tagRelease] == "" {
+	artifact, release := tags[p.workspaceTag(tagArtifact)], tags[p.workspaceTag(tagRelease)]
+	if artifact == "" || release == "" {
 		return provider.Inventory{}, provider.ErrOwnershipMismatch
 	}
 	result := provider.Inventory{Ref: ref, InstanceID: ref.InstanceID, Power: powerOf(instance),
-		ArtifactID: tags[tagArtifact], Release: tags[tagRelease], NetworkMode: NetworkMode, ObservedAt: p.now(), EC2Enrollment: true}
+		ArtifactID: artifact, Release: release, NetworkMode: NetworkMode, ObservedAt: p.now(), EC2Enrollment: true}
 	if result.Power == provider.Starting || result.Power == provider.Stopping {
 		// EC2 can omit attachment fields during transitional states.
 		return result, nil

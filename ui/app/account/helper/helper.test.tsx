@@ -28,13 +28,14 @@ function json(body: unknown, status = 200) {
   return { ok: status < 400, status, json: async () => body, headers: { get: () => "application/json" } } as unknown as Response;
 }
 
-// The installer links to the exact authenticated macOS archive, without implying launch.
+// The installer links to the authenticated macOS download and explains drag-to-Applications.
 test('offers the internal macOS artifact to the signed-in account', async () => {
   globalThis.fetch = jest.fn().mockResolvedValue(json(current));
   renderHelper();
   expect(await screen.findByRole('heading', { name: 'Install Local Helper' })).toBeVisible();
   const download = await screen.findByRole('link', { name: 'Download for macOS' });
   expect(download).toHaveAttribute('href', '/api/v1/ssh/helper/download');
+  expect(screen.getByText(/drag ShiftBox Local Helper to Applications/i)).toBeVisible();
   expect(screen.getByText(/internal build/i)).toBeVisible();
 });
 

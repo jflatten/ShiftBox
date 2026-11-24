@@ -3,6 +3,7 @@ package ec2
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -390,5 +391,83 @@ func TestOfficialBootChecksLiveImageBeforeLaunch(t *testing.T) {
 				t.Fatalf("%s retry = %+v, %v, AWS launches = %d, want existing single-boot instance", kind, got, err, mock.launches)
 			}
 		})
+	}
+}
+
+type suppliedNetworkAPI struct {
+	client
+	subnet types.Subnet
+	group  types.SecurityGroup
+}
+
+func (f suppliedNetworkAPI) DescribeSubnets(context.Context, *api.DescribeSubnetsInput, ...func(*api.Options)) (*api.DescribeSubnetsOutput, error) {
+	return &api.DescribeSubnetsOutput{Subnets: []types.Subnet{f.subnet}}, nil
+}
+
+func (f suppliedNetworkAPI) DescribeSecurityGroups(context.Context, *api.DescribeSecurityGroupsInput, ...func(*api.Options)) (*api.DescribeSecurityGroupsOutput, error) {
+	return &api.DescribeSecurityGroupsOutput{SecurityGroups: []types.SecurityGroup{f.group}}, nil
+}
+
+// TestVerifyNetworkAcceptsDefaultSubnet verifies that subnet auto-assignment is
+// independent of the explicit private primary interface in RunInstances.
+func TestVerifyNetworkAcceptsDefaultSubnet(t *testing.T) {
+	cfg := Config{AccountID: "123456789012", SubnetID: "subnet-default", SecurityGroupID: "sg-workspace"}
+	fake := suppliedNetworkAPI{
+		subnet: types.Subnet{SubnetId: aws.String(cfg.SubnetID), OwnerId: aws.String(cfg.AccountID), VpcId: aws.String("vpc-default"),
+			State: types.SubnetStateAvailable, AvailabilityZone: aws.String("us-east-2a"), MapPublicIpOnLaunch: aws.Bool(true)},
+		group: types.SecurityGroup{GroupId: aws.String(cfg.SecurityGroupID), OwnerId: aws.String(cfg.AccountID), VpcId: aws.String("vpc-default")},
+	}
+	p := &Provider{cfg: cfg, client: fake}
+	if err := p.verifyNetwork(t.Context()); err != nil {
+		t.Fatalf("verifyNetwork(default subnet) = %v, want acceptance", err)
+	}
+	fake.group.IpPermissions = []types.IpPermission{{IpProtocol: aws.String("tcp")}}
+	p.client = fake
+	if err := p.verifyNetwork(t.Context()); !errors.Is(err, provider.ErrOwnershipMismatch) {
+		t.Fatalf("verifyNetwork(workspace ingress) = %v, want rejection", err)
+	}
+}
+
+// TestNamespacedWorkspaceTags checks that CloudFormation workspaces use only
+// ShiftBox-owned keys and that those same keys fence inventory and cleanup.
+func TestNamespacedWorkspaceTags(t *testing.T) {
+	ref := provider.WorkspaceRef{InstallationID: "install", WorkspaceID: "workspace", Generation: 1, OwnershipMarker: "marker"}
+	request := provider.CreateRequest{Ref: ref, OperationID: "operation", ArtifactID: "artifact", Release: "release",
+		NetworkMode: NetworkMode, Resources: ReferenceResources()}
+	p := &Provider{cfg: Config{Deployment: "fixture", Environment: "testing", NamespacedTags: true}}
+	input := p.launchInput(request, Image{ID: "ami-11112222333344445", RootDeviceName: "/dev/sda1"})
+	for _, spec := range input.TagSpecifications {
+		tags := tagValues(spec.Tags)
+		if tags["shiftbox-workspace-deployment"] != "fixture" || tags["shiftbox-project"] != "shiftbox" ||
+			tags["shiftbox-cluster-name"] != "fixture" {
+			t.Fatalf("launchInput(%s) tags = %v, want namespaced deployment ownership", spec.ResourceType, tags)
+		}
+		for key := range tags {
+			if !strings.HasPrefix(key, "shiftbox-") {
+				t.Errorf("launchInput(%s) tag = %q, want shiftbox- prefix", spec.ResourceType, key)
+			}
+		}
+		if !p.owns(ref, spec.Tags) {
+			t.Errorf("owns(%s) = false, want ownership under the same tag convention", spec.ResourceType)
+		}
+	}
+	legacy := &Provider{cfg: Config{Deployment: "fixture", Environment: "testing"}}
+	if !legacy.owns(ref, legacy.ownershipTags(ref)) || p.owns(ref, legacy.ownershipTags(ref)) {
+		t.Fatal("ownership checks did not retain the legacy deployment's tag contract and isolation")
+	}
+	p.cfg.AccountID = "123456789012"
+	p.cfg.SubnetID = "subnet-test"
+	p.cfg.SecurityGroupID = "sg-test"
+	p.client = &lostLaunchAPI{cfg: p.cfg}
+	p.poll, p.now = time.Millisecond, time.Now
+	p.resolve = func(context.Context, string, string) (Image, error) {
+		return Image{ID: "ami-11112222333344445", RootDeviceName: "/dev/sda1", Architecture: "amd64"}, nil
+	}
+	if _, err := p.Create(t.Context(), request); !errors.Is(err, provider.ErrOutcomeUnknown) {
+		t.Fatalf("Create after lost response = %v, want uncertain result", err)
+	}
+	got, err := p.Create(t.Context(), request)
+	if err != nil || got.Power != provider.Stopped || got.ArtifactID != "artifact" || got.Release != "release" {
+		t.Fatalf("Create after namespaced retry = %+v, %v, want original stopped workspace", got, err)
 	}
 }

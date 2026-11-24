@@ -29,6 +29,7 @@ type dexMode uint8
 const (
 	localSetupDex dexMode = iota
 	forwardedSetupDex
+	privateSetupDex
 	controllerDex
 )
 
@@ -67,7 +68,7 @@ func startDex(ctx context.Context, dir, binary, origin string, server tls.Certif
 		}
 	}()
 
-	if mode == controllerDex {
+	if mode == controllerDex || mode == privateSetupDex {
 		server, err = app.EnsureBootstrapCertificate(filepath.Join(runtime, "loopback-tls.pem"), time.Now())
 		if err != nil {
 			return admin, nil, nil, nil, nil, errors.New("cannot generate managed Dex loopback TLS")

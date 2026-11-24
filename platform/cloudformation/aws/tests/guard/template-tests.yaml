@@ -25,6 +25,34 @@
     rules:
       retained_volume: FAIL
 
+# The cache is encrypted but can be deleted with its stack.
+- name: The cache volume can be deleted
+  input:
+    Resources:
+      RegistryCacheVolume:
+        Type: AWS::EC2::Volume
+        DeletionPolicy: Delete
+        UpdateReplacePolicy: Delete
+        Properties:
+          Encrypted: true
+  expectations:
+    rules:
+      disposable_cache_volume: PASS
+
+# The cache carries registry content and still needs encryption at rest.
+- name: An unencrypted cache volume is rejected
+  input:
+    Resources:
+      RegistryCacheVolume:
+        Type: AWS::EC2::Volume
+        DeletionPolicy: Delete
+        UpdateReplacePolicy: Delete
+        Properties:
+          Encrypted: false
+  expectations:
+    rules:
+      disposable_cache_volume: FAIL
+
 # Encryption is mandatory even when other data protections are configured.
 - name: An unencrypted installation volume is rejected
   input:

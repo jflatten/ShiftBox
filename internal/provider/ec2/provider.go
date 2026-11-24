@@ -40,6 +40,7 @@ var (
 // Config fixes the AWS identity, network placement, and deployment tag for the provider.
 type Config struct {
 	Region, AccountID, SubnetID, SecurityGroupID, Deployment, Environment string
+	NamespacedTags                                                        bool
 	OfficialImage                                                         *release.OfficialEC2Image
 }
 
@@ -141,8 +142,10 @@ func (p *Provider) verifyNetwork(ctx context.Context) error {
 		return provider.ErrInvalidState
 	}
 	s := subnet.Subnets[0]
+	// RunInstances explicitly disables public IPv4 on the primary interface.
+	// The subnet's default only applies to launches that omit that setting.
 	if aws.ToString(s.SubnetId) != p.cfg.SubnetID || aws.ToString(s.OwnerId) != p.cfg.AccountID ||
-		s.State != types.SubnetStateAvailable || aws.ToBool(s.MapPublicIpOnLaunch) || aws.ToString(s.AvailabilityZone) == "" {
+		s.State != types.SubnetStateAvailable || aws.ToString(s.AvailabilityZone) == "" {
 		return provider.ErrOwnershipMismatch
 	}
 	groups, err := p.client.DescribeSecurityGroups(ctx, &api.DescribeSecurityGroupsInput{GroupIds: []string{p.cfg.SecurityGroupID}})

@@ -3,8 +3,17 @@ import userEvent from '@testing-library/user-event';
 import { Providers } from '../../app/providers';
 import { Templates } from './templates';
 
+const mockPush = jest.fn();
+jest.mock('next/navigation', () => ({
+  ...jest.requireActual('next/navigation'),
+  useRouter: () => ({ push: mockPush }),
+}));
+
 const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; });
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  mockPush.mockClear();
+});
 
 const project = { id: 'project-id', name: 'Example project', ownerId: 'someone-else', ownerName: 'Project author', state: 'active',
   currentRevision: 2, version: 4, repositoryUrl: 'https://github.com/example/project', repositoryRef: 'main',
@@ -12,6 +21,26 @@ const project = { id: 'project-id', name: 'Example project', ownerId: 'someone-e
   platformArtifactId: 'image-id', platformImageName: 'Ubuntu release', secretNames: ['API_KEY'] };
 const session = { user: { id: 'member', role: 'member' }, mode: 'normal', installationState: 'active', permissions: [], csrfToken: 'fixture' };
 const json = (data: unknown) => ({ ok: true, status: 200, json: async () => data }) as Response;
+
+// An accepted project launch selects the returned workspace in the normal workspace route.
+test('opens the new workspace directly after launch', async () => {
+  const workspaceId = '9f167c98-8755-479a-99b3-c0674058f7a3';
+  globalThis.fetch = jest.fn(async (input, init) => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === '/api/v1/templates') return json({ items: [project], nextCursor: null });
+    if (input === '/api/v1/workspaces' && init?.method === 'POST') return json({ id: 'launch-operation', workspaceId });
+    throw new Error(`unexpected request: ${input}`);
+  });
+  const user = userEvent.setup();
+  render(<Providers><Templates /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Launch workspace for Example project' }));
+  await user.type(await screen.findByRole('textbox', { name: 'Workspace name' }), 'New workspace');
+  expect(mockPush).not.toHaveBeenCalled();
+  await user.click(within(screen.getByRole('dialog', { name: 'Review launch' })).getByRole('button', { name: 'Launch workspace' }));
+  await waitFor(() => expect(mockPush).toHaveBeenCalledWith(`/workspaces/?id=${workspaceId}`));
+  expect(mockPush).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('link', { name: 'View workspace' })).not.toBeInTheDocument();
+});
 
 // Shared users can inspect readable configuration without gaining edit or
 // secret-management controls, and closing details returns keyboard focus.

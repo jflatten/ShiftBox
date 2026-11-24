@@ -80,6 +80,8 @@ Every OpenAPI operation maps to exactly one action. Grouped operation IDs below 
 | `grantTemplateLaunch`, `revokeTemplateLaunch` | `template.share` |
 | `listSecretMetadata`, `setSecret`, `deleteSecretOverride` | `secret.manage_user`, `secret.manage_template`, or `secret.manage_organization` from the requested scope |
 | `getGitAuthorization`, `beginGitAuthorization`, `completeGitAuthorization`, `revokeGitAuthorization` | `git.manage` for the state-bound current user |
+| `getGitHubAppSetup`, `beginGitHubAppSetup`, `completeGitHubAppRegistration`, `verifyGitHubAppInstallation` | `infrastructure.manage` |
+| `returnGitHubAppRegistration` | Same-origin browser redirect to Settings. Credential exchange uses the administrator session and its one-use state on the protected POST. |
 | `listUsers`, `createLocalUser`, `updateMembership` | `user.list`, `user.create`, or the matching `user.approve` / `user.disable` / `user.change_role` action |
 | `resetLocalUserPassword` | `user.reset_password` |
 | `configureExternalIdentity` | `infrastructure.manage` |

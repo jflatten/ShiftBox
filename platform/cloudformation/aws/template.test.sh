@@ -7,7 +7,6 @@ fixture_dir=$(mktemp -d)
 trap 'rm -rf "$fixture_dir"' EXIT
 
 python3 - "$root" "$fixture_dir" <<'PY'
-from ipaddress import ip_network
 import json
 from pathlib import Path
 import re
@@ -67,8 +66,8 @@ substitutions = {
     "POSTGRES_IMAGE": postgres,
     "RELEASE_REGIONS": pins,
     "MOUNT_DATA_SCRIPT": (terraform / "host/mount-data.sh").read_text(),
+    "MOUNT_CACHE_SCRIPT": (terraform / "host/mount-registry-cache.sh").read_text(),
     "POSTGRES_START_SCRIPT": (terraform / "postgres/start.sh").read_text(),
-    "TAILSCALE_USER_DATA": (terraform / "tailscale/user-data.sh.tftpl").read_text(),
 }
 template_bytes = (cloudformation / "template.yaml").read_text()
 # Exercise the production renderer, then independently compare the parsed
@@ -82,6 +81,50 @@ for key, value in substitutions.items():
 assert not re.search(r"@@[A-Z_]+@@", template_bytes), "Unrendered template asset"
 template = yaml.load(template_bytes, Loader=CloudFormationLoader)
 resources = template["Resources"]
+
+# The input sizes a separate, disposable disk that only the controller uses.
+cache_parameter = template["Parameters"]["OciImageCacheSizeGiB"]
+assert cache_parameter["Type"] == "Number" and cache_parameter["Default"] == 20
+assert "up to 5 active users" in cache_parameter["Description"]
+assert "6 to 20" in cache_parameter["Description"] and "21 to 50" in cache_parameter["Description"]
+assert template["Metadata"]["AWS::CloudFormation::Interface"]["ParameterLabels"]["OciImageCacheSizeGiB"]["default"] == "OCI image cache size (GiB)"
+cache_volume = resources["RegistryCacheVolume"]
+assert cache_volume["Type"] == "AWS::EC2::Volume"
+assert cache_volume["DeletionPolicy"] == cache_volume["UpdateReplacePolicy"] == "Delete"
+cache_properties = cache_volume["Properties"]
+assert cache_properties["AvailabilityZone"] == {"Ref": "AvailabilityZone"}
+assert cache_properties["Size"] == {"Ref": "OciImageCacheSizeGiB"}
+assert cache_properties["Encrypted"] is True and cache_properties["VolumeType"] == "gp3"
+assert {"Key": "shiftbox-volume-purpose", "Value": "oci-image-cache"} in cache_properties["Tags"]
+assert resources["RegistryCacheAttachment"]["Properties"] == {
+    "Device": "/dev/sdg", "InstanceId": {"Ref": "EcsHost"}, "VolumeId": {"Ref": "RegistryCacheVolume"},
+}
+assert "RegistryCacheAttachment" in resources["ControllerService"]["DependsOn"]
+cache_path = "/var/lib/shiftbox-registry-cache"
+controller_task = resources["ControllerTask"]["Properties"]
+assert {"Name": "registry-cache", "Host": {"SourcePath": cache_path}} in controller_task["Volumes"]
+controller_container = controller_task["ContainerDefinitions"][0]
+assert {"SourceVolume": "registry-cache", "ContainerPath": cache_path} in controller_container["MountPoints"]
+assert {"Name": "SHIFTBOX_IMAGE_CACHE_VOLUME_ID", "Value": {"Ref": "RegistryCacheVolume"}} in controller_container["Environment"]
+for name in ("PostgresTask", "SetupTask"):
+    assert all(volume["Name"] != "registry-cache" for volume in resources[name]["Properties"]["Volumes"])
+
+# Existing subnet selection must not give the stack ownership of shared networking.
+forbidden_network_types = {
+    "AWS::EC2::VPC", "AWS::EC2::Subnet", "AWS::EC2::RouteTable", "AWS::EC2::Route",
+    "AWS::EC2::SubnetRouteTableAssociation", "AWS::EC2::InternetGateway",
+    "AWS::EC2::VPCGatewayAttachment", "AWS::EC2::NatGateway", "AWS::EC2::EIP",
+}
+assert not (forbidden_network_types & {r["Type"] for r in resources.values()})
+assert not ({"AccessMode", "VpcCidr", "CreateNatGateway"} & template["Parameters"].keys())
+# GitHub setup is separate from the stack and its runtime IAM permissions.
+assert all(field not in template_bytes for field in ("GitHubAppSecretArn", "HasGitHubApp", "SHIFTBOX_GITHUB_APP"))
+# Tenant stack tags such as Project must never collide with resource-level tags.
+for resource in resources.values():
+    properties = resource.get("Properties", {})
+    for tag in properties.get("Tags", []) + properties.get("HostedZoneTags", []):
+        assert tag["Key"].startswith("shiftbox-"), tag["Key"]
+assert {name for name, r in resources.items() if r["Type"] == "AWS::EC2::Instance"} == {"EcsHost"}
 
 
 def properties(name):
@@ -98,7 +141,6 @@ assert resources["ControllerService"]["Condition"] == "DatabaseEnabled"
 assert properties("ControllerService")["DesiredCount"] == {"If": ["ControllerEnabled", 1, 0]}
 assert resources["SetupTask"]["Condition"] == "DatabaseEnabled"
 assert template["Conditions"]["ControllerEnabled"] == {"Equals": [{"Ref": "Phase"}, "active"]}
-assert {"Condition": "DatabaseEnabled"} in template["Conditions"]["UseTailnet"]["And"]
 
 
 def phase_condition(expression, phase):
@@ -152,11 +194,11 @@ assert template["Conditions"]["UseExternalBoundaries"] == {"Equals": [{"Ref": "R
 assert template["Conditions"]["UseManagedBoundaries"] == {"Not": [{"Condition": "UseExternalBoundaries"}]}
 roles = {name for name, resource in resources.items() if resource["Type"] == "AWS::IAM::Role"}
 assert roles == {
-    "HostRole", "RouterRole", "PostgresExecutionRole", "SetupExecutionRole",
+    "HostRole", "PostgresExecutionRole", "SetupExecutionRole",
     "ControllerExecutionRole", "SetupTaskRole", "ControllerTaskRole",
 }
 managed_role_names = set()
-for name in roles | {"HostProfile", "RouterProfile"}:
+for name in roles | {"HostProfile"}:
     identity = properties(name)
     name_property = "RoleName" if name in roles else "InstanceProfileName"
     condition, external_name, managed_name = identity[name_property]["If"]
@@ -178,7 +220,6 @@ for name in roles | {"HostProfile", "RouterProfile"}:
         assert resources[name + "Boundary"]["Condition"] == (
             {
                 "HostRole": "UseManagedBoundaries",
-                "RouterRole": "UseManagedRouterBoundary",
             }.get(name, "UseManagedTaskBoundaries")
         )
         if "Policies" in identity:
@@ -192,11 +233,9 @@ assert template["Conditions"]["UseManagedTaskBoundaries"] == {
     "And": [{"Condition": "UseManagedBoundaries"}, {"Condition": "DatabaseEnabled"}]
 }
 
-# The two AWS-managed agent policies stay capped by local policies, including
-# restrictions on permission domains inherited by future managed versions.
+# Cap the managed ECS agent policy at the permissions used by this stack.
 for name, allowed_prefixes in (
     ("HostRoleBoundary", ("ec2:", "ecs:", "logs:")),
-    ("RouterRoleBoundary", ("ssm:", "ssmmessages:", "ec2messages:")),
 ):
     actions = {
         action
@@ -269,44 +308,25 @@ for name in ("SetupTask", "ControllerTask"):
     )
     assert ca_value == {"Join": ["\n", {"Split": ["|", {"Ref": "PostgresCaPem"}]}]}
 
-# Private stack and guest networks expose only the approved origins and service groups.
-for name in ("ServiceSubnet", "WorkspaceSubnet"):
-    assert properties(name)["MapPublicIpOnLaunch"] is False
-
-# Every supported VPC size fits the two private subnets and the optional NAT subnet.
-def resolve_subnet_expression(expression, vpc):
-    """Evaluate the network properties with the documented IPv4 CIDR interpretation."""
-    if not isinstance(expression, dict):
-        return expression
-    (function, args), = expression.items()
-    if function == "Ref":
-        return vpc if args == "VpcCidr" else template["Parameters"][args]["Default"]
-    if function == "Select":
-        return resolve_subnet_expression(args[1], vpc)[args[0]]
-    if function == "Split":
-        return resolve_subnet_expression(args[1], vpc).split(args[0])
-    if function == "Equals":
-        return resolve_subnet_expression(args[0], vpc) == resolve_subnet_expression(args[1], vpc)
-    if function == "If":
-        condition = resolve_subnet_expression(template["Conditions"][args[0]], vpc)
-        return resolve_subnet_expression(args[1] if condition else args[2], vpc)
-    if function == "Cidr":
-        network = ip_network(resolve_subnet_expression(args[0], vpc))
-        prefix = 32 - resolve_subnet_expression(args[2], vpc)
-        subnets = list(network.subnets(new_prefix=prefix))
-        assert len(subnets) >= args[1], f"{vpc} cannot fit {args[1]} /{prefix} subnets"
-        return subnets[:args[1]]
-    raise AssertionError(f"Unexpected subnet expression: {function}")
-
-
-for parent_prefix in range(16, 25):
-    vpc = f"10.63.0.0/{parent_prefix}"
-    assert re.fullmatch(template["Parameters"]["VpcCidr"]["AllowedPattern"], vpc)
-    cidrs = [resolve_subnet_expression(properties(name)["CidrBlock"], vpc)
-             for name in ("ServiceSubnet", "WorkspaceSubnet", "EgressSubnet")]
-    assert len(set(cidrs)) == 3
-    assert all(cidr.prefixlen == max(24, parent_prefix + 2) for cidr in cidrs)
-
+# Native AWS selectors reference existing inputs and reject a mismatched VPC or host AZ.
+parameters = template["Parameters"]
+assert parameters["VpcId"]["Type"] == "AWS::EC2::VPC::Id"
+assert parameters["ServiceSubnet"]["Type"] == parameters["WorkspaceSubnet"]["Type"] == "AWS::EC2::Subnet::Id"
+assert [
+    rule["Assert"]["EachMemberEquals"] for rule in template["Rules"]["SubnetsInSelectedVpc"]["Assertions"]
+] == [
+    [[{"ValueOf": ["ServiceSubnet", "VpcId"]}, {"ValueOf": ["WorkspaceSubnet", "VpcId"]}], {"Ref": "VpcId"}],
+    [[{"ValueOf": ["ServiceSubnet", "AvailabilityZone"]}], {"Ref": "AvailabilityZone"}],
+]
+host_interface, = properties("EcsHost")["NetworkInterfaces"]
+assert host_interface["SubnetId"] == {"Ref": "ServiceSubnet"}
+assert host_interface["AssociatePublicIpAddress"] is False
+assert properties("DiscoveryNamespace")["Vpc"] == {"Ref": "VpcId"}
+assert properties("PrivateZone")["VPCs"] == [{"VPCId": {"Ref": "VpcId"}, "VPCRegion": {"Ref": "AWS::Region"}}]
+assert '"subnetId":"${WorkspaceSubnet}"' in cloud_environments[0]["Sub"][0]
+for name, parameter in (("VpcId", "VpcId"), ("ServiceSubnetId", "ServiceSubnet"), ("WorkspaceSubnetId", "WorkspaceSubnet")):
+    assert template["Outputs"][name]["Value"] == {"Ref": parameter}
+assert not ({"PrivateRouteTableId", "TailscaleRouterInstanceId", "TailscaleAdvertisedRoute"} & template["Outputs"].keys())
 for name in ("ControllerService", "PostgresService"):
     assert properties(name)["NetworkConfiguration"]["AwsvpcConfiguration"]["AssignPublicIp"] == "DISABLED"
 for name, resource in resources.items():
@@ -319,7 +339,6 @@ ingress = {
 }
 assert ingress == {
     "OperatorIngress": (8443, 8443),
-    "RouterIngress": (8443, 8443),
     "GuestIngress": (19443, 19447),
     "PostgresControllerIngress": (5432, 5432),
     "PostgresSetupIngress": (5432, 5432),
@@ -328,10 +347,9 @@ for name in ingress:
     assert "0.0.0.0/0" != properties(name).get("CidrIp"), name
 assert properties("OperatorIngress")["CidrIp"] == {"Ref": "OperatorCidr"}
 assert re.fullmatch(template["Parameters"]["OperatorCidr"]["AllowedPattern"], "0.0.0.0/0") is None
-assert template["Parameters"]["OperatorCidr"]["Default"] == "192.0.2.255/32"
-assert template["Rules"]["PrivateLinkCidrRequired"]["Assertions"][0]["Assert"] == {
-    "Not": [{"Equals": [{"Ref": "OperatorCidr"}, "192.0.2.255/32"]}]
-}
+assert parameters["OperatorCidr"]["Default"] == ""
+assert resources["OperatorIngress"]["Condition"] == "AllowOperatorIngress"
+assert template["Conditions"]["AllowOperatorIngress"] == {"Not": [{"Equals": [{"Ref": "OperatorCidr"}, ""]}]}
 assert properties("GuestIngress")["SourceSecurityGroupId"] == {"Ref": "WorkspaceGroup"}
 
 # Workspace IAM requires the exact official image and publisher, workspace scopes and encrypted EBS.
@@ -359,28 +377,23 @@ assert properties("SetupSession")["Content"]["properties"] == {
 
 # Rendered user data and template must fit AWS limits before being hosted on S3.
 assert len(template_bytes.encode()) <= 1_048_576
-host_script = properties("EcsHost")["UserData"]["Fn::Base64"]["Sub"]
-router_script = properties("TailscaleRouter")["UserData"]["Fn::Base64"]["Sub"]
-for script, substitutions in (host_script, router_script):
-    assert len(script.encode()) + sum(
-        len(value.encode()) if isinstance(value, str) else 1024
-        for value in substitutions.values()
-    ) <= 16_384
+script, substitutions = properties("EcsHost")["UserData"]["Fn::Base64"]["Sub"]
+assert len(script.encode()) + sum(len(value.encode()) for value in substitutions.values()) <= 16_384
 # Hosted bootstrap runs from the rendered bytes. Detect broken shell quoting and heredocs.
 user_data_values = {
     "Cluster": "test-cluster",
     "DeploymentName": "test-deployment",
     "InstallationVolume": "vol-0123456789abcdef0",
     "InitializeDataVolume": "true",
-    "OutboundRoute": "test-route",
-    "dns_suffix": "shiftbox-test.internal",
-    "subnet_cidr": "10.63.0.0/24",
-    "browser_port": "8443",
+    "RegistryCacheVolume": "vol-1234567890abcdef0",
     "MountScript": (terraform / "host/mount-data.sh").read_text(),
+    "MountCacheScript": (terraform / "host/mount-registry-cache.sh").read_text(),
 }
-for script, _ in (host_script, router_script):
-    rendered = re.sub(r"\$\{([A-Za-z0-9_]+)\}", lambda match: user_data_values[match[1]], script)
-    subprocess.run(["bash", "-n"], input=rendered, text=True, check=True)
+rendered = re.sub(r"\$\{([A-Za-z0-9_]+)\}", lambda match: user_data_values[match[1]], script)
+subprocess.run(["bash", "-n"], input=rendered, text=True, check=True)
+# Cache mounting waits before ECS starts and always targets the distinct EBS ID.
+assert "ExecStart=/usr/local/libexec/shiftbox-mount-registry-cache vol-1234567890abcdef0 /var/lib/shiftbox-registry-cache auto" in rendered
+assert "Wants=shiftbox-cache.service\nAfter=shiftbox-cache.service" in rendered
 postgres_start = properties("PostgresTask")["ContainerDefinitions"][0]["Command"][0]
 subprocess.run(["sh", "-n"], input=postgres_start, text=True, check=True)
 (fixture_dir / "rendered.yaml").write_text(template_bytes)

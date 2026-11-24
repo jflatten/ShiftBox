@@ -33,7 +33,7 @@ paths:
       operationId: getSetupStatus
       responses:
         '200':
-          description: Current locally reachable setup gate
+          description: Current setup gate on the protected bootstrap origin
           content:
             application/json:
               schema:
@@ -54,16 +54,23 @@ paths:
               type: object
               additionalProperties: false
               required: [email]
+              dependentRequired:
+                claimCode: [initialPassword, confirmPassword]
+                initialPassword: [claimCode, confirmPassword]
+                confirmPassword: [claimCode, initialPassword]
               properties:
                 email: { type: string, format: email }
+                claimCode: { type: string, writeOnly: true, description: Required for private AWS first login. }
+                initialPassword: { type: string, writeOnly: true, description: The administrator password chosen during private AWS setup. }
+                confirmPassword: { type: string, writeOnly: true, description: Must match the chosen administrator password. }
       responses:
         '201':
-          description: Restricted administrator created; temporary password is shown once
+          description: Restricted administrator created. Loopback setup returns a one-time temporary password.
           content:
             application/json:
               schema:
                 type: object
-                required: [administratorId, temporaryPassword, operation]
+                required: [administratorId, operation]
                 properties:
                   administratorId: { type: string, format: uuid }
                   temporaryPassword: { type: string, writeOnly: true }
@@ -105,9 +112,12 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [certificateChainPem, privateKeyPem, managementOrigin, ideHostPattern, previewHostPattern]
+              required: [managementOrigin, ideHostPattern, previewHostPattern]
+              dependentRequired:
+                certificateChainPem: [privateKeyPem]
+                privateKeyPem: [certificateChainPem]
               properties:
-                certificateChainPem: { type: string }
+                certificateChainPem: { type: string, description: Supply with the key for loopback setup. Omit for private AWS first login. }
                 privateKeyPem: { type: string, writeOnly: true }
                 managementOrigin: { type: string, format: uri }
                 ideHostPattern: { type: string }
@@ -204,9 +214,9 @@ paths:
       operationId: downloadWorkspaceSSHHelper
       responses:
         '200':
-          description: Signed internal macOS app archive for the current installation
+          description: macOS disk image containing the signed helper app
           content:
-            application/zip:
+            application/x-apple-diskimage:
               schema: { type: string, format: binary }
         default: { $ref: '#/components/responses/Error' }
 
@@ -1220,6 +1230,107 @@ paths:
         '204': { description: Session timeout saved }
         default: { $ref: '#/components/responses/Error' }
 
+  /admin/settings/github-app:
+    get:
+      tags: [Administration]
+      operationId: getGitHubAppSetup
+      description: Read GitHub App registration and installation progress.
+      responses:
+        '200':
+          description: Setup progress and safe application metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubAppSetupStatus' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Administration]
+      operationId: beginGitHubAppSetup
+      description: Prepare the GitHub App manifest and bind its return state to the administrator session.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                organization: { type: string, maxLength: 39, description: Leave empty for a personal GitHub account. }
+                restart: { type: boolean, description: Explicitly start over after an interrupted registration. }
+      responses:
+        '200':
+          description: Form action and JSON manifest to submit to GitHub
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [action, manifest]
+                properties:
+                  action: { type: string, format: uri }
+                  manifest: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/settings/github-app/return:
+    get:
+      tags: [Administration]
+      operationId: returnGitHubAppRegistration
+      security: []
+      description: Forward the GitHub browser return to the settings page without exchanging credentials.
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema: { type: string }
+        - in: query
+          name: state
+          required: true
+          schema: { type: string }
+      responses:
+        '303': { description: Same-origin settings navigation }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/settings/github-app/callback:
+    post:
+      tags: [Administration]
+      operationId: completeGitHubAppRegistration
+      description: Exchange the registration code from the authenticated initiating admin session.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code, state]
+              properties:
+                code: { type: string, writeOnly: true }
+                state: { type: string, writeOnly: true }
+      responses:
+        '200':
+          description: Registered application pending repository installation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubAppSetupStatus' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/settings/github-app/verify:
+    post:
+      tags: [Administration]
+      operationId: verifyGitHubAppInstallation
+      description: Verify repository installation with GitHub and enable independent user authorization.
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      responses:
+        '200':
+          description: Current verified installation progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubAppSetupStatus' }
+        default: { $ref: '#/components/responses/Error' }
+
   /admin/image-cache:
     get:
       tags: [Infrastructure]
@@ -1592,6 +1703,18 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
   schemas:
+    GitHubAppSetupStatus:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [not_configured, registering, exchanging, installation_pending, ready, file_managed, recovery_required]
+        appName: { type: string }
+        owner: { type: string }
+        installUrl: { type: string, format: uri }
+        manageUrl: { type: string, format: uri }
+        repositorySelection: { type: string, enum: [selected, all] }
     SessionTimeout:
       type: object
       additionalProperties: false
@@ -1624,7 +1747,7 @@ components:
       required: [state, localOnly, completedSteps, availableSteps]
       properties:
         state: { type: string, enum: [bootstrap, configuring, active, recovery, blocked] }
-        localOnly: { type: boolean }
+        localOnly: { type: boolean, description: False for setup at the private AWS management origin. }
         completedSteps: { type: array, items: { type: string } }
         availableSteps: { type: array, items: { type: string } }
         blockingProblem: { oneOf: [{ $ref: '#/components/schemas/Problem' }, { type: 'null' }] }

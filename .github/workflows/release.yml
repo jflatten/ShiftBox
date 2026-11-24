@@ -430,12 +430,48 @@ jobs:
         if: always() && steps.cleanup-control.outcome == 'success'
         run: bash platform/packer/aws/release-phase.sh close share
 
+  candidate-helper:
+    name: Package the macOS helper
+    needs: [preflight, approve-release, candidate-setup]
+    if: >-
+      needs.approve-release.result == 'success' && needs.candidate-setup.result == 'success' &&
+      needs.preflight.outputs.channel == 'rc' && needs.candidate-setup.outputs.assets == ''
+    runs-on: macos-15
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.source }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build and sign the portable macOS helper
+        run: |
+          output="$RUNNER_TEMP/macos-helper"
+          sh platform/helper/macos/package.sh --portable "$output"
+          (cd "$output" && shasum -a 256 ShiftBox-Local-Helper.dmg > SHA256SUMS)
+      - uses: actions/upload-artifact@v7.0.2
+        id: upload
+        with:
+          name: macos-helper-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/macos-helper/ShiftBox-Local-Helper.dmg
+            ${{ runner.temp }}/macos-helper/SHA256SUMS
+          compression-level: 0
+          if-no-files-found: error
+
   candidate:
-    needs: [preflight, approve-release, candidate-setup, candidate-ami-share]
+    needs: [preflight, approve-release, candidate-setup, candidate-ami-share, candidate-helper]
     if: >-
       !cancelled() && needs.approve-release.result == 'success' && needs.candidate-setup.result == 'success' &&
       (needs.candidate-setup.outputs.assets != '' || needs.candidate-setup.outputs.share != '' ||
-       needs.candidate-ami-share.result == 'success')
+       needs.candidate-ami-share.result == 'success') &&
+      (needs.candidate-setup.outputs.assets != '' || needs.candidate-helper.result == 'success')
     runs-on: ubuntu-latest
     environment: aws-release-candidate
     timeout-minutes: 55
@@ -501,6 +537,11 @@ jobs:
           test -x "$guard"
           install "$guard" "$tools/bin/cfn-guard"
           printf '%s\n' "$tools/python/bin" "$tools/bin" >> "$GITHUB_PATH"
+      - uses: actions/download-artifact@v8.0.2
+        if: steps.restore.outputs.assets == ''
+        with:
+          artifact-ids: ${{ needs.candidate-helper.outputs.artifact }}
+          path: ${{ runner.temp }}/candidate/helper
       - name: Build the full controller and record its registry digest
         if: steps.restore.outputs.assets == ''
         env:
@@ -518,10 +559,12 @@ jobs:
           }
           trap cleanup EXIT
           # Keep builder metadata and registry credentials in the same temporary Docker config.
+          (cd "$RUNNER_TEMP/candidate/helper" && shasum -a 256 -c SHA256SUMS)
           docker buildx create --name "$builder" --driver docker-container --bootstrap
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker buildx build --builder "$builder" --platform linux/amd64 \
             --file platform/container/Dockerfile --build-arg "RELEASE_CANDIDATE=$RELEASE_TAG" \
+            --build-context "macos-helper=$RUNNER_TEMP/candidate/helper" \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \
             --metadata-file "$RUNNER_TEMP/candidate/controller.json" \

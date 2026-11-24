@@ -53,6 +53,10 @@ func (c Config) Validate() error {
 			return errors.New("invalid official EC2 image configuration")
 		}
 	}
+	if c.Runtime != nil && c.Runtime.EC2 != nil && len(c.Runtime.EC2.StarterCatalog) != 0 &&
+		(c.Runtime.Provider != "ec2" || c.Runtime.EC2.OfficialImage == nil) {
+		return errors.New("a starter EC2 catalog requires an official EC2 image")
+	}
 	return nil
 }
 

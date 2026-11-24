@@ -58,9 +58,10 @@ the developer and AI development agents.
 
 - Always use Terraform to manage AWS resources
 - Always clean up your test resources when completing your task.
-- Ensure all resources that are taggable are tagged with:
-  - project = shiftbox
-  - cluster_name = `<name of deployment>`
+- Prefix new ShiftBox-managed AWS tag keys with `shiftbox-`. For new
+  CloudFormation deployments use `shiftbox-project=shiftbox` and
+  `shiftbox-cluster-name=<name of deployment>` where tagging is supported.
+  Preserve existing tag contracts for deployed resources and legacy release assets.
 
 ## Deploy an update to the AWS demo
 
@@ -100,7 +101,12 @@ mkdir -p "$rollout/overlay" "$rollout/docker"
 cp "$active_vars" "$rollout/previous.tfvars.json"
 
 npm --prefix ui run build
-CGO_ENABLED=0 go test -tags shiftbox_ui ./cmd/shiftbox -run '^TestEmbeddedBrowserAssets$' -count=1
+origin="$(jq -er .outputs.management_origin.value "$state")"
+sh platform/helper/macos/package.sh "$origin" "$rollout/helper"
+install -d ui/out/_shiftbox
+install -m 0644 "$rollout/helper/ShiftBox-Local-Helper.dmg" ui/out/_shiftbox/ShiftBox-Local-Helper.dmg
+SHIFTBOX_REQUIRE_MACOS_HELPER=1 CGO_ENABLED=0 go test -tags shiftbox_ui ./cmd/shiftbox \
+  -run '^Test(EmbeddedBrowserAssets|EmbeddedMacOSHelper)$' -count=1
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -tags shiftbox_ui \
   -o "$rollout/overlay/shiftbox" ./cmd/shiftbox
 chmod 0755 "$rollout/overlay/shiftbox"

@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// BootstrapServer owns a loopback-only listener and its local HTTPS lifecycle.
+// BootstrapServer owns the bootstrap HTTPS listener and its lifecycle.
 // Origin is the actual address, including the OS-selected port when zero is used.
 type BootstrapServer struct {
 	Origin   string
@@ -50,6 +50,23 @@ func ListenBootstrap(address string, certificate tls.Certificate, handler func(s
 			origin = "https://[" + ip.String() + "]"
 		}
 	}
+	return newBootstrapServer(listener, origin, certificate, handler)
+}
+
+// ListenPrivateBootstrap binds the configured ECS task port. The task security
+// group admits private clients and the handler enforces the management authority.
+func ListenPrivateBootstrap(address, origin string, certificate tls.Certificate, handler func(string) (http.Handler, error)) (*BootstrapServer, error) {
+	if len(certificate.Certificate) == 0 || certificate.PrivateKey == nil || handler == nil {
+		return nil, errors.New("private setup TLS material and handler are required")
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return nil, errors.New("cannot bind private setup listener")
+	}
+	return newBootstrapServer(listener, origin, certificate, handler)
+}
+
+func newBootstrapServer(listener net.Listener, origin string, certificate tls.Certificate, handler func(string) (http.Handler, error)) (*BootstrapServer, error) {
 	next, err := handler(origin)
 	if err != nil || next == nil {
 		listener.Close()

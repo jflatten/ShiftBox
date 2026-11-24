@@ -272,3 +272,70 @@ test('validates the deployed PostgreSQL database in cloud setup', async () => {
     body: JSON.stringify({ profile: 'postgres', tlsMode: 'verify-full' }),
   }));
 });
+
+// The private claim form rejects a mistyped confirmation and hands off directly
+// to sign-in with the confirmed password.
+test('claims a private installation with a confirmed password and continues to sign-in', async () => {
+  const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
+    if (input === '/api/v1/session') return response(401) as Response;
+    if (input === '/api/v1/setup/status') return response(200, { ...bootstrap('administrator'), localOnly: false }) as Response;
+    if (input === '/api/v1/setup/administrator' && init?.method === 'POST') return response(201, {}) as Response;
+    throw new Error('unexpected request');
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><SetupFlow /></Providers>);
+  const create = await screen.findByRole('button', { name: 'Create administrator' });
+  await user.type(screen.getByRole('textbox', { name: 'Administrator email' }), 'owner@example.test');
+  await user.type(screen.getByLabelText(/^Setup claim code/), 'verified-deployment-claim');
+  await user.type(screen.getByLabelText(/^New password/), 'chosen-owner-password');
+  const confirmation = screen.getByLabelText(/^Confirm password/);
+  await user.type(confirmation, 'mistyped-owner-password');
+  await user.click(create);
+  expect(await screen.findByText('Passwords do not match.')).toBeVisible();
+  expect(fetch).not.toHaveBeenCalledWith('/api/v1/setup/administrator', expect.anything());
+  await user.clear(confirmation);
+  await user.type(confirmation, 'chosen-owner-password');
+  await user.click(create);
+  expect(await screen.findByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/auth/login');
+  expect(screen.getByText('Sign in with the administrator email and password you just set.')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Password' })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/^Setup claim code/)).not.toBeInTheDocument();
+  expect(fetch).toHaveBeenCalledWith('/api/v1/setup/administrator', expect.objectContaining({
+    method: 'POST',
+    body: JSON.stringify({
+      email: 'owner@example.test', claimCode: 'verified-deployment-claim',
+      initialPassword: 'chosen-owner-password', confirmPassword: 'chosen-owner-password',
+    }),
+  }));
+});
+
+// Activation keeps the operator on the same private origin while the active
+// controller replaces the setup listener and retires its bootstrap API.
+test('waits for the private controller before offering fresh sign-in', async () => {
+  let activated = false;
+  let online = false;
+  globalThis.fetch = jest.fn(async (input) => {
+    if (input === '/api/v1/setup/status') {
+      if (activated && online) return response(404) as Response;
+      return response(200, {
+        ...bootstrap('activation'), localOnly: false, managementOrigin: 'https://shiftbox.fixture.internal:8443',
+      }) as Response;
+    }
+    if (input === '/api/v1/session') return response(200, { mode: 'bootstrap_restricted', csrfToken: 'fixture' }) as Response;
+    if (input === '/api/v1/setup/activate') {
+      activated = true;
+      return response(202, { status: 'succeeded' }) as Response;
+    }
+    throw new Error('unexpected request');
+  });
+  const user = userEvent.setup();
+  render(<Providers><SetupFlow /></Providers>);
+  await user.click(await screen.findByRole('checkbox', { name: 'I understand that I will need to sign in again' }));
+  await user.click(screen.getByRole('button', { name: 'Activate installation' }));
+  expect(await screen.findByText('Starting ShiftBox…')).toBeVisible();
+  expect(screen.queryByRole('link', { name: 'Sign in to ShiftBox' })).not.toBeInTheDocument();
+  online = true;
+  const signIn = await screen.findByRole('link', { name: 'Sign in to ShiftBox' }, { timeout: 3000 });
+  expect(signIn).toHaveAttribute('href', 'https://shiftbox.fixture.internal:8443/auth/login');
+});

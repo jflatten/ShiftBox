@@ -54,17 +54,6 @@ func helperCommand(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	origin := *configuredOrigin
-	if origin == "" {
-		origin, err = bundledHelperOrigin(executable)
-		if err != nil {
-			return err
-		}
-	}
-	origin, err = canonicalSSHOrigin(origin)
-	if err != nil {
-		return err
-	}
 	paths, dataDir, err := helperPaths(executable)
 	if err != nil {
 		return err
@@ -80,6 +69,10 @@ func helperCommand(ctx context.Context, args []string) error {
 		if errors.Is(err, unix.EWOULDBLOCK) {
 			return nil
 		}
+		return err
+	}
+	origin, err := helperOrigin(ctx, *configuredOrigin, executable, dataDir, promptHelperOrigin)
+	if err != nil {
 		return err
 	}
 	if err := registerHelperLogin(); err != nil {
@@ -127,22 +120,6 @@ func helperProxyCommand(ctx context.Context, args []string) error {
 		return err
 	}
 	return runSSHProxy(ctx, nil, origin, *workspace, session.Credential, *pins, os.Stdin, os.Stdout, os.Stderr)
-}
-
-func bundledHelperOrigin(executable string) (string, error) {
-	resource := filepath.Join(filepath.Dir(executable), "..", "Resources", "shiftbox-helper.json")
-	f, err := os.Open(resource)
-	if err != nil {
-		return "", errors.New("the app has no controller URL; download it from ShiftBox or run with --origin")
-	}
-	defer f.Close()
-	var settings struct {
-		Origin string `json:"origin"`
-	}
-	if err := readHelperResponse(f, &settings, 8<<10); err != nil {
-		return "", errors.New("the bundled ShiftBox controller configuration is invalid")
-	}
-	return canonicalSSHOrigin(settings.Origin)
 }
 
 func helperPaths(executable string) (sshConfigPaths, string, error) {

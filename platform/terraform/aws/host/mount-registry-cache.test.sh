@@ -26,7 +26,7 @@ STUB
 cat > "$scratch/bin/blkid" <<'STUB'
 #!/bin/sh
 if [ "${TEST_BLANK:-false}" = true ] && [ ! -e "$TEST_FORMATTED" ]; then exit 2; fi
-printf 'xfs\n'
+printf '%s\n' "${TEST_FILESYSTEM:-xfs}"
 STUB
 cat > "$scratch/bin/mount" <<'STUB'
 #!/bin/sh
@@ -43,6 +43,12 @@ STUB
 cat > "$scratch/bin/wipefs" <<'STUB'
 #!/bin/sh
 test "${TEST_PROBE_ERROR:-false}" = false
+STUB
+cat > "$scratch/bin/xfs_growfs" <<'STUB'
+#!/bin/sh
+test "$*" = "$TEST_MOUNT"
+test "$(cat "$TEST_LOG")" = "$TEST_DEVICE"
+printf '%s\n' "$TEST_MOUNT" >> "$TEST_GROWN"
 STUB
 cat > "$scratch/bin/install" <<'STUB'
 #!/bin/sh
@@ -90,3 +96,25 @@ test ! -e "$TEST_FORMATTED"
 TEST_BLANK=true sh "$guard" vol-0123456789abcdef0 "$TEST_MOUNT" true 0
 test -e "$TEST_FORMATTED"
 TEST_BLANK=true sh "$guard" vol-0123456789abcdef0 "$TEST_MOUNT" false 0
+
+# CloudFormation auto mode can initialize the exact blank disk once and grow
+# the verified filesystem on boot, including after an EBS capacity increase.
+export TEST_GROWN="$scratch/grown"
+rm "$TEST_LOG" "$TEST_FORMATTED"
+TEST_BLANK=true sh "$guard" vol-0123456789abcdef0 "$TEST_MOUNT" auto 0
+test -e "$TEST_FORMATTED"
+rm "$TEST_LOG"
+TEST_BLANK=true sh "$guard" vol-0123456789abcdef0 "$TEST_MOUNT" auto 0
+test "$(wc -l < "$TEST_GROWN" | tr -d ' ')" = 2
+
+# Automatic mounting preserves existing foreign filesystems and rejects a failed probe.
+rm "$TEST_LOG" "$TEST_FORMATTED"
+if TEST_FILESYSTEM=ext4 sh "$guard" vol-0123456789abcdef0 "$TEST_MOUNT" auto 0; then
+    echo 'automatic cache setup accepted a foreign filesystem' >&2
+    exit 1
+fi
+if TEST_BLANK=true TEST_PROBE_ERROR=true sh "$guard" vol-0123456789abcdef0 "$TEST_MOUNT" auto 0; then
+    echo 'automatic cache setup accepted an unreadable signature probe' >&2
+    exit 1
+fi
+test ! -e "$TEST_FORMATTED"

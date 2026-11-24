@@ -102,7 +102,7 @@ func TestManagementRouterGuardsCatalogRoutes(t *testing.T) {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
 		want := http.StatusUnauthorized
-		if route.OperationID == "completeGitAuthorization" {
+		if route.OperationID == "completeGitAuthorization" || route.OperationID == "returnGitHubAppRegistration" {
 			want = http.StatusBadRequest
 		}
 		if response.Code != want {
@@ -130,7 +130,8 @@ func routerHandlers(t *testing.T) map[string]web.AuthorizedHandler {
 	t.Cleanup(func() { db.Close() })
 	handlers := make(map[string]web.AuthorizedHandler)
 	for _, route := range web.ManagementRoutes() {
-		if route.OperationID == "getSession" || route.OperationID == "logout" || route.OperationID == "completeGitAuthorization" {
+		if route.OperationID == "getSession" || route.OperationID == "logout" || route.OperationID == "completeGitAuthorization" ||
+			route.OperationID == "returnGitHubAppRegistration" {
 			continue
 		}
 		handlers[route.OperationID] = web.AuthorizedHandler{DB: db, Origin: session.Origin, Now: session.Now,

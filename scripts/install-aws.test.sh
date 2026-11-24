@@ -37,6 +37,37 @@ reject() {
     fi
 }
 
+# Subnet selection derives the VPC and storage AZ, without a routing-mode prompt.
+(
+    install_prompt() { IFS= read -r REPLY; }
+    aws() {
+        case "$*" in
+            *'--output table') return 0 ;;
+            *'ec2 describe-subnets --subnet-ids'*)
+                jq -n --arg workspace_vpc "${WORKSPACE_VPC:-vpc-00000000000000001}" --argjson default_subnet "${DEFAULT_SUBNET:-false}" '
+                  {Subnets:[{SubnetId:"subnet-00000000000000001",VpcId:"vpc-00000000000000001",
+                    State:"available",AvailabilityZone:"us-east-2a",MapPublicIpOnLaunch:$default_subnet},
+                    {SubnetId:"subnet-00000000000000002",VpcId:$workspace_vpc,
+                    State:"available",AvailabilityZone:"us-east-2b",MapPublicIpOnLaunch:$default_subnet}]}' ;;
+            *) return 97 ;;
+        esac
+    }
+    printf '{}\n' >"$test_dir/subnet-state.json"
+    answers=$'fresh\nsubnet-00000000000000001\nsubnet-00000000000000002\nfresh.internal\n\n'
+    install_prompt_parameters "$test_dir/subnet-state.json" us-east-2 <<<"$answers" >/dev/null
+    jq -e '.parameters | .VpcId == "vpc-00000000000000001" and .AvailabilityZone == "us-east-2a" and
+      .ServiceSubnet == "subnet-00000000000000001" and .WorkspaceSubnet == "subnet-00000000000000002" and
+      .OperatorCidr == "" and (has("AccessMode") or has("VpcCidr") or has("CreateNatGateway") or has("GitHubAppSecretArn") | not)' \
+      "$test_dir/subnet-state.json" >/dev/null
+    # A workspace subnet in a different VPC must fail before persisting inputs.
+    WORKSPACE_VPC=vpc-00000000000000002 reject install_prompt_parameters "$test_dir/subnet-state.json" us-east-2 <<<"$answers"
+    # One-pass launches override auto-assignment, so a default subnet is a valid input.
+    answers=$'fresh\nsubnet-00000000000000001\nsubnet-00000000000000002\nfresh.internal\n172.31.0.1/32\n'
+    DEFAULT_SUBNET=true install_prompt_parameters "$test_dir/subnet-state.json" us-east-2 one-pass <<<"$answers" >/dev/null
+    jq -e '.parameters | .OperatorCidr == "172.31.0.1/32" and (has("RoleBoundaryMode") or has("GitHubAppSecretArn") | not)' \
+      "$test_dir/subnet-state.json" >/dev/null
+)
+
 release_fixture() {
     jq -n --arg tag "$1" --argjson prerelease "$2" --argjson draft "$3" '
     {id:101,tag_name:$tag,immutable:true,prerelease:$prerelease,draft:$draft,published_at:"2026-01-02T03:04:05Z",
@@ -136,9 +167,12 @@ jq -n --arg stack "$stack" '
   {Stacks:[{StackId:$stack,StackStatus:"UPDATE_COMPLETE",
     Parameters:[{ParameterKey:"RoleBoundaryMode",ParameterValue:"managed"}],
     Outputs:({Phase:"dns-zones",VpcId:"vpc-00000000000000001",InstallationVolumeId:"vol-00000000000000001",
+          ServiceSubnetId:"subnet-00000000000000001",WorkspaceSubnetId:"subnet-00000000000000002",
           PrivateZoneId:"Z123456789",DiscoveryHostedZoneId:"Z987654321",DiscoveryNamespaceId:"ns-0123456789abcdef"} |
       to_entries | map({OutputKey:.key,OutputValue:.value}))}]}
 ' >"$stage_stack"
+install_store "$stage_state" '.parameters = {VpcId:"vpc-00000000000000001",
+  ServiceSubnet:"subnet-00000000000000001",WorkspaceSubnet:"subnet-00000000000000002"}'
 test "$(install_record_stage "$stage_state" "$stage_stack" dns-zones)" = dns-zones
 test "$(install_record_stage "$stage_state" "$stage_stack")" = dns-zones
 jq -e '.dnsIdentity.PrivateZoneId == "Z123456789" and .volume == "vol-00000000000000001" and .vpc == "vpc-00000000000000001"' \
@@ -152,6 +186,7 @@ for stage_edit in \
     '.Stacks[0].Outputs |= map(select(.OutputKey != "DiscoveryNamespaceId"))' \
     '(.Stacks[0].Outputs[] | select(.OutputKey == "PrivateZoneId") | .OutputValue) = "Z999999999"' \
     '(.Stacks[0].Outputs[] | select(.OutputKey == "VpcId") | .OutputValue) = "vpc-00000000000000002"' \
+    '(.Stacks[0].Outputs[] | select(.OutputKey == "WorkspaceSubnetId") | .OutputValue) = "subnet-00000000000000003"' \
     '(.Stacks[0].Outputs[] | select(.OutputKey == "InstallationVolumeId") | .OutputValue) = "vol-00000000000000002"'; do
     jq "$stage_edit" <"$stage_stack" >"$test_dir/edited-stage.json"
     reject install_record_stage "$stage_state" "$test_dir/edited-stage.json"
@@ -364,3 +399,24 @@ test -f "$resumable/state.json"
 test -d "$resumable/release"
 test ! -e "$resumable/.install-lock"
 printf 'Installer fixtures passed.\n'
+
+# The one-pass preview allows a new bounded stack with both services and the
+# initial claim. It rejects an update or a stack that tries to own the network.
+jq -n '{
+  Status:"CREATE_COMPLETE", ExecutionStatus:"AVAILABLE", Capabilities:["CAPABILITY_NAMED_IAM"],
+  Changes: ([
+    ["PostgresService", "AWS::ECS::Service"],
+    ["ControllerService", "AWS::ECS::Service"],
+    ["SetupClaim", "AWS::SecretsManager::Secret"],
+    ["BrowserTrust", "AWS::SecretsManager::Secret"],
+    ["InstallationVolume", "AWS::EC2::Volume"]
+  ] | map({Type:"Resource",ResourceChange:{Action:"Add",LogicalResourceId:.[0],ResourceType:.[1]}}))
+}' > "$test_dir/one-pass.json"
+printf '{"OperationEvents":[]}\n' > "$test_dir/events.json"
+install_preview "$test_dir/one-pass.json" "$test_dir/events.json" one-pass >/dev/null
+jq '.Changes[0].ResourceChange.Action = "Modify" | .Changes[0].ResourceChange.Replacement = "False"' \
+    "$test_dir/one-pass.json" > "$test_dir/modified-one-pass.json"
+reject install_preview "$test_dir/modified-one-pass.json" "$test_dir/events.json" one-pass
+jq '.Changes += [{Type:"Resource",ResourceChange:{Action:"Add",LogicalResourceId:"Network",ResourceType:"AWS::EC2::VPC"}}]' \
+    "$test_dir/one-pass.json" > "$test_dir/network-one-pass.json"
+reject install_preview "$test_dir/network-one-pass.json" "$test_dir/events.json" one-pass

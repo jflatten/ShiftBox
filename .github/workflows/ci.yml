@@ -32,6 +32,17 @@ jobs:
       - run: go test -tags openapi ./tests/contract -run '^TestOpenAPITypesMatchContract$' -count=1
       - run: make ui-test build
       - run: go test -tags shiftbox_ui ./cmd/shiftbox -run '^TestEmbeddedBrowserAssets$'
+  macos-helper:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: sh platform/helper/macos/package.test.sh
   aws-release-fixtures:
     runs-on: ubuntu-latest
     steps:
@@ -115,8 +126,8 @@ jobs:
           bash platform/qualification/deploy.test.sh
           bash platform/qualification/cleanup.test.sh
           python platform/qualification/workflow.test.py
-          python platform/qualification/test_tailnet.py
           python -m pytest -q -p no:cacheprovider platform/qualification/test_cost.py
+          python -m pytest -q -p no:cacheprovider platform/development
           terraform -chdir=platform/terraform/qualification/execution test
           terraform -chdir=platform/terraform/qualification init -backend=false -lockfile=readonly
           terraform -chdir=platform/terraform/qualification test

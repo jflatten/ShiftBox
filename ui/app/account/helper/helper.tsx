@@ -95,7 +95,7 @@ export function LocalHelper({ query, onReturn = openCallback }: { query: string;
             <Stack gap="md">
               <Text>This internal build is for the private macOS pilot.</Text>
               <Group><Button component="a" href="/api/v1/ssh/helper/download" download>Download for macOS</Button></Group>
-              <Text size="sm">Open the ZIP and place ShiftBox Local Helper in your Applications folder. Open the app and follow the browser prompts to pair it with this installation.</Text>
+              <Text size="sm">Open the disk image and drag ShiftBox Local Helper to Applications. Open it from Applications and follow the browser prompts to pair it with this installation.</Text>
               <Text size="sm">Approve the login item in System Settings to keep your SSH aliases up to date after you sign in to macOS. If macOS blocks the app, contact your ShiftBox administrator.</Text>
             </Stack>
           </Paper> : null}

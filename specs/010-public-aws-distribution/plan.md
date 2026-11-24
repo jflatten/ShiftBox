@@ -12,7 +12,7 @@ Distribute the existing single-controller private AWS deployment through GitHub 
 
 **Language/Version**: Go and Node pinned by `go.mod` and existing CI (Go 1.27.4 and Node 26.13.0 at this checkout), Bash with a macOS-compatible 3.2 baseline, CloudFormation YAML, Packer 1.14.2 and its pinned AWS plugin, and a locked Jekyll site build.
 
-**Primary Dependencies**: AWS CLI v2, Session Manager plugin, curl, jq, OpenSSL with the required certificate extensions, GitHub Actions / Releases / GHCR / Pages, and Packer. Use cfn-lint and cfn-guard in CI and Terraform for internal infrastructure. Operators use normal AWS access. Tailscale is the guided private connection, with an existing DNS and network path as the other supported option.
+**Primary Dependencies**: AWS CLI v2, Session Manager plugin, curl, jq, OpenSSL with the required certificate extensions, GitHub Actions / Releases / GHCR / Pages, and Packer. Use cfn-lint and cfn-guard in CI and Terraform for internal infrastructure. Operators use normal AWS access. Select existing private service and workspace subnets. The operator provides private connectivity and DNS forwarding, including when using Tailscale.
 
 **Storage**: CloudFormation stack state and retained, separately owned EBS and Secrets Manager resources in the customer's account. The CLI keeps only nonsecret resume metadata in an operator-only directory. Existing encrypted ECS host data volume for the ShiftBox installation and PostgreSQL 17 data, scoped Secrets Manager values, encrypted workspace roots per EC2 instance. Publication metadata lives in release assets and one reviewed qualification file per RC. Keep full evidence in existing restricted operator storage.
 

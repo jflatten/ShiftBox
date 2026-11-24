@@ -185,11 +185,10 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
     await expect(page.getByRole('heading', { name: `${templateName} · Revision 1` })).toBeVisible();
     await enter(page.getByRole('textbox', { name: /workspace name/i }), templateName);
     await activate(page.getByRole('dialog', { name: 'Review launch' }).getByRole('button', { name: 'Launch workspace', exact: true }));
-    const details = page.getByRole('link', { name: 'View workspace' });
-    await expect(details).toBeVisible();
-    workspaceURL = new URL((await details.getAttribute('href')) ?? '', managementOrigin).href;
+    await expect(page).toHaveURL(/\/workspaces\/\?id=[a-f0-9-]+$/);
+    workspaceURL = page.url();
 
-    // The launch page remains attached to its stream while another tab
+    // The workspace page remains attached to its stream while another tab
     // verifies the management entry control cannot open an unready IDE.
     const early = await page.context().newPage();
     try {
@@ -205,7 +204,6 @@ test('MVP setup, reconnect, retained checkout, and repair', async ({ page }) => 
       await early.close();
       await page.unroute('**/api/v1/operations/*/events');
     }
-    await activate(details);
   });
 
   const rebuiltIDE = await test.step('Save a file and retain it across stop, start, and rebuild', async () => {
@@ -336,7 +334,7 @@ test('validates and launches the official AWS release image', async ({ page }) =
   await expect(review.getByText(fixture.releaseId, { exact: true })).toBeVisible();
   await enter(review.getByRole('textbox', { name: /workspace name/i }), name);
   await activate(review.getByRole('button', { name: 'Launch workspace', exact: true }));
-  await activate(page.getByRole('link', { name: 'View workspace' }));
+  await expect(page).toHaveURL(/\/workspaces\/\?id=[a-f0-9-]+$/);
   await expect(page.getByRole('button', { name: 'Open IDE', exact: true })).toBeVisible({ timeout: firstLaunchTimeout });
   await openIDE(page, 'Open IDE', origin);
 });

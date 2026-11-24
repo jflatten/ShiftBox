@@ -56,9 +56,11 @@ type EC2Runtime struct {
 	SecurityGroupID       string                    `json:"securityGroupId"`
 	Deployment            string                    `json:"deployment"`
 	Environment           string                    `json:"environment"`
+	NamespacedTags        bool                      `json:"namespacedTags,omitempty"`
 	VerifiedEnrollmentAMI string                    `json:"verifiedEnrollmentAmi,omitempty"`
 	VerifiedSingleBootAMI string                    `json:"verifiedSingleBootAmi,omitempty"`
 	OfficialImage         *release.OfficialEC2Image `json:"officialImage,omitempty"`
+	StarterCatalog        []byte                    `json:"starterCatalog,omitempty"`
 }
 
 // VMResources records the validated allocation bounds for the local UTM host.

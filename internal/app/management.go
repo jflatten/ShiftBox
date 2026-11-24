@@ -64,6 +64,9 @@ func NewManagementServices(state *ControllerState, journal *operation.Journal,
 	updateBuiltImagePolicy := web.BuiltImagePolicyHandler(db, origin, now, applyBuiltImagePolicy, builtImageAvailability)
 	getSessionTimeout, updateSessionTimeout := web.SessionTimeoutHandlers(db, origin, now)
 	handlers := web.GitAuthorizationHandlers(db, origin, now, github)
+	for id, handler := range state.githubAppHandlers(now) {
+		handlers[id] = handler
+	}
 	handlers["revokeGitAuthorization"] = fenceBuiltImageRevocation(handlers["revokeGitAuthorization"], registry)
 	for id, handler := range web.SecretHandlers(db, origin, state.Secrets, now) {
 		handlers[id] = handler

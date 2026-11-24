@@ -88,9 +88,10 @@ export function CapacityForm({ csrfToken, version, onSaved }: {
   );
 }
 
-export function ActivateForm({ csrfToken, onActivated }: {
+export function ActivateForm({ csrfToken, onActivated, privateSetup }: {
   csrfToken: string;
   onActivated: () => void;
+  privateSetup?: boolean;
 }) {
   const [acknowledged, setAcknowledged] = useState(false);
   const [working, setWorking] = useState(false);
@@ -119,8 +120,10 @@ export function ActivateForm({ csrfToken, onActivated }: {
   return (
     <Stack align="flex-start">
       <Title order={2}>Activate installation</Title>
-      <Alert color="yellow" title="The local setup session will end">
-        After activation, start the controller and sign in at the management address.
+      <Alert color="yellow" title="The setup session will end">
+        {privateSetup
+          ? 'After activation, ShiftBox starts automatically. Sign in again at this address.'
+          : 'After activation, start the controller and sign in at the management address.'}
       </Alert>
       <Checkbox label="I understand that I will need to sign in again" checked={acknowledged}
         onChange={event => setAcknowledged(event.currentTarget.checked)} disabled={working} />
@@ -130,7 +133,7 @@ export function ActivateForm({ csrfToken, onActivated }: {
   );
 }
 
-export function SetupComplete({ origin }: { origin?: string }) {
+export function SetupComplete({ origin, privateSetup, ready }: { origin?: string; privateSetup?: boolean; ready?: boolean }) {
   let signInURL: string | undefined;
   try {
     if (origin) {
@@ -142,8 +145,10 @@ export function SetupComplete({ origin }: { origin?: string }) {
   }
   return (
     <Stack align="flex-start">
-      <Text role="status">Setup is complete. Start the controller and sign in at the management address.</Text>
-      {signInURL ? <Button component="a" href={signInURL}>Sign in to ShiftBox</Button> : null}
+      <Text role="status">{privateSetup
+        ? ready ? 'ShiftBox is online.' : 'Starting ShiftBox…'
+        : 'Setup is complete. Start the controller and sign in at the management address.'}</Text>
+      {signInURL && (!privateSetup || ready) ? <Button component="a" href={signInURL}>Sign in to ShiftBox</Button> : null}
     </Stack>
   );
 }

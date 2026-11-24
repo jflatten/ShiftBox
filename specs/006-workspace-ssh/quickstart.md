@@ -56,7 +56,7 @@ Controller pairing tests covered browser session and CSRF validation, expiry, pr
 
 ## Private macOS artifact (T012)
 
-Build on the MVP Mac with `sh platform/helper/macos/package.sh <management HTTPS origin> <output directory>`. The directory holds the app and the ZIP. Run the packaging verification with `sh platform/helper/macos/package.test.sh`. After the production UI export, stage the ZIP as `ui/out/_shiftbox/ShiftBox-Local-Helper.zip` before building the embedded controller. The authenticated download route serves the archive staged for that controller build.
+Build on the MVP Mac with `sh platform/helper/macos/package.sh <management HTTPS origin> <output directory>`. The directory holds the app and the DMG. Run the packaging verification with `sh platform/helper/macos/package.test.sh`. After the production UI export, stage the DMG as `ui/out/_shiftbox/ShiftBox-Local-Helper.dmg` before building the embedded controller. From the signed-in helper page, download and open the disk image, drag ShiftBox Local Helper to Applications, and open it from Applications.
 
 The demo bundle uses ID `com.shiftbox.local-helper`, an arm64 macOS executable, and an ad hoc signature. `codesign --verify --deep --strict` passed on the assembled app and the unpacked verification archive. The final deployed ZIP has SHA-256 `f0eba761cf442a48f9f9c829f81dfe9b7a1bbe0f66e573810be03f0263b0ba3f` and contains the demo management HTTPS origin.
 

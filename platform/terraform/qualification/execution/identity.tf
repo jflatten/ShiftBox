@@ -1,19 +1,14 @@
 locals {
   role_prefix   = "arn:aws:iam::${local.account}:role/shiftbox-qualification/${local.run}"
   policy_prefix = "arn:aws:iam::${local.account}:policy/shiftbox-qualification-boundaries/${local.run}"
-  host_roles    = ["HostRole", "RouterRole"]
   task_roles    = ["PostgresExecutionRole", "SetupExecutionRole", "ControllerExecutionRole", "SetupTaskRole", "ControllerTaskRole"]
-  roles         = concat(local.host_roles, local.task_roles)
+  roles         = concat(["HostRole"], local.task_roles)
   role_arns     = { for role in local.roles : role => "${local.role_prefix}/${local.run}-${role}" }
   boundary_arns = { for role in local.roles : role => "${local.policy_prefix}-${role}" }
   managed_attachments = {
-    HostRole   = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
-    RouterRole = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+    HostRole = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
   }
-  instance_profiles = [
-    for name in ["HostProfile", "RouterProfile"] :
-    "arn:aws:iam::${local.account}:instance-profile/shiftbox-qualification/${local.run}/${local.run}-${name}"
-  ]
+  host_profile = "arn:aws:iam::${local.account}:instance-profile/shiftbox-qualification/${local.run}/${local.run}-HostProfile"
   identity_statements = concat(
     [
       for role in local.roles : {
@@ -70,12 +65,12 @@ locals {
     {
       Effect   = "Allow"
       Action   = ["iam:CreateInstanceProfile", "iam:GetInstanceProfile", "iam:DeleteInstanceProfile", "iam:RemoveRoleFromInstanceProfile", "iam:AddRoleToInstanceProfile"]
-      Resource = local.instance_profiles
+      Resource = [local.host_profile]
     },
     {
       Effect   = "Allow"
       Action   = ["iam:PassRole"]
-      Resource = [for role in local.host_roles : local.role_arns[role]]
+      Resource = [local.role_arns.HostRole]
       Condition = {
         StringEquals = { "iam:PassedToService" = "ec2.amazonaws.com" }
       }

@@ -14,7 +14,13 @@ import (
 // MarkAdministratorReady records successful Dex reconciliation only for the
 // credential intent that was sent. A stale result cannot ready a reset password.
 func MarkAdministratorReady(ctx context.Context, tx *sql.Tx, installationID, userID string, expectedHash []byte) error {
-	result, err := tx.ExecContext(ctx, `UPDATE bootstrap_administrator SET credential_ready=1 WHERE installation_id=$1 AND user_id=$2 AND password_hash=$3 AND EXISTS(SELECT 1 FROM installations i WHERE i.id=$1 AND i.state IN ('bootstrap','configuring')) AND EXISTS(SELECT 1 FROM users u WHERE u.id=$2 AND u.must_change_password=1 AND u.membership_state='active' AND u.role='administrator')`, installationID, userID, string(expectedHash))
+	result, err := tx.ExecContext(ctx, `UPDATE bootstrap_administrator SET credential_ready=1
+		WHERE installation_id=$1 AND user_id=$2 AND password_hash=$3
+		AND EXISTS(SELECT 1 FROM installations i WHERE i.id=$1 AND i.state IN ('bootstrap','configuring'))
+		AND EXISTS(SELECT 1 FROM users u WHERE u.id=$2 AND u.membership_state='active'
+		AND u.role='administrator' AND u.credential_mode='local'
+		AND (u.must_change_password=1 OR (credential_ready=0 AND delivered_at IS NOT NULL AND password_ciphertext_id IS NULL)))`,
+		installationID, userID, string(expectedHash))
 	if err != nil {
 		return err
 	}

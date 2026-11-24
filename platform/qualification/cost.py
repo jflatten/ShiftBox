@@ -11,6 +11,7 @@ D = Decimal
 BUDGET = D("30")
 MONTH_HOURS = D("720")
 OHIO = "us-east-2"
+OCI_IMAGE_CACHE_GIB = 20
 T3_MEDIUM = {
     "us-east-1": D("0.0416"),
     "us-east-2": D("0.0416"),
@@ -89,45 +90,38 @@ def ohio_stack(staffed, buffered):
     # may run after the workspace stops to avoid raising the vCPU requirement.
     recovery_hours = D(1 if staffed else 0)
     workspace_hours = hours if staffed else D(0)
-    router_hours = hours if staffed else D(0)
     t3_hours = hours + workspace_hours + recovery_hours
     disk_gib_hours = (
-        (30 + 32) * hours
-        + 8 * router_hours
+        (30 + 32 + OCI_IMAGE_CACHE_GIB) * hours
         + 32 * (workspace_hours + recovery_hours)
     )
     # Charge a worst-case extra day for the retained installation, workspace
     # and recovery volumes if destruction is delayed after stack deletion.
     storage_tail = 24 if buffered else 0
     disk_gib_hours += 32 * (3 if staffed else 1) * storage_tail
-    nat_gib = D(20 if buffered else (5 if staffed else 2))
+    egress_gib = D(20 if buffered else (5 if staffed else 2))
     outbound_gib = D(5 if buffered else 1)
     logs_gib = D("0.50" if buffered else "0.10")
     secret_hours = (hours + storage_tail).to_integral_value(rounding=ROUND_CEILING)
-    secret_count = 5 if staffed else 4
     # Cloud Map's task registrations are priced at a full month in the buffer
     # because the published examples do not specify short-run rounding.
     if buffered and staffed:
         cloud_map = D("0.20")
     else:
-        cloud_map = D("0.20") * router_hours / MONTH_HOURS
+        cloud_map = D("0.20") * workspace_hours / MONTH_HOURS
     secret_requests = 6000 if buffered else 1000
     t3_cpu_credits = (2 * t3_hours if buffered else t3_hours) * D("0.05")
-    t4g_cpu_credits = (2 * router_hours if buffered else router_hours) * D("0.04")
     return {
         "ecs_host_ec2": hours * T3_MEDIUM[OHIO],
         "workspace_ec2": workspace_hours * T3_MEDIUM[OHIO],
-        "tailscale_router_ec2": router_hours * D("0.0084"),
         "recovery_target_ec2": recovery_hours * T3_MEDIUM[OHIO],
         "gp3_storage_including_retention": disk_gib_hours * GP3[OHIO] / MONTH_HOURS,
-        "cpu_credit_allowance": t3_cpu_credits + t4g_cpu_credits,
-        "nat_gateway": hours.to_integral_value(rounding=ROUND_CEILING) * D("0.045"),
-        "nat_public_ipv4": hours * D("0.005"),
-        "nat_processing": nat_gib * D("0.045"),
+        "cpu_credit_allowance": t3_cpu_credits,
+        "existing_egress_processing_allowance": egress_gib * D("0.045"),
         "internet_egress_allowance": outbound_gib * D("0.09"),
         "private_dns_hosted_zones": D("1.00" if buffered else "0.00"),
         "cloud_map_registrations_and_calls": cloud_map + D("0.001"),
-        "secrets_storage_and_calls": secret_count * secret_hours * D("0.40") / MONTH_HOURS
+        "secrets_storage_and_calls": 4 * secret_hours * D("0.40") / MONTH_HOURS
         + secret_requests * D("0.05") / 10000,
         "logs_ingestion_and_storage": logs_gib
         * (D("0.50") + D("0.03") * (hours + storage_tail) / MONTH_HOURS),
@@ -156,14 +150,15 @@ def qualification_scenario(staffed):
         "ceiling_probe_total_usd": usd(sum(ceiling_probes.values())),
         "assumptions": {
             "ohio_hours_including_teardown": 2 if staffed else 1,
+            "oci_image_cache_gib": OCI_IMAGE_CACHE_GIB,
             "automated_execution_minutes": 45,
             "staffed_operator_minutes": 60 if staffed else 0,
             "teardown_minutes": 15,
             "regional_probe_minutes_each": 15,
             "additional_running_orphan_hours_in_ceiling": 2,
             "additional_retained_disk_and_secret_hours_in_ceiling": 24,
-            "nat_processed_gib": 5 if staffed else 2,
-            "nat_processed_gib_in_ceiling": 20,
+            "existing_egress_processed_gib": 5 if staffed else 2,
+            "existing_egress_processed_gib_in_ceiling": 20,
             "internet_egress_gib": 1,
             "internet_egress_gib_in_ceiling": 5,
             "log_ingest_gib": "0.10",

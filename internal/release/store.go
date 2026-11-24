@@ -40,6 +40,23 @@ func NewStore(db *sql.DB) *Store {
 
 // BeginImport records a release awaiting provider and guest validation.
 func (s *Store) BeginImport(ctx context.Context, id string, artifact Artifact, actor string, now time.Time) error {
+	return insertCatalogArtifact(ctx, s.db, id, artifact, actor, now, "validating", 0)
+}
+
+// InsertOfficialStarterInTx records an exact deployment-pinned image for the
+// starter profiles. The caller must first verify the image against EC2.
+func InsertOfficialStarterInTx(ctx context.Context, tx *sql.Tx, id string, pin OfficialEC2Image, artifact Artifact, actor string, now time.Time) error {
+	image := artifact.EC2
+	if image == nil || pin.Validate(image.Region, image.AccountID) != nil || !pin.MatchesManifest(artifact) ||
+		!pin.MatchesCatalog(*image, artifact.ManifestSHA256) {
+		return ErrInvalidArtifact
+	}
+	return insertCatalogArtifact(ctx, tx, id, artifact, actor, now, "available", 1)
+}
+
+func insertCatalogArtifact(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, id string, artifact Artifact, actor string, now time.Time, state string, isDefault int) error {
 	if _, err := uuid.Parse(id); err != nil || !validDigest(artifact.ManifestSHA256) || actor == "" || now.IsZero() {
 		return ErrInvalidArtifact
 	}
@@ -87,14 +104,14 @@ func (s *Store) BeginImport(ctx context.Context, id string, artifact Artifact, a
 		return err
 	}
 	m := artifact.Manifest
-	result, err := s.db.ExecContext(ctx, `INSERT INTO platform_artifacts
+	result, err := db.ExecContext(ctx, `INSERT INTO platform_artifacts
 		(id,release_id,architecture,platform_version,guest_release,protocol_version,owned_resources_json,
 		digests_json,provenance_json,manifest_json,manifest_sha256,bundle_name,imported_by,imported_at,state,provider_kind,ec2_image_json,
-		ec2_family,ec2_created_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'validating',$15,$16,$17,$18)
+		ec2_family,ec2_created_at,is_default)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 		ON CONFLICT DO NOTHING`, id, m.ReleaseID, m.Architecture, m.PlatformVersion, m.Guest.Version,
 		m.ProtocolVersion, string(resources), string(digestJSON), string(provenance), string(manifest),
-		artifact.ManifestSHA256, artifact.Bundle, actor, now.UTC().Format(time.RFC3339Nano), kind, string(ec2Image), family, imageCreatedAt)
+		artifact.ManifestSHA256, artifact.Bundle, actor, now.UTC().Format(time.RFC3339Nano), state, kind, string(ec2Image), family, imageCreatedAt, isDefault)
 	return catalogTransition(result, err)
 }
 

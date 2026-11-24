@@ -398,6 +398,19 @@ candidate_steps = release["jobs"]["candidate"]["steps"]
 controller, = [step for step in candidate_steps
                if step.get("name") == "Build the full controller and record its registry digest"]
 controller_commands = controller["run"]
+# The native helper is produced from the same source and tied to an immutable
+# same-run artifact ID before the Linux image can be built.
+helper = jobs["candidate-helper"]
+assert helper["runs-on"] == "macos-15"
+assert helper["permissions"] == {"contents": "read"}
+# The native build uploads and checksums the same disk image the controller embeds.
+assert any("shasum -a 256 ShiftBox-Local-Helper.dmg" in step.get("run", "") for step in helper["steps"])
+assert any("macos-helper/ShiftBox-Local-Helper.dmg" in step.get("with", {}).get("path", "") for step in helper["steps"])
+assert "candidate-helper" in jobs["candidate"]["needs"]
+assert "needs.candidate-helper.result == 'success'" in jobs["candidate"]["if"]
+assert any(step.get("with", {}).get("artifact-ids") == "${{ needs.candidate-helper.outputs.artifact }}" for step in candidate_steps)
+assert '--build-context "macos-helper=$RUNNER_TEMP/candidate/helper"' in controller_commands
+assert 'shasum -a 256 -c SHA256SUMS' in controller_commands
 assert controller["if"] == "steps.restore.outputs.assets == ''"
 assert 'export DOCKER_CONFIG="$registry_config" BUILDX_CONFIG="$registry_config/buildx"' in controller_commands
 create_builder = 'docker buildx create --name "$builder" --driver docker-container --bootstrap'

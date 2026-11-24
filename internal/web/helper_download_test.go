@@ -10,9 +10,9 @@ import (
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
-// TestHelperDownloadServesOnlyTheStagedArchive checks browser authentication,
+// TestHelperDownloadServesOnlyTheStagedDiskImage checks browser authentication,
 // attachment metadata, and the missing-artifact response for an unstaged build.
-func TestHelperDownloadServesOnlyTheStagedArchive(t *testing.T) {
+func TestHelperDownloadServesOnlyTheStagedDiskImage(t *testing.T) {
 	db, now := readySSHWorkspace(t)
 	const origin = "https://management.test"
 	token := connectionGrantSession(t, db, now, "user", "helper-download")
@@ -29,19 +29,19 @@ func TestHelperDownloadServesOnlyTheStagedArchive(t *testing.T) {
 		handler.ServeHTTP(res, req)
 		return res
 	}
-	data := []byte("PK\x03\x04fixture archive contents")
+	data := []byte("fixture disk image contents")
 	handler := web.NewWorkspaceSSHAPI(db, nil, nil, nil, func() time.Time { return now }, origin, data)
 	if res := request(handler, origin, "", credential); res.Code != http.StatusUnauthorized {
-		t.Errorf("helper credential downloaded archive: %d, want 401", res.Code)
+		t.Errorf("helper credential downloaded disk image: %d, want 401", res.Code)
 	}
 	if res := request(handler, "http://management.test", token, ""); res.Code != http.StatusForbidden {
-		t.Errorf("browser over HTTP downloaded archive: %d, want 403", res.Code)
+		t.Errorf("browser over HTTP downloaded disk image: %d, want 403", res.Code)
 	}
 	res := request(handler, origin, token, "")
 	if res.Code != http.StatusOK || res.Body.String() != string(data) ||
-		res.Header().Get("Content-Type") != "application/zip" || res.Header().Get("Cache-Control") != "no-store" ||
-		!strings.Contains(res.Header().Get("Content-Disposition"), "ShiftBox-Local-Helper.zip") {
-		t.Fatalf("download = %d %v %q, want the staged ZIP attachment", res.Code, res.Header(), res.Body.String())
+		res.Header().Get("Content-Type") != "application/x-apple-diskimage" || res.Header().Get("Cache-Control") != "no-store" ||
+		!strings.Contains(res.Header().Get("Content-Disposition"), "ShiftBox-Local-Helper.dmg") {
+		t.Fatalf("download = %d %v %q, want the staged DMG attachment", res.Code, res.Header(), res.Body.String())
 	}
 	unstaged := web.NewWorkspaceSSHAPI(db, nil, nil, nil, func() time.Time { return now }, origin, nil)
 	if res := request(unstaged, origin, token, ""); res.Code != http.StatusNotFound {

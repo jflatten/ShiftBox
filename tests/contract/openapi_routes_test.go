@@ -88,6 +88,7 @@ func TestRouteActionsMatchReviewedMatrix(t *testing.T) {
 		"updateTemplate": "template_update", "listSecretMetadata": "secret_scope",
 		"setSecret": "secret_scope", "deleteSecretOverride": "secret_scope",
 		"updateMembership": "membership_update", "updateNoticeReceipt": "notice_receipt",
+		"returnGitHubAppRegistration": "github_app_browser_return",
 	}
 	for _, route := range web.ManagementRoutes() {
 		if resolver, ok := contextual[route.OperationID]; ok {

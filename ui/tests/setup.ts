@@ -1,5 +1,11 @@
 import '@testing-library/jest-dom';
 
+// Component tests mount client screens without a Next.js route provider.
+jest.mock('next/navigation', () => ({
+  ...jest.requireActual('next/navigation'),
+  useRouter: () => ({ push: jest.fn() }),
+}));
+
 // Mantine queries browser layout APIs that jsdom does not implement.
 Object.defineProperty(window, 'matchMedia', {
   writable: true,

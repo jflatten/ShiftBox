@@ -94,7 +94,8 @@ func (p *Provider) create(ctx context.Context, req provider.CreateRequest, image
 		return provider.Inventory{}, err
 	}
 	tags := tagValues(instance.Tags)
-	if tags[tagProvision] != req.OperationID || tags[tagArtifact] != req.ArtifactID || tags[tagRelease] != req.Release ||
+	if tags[p.workspaceTag(tagProvision)] != req.OperationID || tags[p.workspaceTag(tagArtifact)] != req.ArtifactID ||
+		tags[p.workspaceTag(tagRelease)] != req.Release ||
 		string(instance.InstanceType) != req.Resources.InstanceType || aws.ToString(instance.ImageId) != image.ID || aws.ToString(instance.RootDeviceName) != image.RootDeviceName {
 		return provider.Inventory{}, provider.ErrOwnershipMismatch
 	}
@@ -133,12 +134,12 @@ func launchToken(req provider.CreateRequest) string {
 
 func (p *Provider) launchInput(req provider.CreateRequest, image Image) *api.RunInstancesInput {
 	tagSet := append(p.ownershipTags(req.Ref),
-		types.Tag{Key: aws.String(tagProvision), Value: aws.String(req.OperationID)},
-		types.Tag{Key: aws.String(tagArtifact), Value: aws.String(req.ArtifactID)},
-		types.Tag{Key: aws.String(tagRelease), Value: aws.String(req.Release)},
-		types.Tag{Key: aws.String("project"), Value: aws.String("shiftbox")},
-		types.Tag{Key: aws.String("environment"), Value: aws.String(p.cfg.Environment)},
-		types.Tag{Key: aws.String("cluster_name"), Value: aws.String(p.cfg.Deployment)},
+		types.Tag{Key: aws.String(p.workspaceTag(tagProvision)), Value: aws.String(req.OperationID)},
+		types.Tag{Key: aws.String(p.workspaceTag(tagArtifact)), Value: aws.String(req.ArtifactID)},
+		types.Tag{Key: aws.String(p.workspaceTag(tagRelease)), Value: aws.String(req.Release)},
+		types.Tag{Key: aws.String(p.workspaceTag(tagProject)), Value: aws.String("shiftbox")},
+		types.Tag{Key: aws.String(p.workspaceTag(tagEnvironment)), Value: aws.String(p.cfg.Environment)},
+		types.Tag{Key: aws.String(p.workspaceTag(tagCluster)), Value: aws.String(p.cfg.Deployment)},
 	)
 	input := &api.RunInstancesInput{
 		ClientToken: aws.String(launchToken(req)), ImageId: aws.String(image.ID), InstanceType: types.InstanceType(req.Resources.InstanceType),

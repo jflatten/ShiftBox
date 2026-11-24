@@ -3,7 +3,6 @@ variables {
   publisher_account_id = "222222222222"
   run_name             = "sbq-123456789-2"
   host_ami_id          = "ami-0123456789abcdef0"
-  router_ami_id        = "ami-abcdef01234567890"
 }
 
 # The draft must stay runnable without an AWS login and fit IAM attachment limits.
@@ -34,6 +33,15 @@ run "review_artifacts_fit_iam_limits" {
     condition     = !contains(keys(output.policy_documents), "dns") && !contains(keys(output.policy_documents), "discovery")
     error_message = "DNS and discovery must stay closed until matching physical resources are independently verified."
   }
+
+  # The execution role must never acquire the operator's network lifecycle.
+  assert {
+    condition = alltrue([for policy in values(output.policy_documents) : !can(regex(
+      "ec2:(CreateVpc|DeleteVpc|CreateSubnet|DeleteSubnet|CreateNatGateway|DeleteNatGateway|CreateRoute|DeleteRoute|AllocateAddress|AttachInternetGateway)",
+      policy
+    ))])
+    error_message = "The execution policy cannot provision or change VPCs, subnets, routes or gateways."
+  }
 }
 
 # Each role must carry its own fixed boundary, even when an inline policy is replaced.
@@ -49,7 +57,7 @@ run "identity_roles_have_fixed_bounds" {
       ]) && length([
       for statement in jsondecode(output.policy_documents.identity).Statement : statement
       if contains(statement.Action, "iam:CreateRole")
-    ]) == 7
+    ]) == 6
     error_message = "Creation and inline writes require reviewed, exact per-role boundaries."
   }
 
@@ -61,6 +69,21 @@ run "identity_roles_have_fixed_bounds" {
       ]
     ])) == toset(["ec2.amazonaws.com", "ecs-tasks.amazonaws.com"])
     error_message = "Instance and task PassRole permissions must stay separated by destination service."
+  }
+}
+
+# The private-link stack has no router compute, credentials or profile grants.
+run "qualifies_with_only_the_ecs_host_role_and_image" {
+  command = plan
+
+  assert {
+    condition = !contains(keys(output.required_role_boundaries), "RouterRole") && alltrue([
+      for policy in values(output.policy_documents) : alltrue([
+        for token in ["RouterRole", "RouterProfile", "t4g.micro", "al2023-ami-kernel-default-arm64"] :
+        !strcontains(policy, token)
+      ])
+    ])
+    error_message = "Operator-managed router access must stay outside this execution draft."
   }
 }
 
@@ -132,15 +155,15 @@ run "rejects_broad_run_selector" {
   expect_failures = [var.run_name]
 }
 
-# Both EC2 launch images must be exact, including the router's resolved public parameter.
+# The ECS host AMI must be an exact image ID, never a moving public parameter.
 run "rejects_unpinned_ami" {
   command = plan
 
   variables {
-    router_ami_id = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
+    host_ami_id = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
   }
 
-  expect_failures = [var.router_ami_id]
+  expect_failures = [var.host_ami_id]
 }
 
 # Policy size enforcement must also hold for the longest permitted run name and the optional DNS documents.

@@ -18,7 +18,11 @@ case "$*" in
   *'service-quotas get-service-quota '*)
     printf '%s\n' "${FIXTURE_QUOTA:-5}" ;;
   *'ec2 describe-instances '*)
-    printf '%s\n' "${FIXTURE_RUNNING:-0}" ;;
+    if [[ $* == '--region us-east-2 '* ]]; then printf '%s\n' "${FIXTURE_OHIO_TYPES:-[]}";
+    else printf '[]\n'; fi ;;
+  *'ec2 describe-instance-types '*)
+    known='{"InstanceTypes":[{"InstanceType":"t4g.large","VCpuInfo":{"DefaultVCpus":2}}]}'
+    printf '%s\n' "${FIXTURE_INSTANCE_TYPES:-$known}" ;;
   *) exit 2 ;;
 esac
 AWS
@@ -54,11 +58,18 @@ SHIFTBOX_QUALIFICATION_ACCOUNT_ID=524941137496 FIXTURE_ACCOUNT=524941137496 reje
 SHIFTBOX_QUALIFICATION_ACCOUNT_ID=222222222222 FIXTURE_ACCOUNT=222222222222 reject bash "$here/preflight.sh" account
 SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID=missing reject bash "$here/preflight.sh" account
 
-# The published topology needs six vCPUs during the staffed Ohio run.
+# Staffed Ohio needs four additional vCPUs after removing the disposable router.
 bash "$here/preflight.sh" capacity automated
-reject bash "$here/preflight.sh" capacity staffed
-FIXTURE_QUOTA=6 bash "$here/preflight.sh" capacity staffed
-FIXTURE_RUNNING=1 reject bash "$here/preflight.sh" capacity automated
+FIXTURE_QUOTA=4 bash "$here/preflight.sh" capacity staffed
+FIXTURE_QUOTA=3 reject bash "$here/preflight.sh" capacity staffed
+# The external router can coexist with a run if Ohio has enough remaining quota.
+FIXTURE_OHIO_TYPES='["t4g.large"]' FIXTURE_QUOTA=6 bash "$here/preflight.sh" capacity staffed
+FIXTURE_OHIO_TYPES='["t4g.large"]' FIXTURE_QUOTA=5 reject bash "$here/preflight.sh" capacity staffed
+grep -q 'after accounting for existing EC2 instances' "$scratch/rejected"
+# Count both instances of the same type and refuse unverifiable inventory.
+FIXTURE_OHIO_TYPES='["t4g.large","t4g.large"]' FIXTURE_QUOTA=7 reject bash "$here/preflight.sh" capacity staffed
+FIXTURE_OHIO_TYPES='["t4g.large"]' FIXTURE_INSTANCE_TYPES='{"InstanceTypes":[]}' reject bash "$here/preflight.sh" capacity automated
+FIXTURE_OHIO_TYPES='null' reject bash "$here/preflight.sh" capacity automated
 FIXTURE_QUOTA=null reject bash "$here/preflight.sh" capacity automated
 
 # Stable tags and user-controlled paths fail before any remote release access.

@@ -10,7 +10,9 @@ import (
 	"net/mail"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/jflatten/ShiftBox/internal/config"
 	"github.com/jflatten/ShiftBox/internal/cryptostore"
 	"github.com/jflatten/ShiftBox/internal/database"
 	"github.com/jflatten/ShiftBox/internal/identity"
@@ -43,12 +45,13 @@ type SetupHTTP struct {
 type CloudSetup struct {
 	ApplicationURI                                       string
 	ManagementOrigin, IDEHostPattern, PreviewHostPattern string
+	PrivateClaim                                         *PrivateSetupClaim
+	BrowserCertificate                                   *config.BrowserCertificateInput
 	// OnActivated reports the committed PostgreSQL cutover to the local launcher.
 	OnActivated func()
 }
 
-// NewSetupHandler exposes only currently implemented local bootstrap routes.
-// It must be served by a loopback-bound TLS listener, not the public management mux.
+// NewSetupHandler exposes the bootstrap routes on the configured HTTPS listener.
 func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 	if setup.DB == nil || setup.Cipher == nil || setup.Admin == nil || setup.Journal == nil || setup.Now == nil || setup.NewID == nil || !web.ValidUUID(setup.InstallationID) {
 		return nil, ErrSetupConflict
@@ -56,6 +59,12 @@ func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 	mux := http.NewServeMux()
 	if setup.BrowserAssets != nil {
 		mux.Handle("/", setup.BrowserAssets)
+	}
+	private := setup.Cloud != nil && setup.Cloud.PrivateClaim != nil
+	if private {
+		mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/setup/", http.StatusSeeOther)
+		})
 	}
 	mux.HandleFunc("GET /api/v1/setup/status", setup.status)
 	mux.HandleFunc("POST /api/v1/setup/administrator", setup.administrator)
@@ -82,7 +91,13 @@ func NewSetupHandler(setup SetupHTTP) (http.Handler, error) {
 			mux.Handle("PUT /api/v1/session/password", setup.passwordHandler(sessions, passwords))
 		}
 	}
-	guarded, err := ProtectBootstrap(setup.Origin, mux)
+	var guarded http.Handler
+	var err error
+	if private {
+		guarded, err = protectPrivateSetup(setup.Origin, setup.Cloud, mux)
+	} else {
+		guarded, err = ProtectBootstrap(setup.Origin, mux)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +129,7 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	completed, available := []string{}, []string{}
+	private := s.Cloud != nil && s.Cloud.PrivateClaim != nil
 	if state == "bootstrap" || state == "configuring" {
 		if !userID.Valid || !ready.Bool {
 			available = append(available, "administrator")
@@ -122,7 +138,9 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 			if change.Bool {
 				available = append(available, "password")
 			} else {
-				completed = append(completed, "password")
+				if !private {
+					completed = append(completed, "password")
+				}
 				if profileSelected {
 					completed = append(completed, "data_profile")
 					if certificateConfigured {
@@ -154,7 +172,7 @@ func (s SetupHTTP) status(w http.ResponseWriter, r *http.Request) {
 		CompatibleArtifact bool               `json:"compatibleArtifact"`
 		ManagementOrigin   string             `json:"managementOrigin,omitempty"`
 		Cloud              *setupServiceNames `json:"cloud,omitempty"`
-	}{state, true, completed, available, capacityVersion, compatibleArtifact, managementOrigin, s.cloudNames()})
+	}{state, s.Cloud == nil || s.Cloud.PrivateClaim == nil, completed, available, capacityVersion, compatibleArtifact, managementOrigin, s.cloudNames()})
 }
 
 type setupServiceNames struct {
@@ -172,7 +190,7 @@ func (s SetupHTTP) cloudNames() *setupServiceNames {
 
 func (s SetupHTTP) administrator(w http.ResponseWriter, r *http.Request) {
 	// The first account has no session yet. Exact Origin prevents a foreign page
-	// from driving this otherwise unauthenticated, loopback-only bootstrap mutation.
+	// from driving the initial bootstrap mutation.
 	origins := r.Header.Values("Origin")
 	if len(origins) != 1 || origins[0] != s.Origin {
 		setupProblem(w, r, web.Problem{Status: 403, Code: "setup.invalid_origin", Title: "Return to the local setup page"})
@@ -184,10 +202,31 @@ func (s SetupHTTP) administrator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Email string `json:"email"`
+		Email           string `json:"email"`
+		ClaimCode       string `json:"claimCode"`
+		InitialPassword string `json:"initialPassword"`
+		ConfirmPassword string `json:"confirmPassword"`
 	}
 	if err := web.DecodeJSON(w, r, &body, 16<<10); err != nil {
 		setupProblem(w, r, err)
+		return
+	}
+	private := s.Cloud != nil && s.Cloud.PrivateClaim != nil
+	if private {
+		if !s.Cloud.PrivateClaim.accepts(body.ClaimCode) {
+			setupProblem(w, r, web.Problem{Status: 403, Code: "setup.invalid_claim", Title: "Enter the setup claim code for this deployment"})
+			return
+		}
+		if utf8.RuneCountInString(body.InitialPassword) < 12 || len(body.InitialPassword) > 72 {
+			setupProblem(w, r, web.Problem{Status: 400, Code: "setup.invalid_password", Title: "Use at least 12 characters and at most 72 UTF-8 bytes"})
+			return
+		}
+		if body.InitialPassword != body.ConfirmPassword {
+			setupProblem(w, r, web.Problem{Status: 400, Code: "setup.password_mismatch", Title: "Passwords do not match."})
+			return
+		}
+	} else if body.ClaimCode != "" || body.InitialPassword != "" || body.ConfirmPassword != "" {
+		setupProblem(w, r, web.Problem{Status: 400, Code: "setup.unexpected_claim", Title: "Use the local administrator form"})
 		return
 	}
 	body.Email = strings.ToLower(strings.TrimSpace(body.Email))
@@ -196,16 +235,33 @@ func (s SetupHTTP) administrator(w http.ResponseWriter, r *http.Request) {
 		setupProblem(w, r, web.Problem{Status: 400, Code: "setup.invalid_email", Title: "Enter a valid administrator email"})
 		return
 	}
+	if private {
+		if !s.Cloud.PrivateClaim.mu.TryLock() {
+			setupProblem(w, r, web.Problem{Status: 409, Code: "setup.claim_in_progress", Title: "An administrator claim is in progress", Retryable: true})
+			return
+		}
+		defer s.Cloud.PrivateClaim.mu.Unlock()
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	admission, err := BeginAdministrator(ctx, s.DB, s.Journal, AdministratorIntent{InstallationID: s.InstallationID, UserID: s.NewID(), Email: body.Email, CreatedAt: s.Now()}, s.Cipher, key)
+	admission, err := BeginAdministrator(ctx, s.DB, s.Journal, AdministratorIntent{
+		InstallationID: s.InstallationID, UserID: s.NewID(), Email: body.Email, CreatedAt: s.Now(), initialPassword: body.InitialPassword,
+	}, s.Cipher, key)
 	if err != nil {
+		if private && errors.Is(err, ErrSetupConflict) {
+			err = web.Problem{Status: 409, Code: "setup.state_conflict", Title: "Return to the original administrator",
+				Detail: "If you already created the account, reload and sign in. If creation was interrupted, retry with the same email and password."}
+		}
 		setupProblem(w, r, err)
 		return
 	}
 	admission.Operation, err = FinishAdministrator(ctx, s.DB, s.Journal, s.InstallationID, s.Admin, admission.Operation)
 	if err != nil {
 		setupProblem(w, r, err)
+		return
+	}
+	if private {
+		writeSetupJSON(w, 201, admission)
 		return
 	}
 	password, err := ClaimTemporaryPassword(ctx, s.DB, s.InstallationID, s.Cipher, s.Now())

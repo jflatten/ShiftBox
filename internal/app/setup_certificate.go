@@ -30,6 +30,13 @@ func (s SetupHTTP) certificateHandler() http.Handler {
 		if err := web.DecodeJSON(nil, r, &input, 256<<10); err != nil {
 			return nil, err
 		}
+		if s.Cloud != nil && s.Cloud.BrowserCertificate != nil {
+			if input.Chain != "" || input.Key != "" {
+				return nil, web.Problem{Status: 400, Code: "setup.invalid_certificate", Title: "Use the deployed browser certificate"}
+			}
+			input.Chain = string(s.Cloud.BrowserCertificate.ChainPEM)
+			input.Key = string(s.Cloud.BrowserCertificate.KeyPEM)
+		}
 		if names := s.cloudNames(); names != nil && (input.Management != names.ManagementOrigin ||
 			input.IDE != names.IDEHostPattern || input.Preview != names.PreviewHostPattern) {
 			return nil, web.Problem{Status: 400, Code: "setup.invalid_service_names", Title: "Use the service names configured by the deployment"}

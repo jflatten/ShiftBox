@@ -38,21 +38,32 @@ account() {
 }
 
 capacity() {
-  local mode=$1 region minimum quota running
+  local mode=$1 region minimum quota running types used
   [[ $mode == staffed || $mode == automated ]] || fail 'invalid capacity check mode'
   account
   for region in us-east-1 us-east-2 us-west-1 us-west-2; do
     minimum=2
-    if [[ $region == us-east-2 && $mode == staffed ]]; then minimum=6; fi
+    if [[ $region == us-east-2 && $mode == staffed ]]; then minimum=4; fi
     quota=$(aws --region "$region" service-quotas get-service-quota --service-code ec2 \
       --quota-code L-1216C47A --query Quota.Value --output json)
-    jq -e --argjson minimum "$minimum" 'type == "number" and . >= $minimum' <<<"$quota" >/dev/null ||
-      fail "$region needs at least $minimum available Standard On-Demand vCPUs for this mode"
     running=$(aws --region "$region" ec2 describe-instances \
       --filters Name=instance-state-name,Values=pending,running \
-      --query 'length(Reservations[].Instances[])' --output json)
-    jq -e '. == 0' <<<"$running" >/dev/null ||
-      fail "$region already has pending or running EC2 instances in the dedicated test account"
+      --query 'Reservations[].Instances[].InstanceType' --output json)
+    types=$(jq -er 'select(type == "array" and all(.[]; type == "string" and test("^[a-z0-9-]+\\.[a-z0-9]+$"))) |
+      unique | join(",")' <<<"$running") || fail "could not verify EC2 instance inventory in $region"
+    used=0
+    if [[ -n $types ]]; then
+      # Use default vCPUs and count pending instances conservatively. Existing
+      # infrastructure consumes headroom without becoming qualification-owned.
+      used=$(aws --region "$region" ec2 describe-instance-types --filters "Name=instance-type,Values=$types" --output json |
+        jq -er --argjson running "$running" '
+          [.InstanceTypes[] | {key:.InstanceType,value:.VCpuInfo.DefaultVCpus}] | from_entries as $sizes |
+          [$running[] | $sizes[.] | if type == "number" and . > 0 then . else error("missing vCPU count") end] | add
+        ') || fail "could not verify existing EC2 vCPUs in $region"
+    fi
+    jq -e --argjson minimum "$minimum" --argjson used "$used" \
+      'type == "number" and . - $used >= $minimum' <<<"$quota" >/dev/null ||
+      fail "$region needs at least $minimum available Standard On-Demand vCPUs after accounting for existing EC2 instances"
   done
 }
 

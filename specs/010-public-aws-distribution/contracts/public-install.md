@@ -10,7 +10,7 @@ GitHub Releases and Pages render four launch links from the selected public rele
 https://<region>.console.aws.amazon.com/cloudformation/home?region=<region>#/stacks/create/review?templateURL=<encoded-versioned-template-url>
 ```
 
-The decoded template is `https://<bucket>.s3.<region>.amazonaws.com/<key>?versionId=<pinned-version>`. The console and object regions must match the selected entry. The inspected template specifies encrypted installation storage and selects the exact matching host and workspace pins. AWS Console shows the exact template for inspection, the caller's account and region, stack name, network and AZ parameters, IAM capability and stack options. Provide the matching template and checksum in the GitHub Release. A manual operator may use the versioned URL or upload the verified download. Links never carry credentials, secret values or private endpoints and must default to the foundation phase.
+The decoded template is `https://<bucket>.s3.<region>.amazonaws.com/<key>?versionId=<pinned-version>`. The console and object regions must match the selected entry. The inspected template specifies encrypted installation storage and selects the exact matching host and workspace pins. AWS Console shows the exact template for inspection, the caller's account and region, stack name, existing VPC and subnet selectors and service subnet AZ, IAM capability and stack options. Provide the matching template and checksum in the GitHub Release. A manual operator may use the versioned URL or upload the verified download. Links never carry credentials, secret values or private endpoints and must default to the foundation phase.
 
 Choose the designated account and region, expand **View template**, confirm parameters and IAM capabilities, upload the release's stack policy to protect retained resources, enable termination protection and review the initial stack or preview change set. After launch, use the same stack's Outputs, Secrets Manager and documented local AWS CLI/Session Manager helper to complete setup. Use preview change sets for each update. Console users can complete the flow without Terraform or the guided installer. They still use the local Session Manager client for the protected browser tunnel.
 
@@ -39,23 +39,65 @@ The canonical HTTPS repository and its approved release assets are the bootstrap
 1. In the CLI, check Bash, curl, jq, OpenSSL, AWS CLI v2 with `describe-events`, and the Session Manager plugin. Confirm normal AWS caller identity, expected account, commercial region, eligible AZ, unique stack name, routing/egress constraints and required role permissions. Verify exact image owner and pins and hosted template digest. If the operator delegates stack execution to an existing service role, show its scope and require appropriate `iam:PassRole`. Require `CAPABILITY_NAMED_IAM` acknowledgement for the named roles with per-role permissions boundaries.
 2. Record nonsecret metadata in an operator-only directory with a local lock. Bind to account, region, stack name and verified CloudFormation stack ID, release, template version and checksum. CloudFormation's stack/operation/change-set IDs and current resource state are authoritative. Distinguish an unexecuted CREATE review stack, pending operation and real prior installation. Reconcile existing change sets, client tokens and stack outputs on timeout or interruption. A mismatched stack, in-progress transition or uncertain result blocks new side effects.
 3. Create or inspect the foundation stage with the installed controller and database services stopped or absent. CLI creates a CREATE change set, checks `describe-change-set` and `describe-events` validation, and obtains explicit terminal approval before executing that ID. Enable termination protection and verify the protected logical resources under the supplied stack policy before proceeding. Preserve the stable encrypted EBS volume in its selected AZ, and set both `DeletionPolicy: Retain` and `UpdateReplacePolicy: Retain` for the installation volume and managed secrets. Hold replacement/removal of protected physical resources. Guide operator review of network/IAM scope and costs. If an optional stack service role is chosen, document that CloudFormation reuses it for later operations and restrict stack update permissions accordingly.
-4. Review separate UPDATE change sets for `dns-zones` and `dns-services`. Verify and record the run VPC, private hosted zone and Cloud Map namespace before creating the services. Verify both services belong to that namespace. Preserve their physical identities on resume. CloudFormation can generate independent database passwords in scoped Secrets Manager resources. Provision the matching PostgreSQL certificate and key into the scoped TLS secret through the AWS Console or approved AWS CLI helper and supply only public DB CA and ARN references in stack inputs. Never put private key or password values into stack inputs, outputs, UserData, change sets or routine logs. Retain matching secrets and values on resume. Guide operator-owned GitHub App setup and any secret references required for repository checkout.
+4. Review separate UPDATE change sets for `dns-zones` and `dns-services`. Verify and record the selected VPC and subnet IDs, private hosted zone and Cloud Map namespace before creating the services. Verify both services belong to that namespace. Preserve their physical identities on resume. CloudFormation can generate independent database passwords in scoped Secrets Manager resources. Provision the matching PostgreSQL certificate and key into the scoped TLS secret through the AWS Console or approved AWS CLI helper and supply only public DB CA and ARN references in stack inputs. Never put private key or password values into stack inputs, outputs, UserData, change sets or routine logs. Retain matching secrets and values on resume.
 5. Create and review a validated UPDATE change set that adds the private DNS aliases and starts PostgreSQL with the matching retained volume and setup/task definitions available, leaving the normal controller stopped. Confirm service readiness. Grant only authorized setup access and start or reconcile the tagged ECS setup task for this stack. Forward HTTPS over SSM to local TCP 8444, verify the temporary fingerprint, complete initial administrator/password setup, select verified PostgreSQL, configure production browser TLS and capacity and activate. Verify durable activation and setup task termination before startup. A resumed setup preserves the same owner and installation.
 6. Create and review the next validated UPDATE change set to start the normal controller. Recheck credentials, stack operation and exact change set before execution. The controller must fail closed if persisted bootstrap is incomplete. Wait for service readiness and print its private origin. On unexpected changes or validation failure, leave stack state intact and explain the next safe action. Both paths require review for later updates. Reject accidental stack/volume replacement and create a new change set after stale approval, changed inputs or partial operation.
 
 ## Private DNS, network and authority
 
+### One-pass private first login
+
+The target customer flow is one CloudFormation deployment in selected existing
+subnets, navigation to the stack's private ShiftBox URL, and completion of the
+first-use steps in that interface. The browser stays at that origin during
+setup and its handoff to normal sign-in. No AWS stack updates or local SSM
+setup command belong to that flow. The development lane renders a one-pass
+template with the digest-pinned testing ECR controller. The published RC3
+application and template exercise the staged flow.
+
+The initial private browser page must have verified HTTPS before it collects
+credentials. An operator can supply an existing certificate reference, or use
+an installation-scoped issuer whose public trust material is delivered through
+the authenticated deployment context. Browser, PostgreSQL and guest trust stay
+separate. Establish PostgreSQL TLS and scope the database secrets before the
+wizard uses the database, then bootstrap and activate durably on the existing
+installation volume.
+
+Require deliberate proof of AWS-authorized ownership for first-admin setup.
+Use a deployment-scoped, single-use initial claim, available only through
+authorized AWS access. Deliver only its reference in stack outputs. Keep the
+claim out of logs, URLs and normal app configuration. The first-use web UI
+collects the claim, administrator email and a password entered twice. After
+the claim succeeds, the administrator signs in with that password to finish
+setup. The UI shows progress until the service is online. Activation retires
+bootstrap authority and requires fresh sign-in. An
+interrupted setup must resume without issuing a second owner or resetting a
+password. Configure any GitHub App for repository checkout separately from the
+CloudFormation installation.
+
+The development stack accepts existing subnets, including default subnets,
+and disables public IPv4 assignment on launch. The operator provides egress,
+client routing and DNS forwarding. The stack creates workload security groups
+and installation DNS records scoped to the selected VPC. It creates no VPC,
+subnet, route table, internet gateway, NAT or Elastic IP.
+
+Exercise this flow using the [pre-RC development lane](../../../platform/development/README.md)
+with a separately pinned controller digest and private same-account workspace
+AMI, then verify it again on an exact public candidate.
+
 | Path | Current deployment port/source | Expected boundary |
 | --- | --- | --- |
 | Setup HTTPS | TCP 8444 via a loopback SSM port forward | Scoped setup principal/session document and verified temporary fingerprint |
-| Browser HTTPS | TCP 8443 from permitted private operator CIDRs or router security group | No public ingress, private task endpoint and validated browser certificate |
+| Browser HTTPS | TCP 8443 from the permitted private operator source CIDR | No public ingress, private task endpoint and validated browser certificate |
 | Tailscale DNS | TCP and UDP 53 on the router's tailnet address | Restricted forwarder for the chosen suffix, permitted tailnet clients only |
 | Tailscale router outbound | TCP 443 and UDP 3478 in current Terraform | Auth/control/relay and discovery according to the tailnet configuration |
 | Guest paths | TCP 19443–19447 from the workspace security group | Separate enrollment, polling and tunnel trust |
 | PostgreSQL | TCP 5432 from the controller/setup security group | Verified database TLS and scoped roles |
 | Deployment egress | DNS and HTTPS through the existing private subnets' outbound path | AWS APIs, SSM, public image pulls and required dependencies, with no inbound internet access |
 
-For Tailscale, register the router through the authorized tailnet UI, approve the service subnet route, configure the restricted nameserver and client grants and verify no conflicting routes. Tailscale-only deployments can leave direct browser CIDRs empty; the dedicated router rule is always scoped. Generate a persistent installation-specific `sb-<random>.internal` suffix and a browser leaf covering `shiftbox.<suffix>`, `*.ide.<suffix>`, `*.preview.<suffix>` and `*.repair.<suffix>`. The operator compares the browser CA fingerprint and trusts it once per appropriate client store. Verify exact names and expiry with ordinary TLS checks. Document safe key storage, renewal and trust removal. Browser trust doesn't grant access to database or guest signing keys.
+The deployment owns application security groups and installation-specific private DNS records. The operator supplies the existing VPC, service and workspace subnets and the service subnet's Availability Zone. CloudFormation Rules validate subnet membership and service AZ. The installer derives the VPC and service AZ from the selected subnet IDs. The stack does not provision VPCs, subnets, routes, gateways or routers.
+
+For Tailscale, use an existing operator-managed subnet router, approved service subnet route and restricted nameserver. Generate a persistent installation-specific `sb-<random>.internal` suffix and a browser leaf covering `shiftbox.<suffix>`, `*.ide.<suffix>`, `*.preview.<suffix>` and `*.repair.<suffix>`. The operator compares the browser CA fingerprint and trusts it once per appropriate client store. Verify exact names and expiry with ordinary TLS checks. Document safe key storage, renewal and trust removal. Browser trust doesn't grant access to database or guest signing keys.
 
 For existing private routing, the operator configures forward and return routes, the correct source CIDRs and conditional DNS to a reachable VPC-side resolver or equivalent, including the private wildcard names. Use operator-provided browser TLS or the documented scoped CA path. Describe route overlap, missing egress, public-origin rejection, DNS rebinding handling and certificate diagnosis without suggesting disabled verification or internet ingress.
 
