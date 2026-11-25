@@ -64,7 +64,7 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
         <Group h="100%" px={{ base: 'md', sm: 'lg' }} gap="xs" justify="space-between" wrap="nowrap">
           <Group gap="xs" wrap="nowrap">
             <Burger opened={opened} onClick={() => setOpened(value => !value)} hiddenFrom="sm" aria-label="Toggle navigation" aria-expanded={opened} />
-            {normal ? <Anchor href="/workspaces/" aria-label="ShiftBox home">{logo}</Anchor> : logo}
+            {normal ? <Anchor href="/templates/" aria-label="ShiftBox home">{logo}</Anchor> : logo}
           </Group>
           <Group gap="xs" wrap="nowrap">
             <ActionIcon variant="default" size={44} aria-label="Dark mode" aria-pressed={scheme === 'dark'}
@@ -103,10 +103,10 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="md" component="nav" aria-label="Main navigation">
-        {normal ? <NavLink href="/workspaces/" label="Workspaces" active={!!at('/workspaces/')}
-          aria-current={at('/workspaces/') ? 'page' : undefined} /> : null}
         {normal ? <NavLink href="/templates/" label="Projects" active={!!at('/templates/')}
           aria-current={at('/templates/') ? 'page' : undefined} /> : null}
+        {normal ? <NavLink href="/workspaces/" label="Workspaces" active={!!at('/workspaces/')}
+          aria-current={at('/workspaces/') ? 'page' : undefined} /> : null}
         {administration ? <NavLink component="button" type="button" label="Administration" defaultOpened childrenOffset={16}>
           {adminNotice ? <NavLink href="/notices/" label="Notices" active={!!at('/notices/')}
             aria-current={at('/notices/') ? 'page' : undefined} /> : null}

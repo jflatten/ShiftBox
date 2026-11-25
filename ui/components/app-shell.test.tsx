@@ -17,14 +17,25 @@ beforeEach(() => {
 });
 afterEach(() => { jest.restoreAllMocks(); jest.clearAllMocks(); });
 
-// A member must not be offered administration navigation by the shared shell.
+// The member shell links the brand to Projects and hides administration navigation.
 test('shows member navigation and the approved brand', () => {
   render(<MantineProvider><ShiftBoxShell session={{ role: 'member', mode: 'normal', installationState: 'active', permissions: ['template.create'] }} alerts={[]}><h1>Workspaces</h1></ShiftBoxShell></MantineProvider>);
   expect(screen.getByRole('link', { name: 'Workspaces' })).toBeVisible();
   expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/templates/');
   expect(screen.queryByRole('link', { name: 'Infrastructure' })).not.toBeInTheDocument();
   expect(screen.getByAltText('ShiftBox')).toHaveAttribute('src', '/brand/shiftbox-logo-light.svg');
-  expect(screen.getByRole('link', { name: 'ShiftBox home' })).toHaveAttribute('href', '/workspaces/');
+  expect(screen.getByRole('link', { name: 'ShiftBox home' })).toHaveAttribute('href', '/templates/');
+});
+
+// Sidebar reading and keyboard order put Projects before Workspaces for signed-in users.
+test('lists Projects first in the main navigation', () => {
+  render(<MantineProvider><ShiftBoxShell session={{ role: 'administrator', mode: 'normal', installationState: 'active',
+    permissions: ['infrastructure.view'] }} alerts={[]}><h1>Infrastructure</h1></ShiftBoxShell></MantineProvider>);
+  const navigation = screen.getByRole('navigation', { name: 'Main navigation' });
+  expect(within(navigation).getAllByRole('link').slice(0, 2)).toEqual([
+    within(navigation).getByRole('link', { name: 'Projects' }),
+    within(navigation).getByRole('link', { name: 'Workspaces' }),
+  ]);
 });
 
 // A keyboard selection changes both theme and brand, and a remounted app

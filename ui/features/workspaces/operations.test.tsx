@@ -62,7 +62,7 @@ test('restores keyboard focus after cancelling workspace deletion', async () => 
   render(<Providers><Workspaces workspaceId={id} /></Providers>);
   const settings = await screen.findByRole('tab', { name: 'Settings' });
   // The compact navigation toggle is the first keyboard stop. Opening it
-  // keeps the page title present and exposes the labeled workspace link.
+  // keeps the page title present and exposes Projects first in the sidebar.
   const toggle = screen.getByRole('button', { name: 'Toggle navigation' });
   await user.tab();
   expect(toggle).toHaveFocus();
@@ -78,7 +78,7 @@ test('restores keyboard focus after cancelling workspace deletion', async () => 
   expect(screen.getByRole('button', { name: 'User menu' })).toHaveFocus();
   await user.tab();
   const nav = within(screen.getByRole('navigation', { name: 'Main navigation' }));
-  expect(nav.getByRole('link', { name: 'Workspaces' })).toHaveFocus();
+  expect(nav.getByRole('link', { name: 'Projects' })).toHaveFocus();
   settings.focus();
   await user.keyboard('{Enter}');
   const deletion = screen.getByRole('button', { name: 'Delete workspace' });

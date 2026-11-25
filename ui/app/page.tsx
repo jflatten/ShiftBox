@@ -15,7 +15,7 @@ export default function Home() {
   const passwordRequired = current?.mode === 'password_change' && current.installationState === 'active' &&
     current.permissions.includes('session.change_password');
   const destination = current && !passwordRequired
-    ? current.mode === 'recovery_review' ? '/recovery/' : '/workspaces/'
+    ? current.mode === 'recovery_review' ? '/recovery/' : '/templates/'
     : undefined;
   useEffect(() => {
     if (destination) router.replace(destination);

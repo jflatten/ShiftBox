@@ -1022,18 +1022,19 @@ test('personal settings avatar menu and password dialog', async ({ page }) => {
   await expect(page.getByRole('region', { name: 'Your profile' })).toBeHidden();
 });
 
-// Workspaces is home from both the site root and the shared header logo.
-test('opens Workspaces from the root and the ShiftBox logo', async ({ page }) => {
+// Projects is home from both the site root and the shared header logo.
+test('opens Projects from the root and the ShiftBox logo', async ({ page }) => {
   await fixture(page, (route, path) => {
     if (path.endsWith('/session')) return route.fulfill({ json: admin([]) });
     if (path.endsWith('/workspaces') || path.endsWith('/templates')) return route.fulfill({ json: { items: [], nextCursor: null } });
   });
   await page.goto('/');
-  await expect(page).toHaveURL(/\/workspaces\/$/);
-  await page.goto('/templates/');
+  await expect(page).toHaveURL(/\/templates\/$/);
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
+  await page.goto('/workspaces/');
   await activate(page, page.getByRole('link', { name: 'ShiftBox home' }));
-  await expect(page).toHaveURL(/\/workspaces\/$/);
-  await expect(page.getByRole('heading', { name: 'Workspaces', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/templates\/$/);
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
 });
 
 // A controller denial after the login deadline takes the user straight to the

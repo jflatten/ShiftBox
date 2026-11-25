@@ -5,15 +5,15 @@ import { Providers } from './providers';
 const mockReplace = jest.fn();
 jest.mock('next/navigation', () => ({ usePathname: () => '/', useRouter: () => ({ replace: mockReplace }) }));
 
-// An authenticated visit to the site root opens Workspaces without an overview.
-test('opens Workspaces from the root for a normal session', async () => {
+// An authenticated visit to the site root opens Projects without an overview.
+test('opens Projects from the root for a normal session', async () => {
   const original = globalThis.fetch;
   globalThis.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
     user: { id: 'owner', role: 'member' }, mode: 'normal', installationState: 'active', permissions: [],
   }) });
   try {
     render(<Providers><Home /></Providers>);
-    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/workspaces/'));
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/templates/'));
     expect(screen.queryByRole('heading', { name: 'Your development environments' })).not.toBeInTheDocument();
   } finally { globalThis.fetch = original; mockReplace.mockClear(); }
 });

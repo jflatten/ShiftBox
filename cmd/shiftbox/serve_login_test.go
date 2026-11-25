@@ -47,8 +47,8 @@ func TestControllerDexRequiresRetainedSQLite(t *testing.T) {
 }
 
 // TestActiveLoginUsesCurrentMembership drives native Dex and shows that a
-// verified password creates a session only for a current active local member
-// and that a temporary password from a reset forces a password change.
+// verified password opens Projects for an active local member and that a
+// temporary password from a reset forces a password change.
 func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 	binary := os.Getenv("SHIFTBOX_TEST_DEX_BINARY")
 	if binary == "" {
@@ -149,8 +149,8 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		reset := services.Handlers["resetLocalUserPassword"]
 		api.Handle("POST /api/v1/admin/users/{userId}/password-reset", &reset)
 		assets, err := web.NewStaticHandler(fstest.MapFS{
-			"index.html":            {Data: []byte("<h1>ShiftBox</h1>")},
-			"workspaces/index.html": {Data: []byte("<h1>Workspaces</h1>")},
+			"index.html":           {Data: []byte("<h1>ShiftBox</h1>")},
+			"templates/index.html": {Data: []byte("<h1>Projects</h1>")},
 		})
 		if err != nil {
 			return nil, err
@@ -254,10 +254,10 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 		body, err := io.ReadAll(response.Body)
 		if wantMode != "" && err == nil {
 			wantPath, wantPage := "/", "ShiftBox"
-			// An unrestricted login opens Workspaces. A temporary password still
+			// An unrestricted login opens Projects. A temporary password still
 			// leads to the password-change entry point before work is available.
 			if wantMode == "normal" {
-				wantPath, wantPage = "/workspaces/", "Workspaces"
+				wantPath, wantPage = "/templates/", "Projects"
 			}
 			if response.StatusCode != http.StatusOK || response.Request.URL.Path != wantPath || !bytes.Contains(body, []byte(wantPage)) {
 				t.Fatalf("active sign-in (%s) returned %d at %s, want 200 at %s with %s", wantMode, response.StatusCode, response.Request.URL.Path, wantPath, wantPage)
@@ -354,8 +354,8 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 			t.Fatal(err)
 		}
 		res.Body.Close()
-		if res.StatusCode != http.StatusOK || res.Request.URL.Path != "/workspaces/" {
-			t.Fatalf("sign-in after session expiry returned %d at %s, want 200 at /workspaces/", res.StatusCode, res.Request.URL.Path)
+		if res.StatusCode != http.StatusOK || res.Request.URL.Path != "/templates/" {
+			t.Fatalf("sign-in after session expiry returned %d at %s, want 200 at /templates/", res.StatusCode, res.Request.URL.Path)
 		}
 	}
 	response, err = expired.Get(server.Origin + "/api/v1/session")
