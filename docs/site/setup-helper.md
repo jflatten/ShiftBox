@@ -6,7 +6,15 @@ permalink: /install/setup-helper/
 
 # Set up ShiftBox with the setup helper
 
-Use this guide if your CloudFormation template has a `Phase` field. For the template that starts ShiftBox in one operation, follow the [AWS installation guide]({{ '/install/' | relative_url }}).
+Use this guide for older private deployments whose template starts at `Phase=foundation`. For the template that starts ShiftBox in one operation, follow the [AWS installation guide]({{ '/install/' | relative_url }}).
+
+## Identify your legacy network template
+
+**If you see `VpcCidr` and `AccessMode`**, you have the original RC3 network layout. That stack creates its own VPC. Follow the [matching RC3 console and certificate instructions](https://github.com/jflatten/ShiftBox/blob/28b67b0c77a25fdc072333e5279ebae9bc217ecf/platform/cloudformation/aws/README.md) or download and inspect the `install.sh` attached to the same release. The guided installer accepts the exact release tag with `--version`, previews each change set and can resume with `--resume` in the same work directory. It requires Bash, AWS CLI v2 with CloudFormation event support, the Session Manager plugin, curl, jq, OpenSSL and tar. [Release downloads](https://github.com/jflatten/ShiftBox/releases)
+
+Choose a VPC address range that does not overlap your clients’ networks. Select `tailscale` to use that template’s subnet router or `private-link` to use your own routed connection. Keep the NAT gateway enabled unless you have arranged other outbound access. That controller takes GitHub App credentials from Secrets Manager. Use the instructions and support files for that release through your first workspace.
+
+**If you see `VpcId`, `ServiceSubnet`, `WorkspaceSubnet` and `Phase=foundation`**, the stack uses your existing private subnets. Continue below for that template.
 
 ## Before you begin
 
@@ -80,4 +88,4 @@ Create the following update change sets on the same stack using the same templat
 
 In ShiftBox, open **Administration → Infrastructure → Platform**. Select the JSON file for your Region from the support archive's `catalog/` folder under **Official AMI catalog manifest**, then select **Validate official AMI**. Wait for validation to finish and clean up its temporary EC2 instance.
 
-In **Administration → Infrastructure → Resources**, select **New resource profile**. Choose the validated **AMI image**, an EC2 instance type available in your workspace subnet, and a disk size at or above the displayed minimum. Save the profile, then follow the workspace guide to connect GitHub and open the IDE. [Launch your first workspace]({{ '/first-workspace/' | relative_url }}#configure-the-github-app)
+In **Administration → Infrastructure**, find **Resource profiles** (under **Platform** in the current UI or **Resources** in older builds) and select **New resource profile**. Choose the validated **AMI image**, an EC2 instance type available in your workspace subnet, and a disk size at or above the displayed minimum. Save the profile, then follow the workspace guide to connect GitHub and open the IDE. [Launch your first workspace]({{ '/first-workspace/' | relative_url }}#configure-the-github-app)

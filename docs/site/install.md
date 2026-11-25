@@ -6,76 +6,99 @@ permalink: /install/
 
 # Install ShiftBox in an existing AWS VPC
 
-Use the AWS Console to create ShiftBox in your private network, then finish setup in your browser. When you’re done, you can sign in as the first administrator and launch a workspace.
-
-For a public browser URL with automatic HTTPS, use the [public access settings](#public-browser-access-with-lets-encrypt).
-
-## Before you begin
-
-* **AWS access.** You need permission to create a CloudFormation stack, let it create the roles it needs, and read the setup claim from AWS Secrets Manager. Private installations that use the generated browser CA also need access to that certificate.
-* **An existing network.** Choose a virtual private cloud (VPC) and two private subnets in it. One subnet runs the ShiftBox application and its database. The other runs your workspaces. You’ll connect to ShiftBox through your VPN, Tailscale, or another private connection.
-* **AWS costs.** The stack adds an EC2 server, disks, and private DNS records. Each workspace adds its own server and disk.
-
-## Prepare your VPC and subnets
-
-1. In **VPC → Your VPCs**, confirm that the VPC has DNS resolution and DNS hostnames enabled. [AWS VPC DNS settings](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-dns-updating.html)
-2. Identify the service and workspace subnets in that VPC. Both need outbound access to AWS and container registries. The workspace subnet also needs access to your source code and package registries.
-3. For private access, arrange private routing and DNS forwarding. Get the IPv4 source range your connection uses. Your default internal DNS suffix is the stack name followed by `.internal`. [Private routing and DNS]({{ '/private-access/' | relative_url }})
+Create one CloudFormation stack, then finish setup in your browser. The stack runs the controller and PostgreSQL database on a shared host. When a developer launches a workspace later, the controller starts a separate private EC2 virtual machine for it.
 
 ## Get the installation files
 
-Download and extract `shiftbox-aws-support.tar.gz` from the release. In its `launch` directory, choose `shiftbox-aws-private.json` for private access or `shiftbox-aws-public.json` for a domain with Let’s Encrypt. If several public subnets are eligible, choose `shiftbox-aws-public-placement.json` to select one explicitly. [ShiftBox downloads](https://github.com/jflatten/ShiftBox/releases)
+Open the release you intend to install and extract its `shiftbox-aws-support.tar.gz`. Keep the archive for its regional workspace image catalog. [ShiftBox downloads](https://github.com/jflatten/ShiftBox/releases)
+
+**Check the contents before starting.** The original RC3 archive contains the older setup helper. If your archive has no `launch/` directory and its matching template asks for **Phase**, use the [legacy setup helper guide]({{ '/install/setup-helper/' | relative_url }}) for that private release. For single-pass setup or public HTTPS, you need a release package or a matching deployment build that includes the revised launch forms.
+
+| How will your team connect? | File in `launch/` | What to expect |
+| --- | --- | --- |
+| Privately, using a certificate you distribute | `shiftbox-aws-private.json` | Use your existing private route. Each browser must trust the installation’s certificate authority. The default address for a stack named `team` is `https://shiftbox.team.internal:8443`. |
+| Privately, using a certificate browsers already trust | `shiftbox-aws-public.json` with **Browser access** set to **Private** (default) | Supply an authoritative public DNS zone for Let’s Encrypt to verify. Users reach the controller over your private route on port 443. |
+| Over the internet from approved addresses | `shiftbox-aws-public.json` with **Browser access** set to **Public** | A Network Load Balancer listens on port 443 at a fixed public IPv4 address. The controller, database and workspace machines stay in private subnets. |
+| Over the internet, with a specific load balancer subnet | `shiftbox-aws-public-placement.json` with **Public** selected | Use this form when several public subnets qualify or when you need to pick one yourself. |
+
+Once you have the right form, [prepare the network](#prepare-your-vpc-and-subnets), [choose the stack settings](#create-the-cloudformation-stack) and [finish first login](#finish-setup-in-shiftbox).
+
+## Prepare your VPC and subnets
+
+- **AWS account and Region.** Use a Region covered by the release catalog (`us-east-1`, `us-east-2`, `us-west-1` or `us-west-2`). Your AWS identity needs permission to deploy the stack and its named IAM roles, upload the template and read the setup secret in Secrets Manager.
+- **Service and workspace networks.** Identify the existing VPC and private subnets for the controller and workspaces. Enable VPC DNS resolution and DNS hostnames. Both subnets need an outbound path to AWS services and container registries. Workspaces also need to reach GitHub and any package sources the project uses. [AWS VPC DNS settings](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-dns-updating.html)
+- **Browser connection.** For private access, arrange a route, DNS forwarding and the source IPv4 range your browser will use. For public access, identify the public IPv4 range your team connects from and an internet-routed subnet in the service subnet’s Availability Zone. The load balancer subnet needs at least eight free IPv4 addresses. [Private routing and DNS]({{ '/private-access/' | relative_url }})
+- **Domain for Let’s Encrypt.** Create or select a public Route 53 hosted zone in the deployment account. A hosted zone holds the DNS records for a domain. Your registrar (or the parent DNS zone for a subdomain) must delegate to its assigned name servers. For an existing domain in use, preserve its other DNS records when moving DNS service. [Set up Route 53 for an existing domain](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/MigratingDNS.html)
+- **Costs.** Budget for the always-on service host, disks, DNS, secrets and network traffic, plus compute and storage for each workspace. Public access adds the load balancer and its Elastic IP. Stopping a workspace releases its compute while its disk continues to incur charges. [Load balancer pricing](https://aws.amazon.com/elasticloadbalancing/pricing/) · [Public IPv4 pricing](https://aws.amazon.com/vpc/pricing/)
 
 ## Create the CloudFormation stack
 
-1. In the AWS Console for your VPC’s Region, open **CloudFormation → Create stack → With new resources (standard)**. Choose **Upload a template file** and select your launch file. [Create a stack in the AWS Console](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-create-stack.html)
-2. Enter your deployment name as the **Stack name**. Use 2–32 lowercase letters, numbers, or hyphens. Start with a letter and end with a letter or number. Choose the service and workspace subnets from the menus. The stack looks up their VPC and uses the service subnet’s Availability Zone.
-3. For private access, enter the **Private browser source IPv4 range**. For public access, complete the [public browser options](#public-browser-access-with-lets-encrypt) in the same form. Leave the storage and DNS suffix defaults in **Advanced** unless your installation needs different settings.
-4. Review the change set, acknowledge the named IAM resources, and create the stack. Wait for **CREATE_COMPLETE**. You can enable termination protection under **Stack actions**.
+1. In the AWS Console, switch to the Region containing your subnets. Open **CloudFormation → Create stack → With new resources (standard)** and choose **Upload a template file**. Select the JSON launch form for your access choice. [Create a stack in the AWS Console](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-create-stack.html)
+2. Enter the stack name and select your subnets. Use the tables below to complete the access and storage fields.
+3. Acknowledge the named IAM resources. Review the change set, then execute it to create the stack. Wait for **CREATE_COMPLETE**.
+4. Open the stack’s **Outputs** tab. **ManagementOrigin** is the address you will use for both setup and regular sign-in. On a public installation, **PublicIPv4** shows the Elastic IP you can compare against your public DNS answer.
+
+| Field | How to choose |
+| --- | --- |
+| **Stack name** | Choose a lasting deployment name, 2–32 lowercase letters, digits or hyphens. Start with a letter and end with a letter or digit. With a managed certificate, this name becomes the first part of the browser address. |
+| **Service subnet** | Pick the private subnet for the controller, database and their host. ShiftBox derives the VPC and Availability Zone from it. The installation disk lives in that zone. |
+| **Workspace subnet** | Pick the private subnet in the same VPC where developer machines should run. Check its available addresses, outbound connectivity and EC2 instance types. |
+| **Private browser source IPv4 range** | For private access, enter the source range AWS sees from your VPN or other private route. For example, `10.24.8.0/24` covers that network. For one client address use `/32`. In public mode this field is optional and also allows a private route when filled. |
+
+### Public browser access with Let’s Encrypt
+
+These fields appear on both managed-certificate forms. For example, selecting the authoritative zone `example.com` and naming the stack `team` gives you `https://team.example.com`.
+
+| Field | How to choose |
+| --- | --- |
+| **Browser access** | Choose **Public** to create the internet entry point. **Private** keeps browser traffic on your private route and still issues a publicly trusted certificate. |
+| **Public Route 53 hosted zone** | Select your domain from the zones in this AWS account. Check that its public name servers match the delegation. The stack gets the domain name from the zone. |
+| **Public browser source IPv4 range** | Required for public access. Use your office or VPN’s public exit range, or one public IP with `/32`. `0.0.0.0/0` lets any IPv4 address reach the sign-in page. |
+| **Public subnet** | On the explicit-placement form, select a subnet in the service subnet’s VPC and Availability Zone with a default IPv4 route to an internet gateway. The ordinary form discovers the subnet when exactly one qualifies. |
+| **Let’s Encrypt contact email** | Enter a monitored address for the certificate account. An address on another domain works. DNS proves domain control. |
+| **Accept Let’s Encrypt subscriber agreement** | Select **true** if authorized to accept the agreement. Both managed-certificate options require acceptance. [Let’s Encrypt subscriber agreement](https://letsencrypt.org/repository/) |
+| **DNS placement** (Advanced) | Keep **Use selected zone** to add the deployment’s records to your existing zone. **Delegate a child zone** creates a separate zone for the deployment name and adds its name servers to the selected parent. Choose this if you want that deployment’s public records grouped separately. |
+
+On first boot, Certbot in the controller writes temporary DNS TXT records, obtains the certificate and later renews it automatically. The stack grants the required Route 53 permissions. The same certificate covers management, workspace IDEs, previews and repair pages. [How DNS certificate validation works](https://letsencrypt.org/docs/challenge-types/#dns-01-challenge)
+
+To move a working public deployment behind a VPN later, keep the same hostname and test private access before removing its public address. [Switch a public endpoint to private access]({{ '/private-access/' | relative_url }}#switch-an-existing-public-endpoint-to-private-access)
+
+The stack also reuses or creates a **private** browser zone for the selected base domain. If that domain already serves other applications, check how those names resolve inside this VPC before deployment. [Understand public and private DNS answers]({{ '/private-access/' | relative_url }}#route-and-resolve-shiftbox)
+
+### Advanced storage and DNS options
+
+| Field | Default | When to change it |
+| --- | --- | --- |
+| **Private DNS suffix** | Stack name plus `.internal` | Choose an unused lowercase suffix if your private DNS already uses that name. Keep it distinct from the public zone. Arrange private DNS forwarding for the names your clients use. |
+| **DataVolumeSizeGiB** | 32 GiB | This encrypted disk holds installation state and the database and survives stack deletion. Choose more space if needed for that data. The allowed range is 20–16,384 GiB. Each workspace has a separate disk. |
+| **OCI image cache size (GiB)** | 20 GiB | This separate disk holds reusable container images. Suggested starting sizes are 20 GiB for up to 5 active users, 50 for 6–20, or 100 for 21–50. Large or varied images need more space. The allowed range is 1–16,384 GiB. Review the usable cache budget in ShiftBox after activation. |
+
+### Using the guided installer
+
+If you prefer a terminal, use an authenticated AWS CLI v2 with CloudFormation event support, Bash, curl, jq, OpenSSL and tar. Download and inspect `install.sh` from a release that supports the revised deployment. Use the script and tag from the same release. Run `bash ./install.sh --version RELEASE_TAG` for private access or add `--public` for public HTTPS, replacing `RELEASE_TAG` with the published tag. The installer lists eligible subnets and public zones and can suggest your current public IP for confirmation. Review the change set, then complete the same browser setup below.
 
 ## Retrieve the certificate and admin claim
 
-1. Open the stack’s **Outputs** tab. Keep it open so you can refer to **SetupClaimSecretArn** and **ManagementOrigin**.
-2. If the stack publishes **BrowserCaSecretArn**, open **Secrets Manager** in the same AWS Region. Find the secret with that ARN and select **Retrieve secret value**. Copy the full certificate, including the `BEGIN CERTIFICATE` and `END CERTIFICATE` lines. Save it as a plain-text file named `shiftbox-ca.crt` and trust it on your computer. [Trust the browser certificate]({{ '/private-access/' | relative_url }}#trust-the-browser-certificate)
-3. Find the secret whose ARN matches **SetupClaimSecretArn** and select **Retrieve secret value**. Copy the claim code for the next step. Treat it like a password and keep it out of URLs, chat, and screenshots. [View a secret in the AWS Console](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets-console.html)
+1. In **Outputs**, find **SetupClaimSecretArn**. This is the AWS identifier of a secret. Open **Secrets Manager** in the same account and Region, open that secret and choose **Retrieve secret value**. Copy the claim code. It authorizes creation of the first administrator, so handle it like a password. [Retrieve a secret in the AWS Console](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets-console.html)
+2. If **BrowserCaSecretArn** appears, retrieve that separate secret. Save the entire public certificate, including its `BEGIN CERTIFICATE` and `END CERTIFICATE` lines, as `shiftbox-ca.crt`. Trust it on the computer you will use for setup. Browsers already trust the Let’s Encrypt option. [Trust the browser certificate]({{ '/private-access/' | relative_url }}#trust-the-browser-certificate)
 
 ## Finish setup in ShiftBox
 
-1. Open the address listed under **ManagementOrigin** from an allowed network. On **Set up ShiftBox**, paste the claim code, enter your email, and choose a password. Select **Create administrator**.
+1. Open **ManagementOrigin** from an allowed network. On **Set up ShiftBox**, enter the claim, your administrator email and a new password twice. Use at least 12 characters and at most 72 UTF-8 bytes. Select **Create administrator**.
 
-   ![The ShiftBox setup form with fields for the setup claim code, administrator email, and new password.]({{ '/assets/setup-administrator.png' | relative_url }})
+   ![First administrator form showing the setup claim, email and password fields.]({{ '/assets/setup-administrator.png' | relative_url }})
 
-2. Sign in with the email and password you just entered.
-3. Select **Validate database**, then **Validate certificate** on the next screen. ShiftBox checks the database and certificate it already set up.
-4. Select **Save capacity** after reviewing the workspace limits. On **Activate installation**, confirm that you’re ready to sign in again, then select **Activate installation**.
+2. Sign in with the account you created. Select **Validate database**. ShiftBox checks the encrypted connection and the separate database logins for the application and its sign-in service, Dex.
+3. Select **Validate certificate** to check that the installed certificate covers the displayed browser addresses.
+4. In **Workspace capacity**, set total vCPU, memory and disk limits across workspaces, or leave any field blank for unlimited. Memory and disk use MiB (1 GiB = 1,024 MiB). Select **Save capacity**. You can revise these limits later. [Choose a capacity budget]({{ '/configure/' | relative_url }}#workspace-sizes-and-capacity)
+5. On **Activate installation**, confirm that you are ready to sign in again, then select **Activate installation**.
 
-   ![The final ShiftBox setup screen with the sign-in confirmation checkbox and Activate installation button.]({{ '/assets/setup-activate.png' | relative_url }})
+   ![Activation screen with the sign-in confirmation checkbox and Activate installation button.]({{ '/assets/setup-activate.png' | relative_url }})
 
-5. Wait for **ShiftBox is online**, then sign in again at the same address. [Launch your first workspace]({{ '/first-workspace/' | relative_url }})
+6. Wait for **ShiftBox is online** and sign in again at the same address. You are ready to connect GitHub and launch a project. [Launch your first workspace]({{ '/first-workspace/' | relative_url }})
 
 ## Clean up a trial installation
 
-Push any workspace changes you want to keep. Delete the trial workspaces in ShiftBox first, then back up any settings or data you need. In CloudFormation, verify that you selected the trial stack before turning off termination protection and deleting it. Review its retained volume and secrets separately, and remove the trial certificate from your computer’s trust settings. [Backup and recovery]({{ '/upgrade-recovery/' | relative_url }})
+Push work you want to keep and delete the trial workspaces in ShiftBox. Make and verify a management backup if you need the installation settings. Record the installation volume ID and secret identifiers from the stack before you delete it. [Backup and recovery]({{ '/upgrade-recovery/' | relative_url }})
 
-For older templates that use the separate setup task, use the release-matched setup helper. [Legacy setup helper]({{ '/install/setup-helper/' | relative_url }})
-
-## Public browser access with Let’s Encrypt
-
-Use these settings on a fresh CloudFormation installation. The controller, PostgreSQL, and workspaces run in private subnets. An internet-facing Network Load Balancer adds a static IPv4 address and forwards HTTPS to the controller. The load balancer and its address add AWS charges. DNS validation and certificate renewal run inside the controller. [Network Load Balancer pricing](https://aws.amazon.com/elasticloadbalancing/pricing/) · [Public IPv4 pricing](https://aws.amazon.com/vpc/pricing/)
-
-| Field | What to select |
-| --- | --- |
-| **Browser access** | Choose **Public**. Choose **Private** if you want a Let’s Encrypt certificate for a VPC-only browser URL. |
-| **Public Route 53 hosted zone** | Select the authoritative public zone in this account. For stack `rc3` and zone `shiftbox.dev`, the browser URL is `https://rc3.shiftbox.dev`. |
-| **Public browser source IPv4 range** | Enter the source range allowed through the load balancer. Use `/32` for one IPv4 address. |
-| **Let’s Encrypt contact email** and **Accept Let’s Encrypt subscriber agreement** | Enter your contact email and explicitly accept the subscriber agreement. [Let’s Encrypt legal repository](https://letsencrypt.org/repository/) |
-
-The stack uses the only eligible internet-routed subnet in the service subnet’s VPC and Availability Zone. If several qualify, use the explicit-placement launch file to pick one. In **Advanced**, use **DNS placement** to delegate a child zone instead of creating records directly in the selected zone. ShiftBox reuses a matching private zone associated with the VPC, or creates one when needed.
-
-Verify that the public zone is authoritative before creating the stack. Wait for **CREATE_COMPLETE** while the controller obtains its certificate. Then retrieve the setup claim, open **ManagementOrigin** from an allowed IPv4 address, and finish setup in the browser. [First-login setup](#finish-setup-in-shiftbox)
-
-The release installer also accepts `--public`. It filters the subnet choices, lists same-account public zones by name, and can propose this computer’s IPv4 address for you to confirm. It creates one reviewed CloudFormation change set.
-
-Check the active certificate and last renewal result under **Administration → Settings → Certificates**. The controller retries failed renewals. Browsers use their normal trust stores for Let’s Encrypt certificates.
-
-To switch to private access, first allow your private IPv4 source range and verify the same management URL from a client that uses VPC DNS and can reach TCP 443. Then review a stack update with **Browser access** set to **Private**. Keep the selected public hosted zone for certificate renewal. The update removes the public browser records, load balancer, and Elastic IP. [Private connectivity]({{ '/private-access/' | relative_url }})
+Confirm the account, Region and stack name, turn off termination protection if enabled, then delete the trial stack. After **DELETE_COMPLETE**, check EC2 for its retained installation volume and any remaining Elastic IP, and check Secrets Manager for its retained secrets. Remove only resources you have matched to the discarded installation. A fresh deployment with the same name may conflict with retained secrets. Keep shared DNS zones and remove the trial CA from your device if you trusted it.

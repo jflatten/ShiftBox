@@ -10,7 +10,7 @@ Plan a maintenance window and keep the existing CloudFormation stack, Availabili
 
 ## Verify a management backup
 
-1. In **Backup & Recovery**, create a coordinated management backup and wait for the archive to be verified. The archive covers the ShiftBox and Dex schemas, installation configuration, trust material and installation key. Keep the archive, its verified operation and checksum, and the separately stored passphrase in protected operator custody. Back up workspace VM disks and project data separately if required.
+1. Open **Administration → Backup & Recovery**. In **Destination**, enter a new absolute archive path on the controller. Enter a **Passphrase** of at least 12 characters and select **Create backup**. Wait for the archive to be verified. The archive covers the ShiftBox and Dex schemas, installation configuration, trust material and installation key. Keep the archive, its verified operation and checksum, and the separately stored passphrase in protected operator custody. Back up workspace VM disks and project data separately if required.
 2. Use the CLI alternative only in the authorized private controller environment with the active configuration and backup socket. Use a new destination and enter the passphrase at the prompt.
 
    ```sh
@@ -31,7 +31,7 @@ Plan a maintenance window and keep the existing CloudFormation stack, Availabili
    ```
 
 4. If the upgrade includes a schema migration, stop the normal controller through a reviewed change set before migration. Keep the database and retained volume in place. Use the migration procedure for the target revision after verifying the backup and satisfying the retained-workspace gate. Confirm that the procedure covers your starting schema before stopping the installed controller.
-5. After migration or a reviewed controller-only replacement, check that CloudFormation and both ECS services stabilize. Sign in afresh over the private route, verify the installation identity and retained workspace inventory, and open an authorized workspace IDE. Check the running controller digest and volume identity against your record.
+5. After migration or a reviewed controller-only replacement, check that CloudFormation and both ECS services stabilize. Sign in again at **ManagementOrigin** from an allowed network, verify the installation identity and retained workspace inventory, and open an authorized workspace IDE. Check the running controller digest and volume identity against your record.
 
 ## Recover from a failed migration
 

@@ -23,7 +23,7 @@ copy_public() {
     cp -- "$1" "$2"
 }
 
-for guide in index install setup-helper private-access first-workspace troubleshooting upgrade-recovery contributing; do
+for guide in index install setup-helper configure private-access first-workspace troubleshooting upgrade-recovery contributing; do
     copy_public "$site/$guide.md" "$source_dir/$guide.md"
 done
 copy_public "$site/_layouts/default.html" "$source_dir/_layouts/default.html"
