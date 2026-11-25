@@ -155,7 +155,15 @@ def test_one_pass_uses_only_existing_network_and_main_task():
     assert resources["RegistryCacheVolume"]["Properties"]["Size"] == {"Ref": cache_parameter}
     assert "RegistryCacheAttachment" in resources["ControllerService"]["DependsOn"]
     rendered = json.dumps(base)
-    assert "Phase" not in base["Parameters"]
+    assert {"Phase", "PostgresCaPem"}.isdisjoint(base["Parameters"])
+    # Public deployment uses the same one-pass artifact and retains optional IAM and DNS.
+    assert base["Parameters"]["PublicAccess"]["Default"] == "false"
+    assert base["Parameters"]["PublicParentHostedZoneId"]["Default"] == ""
+    assert resources["PublicLoadBalancer"]["Condition"] == "PublicEnabled"
+    assert resources["ManagedPublicDelegation"]["Properties"]["HostedZoneId"] == {"Ref": "PublicParentHostedZoneId"}
+    assert base["Outputs"]["BrowserCaSecretArn"]["Condition"] == "PrivateBootstrap"
+    assert any(tag.get("Fn::If", [None])[0] == "CreateManagedPublicZone"
+               for tag in resources["ControllerService"]["Properties"]["Tags"])
     assert all(field not in rendered for field in ("GitHubAppSecretArn", "HasGitHubApp", "SHIFTBOX_GITHUB_APP"))
     assert "SetupTask" not in resources
     assert "SetupSession" not in resources
@@ -175,6 +183,9 @@ def test_one_pass_uses_only_existing_network_and_main_task():
     for resource in resources.values():
         properties = resource.get("Properties", {})
         for tag in properties.get("Tags", []) + properties.get("HostedZoneTags", []):
+            if "Fn::If" in tag:
+                assert len(tag["Fn::If"]) == 3
+                tag = tag["Fn::If"][1]
             assert tag["Key"].startswith("shiftbox-"), tag["Key"]
     assert '"namespacedTags":true' in rendered.replace('\\"', '"')
     assert "aws:RequestTag/shiftbox-workspace-deployment" in rendered
@@ -189,5 +200,7 @@ def test_one_pass_uses_only_existing_network_and_main_task():
         assert grants == boundary["Statement"]
     assert "pg-identity" in json.dumps(resources["PostgresTask"])
     assert "pg-identity" not in json.dumps(resources["ControllerTask"])
+    assert "database-trust" in json.dumps(resources["ControllerTask"])
+    assert "SHIFTBOX_DB_CA" not in json.dumps(resources["ControllerTask"])
     trust = resources["ControllerTaskRole"]["Properties"]["AssumeRolePolicyDocument"]["Statement"][0]
     assert trust["Condition"]["StringEquals"]["aws:SourceAccount"] == {"Ref": "AWS::AccountId"}

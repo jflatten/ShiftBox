@@ -248,7 +248,7 @@ func applyGuestPoll(ctx context.Context, journal *localJournal, runtime devConta
 		replacement != (dispatch.Type == "rebuild") {
 		return errors.New("invalid development container dispatch")
 	}
-	if dispatch.Type != "provision" {
+	if dispatch.Type != "provision" && dispatch.Type != "start" {
 		runtime.launchTiming = nil
 	}
 	if dispatch.Type != "provision" && dispatch.Command != rebuildDevelopmentCommand {

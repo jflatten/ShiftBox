@@ -50,7 +50,7 @@ FROM ghcr.io/dexidp/dex:v2.46.1 AS dex
 
 FROM debian:trixie-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates jq postgresql-client-17 \
+    && apt-get install -y --no-install-recommends ca-certificates jq postgresql-client-17 certbot python3-certbot-dns-route53 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 shiftbox \
     && useradd --uid 10001 --gid shiftbox --home-dir /var/lib/shiftbox --shell /usr/sbin/nologin shiftbox \

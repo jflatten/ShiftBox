@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jflatten/ShiftBox/internal/database"
+	"github.com/jflatten/ShiftBox/internal/launchlog"
 	"github.com/jflatten/ShiftBox/internal/operation"
 	"github.com/jflatten/ShiftBox/internal/provider"
 	"github.com/jflatten/ShiftBox/internal/provider/fake"
@@ -16,7 +17,8 @@ import (
 
 // TestPowerWorkerReconcilesLostReplies reopens the controller database and
 // recreates its worker before each step. The provider and guest evidence
-// survive the controller, including lost start and stop replies.
+// survive the controller, including lost start and stop replies and the
+// reconciled start's performance timings.
 func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	ctx := t.Context()
 	fixtureDB := openWorkspaceDatabase(t, "sqlite")
@@ -196,6 +198,25 @@ func TestPowerWorkerReconcilesLostReplies(t *testing.T) {
 	checkState(start, "running", "waiting")
 	run(start, nil)
 	checkState(start, "running", "succeeded")
+	performance, err := launchlog.Read(ctx, db, start.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if performance.TimeToIDEReadyMS == nil || performance.TimeToSetupCompleteMS == nil {
+		t.Errorf("Read(completed start) = %+v, want IDE and setup completion milestones", performance)
+	}
+	var calls, running int
+	for _, event := range performance.Events {
+		switch event.Phase {
+		case "vm_start":
+			calls++
+		case "vm_running":
+			running++
+		}
+	}
+	if calls != 1 || running != 1 {
+		t.Errorf("Read(reconciled start) provider events = %+v, want one start call and one running observation", performance.Events)
+	}
 
 	// Rebuild waits for new guest evidence and uses the existing VM and reservation.
 	rebuild := admit("rebuild")

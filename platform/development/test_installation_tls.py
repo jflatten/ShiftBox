@@ -7,7 +7,7 @@ import subprocess
 
 def test_private_install_reuses_certificates_and_separates_trust(tmp_path):
     # Host replacement reuses the same keys, with independent browser and database trust.
-    script = Path(__file__).with_name("installation-tls.sh")
+    script = Path(__file__).parents[1] / "cloudformation" / "aws" / "host" / "installation-tls.sh"
     root = tmp_path / "persist"
     root.mkdir()
     commands = tmp_path / "bin"

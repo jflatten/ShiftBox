@@ -70,7 +70,7 @@ def statements(rendered, action):
 def resolve(expression, phase, mode="external"):
     """Resolve the subset of intrinsics used for phase guards and IAM names."""
     params = {
-        "Phase": phase, "RoleBoundaryMode": mode, "DeploymentName": run,
+        "Phase": phase, "RoleBoundaryMode": mode, "DeploymentName": run, "BrowserCertificateMode": "OperatorManaged",
         "AWS::Partition": "aws",
         "AWS::AccountId": account, "AWS::Region": region, "DnsSuffix": f"{run}.internal",
     }
@@ -78,6 +78,8 @@ def resolve(expression, phase, mode="external"):
         return expression
     operation, value = next(iter(expression.items()))
     if operation == "Ref":
+        if value == "AWS::NoValue":
+            return None
         return params[value]
     if operation == "Condition":
         return resolve(template["Conditions"][value], phase, mode)
@@ -136,7 +138,10 @@ for name, spec in roles.items():
     boundary = resolve(properties["PermissionsBoundary"], "database")
     role_arn = f"arn:aws:iam::{account}:role{role_path}{role_name}"
     assert boundary == foundation["boundaries"][name]
-    for action in ["iam:CreateRole"] + (["iam:PutRolePolicy"] if properties.get("Policies") else []):
+    policies = properties.get("Policies")
+    if isinstance(policies, dict):
+        policies = resolve(policies, "database")
+    for action in ["iam:CreateRole"] + (["iam:PutRolePolicy"] if policies else []):
         grant, = [s for s in statements(foundation, action) if s["Resource"] == [role_arn]]
         assert grant["Condition"]["StringEquals"]["iam:PermissionsBoundary"] == boundary
     service = properties["AssumeRolePolicyDocument"]["Statement"][0]["Principal"]["Service"]

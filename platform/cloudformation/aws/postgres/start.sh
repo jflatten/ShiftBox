@@ -5,8 +5,13 @@ umask 077
 # The private key stays in the task filesystem. Only database data uses EBS.
 tls=/tmp/shiftbox-postgres-tls
 install -d -m 0700 -o postgres -g postgres "$tls"
-printf '%s\n' "$POSTGRES_TLS_CERT" > "$tls/server.crt"
-printf '%s\n' "$POSTGRES_TLS_KEY" > "$tls/server.key"
+if [ -d /run/shiftbox/postgres-tls ]; then
+    cat /run/shiftbox/postgres-tls/server.crt > "$tls/server.crt"
+    cat /run/shiftbox/postgres-tls/server.key > "$tls/server.key"
+else
+    printf '%s\n' "${POSTGRES_TLS_CERT:?missing database certificate}" > "$tls/server.crt"
+    printf '%s\n' "${POSTGRES_TLS_KEY:?missing database private key}" > "$tls/server.key"
+fi
 chown postgres:postgres "$tls/server.crt" "$tls/server.key"
 unset POSTGRES_TLS_CERT POSTGRES_TLS_KEY
 

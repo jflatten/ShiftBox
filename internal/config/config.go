@@ -21,6 +21,7 @@ type Config struct {
 	SQLitePath                       string             `json:"sqlitePath"`
 	PostgresURI                      string             `json:"postgresURI"`
 	ManagementOrigin                 string             `json:"managementOrigin"`
+	LetsEncryptEmail                 string             `json:"letsEncryptEmail,omitempty"`
 	ExternalAuthIntervalSeconds      int64              `json:"externalAuthIntervalSeconds"`
 	AuditRetentionDays               *int               `json:"auditRetentionDays,omitempty"`
 	DismissedNoticeRetentionDays     *int               `json:"dismissedNoticeRetentionDays,omitempty"`

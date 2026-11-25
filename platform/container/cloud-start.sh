@@ -26,11 +26,13 @@ ca="$installation/postgres-ca.pem"
 tmp_ca="$(mktemp "$installation/.postgres-ca.XXXXXXXX")"
 if [ "$mode" = one-pass ]; then
     cat /run/shiftbox/database-trust/ca.crt > "$tmp_ca"
-    # Keep the browser trust bundle separate from the database trust used by pgx.
-    SSL_CERT_FILE="$runtime/browser-roots.pem"
-    cat /etc/ssl/certs/ca-certificates.crt /run/shiftbox/browser-tls/ca.crt > "$SSL_CERT_FILE"
-    export SSL_CERT_FILE
     export PGSSLROOTCERT="$ca"
+    if [ -z "${SHIFTBOX_ACME_EMAIL:-}" ]; then
+        # Keep the browser trust bundle separate from the database trust used by pgx.
+        SSL_CERT_FILE="$runtime/browser-roots.pem"
+        cat /etc/ssl/certs/ca-certificates.crt /run/shiftbox/browser-tls/ca.crt > "$SSL_CERT_FILE"
+        export SSL_CERT_FILE
+    fi
 else
     : "${SHIFTBOX_DB_CA:?missing database CA}"
     printf '%s\n' "$SHIFTBOX_DB_CA" > "$tmp_ca"
@@ -38,6 +40,8 @@ fi
 mv -f "$tmp_ca" "$ca"
 export SHIFTBOX_CA_FILE="$ca"
 
+# First-login validation receives the CA separately. The one-pass runtime
+# inherits PGSSLROOTCERT when it switches from setup to serving.
 jq -n --arg mode "$mode" --arg githubAppFile "$github_app_file" '
   ($ENV.SHIFTBOX_CA_FILE | @uri) as $ca |
   ($ENV.SHIFTBOX_APP_PASSWORD | @uri) as $password |
@@ -45,6 +49,7 @@ jq -n --arg mode "$mode" --arg githubAppFile "$github_app_file" '
     postgresURI: ("postgres://shiftbox_app:" + $password + "@" + $ENV.SHIFTBOX_DB_HOST +
       "/shiftbox?sslmode=verify-full" + (if $mode == "serve" then "&sslrootcert=" + $ca else "" end))
   } | if $githubAppFile == "" then . else .runtime.githubAppFile = $githubAppFile end
+    | if ($ENV.SHIFTBOX_ACME_EMAIL // "") == "" then . else .letsEncryptEmail = $ENV.SHIFTBOX_ACME_EMAIL end
 ' > "$runtime/config.json"
 
 case "$mode" in

@@ -591,6 +591,12 @@ jobs:
           platform/release/build-candidate.sh prepare "$stage/pins.json" "$stage/amis/catalog" docs/site "$stage/assets"
           cfn-lint --regions us-east-1 us-east-2 us-west-1 us-west-2 -- "$stage/assets/shiftbox-aws-cloudformation.yaml"
           cfn-guard validate --rules platform/cloudformation/aws/shiftbox.guard --data "$stage/assets/shiftbox-aws-cloudformation.yaml"
+          for mode in private public public-placement; do
+            form="$stage/shiftbox-aws-$mode.json"
+            tar -xOzf "$stage/assets/shiftbox-aws-support.tar.gz" "launch/shiftbox-aws-$mode.json" > "$form"
+            cfn-lint --regions us-east-1 us-east-2 us-west-1 us-west-2 -- "$form"
+            cfn-guard validate --rules platform/cloudformation/aws/shiftbox.guard --data "$form"
+          done
           platform/release/templates.sh stage "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" "$RELEASE_TAG" \
             "$stage/assets/shiftbox-aws-cloudformation.yaml" "$stage/buckets.json" > "$stage/locations.json"
           platform/release/build-candidate.sh finalize "$stage/pins.json" "$stage/locations.json" "$stage/assets"

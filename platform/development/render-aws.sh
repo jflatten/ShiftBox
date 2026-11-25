@@ -5,7 +5,7 @@ umask 077
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd -- "$here/../.." && pwd)
 if [[ $# -lt 2 ]]; then
-  printf 'Usage: %s <downloaded baseline assets directory> <new output directory> [--controller IMAGE@DIGEST] [--workspace PACKER_MANIFEST] [--one-pass]\n' "$0" >&2
+  printf 'Usage: %s <downloaded baseline assets directory> <new output directory> [--controller IMAGE@DIGEST] [--workspace PACKER_MANIFEST] [--one-pass | --launch-form FORM]\n' "$0" >&2
   exit 2
 fi
 baseline=$1
@@ -28,12 +28,8 @@ python3 "$here/aws_template.py" "$scratch/rendered/shiftbox-aws-cloudformation.y
 mkdir -- "$output"
 cp -- "$scratch/shiftbox-aws-development.json" "$output/"
 policy="$root/platform/cloudformation/aws/stack-policy.json"
-if jq -e '.Outputs.SetupClaimSecretArn' "$output/shiftbox-aws-development.json" >/dev/null; then
-  jq '(.Statement[] | select(.Effect == "Deny") | .Resource) |=
-    (map(select(. != "LogicalResourceId/PostgresTlsSecret")) +
-      ["LogicalResourceId/SetupClaim", "LogicalResourceId/BrowserTrust"])' "$policy" > "$output/stack-policy.json"
-else
-  cp -- "$policy" "$output/"
+cp -- "$policy" "$output/"
+if jq -e '.Resources.SetupTask' "$output/shiftbox-aws-development.json" >/dev/null; then
   cp -- "$root/platform/cloudformation/aws/setup.sh" "$output/"
 fi
 cp -- "$scratch/catalog/us-east-2.json" "$output/published-workspace-catalog.json"

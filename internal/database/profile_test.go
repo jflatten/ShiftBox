@@ -12,7 +12,7 @@ import (
 )
 
 // TestOpenBootstrapResumesInstallation checks that reopening local setup preserves
-// the durable identity and progress, and refuses to reopen an active installation.
+// the durable identity, progress, and saved timeout, and refuses active setup.
 func TestOpenBootstrapResumesInstallation(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "bootstrap.db")
@@ -30,7 +30,8 @@ func TestOpenBootstrapResumesInstallation(t *testing.T) {
 	if id != seed.ID {
 		t.Fatalf("first bootstrap ID = %s, want %s", id, seed.ID)
 	}
-	if _, err := db.Exec("UPDATE installations SET state='configuring', version=2"); err != nil {
+	if _, err := db.Exec(`UPDATE installations SET state='configuring', version=2,
+		session_timeout_value=30, session_timeout_unit='minutes', session_timeout_version=2`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -50,6 +51,16 @@ func TestOpenBootstrapResumesInstallation(t *testing.T) {
 	}
 	if resumed != id || state != "configuring" || origin != "https://127.0.0.1:8443" || version != 2 {
 		t.Fatalf("reopening bootstrap changed stored identity or progress: %s %s %s %d", resumed, state, origin, version)
+	}
+	var timeoutValue, timeoutVersion int
+	var timeoutUnit string
+	if err := db.QueryRow(`SELECT session_timeout_value,session_timeout_unit,session_timeout_version
+		FROM installations WHERE id=$1`, id).Scan(&timeoutValue, &timeoutUnit, &timeoutVersion); err != nil {
+		t.Fatal(err)
+	}
+	if timeoutValue != 30 || timeoutUnit != "minutes" || timeoutVersion != 2 {
+		t.Errorf("OpenBootstrap(existing installation) timeout = %d %s at version %d, want 30 minutes at version 2",
+			timeoutValue, timeoutUnit, timeoutVersion)
 	}
 	if _, err := db.Exec("UPDATE installations SET state='active'"); err != nil {
 		t.Fatal(err)

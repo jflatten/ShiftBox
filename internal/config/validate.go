@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net/mail"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -31,6 +32,16 @@ func (c Config) Validate() error {
 	}
 	if err := validateManagementOrigin(c.ManagementOrigin); err != nil {
 		return err
+	}
+	if c.LetsEncryptEmail != "" {
+		address, err := mail.ParseAddress(c.LetsEncryptEmail)
+		if err != nil || address.Address != c.LetsEncryptEmail || c.DataProfile != "postgres" || c.Runtime == nil || c.Runtime.Provider != "ec2" {
+			return errors.New("managed browser certificates require an ACME contact email and an EC2 PostgreSQL deployment")
+		}
+		origin, _ := url.Parse(c.ManagementOrigin)
+		if origin.Port() != "" {
+			return errors.New("managed browser certificates require a standard HTTPS origin")
+		}
 	}
 
 	switch c.DataProfile {

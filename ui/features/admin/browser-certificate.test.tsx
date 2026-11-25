@@ -15,6 +15,18 @@ const certificate = {
   signatureAlgorithm: 'ECDSA-SHA256', publicKeyAlgorithm: 'ECDSA', version: 3, chainLength: 2, status: 'valid',
 };
 
+// A DNS failure must stay visible after reloading a managed certificate page,
+// and administrators must not see an upload form in this mode.
+test('shows the persisted managed renewal result and hides certificate upload', async () => {
+  globalThis.fetch = jest.fn(async () => ({ ok: true, json: async () => ({
+    ...certificate, managed: true, renewal: { result: 'failed', at: '2026-11-25T14:00:00Z' },
+  }) }) as Response);
+  render(<Providers><BrowserCertificate userId="admin" active csrfToken="fixture" refresh={async () => {}} /></Providers>);
+  expect(await screen.findByText('Renewal failed')).toBeVisible();
+  expect(screen.getByText('2026-11-25 14:00:00 UTC')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Replace certificate' })).not.toBeInTheDocument();
+});
+
 // Administrators need the installed identity and all SAN types, exact UTC
 // validity dates, and identifying fields without opening a certificate file.
 test('shows installed certificate details above the upload form', async () => {

@@ -21,6 +21,7 @@ const probeNames = { 'code-server': 'Code-server' } satisfies Record<NonNullable
 
 export function WorkspaceDetail({ id, userId, csrfToken, admin }: { id: string; userId: string; csrfToken: string; admin: boolean }) {
   const unavailable = useControllerUnavailable();
+  const client = useQueryClient();
   const workspace = useWorkspaceDetail(id);
   const readUnavailable = workspace.error instanceof ControllerUnavailableError;
   const data = !workspace.isError || readUnavailable ? workspace.data : undefined;
@@ -38,10 +39,14 @@ export function WorkspaceDetail({ id, userId, csrfToken, admin }: { id: string; 
     : operationBusy ? operationId : recordedWorkflow ?? operationId;
   const { lifecycle: action, rebuild, interrupt, update, delete: canDelete } = availableWorkspaceCommands(data);
   const { run: requestAction, submitting, error, setError } = useWorkspaceCommand(data, csrfToken, workspace.refetch,
-    (action, id, trigger) => {
-      progressFocus.current = { id, trigger };
+    (action, acceptedId, trigger) => {
+      if (action === 'start') {
+        client.setQueryData<Workspace>(['workspaces', 'detail', id], current =>
+          current ? { ...current, launchOperationId: acceptedId } : current);
+      }
+      progressFocus.current = { id: acceptedId, trigger };
       setOperationBusy(true);
-      setOperationId(id);
+      setOperationId(acceptedId);
       setSection('overview');
       if (action === 'delete') setConfirmDelete(false);
     });

@@ -1854,7 +1854,7 @@ components:
         launchOperationId:
           type: string
           format: uuid
-          description: Initial launch operation when available on workspace detail.
+          description: Most recent launch or start operation when available on workspace detail.
         lifecycle: { $ref: '#/components/schemas/WorkspaceLifecycle' }
         previewPorts:
           type: array
@@ -2115,7 +2115,7 @@ components:
         finishedAt: { type: [string, 'null'], format: date-time }
         version: { type: integer, minimum: 1 }
         launchPerformance:
-          description: Launch-only timing details. Guest events are guest reported.
+          description: Timing details for this launch or start. Guest events are guest reported.
           $ref: '#/components/schemas/LaunchPerformance'
 
     LaunchPerformance:
@@ -2286,6 +2286,14 @@ components:
         publicKeyAlgorithm: { type: string }
         version: { type: integer }
         chainLength: { type: integer, minimum: 1 }
+        managed: { type: boolean, description: Let’s Encrypt manages issuance and renewal }
+        renewal:
+          type: object
+          required: [result, at]
+          additionalProperties: false
+          properties:
+            result: { type: string, enum: [succeeded, failed] }
+            at: { type: string, format: date-time }
         status:
           type: string
           description: Time validity of the leaf; expiring means 30 days or less remain

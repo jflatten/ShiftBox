@@ -60,6 +60,12 @@ the developer and AI development agents.
 
 ## AWS Practices
 
+- Every fresh ShiftBox AWS deployment has exactly two operator steps. Run CloudFormation once,
+  then complete first-login setup in the ShiftBox browser UI. This is a hard product requirement
+  for both public and private deployments. The initial stack must bootstrap all stack-owned
+  prerequisites, including database TLS and any managed browser certificate. First login and
+  activation must work without a follow-up stack update, a manual certificate bootstrap, or a
+  separate setup task.
 - Use CloudFormation for ShiftBox deployments on AWS. Review and execute change sets for stack
   creation and updates. Use Terraform for the separately managed release publisher, qualification
   infrastructure, and shared development registry.

@@ -33,9 +33,10 @@ type builtImagePolicyView struct {
 }
 
 type imageCacheView struct {
-	BuiltImages builtImagePolicyView `json:"builtImages"`
-	Version     int64                `json:"version"`
-	Desired     imagecache.Settings  `json:"desired"`
+	BuiltImages builtImagePolicyView  `json:"builtImages"`
+	Version     int64                 `json:"version"`
+	Activation  imagecache.Activation `json:"activation"`
+	Desired     imagecache.Settings   `json:"desired"`
 	Effective   struct {
 		Version int64 `json:"version"`
 		imagecache.Settings
@@ -84,12 +85,13 @@ func TestImageCacheRoutesRequireCurrentAuthority(t *testing.T) {
 }
 
 // TestImageCacheRoutesRejectInvalidSettings verifies that malformed budgets,
-// thresholds, or paths leave the current settings and version intact.
+// thresholds, or paths leave both cache policies on and their versions intact
+// for a fresh installation.
 func TestImageCacheRoutesRejectInvalidSettings(t *testing.T) {
 	defaultPath := filepath.Join(t.TempDir(), "registry")
 	principal, request := imageCacheRequestFixture(t, keepAliveDatabase(t), defaultPath)
 	principal.User.Role = "administrator"
-	want := imagecache.Settings{StoragePath: defaultPath, MaxBytes: imagecache.Bytes(14 << 30), VolumeHighPercent: 80, VolumeLowPercent: 70}
+	want := imagecache.Settings{Enabled: true, StoragePath: defaultPath, MaxBytes: imagecache.Bytes(14 << 30), VolumeHighPercent: 80, VolumeLowPercent: 70}
 
 	tests := []struct {
 		name string
@@ -127,6 +129,10 @@ func TestImageCacheRoutesRejectInvalidSettings(t *testing.T) {
 	}
 	if view.Version != 1 || view.Effective.Version != 1 {
 		t.Errorf("GET %s after invalid saves has versions %d/%d, want 1/1", imageCacheRoutePath, view.Version, view.Effective.Version)
+	}
+	if view.Activation.Phase != "ready" || !view.BuiltImages.Enabled {
+		t.Errorf("GET %s after invalid saves has activation phase %q and built images enabled %t, want ready and true",
+			imageCacheRoutePath, view.Activation.Phase, view.BuiltImages.Enabled)
 	}
 }
 

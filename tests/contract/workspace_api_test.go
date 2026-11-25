@@ -283,19 +283,21 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	if _, err := db.Exec(`UPDATE operations SET status='failed' WHERE id=$1`, op.ID); err != nil {
 		t.Fatal(err)
 	}
-	checkOperationReferences := func(current, failed string) {
+	checkOperationReferences := func(current, failed, launch string) {
 		t.Helper()
 		response := lookup(workspacePath)
 		var refs struct {
 			CurrentOperationID    string `json:"currentOperationId"`
 			LastFailedOperationID string `json:"lastFailedOperationId"`
+			LaunchOperationID     string `json:"launchOperationId"`
 		}
 		err := json.Unmarshal(response.Body.Bytes(), &refs)
-		if response.Code != 200 || err != nil || refs.CurrentOperationID != current || refs.LastFailedOperationID != failed {
-			t.Fatalf("workspace detail operation references = %d %+v (%v), want active %q and failed %q", response.Code, refs, err, current, failed)
+		if response.Code != 200 || err != nil || refs.CurrentOperationID != current || refs.LastFailedOperationID != failed || refs.LaunchOperationID != launch {
+			t.Errorf("workspace detail operation references = %d %+v (%v), want active %q, failed %q, latest launch or start %q",
+				response.Code, refs, err, current, failed, launch)
 		}
 	}
-	checkOperationReferences("", op.ID)
+	checkOperationReferences("", op.ID, op.ID)
 	now = now.Add(time.Minute)
 	var generation int64
 	if err := db.QueryRow("SELECT generation FROM workspaces WHERE id=$1", *op.WorkspaceID).Scan(&generation); err != nil {
@@ -307,7 +309,17 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkOperationReferences(later.ID, "")
+	// The pending start supersedes the original launch immediately, even before
+	// the first timing arrives. The same operation remains selected after completion.
+	checkOperationReferences(later.ID, "", later.ID)
+	startDetail := lookup("/api/v1/operations/" + later.ID)
+	check(startDetail, 200, "")
+	timingDetail.LaunchPerformance = nil
+	if err := json.Unmarshal(startDetail.Body.Bytes(), &timingDetail); err != nil ||
+		timingDetail.ID != later.ID || timingDetail.LaunchPerformance == nil ||
+		len(timingDetail.LaunchPerformance.Steps) != 1 || timingDetail.LaunchPerformance.Steps[0].Key != "start" {
+		t.Errorf("operation detail for pending start = %+v, %v, want fresh start timing", timingDetail, err)
+	}
 	laterClaim, err := journal.Claim(ctx, later.ID, "fixture-worker", time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -318,7 +330,7 @@ func TestWorkspaceLaunchAPI(t *testing.T) {
 	if err := journal.CompleteStep(ctx, laterClaim, 0, "Verified"); err != nil {
 		t.Fatal(err)
 	}
-	checkOperationReferences("", "")
+	checkOperationReferences("", "", later.ID)
 	// Another member with a valid session cannot use an operation ID to
 	// discover a workspace or subscribe to its progress.
 	if _, err := db.Exec("UPDATE users SET role='member' WHERE id='owner'"); err != nil {

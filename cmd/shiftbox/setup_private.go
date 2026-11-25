@@ -18,7 +18,20 @@ func runOnePass(ctx context.Context, args []string, out, status io.Writer) error
 	if len(args) != 4 || !filepath.IsAbs(args[3]) {
 		return errors.New("usage: shiftbox one-pass <installation-directory> <config> <postgres-identity-config> <claim-file>")
 	}
-	err := runSetup(ctx, []string{
+	cfg, err := config.Load(args[1])
+	if err != nil {
+		return err
+	}
+	if cfg.LetsEncryptEmail != "" {
+		// An activated installation can renew a certificate that expired while it
+		// was offline without reopening the first-administrator setup flow.
+		if db, _, err := app.OpenActiveDatabase(ctx, cfg); err == nil {
+			_ = db.Close()
+			_ = os.Remove(args[3])
+			return runServe(ctx, []string{"--config", args[1]})
+		}
+	}
+	err = runSetup(ctx, []string{
 		"--installation-dir", args[0], "--config", args[1], "--postgres-identity-config", args[2], "--private-claim-file", args[3],
 	}, out, status)
 	if err != nil || ctx.Err() != nil {
@@ -41,15 +54,24 @@ func readPrivateSetupClaim(path string) (*app.PrivateSetupClaim, error) {
 	return app.NewPrivateSetupClaim(string(code))
 }
 
-func loadPrivateSetup(cloud *app.CloudSetup, roots *x509.CertPool, claim *app.PrivateSetupClaim) (tls.Certificate, error) {
+func loadPrivateSetup(ctx context.Context, platform *setupPlatform, roots *x509.CertPool, claim *app.PrivateSetupClaim) (tls.Certificate, error) {
+	cloud := platform.cloud
+	hosts, err := config.NewServiceHosts(cloud.ManagementOrigin, cloud.IDEHostPattern, cloud.PreviewHostPattern)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	if platform.letsEncryptEmail != "" {
+		input, cert, err := app.ObtainManagedBrowserCertificate(ctx, platform.installation, platform.letsEncryptEmail, hosts, roots)
+		if err != nil {
+			return tls.Certificate{}, err
+		}
+		cloud.PrivateClaim, cloud.BrowserCertificate = claim, &input
+		return cert, nil
+	}
 	chain, chainErr := os.ReadFile("/run/shiftbox/browser-tls/server.crt")
 	key, keyErr := os.ReadFile("/run/shiftbox/browser-tls/server.key")
 	if chainErr != nil || keyErr != nil {
 		return tls.Certificate{}, errors.New("cannot load the deployed browser TLS identity")
-	}
-	hosts, err := config.NewServiceHosts(cloud.ManagementOrigin, cloud.IDEHostPattern, cloud.PreviewHostPattern)
-	if err != nil {
-		return tls.Certificate{}, err
 	}
 	cert, err := hosts.ValidateCertificate(chain, key, roots, time.Now())
 	if err != nil {

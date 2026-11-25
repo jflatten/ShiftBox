@@ -54,12 +54,12 @@ func (h *ServiceHosts) ValidateCertificate(chainPEM, keyPEM []byte, roots *x509.
 	if h == nil {
 		return tls.Certificate{}, ErrInvalidBrowserCertificate
 	}
-	wildcards := []string{"*" + h.ideSuffix, "*" + h.previewSuffix, "*" + h.repairSuffix}
-	pair, err := ValidateBrowserCertificate(chainPEM, keyPEM, append([]string{h.management}, wildcards...), roots, now)
+	names := h.CertificateNames()
+	pair, err := ValidateBrowserCertificate(chainPEM, keyPEM, names, roots, now)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	for _, wildcard := range wildcards {
+	for _, wildcard := range names[1:] {
 		covered := false
 		for _, name := range pair.Leaf.DNSNames {
 			if strings.EqualFold(name, wildcard) {
@@ -72,4 +72,9 @@ func (h *ServiceHosts) ValidateCertificate(chainPEM, keyPEM []byte, roots *x509.
 		}
 	}
 	return pair, nil
+}
+
+// CertificateNames returns the management hostname and required workspace wildcards.
+func (h *ServiceHosts) CertificateNames() []string {
+	return []string{h.management, "*" + h.ideSuffix, "*" + h.previewSuffix, "*" + h.repairSuffix}
 }

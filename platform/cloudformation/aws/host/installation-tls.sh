@@ -41,14 +41,17 @@ EXTENSIONS
     mv -- "$scratch" "$target"
 )
 
-issue "$browser" "shiftbox.$suffix" "DNS:shiftbox.$suffix,DNS:*.ide.$suffix,DNS:*.preview.$suffix,DNS:*.repair.$suffix"
+if [ "$trust_secret" != - ]; then
+    issue "$browser" "shiftbox.$suffix" "DNS:shiftbox.$suffix,DNS:*.ide.$suffix,DNS:*.preview.$suffix,DNS:*.repair.$suffix"
+fi
 issue "$postgres" "postgres.$suffix" "DNS:postgres.$suffix"
-for entry in "$browser:shiftbox.$suffix" "$postgres:postgres.$suffix"; do
-    identity=${entry%:*}
-    hostname=${entry##*:}
+verify() (
+    identity=$1
+    hostname=$2
     openssl verify -CAfile "$identity/ca.crt" -purpose sslserver -verify_hostname "$hostname" "$identity/server.crt" >/dev/null
     test "$(openssl pkey -in "$identity/server.key" -pubout)" = "$(openssl x509 -in "$identity/server.crt" -pubkey -noout)"
-done
+)
+verify "$postgres" "postgres.$suffix"
 
 install -d -m 0755 "$database_trust"
 public_ca=$(mktemp "$database_trust/.ca.XXXXXXXX")
@@ -56,10 +59,15 @@ trap 'rm -f -- "$public_ca"' EXIT
 cat "$postgres/ca.crt" > "$public_ca"
 chmod 0444 "$public_ca"
 mv -f -- "$public_ca" "$database_trust/ca.crt"
-chown -R 10001:10001 "$browser"
 # The Postgres start script runs as root and stages the database leaf/key with
 # the postgres container's own user. No other task mounts this directory.
 chown -R 0:0 "$postgres"
+
+if [ "$trust_secret" = - ]; then
+    exit 0
+fi
+verify "$browser" "shiftbox.$suffix"
+chown -R 10001:10001 "$browser"
 
 # The public CA is the only certificate material sent to AWS. A stable token
 # makes retries idempotent and never replaces the existing client trust anchor.

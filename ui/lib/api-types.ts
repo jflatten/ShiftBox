@@ -1219,7 +1219,7 @@ export interface components {
             currentOperationId?: string | null;
             /**
              * Format: uuid
-             * @description Initial launch operation when available on workspace detail.
+             * @description Most recent launch or start operation when available on workspace detail.
              */
             launchOperationId?: string;
             lifecycle: components["schemas"]["WorkspaceLifecycle"];
@@ -1431,7 +1431,7 @@ export interface components {
             /** Format: date-time */
             finishedAt?: string | null;
             version: number;
-            /** @description Launch-only timing details. Guest events are guest reported. */
+            /** @description Timing details for this launch or start. Guest events are guest reported. */
             launchPerformance?: components["schemas"]["LaunchPerformance"];
         };
         LaunchPerformance: {
@@ -1601,6 +1601,14 @@ export interface components {
             publicKeyAlgorithm: string;
             version: number;
             chainLength: number;
+            /** @description Let’s Encrypt manages issuance and renewal */
+            managed?: boolean;
+            renewal?: {
+                /** @enum {string} */
+                result: "succeeded" | "failed";
+                /** Format: date-time */
+                at: string;
+            };
             /**
              * @description Time validity of the leaf; expiring means 30 days or less remain
              * @enum {string}

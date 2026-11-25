@@ -78,15 +78,15 @@
     rules:
       retained_secrets: FAIL
 
-# Initial quick-create may only reach the infrastructure foundation.
-- name: A default that bypasses protected staging is rejected
+# Fresh creation starts the claim-protected first-login service.
+- name: An operator-selected phase is rejected as the default
   input:
     Parameters:
       Phase:
         Default: active
   expectations:
     rules:
-      staged_startup: FAIL
+      first_login_startup: FAIL
 
 # A role created by the public template needs a name, path and permissions ceiling.
 - name: A named role with a permissions boundary is accepted

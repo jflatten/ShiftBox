@@ -87,7 +87,7 @@ import sys
 
 source, template = map(Path, sys.argv[1:])
 rendered = template.read_text()
-for script in ("host/mount-data.sh", "host/mount-registry-cache.sh", "postgres/start.sh"):
+for script in ("host/mount-data.sh", "host/mount-registry-cache.sh", "host/installation-tls.sh", "postgres/start.sh"):
     assert json.dumps((source / script).read_text()) in rendered, f"Missing embedded script: {script}"
 PY
 
@@ -105,11 +105,53 @@ docs/private-access.md
 docs/setup-helper.md
 docs/troubleshooting.md
 docs/upgrade-recovery.md
+launch/shiftbox-aws-private.json
+launch/shiftbox-aws-public-placement.json
+launch/shiftbox-aws-public.json
 setup.sh
 stack-policy.json
 MEMBERS
 cmp "$scratch/expected-members" "$scratch/actual-members"
 cmp "$catalog/us-east-2.json" <(tar -xOzf "$stage/shiftbox-aws-support.tar.gz" catalog/us-east-2.json)
+
+# Console forms have resource pickers and derive the other values within one create.
+for mode in private public public-placement; do
+  form="$scratch/shiftbox-aws-$mode.json"
+  tar -xOzf "$stage/shiftbox-aws-support.tar.gz" "launch/shiftbox-aws-$mode.json" > "$form"
+  # Recreating a stack with the same name gets a fresh Cloud Map domain and matching private DNS targets.
+  jq -e '
+    .Resources as $resources |
+    $resources.DiscoveryNamespace.Properties.Name as $domain |
+    $domain."Fn::Sub" == ["svc-${StackInstanceId}.${DnsSuffix}", {
+      StackInstanceId: {"Fn::Select": [2, {"Fn::Split": ["/", {"Ref": "AWS::StackId"}]}]},
+      DnsSuffix: {"Fn::GetAtt": ["LaunchDiscovery", "DnsSuffix"]}
+    }] and
+    all(
+      ($resources.PrivateRecords, $resources.ManagedPrivateBrowserRecords // empty) |
+        .Properties.RecordSets[].ResourceRecords[] |
+        ."Fn::Sub";
+      (.[0] | test("^(postgres|shiftbox)\\.\\$\\{ServiceDiscoveryDomain\\}\\.$")) and
+      .[1].ServiceDiscoveryDomain == $domain
+    )
+  ' "$form" >/dev/null
+  jq -e --arg mode "$mode" '
+    (.Parameters | (has("VpcId") or has("AvailabilityZone") or has("DeploymentName") or has("Phase")) | not) and
+    .Parameters.ServiceSubnet.Type == "AWS::EC2::Subnet::Id" and
+    .Resources.LaunchDiscovery.Type == "Custom::ShiftBoxLaunchDiscovery" and
+    (.Resources.DiscoveryFunction.Properties.Code.ZipFile | contains("\nimport cfnresponse\n")) and
+    .Resources.ControllerTask.Properties.ContainerDefinitions[0].Command == ["one-pass"] and
+    (if $mode == "private" then (.Parameters | has("PublicDnsZone") | not)
+     else .Parameters.PublicDnsZone.Type == "AWS::Route53::HostedZone::Id" and
+       .Resources.ManagedPrivateBrowserRecords.Properties.HostedZoneId."Fn::GetAtt" == ["PrivateBrowserZone", "ZoneId"]
+     end) and
+    (if $mode == "public-placement" then .Parameters.PublicSubnet.Type == "AWS::EC2::Subnet::Id"
+     else (.Parameters | has("PublicSubnet") | not) end)
+  ' "$form" >/dev/null
+  if [ "${2:-}" = --aws-tooling ]; then
+    cfn-lint --regions "${regions[@]}" -- "$form"
+    cfn-guard validate --rules "$root/platform/cloudformation/aws/shiftbox.guard" --data "$form"
+  fi
+done
 
 # Validate the actual packaged bytes with the same static AWS tools used on release templates.
 if [ "${2:-}" = --aws-tooling ]; then

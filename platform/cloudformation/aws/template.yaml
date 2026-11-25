@@ -1,20 +1,22 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: ShiftBox private AWS deployment with reviewed database and controller activation.
+Description: ShiftBox AWS deployment with an optional public HTTPS endpoint and managed browser certificates.
 
 Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
   AWS::CloudFormation::Interface:
     ParameterLabels:
       OperatorCidr: {default: Inbound security group rule for UI access}
       OciImageCacheSizeGiB: {default: OCI image cache size (GiB)}
     ParameterGroups:
       - Label: {default: Installation}
-        Parameters: [DeploymentName, Phase, DataVolumeSizeGiB, OciImageCacheSizeGiB, InitializeDataVolume]
+        Parameters: [DeploymentName, DataVolumeSizeGiB, OciImageCacheSizeGiB, InitializeDataVolume]
       - Label: {default: Existing private network}
         Parameters: [VpcId, ServiceSubnet, WorkspaceSubnet, AvailabilityZone, DnsSuffix, OperatorCidr]
-      - Label: {default: Database trust}
-        Parameters: [PostgresCaPem]
-      - Label: {default: Qualification IAM}
-        Parameters: [RoleBoundaryMode]
+      - Label: {default: Public access and browser certificates}
+        Parameters: [PublicAccess, PublicSubnet, PublicIngressCidr, BrowserCertificateMode, BaseDomain, PublicHostedZoneId, PublicParentHostedZoneId, PrivateBrowserZoneId, AcmeContactEmail, AcmeTermsAccepted]
+      - Label: {default: Internal release qualification inputs}
+        Parameters: [Phase, PostgresCaPem, RoleBoundaryMode]
 
 Parameters:
   DeploymentName:
@@ -24,9 +26,9 @@ Parameters:
     Description: Unique deployment name in this account and region. Keep it unchanged after installation.
   Phase:
     Type: String
-    Default: foundation
-    AllowedValues: [foundation, dns-zones, dns-services, database, active]
-    Description: Create the foundation, review the private zones and discovery services in separate updates, then start the database and activate the controller.
+    Default: one-pass
+    AllowedValues: [one-pass, foundation, dns-zones, dns-services, database, active]
+    Description: Leave at one-pass for new deployments. Other values are for internal release qualification.
   RoleBoundaryMode:
     Type: String
     Default: managed
@@ -55,9 +57,62 @@ Parameters:
     Default: ''
     AllowedPattern: '(|([0-9]{1,3}\.){3}[0-9]{1,3}/([1-9]|[12][0-9]|3[0-2]))'
     Description: >-
-      This inbound rule controls who can open the ShiftBox UI over HTTPS on port 8443.
+      This inbound rule controls private access to the ShiftBox UI over HTTPS on port 8443,
+      or port 443 when using LetsEncrypt.
       Enter an IPv4 range, or use /32 for one address, such as 172.31.12.34/32.
       Leave blank to keep browser access closed.
+  PublicAccess:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+    Description: Publish browser HTTPS through an internet-facing Network Load Balancer with an Elastic IP.
+  PublicSubnet:
+    Type: String
+    Default: ''
+    AllowedPattern: '(|subnet-([a-f0-9]{8}|[a-f0-9]{17}))'
+    Description: Existing internet-routed subnet in the stack VPC and service Availability Zone. Required for public access.
+  PublicIngressCidr:
+    Type: String
+    Default: ''
+    AllowedPattern: '(|((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/([0-9]|[12][0-9]|3[0-2]))'
+    Description: Explicit IPv4 CIDR allowed to reach public HTTPS. Use your operator IP with /32 to limit access.
+  BrowserCertificateMode:
+    Type: String
+    Default: OperatorManaged
+    AllowedValues: [OperatorManaged, LetsEncrypt]
+    Description: Select who issues and renews the browser certificate before first boot. Keep this setting after activation.
+  BaseDomain:
+    Type: String
+    Default: ''
+    MaxLength: 160
+    AllowedPattern: '(|([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?)'
+    Description: Public DNS domain you control. The management hostname is DeploymentName followed by this domain.
+  PublicHostedZoneId:
+    Type: String
+    Default: ''
+    AllowedPattern: '(|Z[A-Z0-9]+)'
+    Description: Existing authoritative Route 53 public hosted zone in this account. Provide this ID or PublicParentHostedZoneId.
+  PublicParentHostedZoneId:
+    Type: String
+    Default: ''
+    AllowedPattern: '(|Z[A-Z0-9]+)'
+    Description: Authoritative public Route 53 zone for BaseDomain. Supply this instead of PublicHostedZoneId to create and delegate a separate zone for the deployment subdomain.
+  PrivateBrowserZoneId:
+    Type: String
+    Default: ''
+    AllowedPattern: '(|Z[A-Z0-9]+)'
+    Description: Existing private Route 53 zone for BaseDomain associated with the VPC. Leave blank to create that zone for the stack.
+  AcmeContactEmail:
+    Type: String
+    Default: ''
+    MaxLength: 254
+    AllowedPattern: '(|[A-Za-z0-9._+%-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})'
+    Description: Contact email for the Let’s Encrypt account.
+  AcmeTermsAccepted:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+    Description: Accept the current Let’s Encrypt subscriber agreement to enable managed issuance.
   DataVolumeSizeGiB:
     Type: Number
     Default: 32
@@ -85,6 +140,34 @@ Parameters:
     Description: Public PostgreSQL CA certificate. For one-line entry use | between PEM lines. Required for database or active phases.
 
 Rules:
+  PublicAccessInputs:
+    RuleCondition: !Equals [!Ref PublicAccess, 'true']
+    Assertions:
+      - Assert: !Equals [!Ref BrowserCertificateMode, LetsEncrypt]
+        AssertDescription: Public access requires the LetsEncrypt browser certificate mode.
+      - Assert: !Not [!Equals [!Ref PublicSubnet, '']]
+        AssertDescription: Choose an existing public subnet in the service subnet's Availability Zone.
+      - Assert: !Not [!Equals [!Ref PublicIngressCidr, '']]
+        AssertDescription: Specify the IPv4 CIDR for public HTTPS access.
+  ManagedBrowserInputs:
+    RuleCondition: !Equals [!Ref BrowserCertificateMode, LetsEncrypt]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref BaseDomain, '']]
+        AssertDescription: Supply a public base domain for managed browser certificates.
+      - Assert: !Not [!Equals [!Ref AcmeContactEmail, '']]
+        AssertDescription: Supply the Let’s Encrypt contact email.
+      - Assert: !Equals [!Ref AcmeTermsAccepted, 'true']
+        AssertDescription: Accept the Let’s Encrypt subscriber agreement before issuing certificates.
+      - Assert: !Equals [!Ref RoleBoundaryMode, managed]
+        AssertDescription: Managed browser certificates require the stack-managed task permissions boundary.
+      - Assert: !Equals [!Ref Phase, one-pass]
+        AssertDescription: Managed browser certificates use first-login setup and require the one-pass installation setting.
+      - Assert: !Or
+          - !And [!Not [!Equals [!Ref PublicHostedZoneId, '']], !Equals [!Ref PublicParentHostedZoneId, '']]
+          - !And [!Equals [!Ref PublicHostedZoneId, ''], !Not [!Equals [!Ref PublicParentHostedZoneId, '']]]
+        AssertDescription: Set either PublicHostedZoneId or PublicParentHostedZoneId to an authoritative Route 53 public zone in this account.
+      - Assert: !Not [!Equals [!Ref DnsSuffix, !Ref BaseDomain]]
+        AssertDescription: The private service DNS suffix and public base domain must be different.
   SubnetsInSelectedVpc:
     Assertions:
       - Assert: !EachMemberEquals [[!ValueOf [ServiceSubnet, VpcId], !ValueOf [WorkspaceSubnet, VpcId]], !Ref VpcId]
@@ -96,19 +179,39 @@ Rules:
     Assertions:
       - Assert: !Not [!Equals [!Ref PostgresCaPem, '']]
         AssertDescription: Configure the PostgreSQL certificate/key secret and provide its public CA certificate.
+  OnePassInputs:
+    RuleCondition: !Equals [!Ref Phase, one-pass]
+    Assertions:
+      - Assert: !Equals [!Ref RoleBoundaryMode, managed]
+        AssertDescription: First-login setup requires the stack-managed permissions boundaries.
+  QualificationPhasesOnly:
+    RuleCondition: !Not [!Equals [!Ref Phase, one-pass]]
+    Assertions:
+      - Assert: !Equals [!Ref RoleBoundaryMode, external]
+        AssertDescription: Deployment phases are reserved for internal release qualification. Use one-pass for a new installation.
 
 Mappings:
   ReleaseRegions: @@RELEASE_REGIONS@@
 
 Conditions:
+  OnePassInstall: !Equals [!Ref Phase, one-pass]
+  StagedInstall: !Not [!Condition OnePassInstall]
+  PublicEnabled: !Equals [!Ref PublicAccess, 'true']
+  ManagedBrowserTLS: !Equals [!Ref BrowserCertificateMode, LetsEncrypt]
+  PrivateBootstrap: !And [!Condition OnePassInstall, !Not [!Condition ManagedBrowserTLS]]
+  CreateManagedPublicZone: !And [!Condition ManagedBrowserTLS, !Equals [!Ref PublicHostedZoneId, '']]
+  CreateManagedPrivateZone: !And [!Condition ManagedBrowserTLS, !Equals [!Ref PrivateBrowserZoneId, '']]
+  ControllerRunning: !Or [!Condition ControllerEnabled, !Condition OnePassInstall]
+  ManualSetupReady: !And [!Condition DatabaseEnabled, !Condition StagedInstall]
   DnsZonesEnabled: !Not [!Equals [!Ref Phase, foundation]]
   DnsServicesEnabled: !Or [!Equals [!Ref Phase, dns-services], !Condition DatabaseEnabled]
-  DatabaseEnabled: !Or [!Equals [!Ref Phase, database], !Equals [!Ref Phase, active]]
+  DatabaseEnabled: !Or [!Condition OnePassInstall, !Equals [!Ref Phase, database], !Equals [!Ref Phase, active]]
   ControllerEnabled: !Equals [!Ref Phase, active]
   UseExternalBoundaries: !Equals [!Ref RoleBoundaryMode, external]
   UseManagedBoundaries: !Not [!Condition UseExternalBoundaries]
   UseManagedTaskBoundaries: !And [!Condition UseManagedBoundaries, !Condition DatabaseEnabled]
-  ManageSetupOperatorPolicy: !And [!Condition UseManagedBoundaries, !Condition DatabaseEnabled]
+  UseManagedSetupBoundaries: !And [!Condition UseManagedBoundaries, !Condition ManualSetupReady]
+  ManageSetupOperatorPolicy: !And [!Condition UseManagedBoundaries, !Condition ManualSetupReady]
   AllowOperatorIngress: !Not [!Equals [!Ref OperatorCidr, '']]
 
 Resources:
@@ -135,6 +238,7 @@ Resources:
 
   SetupGroup:
     Type: AWS::EC2::SecurityGroup
+    Condition: StagedInstall
     Properties:
       GroupDescription: Setup task with access through the Session Manager tunnel only
       VpcId: !Ref VpcId
@@ -153,9 +257,81 @@ Resources:
     Properties:
       GroupId: !Ref ControllerGroup
       IpProtocol: tcp
-      FromPort: 8443
-      ToPort: 8443
+      FromPort: !If [ManagedBrowserTLS, 443, 8443]
+      ToPort: !If [ManagedBrowserTLS, 443, 8443]
       CidrIp: !Ref OperatorCidr
+
+  PublicIngressGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: PublicEnabled
+    Metadata:
+      cfn-lint:
+        config: {ignore_checks: [W1030]} # PublicAccessInputs rejects the blank default before this resource is created.
+      com.aws.cloudformation.Context:
+        why: Limit the public entry point to the operator-selected source and controller HTTPS.
+    Properties:
+      GroupDescription: Public ShiftBox browser HTTPS
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref PublicIngressCidr}
+      SecurityGroupEgress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, DestinationSecurityGroupId: !Ref ControllerGroup}
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
+
+  ControllerPublicIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: PublicEnabled
+    Properties:
+      GroupId: !Ref ControllerGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref PublicIngressGroup
+
+  PublicAddress:
+    Type: AWS::EC2::EIP
+    Condition: PublicEnabled
+    Properties:
+      Domain: vpc
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
+
+  PublicLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Condition: PublicEnabled
+    Metadata:
+      cfn-lint:
+        config: {ignore_checks: [W1030]} # PublicAccessInputs rejects the blank subnet ID in public mode.
+      com.aws.cloudformation.Context:
+        why: Give browser traffic a public IPv4 address independent of ECS task replacement.
+        must: [Terminate browser TLS at the controller.]
+    Properties:
+      Type: network
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      SecurityGroups: [!Ref PublicIngressGroup]
+      SubnetMappings:
+        - {SubnetId: !Ref PublicSubnet, AllocationId: !GetAtt PublicAddress.AllocationId}
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
+
+  PublicTargets:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: PublicEnabled
+    Properties:
+      VpcId: !Ref VpcId
+      TargetType: ip
+      Protocol: TCP
+      Port: 443
+      HealthCheckProtocol: TCP
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
+
+  PublicListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: PublicEnabled
+    Properties:
+      LoadBalancerArn: !Ref PublicLoadBalancer
+      Protocol: TCP
+      Port: 443
+      DefaultActions: [{Type: forward, TargetGroupArn: !Ref PublicTargets}]
 
   GuestIngress:
     Type: AWS::EC2::SecurityGroupIngress
@@ -177,6 +353,7 @@ Resources:
 
   PostgresSetupIngress:
     Type: AWS::EC2::SecurityGroupIngress
+    Condition: StagedInstall
     Properties:
       GroupId: !Ref PostgresGroup
       IpProtocol: tcp
@@ -246,6 +423,7 @@ Resources:
           - Effect: Allow
             Action: [logs:CreateLogStream, logs:PutLogEvents]
             Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ServicesLogGroup}:log-stream:ecs/*'
+          - !If [PrivateBootstrap, {Effect: Allow, Action: 'secretsmanager:PutSecretValue', Resource: !Ref BrowserTrust}, !Ref 'AWS::NoValue']
 
   # The bundle renderer copies each task boundary document from the role's
   # inline policy below so the authorization and its ceiling stay in sync.
@@ -259,7 +437,7 @@ Resources:
 
   SetupExecutionRoleBoundary:
     Type: AWS::IAM::ManagedPolicy
-    Condition: UseManagedTaskBoundaries
+    Condition: UseManagedSetupBoundaries
     Properties:
       Path: !Sub '/shiftbox-boundaries/${AWS::Region}/${DeploymentName}/'
       PolicyDocument:
@@ -275,7 +453,7 @@ Resources:
 
   SetupTaskRoleBoundary:
     Type: AWS::IAM::ManagedPolicy
-    Condition: UseManagedTaskBoundaries
+    Condition: UseManagedSetupBoundaries
     Properties:
       Path: !Sub '/shiftbox-boundaries/${AWS::Region}/${DeploymentName}/'
       PolicyDocument:
@@ -306,6 +484,16 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role'
+      Policies: !If
+        - PrivateBootstrap
+        - - PolicyName: PublishInstallationBrowserCA
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: secretsmanager:PutSecretValue
+                  Resource: !Ref BrowserTrust
+        - !Ref 'AWS::NoValue'
       Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
 
   HostProfile:
@@ -361,6 +549,10 @@ Resources:
             cat > /usr/local/libexec/shiftbox-mount-registry-cache <<'CACHE_SCRIPT'
             ${MountCacheScript}
             CACHE_SCRIPT
+            cat > /usr/local/libexec/shiftbox-installation-tls <<'TLS_BOOTSTRAP'
+            ${InstallationTlsScript}
+            TLS_BOOTSTRAP
+            chmod 0755 /usr/local/libexec/shiftbox-installation-tls
             chmod 0755 /usr/local/libexec/shiftbox-mount-data /usr/local/libexec/shiftbox-mount-registry-cache
             volume_serial=$(printf '%s' '${InstallationVolume}' | tr -d '-')
 
@@ -373,6 +565,7 @@ Resources:
             [Service]
             Type=oneshot
             ExecStart=/usr/local/libexec/shiftbox-mount-data $volume_serial /var/lib/shiftbox-data ${InitializeDataVolume}
+            ${InstallationTlsUnit}
             RemainAfterExit=yes
             TimeoutStartSec=300
             DATA_UNIT
@@ -407,6 +600,13 @@ Resources:
             systemctl enable --now --no-block ecs.service
           - MountScript: @@MOUNT_DATA_SCRIPT@@
             MountCacheScript: @@MOUNT_CACHE_SCRIPT@@
+            InstallationTlsScript: @@INSTALLATION_TLS_SCRIPT@@
+            InstallationTlsUnit: !If
+              - OnePassInstall
+              - !Sub
+                - 'ExecStartPost=/usr/local/libexec/shiftbox-installation-tls /var/lib/shiftbox-data ${DnsSuffix} ${AWS::Region} ${TrustSecret}'
+                - TrustSecret: !If [PrivateBootstrap, !Ref BrowserTrust, '-']
+              - '# Use the explicitly provisioned database TLS secret for legacy stacks.'
 
   DataAttachment:
     Type: AWS::EC2::VolumeAttachment
@@ -454,6 +654,7 @@ Resources:
 
   PostgresTlsSecret:
     Type: AWS::SecretsManager::Secret
+    Condition: StagedInstall
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -512,6 +713,78 @@ Resources:
         - {Name: !Sub '*.preview.${DnsSuffix}.', Type: CNAME, TTL: '10', ResourceRecords: [!Sub 'shiftbox.services.${DnsSuffix}.']}
         - {Name: !Sub '*.repair.${DnsSuffix}.', Type: CNAME, TTL: '10', ResourceRecords: [!Sub 'shiftbox.services.${DnsSuffix}.']}
 
+  ManagedPublicZone:
+    Type: AWS::Route53::HostedZone
+    Condition: CreateManagedPublicZone
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Let a DNS operator delegate a single installation without moving the parent domain.
+    Properties:
+      Name: !Sub '${DeploymentName}.${BaseDomain}'
+      HostedZoneTags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
+
+  ManagedPublicDelegation:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateManagedPublicZone
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Make the new child zone authoritative before the controller requests a certificate.
+    Properties:
+      HostedZoneId: !Ref PublicParentHostedZoneId
+      Name: !Sub '${DeploymentName}.${BaseDomain}.'
+      Type: NS
+      TTL: '300'
+      ResourceRecords: !GetAtt ManagedPublicZone.NameServers
+
+  ManagedPrivateBrowserZone:
+    Type: AWS::Route53::HostedZone
+    Condition: CreateManagedPrivateZone
+    Properties:
+      Name: !Ref BaseDomain
+      VPCs: [{VPCId: !Ref VpcId, VPCRegion: !Ref 'AWS::Region'}]
+      HostedZoneTags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
+
+  ManagedPrivateBrowserRecords:
+    Type: AWS::Route53::RecordSetGroup
+    Condition: ManagedBrowserTLS
+    Properties:
+      HostedZoneId: !If [CreateManagedPrivateZone, !Ref ManagedPrivateBrowserZone, !Ref PrivateBrowserZoneId]
+      RecordSets:
+        - {Name: !Sub '${DeploymentName}.${BaseDomain}.', Type: CNAME, TTL: '30', ResourceRecords: [!Sub 'shiftbox.services.${DnsSuffix}.']}
+        - {Name: !Sub '*.ide.${DeploymentName}.${BaseDomain}.', Type: CNAME, TTL: '30', ResourceRecords: [!Sub 'shiftbox.services.${DnsSuffix}.']}
+        - {Name: !Sub '*.preview.${DeploymentName}.${BaseDomain}.', Type: CNAME, TTL: '30', ResourceRecords: [!Sub 'shiftbox.services.${DnsSuffix}.']}
+        - {Name: !Sub '*.repair.${DeploymentName}.${BaseDomain}.', Type: CNAME, TTL: '30', ResourceRecords: [!Sub 'shiftbox.services.${DnsSuffix}.']}
+
+  PublicBrowserRecords:
+    Type: AWS::Route53::RecordSetGroup
+    Condition: PublicEnabled
+    Properties:
+      HostedZoneId: !If [CreateManagedPublicZone, !Ref ManagedPublicZone, !Ref PublicHostedZoneId]
+      RecordSets:
+        - {Name: !Sub '${DeploymentName}.${BaseDomain}.', Type: A, TTL: '60', ResourceRecords: [!Ref PublicAddress]}
+        - {Name: !Sub '*.ide.${DeploymentName}.${BaseDomain}.', Type: A, TTL: '60', ResourceRecords: [!Ref PublicAddress]}
+        - {Name: !Sub '*.preview.${DeploymentName}.${BaseDomain}.', Type: A, TTL: '60', ResourceRecords: [!Ref PublicAddress]}
+        - {Name: !Sub '*.repair.${DeploymentName}.${BaseDomain}.', Type: A, TTL: '60', ResourceRecords: [!Ref PublicAddress]}
+
+  SetupClaim:
+    Type: AWS::SecretsManager::Secret
+    Condition: OnePassInstall
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Initial browser administrator claim for this ShiftBox installation.
+      GenerateSecretString: {PasswordLength: 48, ExcludePunctuation: true}
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
+
+  BrowserTrust:
+    Type: AWS::SecretsManager::Secret
+    Condition: PrivateBootstrap
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Browser CA certificate for this private ShiftBox installation.
+      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
+
   ServicesLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -545,7 +818,11 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
-                Resource: [!Ref PostgresAdminSecret, !Ref PostgresAppSecret, !Ref PostgresDexSecret, !Ref PostgresTlsSecret]
+                Resource:
+                  - !Ref PostgresAdminSecret
+                  - !Ref PostgresAppSecret
+                  - !Ref PostgresDexSecret
+                  - !If [StagedInstall, !Ref PostgresTlsSecret, !Ref 'AWS::NoValue']
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ServicesLogGroup}:log-stream:ecs/postgres/*'
@@ -553,7 +830,7 @@ Resources:
 
   SetupExecutionRole:
     Type: AWS::IAM::Role
-    Condition: DatabaseEnabled
+    Condition: ManualSetupReady
     Properties:
       RoleName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-SetupExecutionRole', !Sub '${DeploymentName}-${AWS::Region}-setup-exec']
       Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
@@ -609,7 +886,10 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
-                Resource: [!Ref PostgresAppSecret]
+                Resource:
+                  - !Ref PostgresAppSecret
+                  - !If [OnePassInstall, !Ref PostgresDexSecret, !Ref 'AWS::NoValue']
+                  - !If [OnePassInstall, !Ref SetupClaim, !Ref 'AWS::NoValue']
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ServicesLogGroup}:log-stream:ecs/controller/*'
@@ -617,7 +897,7 @@ Resources:
 
   SetupTaskRole:
     Type: AWS::IAM::Role
-    Condition: DatabaseEnabled
+    Condition: ManualSetupReady
     Properties:
       RoleName: !If [UseExternalBoundaries, !Sub '${DeploymentName}-SetupTaskRole', !Sub '${DeploymentName}-${AWS::Region}-setup-task']
       Path: !If [UseExternalBoundaries, !Sub '/shiftbox-qualification/${DeploymentName}/', !Sub '/shiftbox/${AWS::Region}/${DeploymentName}/']
@@ -672,6 +952,35 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              - !If
+                - ManagedBrowserTLS
+                - Effect: Allow
+                  Action: route53:ListHostedZones
+                  Resource: '*'
+                - !Ref 'AWS::NoValue'
+              - !If
+                - ManagedBrowserTLS
+                - Effect: Allow
+                  Action: route53:GetChange
+                  Resource: !Sub 'arn:${AWS::Partition}:route53:::change/*'
+                - !Ref 'AWS::NoValue'
+              - !If
+                - ManagedBrowserTLS
+                - Effect: Allow
+                  Action: route53:ChangeResourceRecordSets
+                  Resource: !Sub
+                    - 'arn:${AWS::Partition}:route53:::hostedzone/${ZoneId}'
+                    - ZoneId: !If [CreateManagedPublicZone, !Ref ManagedPublicZone, !Ref PublicHostedZoneId]
+                  Condition:
+                    'ForAllValues:StringEquals':
+                      route53:ChangeResourceRecordSetsRecordTypes: [TXT]
+                      route53:ChangeResourceRecordSetsActions: [UPSERT, DELETE]
+                      route53:ChangeResourceRecordSetsNormalizedRecordNames:
+                        - !Sub '_acme-challenge.${DeploymentName}.${BaseDomain}'
+                        - !Sub '_acme-challenge.ide.${DeploymentName}.${BaseDomain}'
+                        - !Sub '_acme-challenge.preview.${DeploymentName}.${BaseDomain}'
+                        - !Sub '_acme-challenge.repair.${DeploymentName}.${BaseDomain}'
+                - !Ref 'AWS::NoValue'
               - Sid: ObserveRegionalResources
                 Effect: Allow
                 Action:
@@ -773,6 +1082,7 @@ Resources:
       Volumes:
         - Name: data
           Host: {SourcePath: /var/lib/shiftbox-data/postgres}
+        - !If [OnePassInstall, {Name: postgres-identity, Host: {SourcePath: /var/lib/shiftbox-data/pg-identity}}, !Ref 'AWS::NoValue']
       ContainerDefinitions:
         - Name: postgres
           Image: @@POSTGRES_IMAGE@@
@@ -783,6 +1093,7 @@ Resources:
             - @@POSTGRES_START_SCRIPT@@
           MountPoints:
             - {SourceVolume: data, ContainerPath: /var/lib/postgresql/data}
+            - !If [OnePassInstall, {SourceVolume: postgres-identity, ContainerPath: /run/shiftbox/postgres-tls, ReadOnly: true}, !Ref 'AWS::NoValue']
           Environment:
             - {Name: PGDATA, Value: /var/lib/postgresql/data/pgdata}
             - {Name: POSTGRES_DB, Value: shiftbox}
@@ -790,8 +1101,8 @@ Resources:
             - {Name: POSTGRES_PASSWORD, ValueFrom: !Ref PostgresAdminSecret}
             - {Name: SHIFTBOX_APP_PASSWORD, ValueFrom: !Ref PostgresAppSecret}
             - {Name: SHIFTBOX_DEX_PASSWORD, ValueFrom: !Ref PostgresDexSecret}
-            - {Name: POSTGRES_TLS_CERT, ValueFrom: !Sub '${PostgresTlsSecret}:certificate::'}
-            - {Name: POSTGRES_TLS_KEY, ValueFrom: !Sub '${PostgresTlsSecret}:private_key::'}
+            - !If [StagedInstall, {Name: POSTGRES_TLS_CERT, ValueFrom: !Sub '${PostgresTlsSecret}:certificate::'}, !Ref 'AWS::NoValue']
+            - !If [StagedInstall, {Name: POSTGRES_TLS_KEY, ValueFrom: !Sub '${PostgresTlsSecret}:private_key::'}, !Ref 'AWS::NoValue']
           HealthCheck:
             Command: [CMD, pg_isready, -h, localhost, -p, '5432', -d, shiftbox]
             Interval: 10
@@ -809,7 +1120,7 @@ Resources:
 
   SetupTask:
     Type: AWS::ECS::TaskDefinition
-    Condition: DatabaseEnabled
+    Condition: ManualSetupReady
     Properties:
       Family: !Sub '${DeploymentName}-setup'
       RequiresCompatibilities: [EC2]
@@ -886,33 +1197,44 @@ Resources:
           Host: {SourcePath: /var/lib/shiftbox-data/shiftbox}
         - Name: registry-cache
           Host: {SourcePath: /var/lib/shiftbox-registry-cache}
+        - !If [OnePassInstall, {Name: database-trust, Host: {SourcePath: /var/lib/shiftbox-data/database-trust}}, !Ref 'AWS::NoValue']
+        - !If [PrivateBootstrap, {Name: browser-tls, Host: {SourcePath: /var/lib/shiftbox-data/browser-identity}}, !Ref 'AWS::NoValue']
       ContainerDefinitions:
         - Name: controller
           Image: @@CONTROLLER_IMAGE@@
           Essential: true
           MemoryReservation: 512
           EntryPoint: [/usr/local/bin/shiftbox-cloud]
-          Command: [serve]
+          Command: !If [OnePassInstall, [one-pass], [serve]]
+          LinuxParameters: {InitProcessEnabled: true}
+          SystemControls: !If
+            - ManagedBrowserTLS
+            - [{Namespace: net.ipv4.ip_unprivileged_port_start, Value: '443'}]
+            - !Ref 'AWS::NoValue'
           MountPoints:
             - {SourceVolume: installation, ContainerPath: /var/lib/shiftbox}
             - {SourceVolume: registry-cache, ContainerPath: /var/lib/shiftbox-registry-cache}
+            - !If [OnePassInstall, {SourceVolume: database-trust, ContainerPath: /run/shiftbox/database-trust, ReadOnly: true}, !Ref 'AWS::NoValue']
+            - !If [PrivateBootstrap, {SourceVolume: browser-tls, ContainerPath: /run/shiftbox/browser-tls, ReadOnly: true}, !Ref 'AWS::NoValue']
           Environment:
             - {Name: SHIFTBOX_IMAGE_CACHE_VOLUME_ID, Value: !Ref RegistryCacheVolume}
             - {Name: SHIFTBOX_DB_HOST, Value: !Sub 'postgres.${DnsSuffix}'}
-            - {Name: SHIFTBOX_DB_CA, Value: !Join ["\n", !Split ['|', !Ref PostgresCaPem]]}
+            - !If [StagedInstall, {Name: SHIFTBOX_DB_CA, Value: !Join ["\n", !Split ['|', !Ref PostgresCaPem]]}, !Ref 'AWS::NoValue']
             - Name: SHIFTBOX_CLOUD_CONFIG
               Value: !Sub
                 - >-
-                  {"installationDir":"/var/lib/shiftbox","dataProfile":"postgres","managementOrigin":"https://shiftbox.${DnsSuffix}:8443",
+                  {"installationDir":"/var/lib/shiftbox","dataProfile":"postgres","managementOrigin":"${BrowserOrigin}",
                   "runtime":{"provider":"ec2","ec2":{"accountId":"${AWS::AccountId}","region":"${AWS::Region}",
                   "dataVolumeId":"${InstallationVolume}","subnetId":"${WorkspaceSubnet}","securityGroupId":"${WorkspaceGroup}",
                   "deployment":"${DeploymentName}","environment":"production","officialImage":{"amiId":"${ImageId}",
                   "publisherAccountId":"${ImageOwner}","rootDeviceName":"${RootDevice}","rootSnapshotId":"${Snapshot}",
                   "sourceAmiId":"${SourceAmi}","sourceRegion":"${SourceRegion}","sourceCommit":"${SourceRevision}",
                   "releaseId":"${ImageRelease}","guestRelease":"${GuestRelease}","architecture":"${Architecture}",
-                  "minimumDiskGiB":${MinimumDisk},"catalogSha256":"${CatalogSHA256}"}},"browserAddress":":8443",
+                  "minimumDiskGiB":${MinimumDisk},"catalogSha256":"${CatalogSHA256}"}},"browserAddress":":${BrowserPort}",
                   "guestHost":"guest.${DnsSuffix}","enrollmentAddress":":19443","pollAddress":":19444","tunnelAddress":":19445"}}
-                - ImageId: !FindInMap [ReleaseRegions, !Ref 'AWS::Region', WorkspaceAmi]
+                - BrowserOrigin: !If [ManagedBrowserTLS, !Sub 'https://${DeploymentName}.${BaseDomain}', !Sub 'https://shiftbox.${DnsSuffix}:8443']
+                  BrowserPort: !If [ManagedBrowserTLS, '443', '8443']
+                  ImageId: !FindInMap [ReleaseRegions, !Ref 'AWS::Region', WorkspaceAmi]
                   ImageOwner: !FindInMap [ReleaseRegions, !Ref 'AWS::Region', PublisherAccount]
                   RootDevice: !FindInMap [ReleaseRegions, !Ref 'AWS::Region', WorkspaceRootDevice]
                   Snapshot: !FindInMap [ReleaseRegions, !Ref 'AWS::Region', WorkspaceSnapshot]
@@ -924,8 +1246,11 @@ Resources:
                   Architecture: !FindInMap [ReleaseRegions, !Ref 'AWS::Region', WorkspaceArchitecture]
                   MinimumDisk: !FindInMap [ReleaseRegions, !Ref 'AWS::Region', WorkspaceMinimumDiskGiB]
                   CatalogSHA256: !FindInMap [ReleaseRegions, !Ref 'AWS::Region', WorkspaceCatalogSHA256]
+            - !If [ManagedBrowserTLS, {Name: SHIFTBOX_ACME_EMAIL, Value: !Ref AcmeContactEmail}, !Ref 'AWS::NoValue']
           Secrets:
             - {Name: SHIFTBOX_APP_PASSWORD, ValueFrom: !Ref PostgresAppSecret}
+            - !If [OnePassInstall, {Name: SHIFTBOX_DEX_PASSWORD, ValueFrom: !Ref PostgresDexSecret}, !Ref 'AWS::NoValue']
+            - !If [OnePassInstall, {Name: SHIFTBOX_BOOTSTRAP_CLAIM, ValueFrom: !Ref SetupClaim}, !Ref 'AWS::NoValue']
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -933,7 +1258,7 @@ Resources:
               awslogs-region: !Ref 'AWS::Region'
               awslogs-stream-prefix: ecs
           PortMappings:
-            - {ContainerPort: 8443, Protocol: tcp}
+            - {ContainerPort: !If [ManagedBrowserTLS, 443, 8443], Protocol: tcp}
             - {ContainerPort: 19443, Protocol: tcp}
             - {ContainerPort: 19444, Protocol: tcp}
             - {ContainerPort: 19445, Protocol: tcp}
@@ -944,7 +1269,7 @@ Resources:
   PostgresService:
     Type: AWS::ECS::Service
     Condition: DatabaseEnabled
-    DependsOn: [DataAttachment, PrivateRecords]
+    DependsOn: [DataAttachment, PrivateRecords, PostgresControllerIngress]
     Properties:
       ServiceName: postgres
       Cluster: !Ref Cluster
@@ -970,8 +1295,13 @@ Resources:
       Cluster: !Ref Cluster
       LaunchType: EC2
       TaskDefinition: !Ref ControllerTask
-      DesiredCount: !If [ControllerEnabled, 1, 0]
+      DesiredCount: !If [ControllerRunning, 1, 0]
       DeploymentConfiguration: {MaximumPercent: 100, MinimumHealthyPercent: 0}
+      HealthCheckGracePeriodSeconds: !If [PublicEnabled, 360, !Ref 'AWS::NoValue']
+      LoadBalancers: !If
+        - PublicEnabled
+        - [{ContainerName: controller, ContainerPort: 443, TargetGroupArn: !Ref PublicTargets}]
+        - []
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: DISABLED
@@ -979,11 +1309,16 @@ Resources:
           SecurityGroups: [!Ref ControllerGroup]
       ServiceRegistries: [{RegistryArn: !GetAtt ControllerDiscovery.Arn}]
       PropagateTags: TASK_DEFINITION
-      Tags: [{Key: shiftbox-project, Value: shiftbox}, {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}]
+      Tags:
+        - {Key: shiftbox-project, Value: shiftbox}
+        - {Key: shiftbox-cluster-name, Value: !Ref DeploymentName}
+        # ECS requires the target group to be attached to a listener before creating the service.
+        - !If [PublicEnabled, {Key: shiftbox-public-listener, Value: !Ref PublicListener}, !Ref 'AWS::NoValue']
+        - !If [CreateManagedPublicZone, {Key: shiftbox-public-delegation, Value: !Ref ManagedPublicDelegation}, !Ref 'AWS::NoValue']
 
   SetupSession:
     Type: AWS::SSM::Document
-    Condition: DatabaseEnabled
+    Condition: ManualSetupReady
     Properties:
       Name: !Sub '${DeploymentName}-SetupPort'
       DocumentType: Session
@@ -1083,6 +1418,7 @@ Outputs:
   InstallationVolumeId:
     Value: !Ref InstallationVolume
   PostgresTlsSecretArn:
+    Condition: StagedInstall
     Value: !Ref PostgresTlsSecret
   PostgresHostname:
     Value: !Sub 'postgres.${DnsSuffix}'
@@ -1090,7 +1426,7 @@ Outputs:
     Condition: ManageSetupOperatorPolicy
     Value: !Ref SetupOperatorPolicy
   SetupConfig:
-    Condition: DatabaseEnabled
+    Condition: ManualSetupReady
     Value: !Sub
       - >-
         {"account":"${AWS::AccountId}","stack_id":"${AWS::StackId}","region":"${AWS::Region}","cluster":"${Cluster}",
@@ -1098,5 +1434,24 @@ Outputs:
         "port":8444,"log_group":"${ServicesLogGroup}","tag":"${DeploymentName}"}
       - Definition: !Ref SetupTask
   ManagementOrigin:
-    Condition: ControllerEnabled
-    Value: !Sub 'https://shiftbox.${DnsSuffix}:8443'
+    Condition: ControllerRunning
+    Value: !If [ManagedBrowserTLS, !Sub 'https://${DeploymentName}.${BaseDomain}', !Sub 'https://shiftbox.${DnsSuffix}:8443']
+  SetupClaimSecretArn:
+    Condition: OnePassInstall
+    Value: !Ref SetupClaim
+  BrowserCaSecretArn:
+    Condition: PrivateBootstrap
+    Value: !Ref BrowserTrust
+  PublicIPv4:
+    Condition: PublicEnabled
+    Value: !Ref PublicAddress
+  PublicDnsZoneId:
+    Condition: ManagedBrowserTLS
+    Value: !If [CreateManagedPublicZone, !Ref ManagedPublicZone, !Ref PublicHostedZoneId]
+  PublicDnsNameServers:
+    Condition: CreateManagedPublicZone
+    Description: Name servers used in the stack-created delegation for DeploymentName.BaseDomain.
+    Value: !Join [', ', !GetAtt ManagedPublicZone.NameServers]
+  PrivateBrowserDnsZoneId:
+    Condition: ManagedBrowserTLS
+    Value: !If [CreateManagedPrivateZone, !Ref ManagedPrivateBrowserZone, !Ref PrivateBrowserZoneId]

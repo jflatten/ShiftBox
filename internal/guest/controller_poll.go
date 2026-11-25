@@ -206,7 +206,7 @@ func nextGuestOperation(ctx context.Context, tx *sql.Tx, contact Contact, now ti
 	if err != nil {
 		return nil, err
 	}
-	if dispatch.Type == "provision" {
+	if launchlog.TracksOperation(dispatch.Type, action) {
 		count, err := inserted.RowsAffected()
 		if err != nil {
 			return nil, err
@@ -286,7 +286,7 @@ func acceptGuestReport(ctx context.Context, tx *sql.Tx, contact Contact, input P
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE guest_dispatches SET status=$1,container_id=$2,problem=$3 WHERE operation_id=$4`,
 		report.Status, report.Evidence.ContainerID, report.Problem, report.ID)
-	if err == nil && kind == "provision" && step == "configure" && report.Step == "devcontainer.wait_for" {
+	if err == nil && (kind == "provision" || kind == "start") && step == "configure" && report.Step == "devcontainer.wait_for" {
 		return launchlog.MarkConfigureReported(ctx, tx, report.ID, now)
 	}
 	return err

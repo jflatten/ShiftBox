@@ -31,8 +31,8 @@ rule retained_secrets when %secrets !empty {
     }
 }
 
-rule staged_startup when Parameters.Phase exists {
-    Parameters.Phase.Default == 'foundation'
+rule first_login_startup when Parameters.Phase exists {
+    Parameters.Phase.Default == 'one-pass'
 }
 
 rule bounded_runtime_roles when %runtime_roles !empty {
