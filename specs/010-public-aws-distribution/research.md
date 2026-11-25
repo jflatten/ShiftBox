@@ -8,7 +8,7 @@
 
 **Alternatives considered.** Customer Terraform requires tooling and state the operator did not request. A custom provisioning runtime or nested stacks add service and asset dependencies. Keep the existing full controller image and native template.
 
-Sources: [Existing demo/topology guide](../../platform/terraform/aws/README.md), [ECS task image syntax](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters_ec2.html), [CloudFormation quick-create](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-create-stacks-quick-create-links.html), [DeletionPolicy](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-deletionpolicy.html), [UpdateReplacePolicy](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-updatereplacepolicy.html).
+Sources: [Former demo topology guide](https://github.com/jflatten/ShiftBox/blob/8122d32fd42941c36fe163ef3f9c4244aa61f15d/platform/terraform/aws/README.md), [ECS task image syntax](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters_ec2.html), [CloudFormation quick-create](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-create-stacks-quick-create-links.html), [DeletionPolicy](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-deletionpolicy.html), [UpdateReplacePolicy](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-updatereplacepolicy.html).
 
 ## 2. Publish clean regional AMIs and keep deployments encrypted
 
@@ -38,7 +38,7 @@ Sources: [AWS provider validation](../../specs/002-aws-ec2-provider/quickstart.m
 
 **Alternatives considered.** A custom resource to generate or deliver private keys would add privileged code and logs. An unreviewed one-step startup would bypass the protected wizard. The console path requires the existing local tunnel client, not Terraform.
 
-Sources: [Current deployment reference](../../platform/terraform/aws/README.md), [Protected setup helper](../../platform/terraform/aws/setup.sh), [AWS change sets](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-updating-stacks-changesets.html), [AWS pre-deployment validation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/validate-stack-deployments.html), [Guest repository preparation](../../internal/guest/repository.go).
+Sources: [Former demo deployment reference](https://github.com/jflatten/ShiftBox/blob/8122d32fd42941c36fe163ef3f9c4244aa61f15d/platform/terraform/aws/README.md), [Former protected setup helper](https://github.com/jflatten/ShiftBox/blob/8122d32fd42941c36fe163ef3f9c4244aa61f15d/platform/terraform/aws/setup.sh), [AWS change sets](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-updating-stacks-changesets.html), [AWS pre-deployment validation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/validate-stack-deployments.html), [Guest repository preparation](../../internal/guest/repository.go).
 
 ## 5. Scope DNS and TLS to each installation
 
@@ -48,7 +48,7 @@ Sources: [Current deployment reference](../../platform/terraform/aws/README.md),
 
 **Alternatives considered.** Public TLS or Tailscale hostname certificates would require different names or public-domain control for the existing distinct browser origins. Broad CIDRs and accepting TLS errors weaken the approved private deployment.
 
-Sources: [Tailscale deployment baseline](../../platform/terraform/aws/README.md#optional-tailscale-access), [Tailscale restricted DNS](https://tailscale.com/docs/reference/dns-in-tailscale), [ICANN private-use reservation](https://www.icann.org/en/board-activities-and-meetings/materials/approved-resolutions-special-meeting-of-the-icann-board-29-07-2024-en), [ShiftBox certificate contract](../../documentation/architecture/certificates-and-guest-trust.md).
+Sources: [Former Tailscale deployment baseline](https://github.com/jflatten/ShiftBox/blob/8122d32fd42941c36fe163ef3f9c4244aa61f15d/platform/terraform/aws/README.md#optional-tailscale-access), [Tailscale restricted DNS](https://tailscale.com/docs/reference/dns-in-tailscale), [ICANN private-use reservation](https://www.icann.org/en/board-activities-and-meetings/materials/approved-resolutions-special-meeting-of-the-icann-board-29-07-2024-en), [ShiftBox certificate contract](../../documentation/architecture/certificates-and-guest-trust.md).
 
 ## 6. Qualify one candidate and promote its bytes
 

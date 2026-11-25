@@ -122,7 +122,7 @@ An existing operator can identify what to preserve, which checks to run before u
 ## Assumptions
 
 - AWS-first is the approved public distribution sequencing. Existing UTM capability and the underlying product security and data contracts continue.
-- The user approved CloudFormation for customer stacks. Demo and publisher infrastructure continue to use existing internal Terraform practices.
+- CloudFormation manages customer and development ShiftBox stacks. Terraform manages the separate publisher infrastructure, qualification tooling and shared development registry. See the [repository instructions](../../AGENTS.md).
 - The one-controller persistent topology is the baseline. An operator supplies legitimate AWS access, deployment capacity and either a tailnet or an existing private connection. The install must surface the current database TLS, credentials, host image, setup permissions and catalog prerequisites.
 - The team will verify the official publisher AWS account, GitHub package and version-tag controls, and CI permissions before enabling publication. The demo account is a separate operational dependency.
 - Unit tests with descriptive comments precede each implementation change. Existing AWS and product acceptance checks are reused for release qualification.

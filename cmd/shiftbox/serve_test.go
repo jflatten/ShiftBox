@@ -124,8 +124,8 @@ func TestEC2RuntimeDoesNotRequireUTM(t *testing.T) {
 	}
 }
 
-// TestCloudSetupUsesDeployedNames verifies that cloud setup uses Terraform's
-// browser names and database, and has no local platform folder requirement.
+// TestCloudSetupUsesDeployedNames verifies that cloud setup uses the stack's
+// browser names and database without requiring a local platform folder.
 func TestCloudSetupUsesDeployedNames(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cloud.json")
