@@ -18,7 +18,6 @@ import yaml
 
 root, fixture_dir = map(Path, sys.argv[1:])
 cloudformation = root / "platform/cloudformation/aws"
-terraform = root / "platform/terraform/aws"
 
 
 class CloudFormationLoader(yaml.SafeLoader):
@@ -65,9 +64,9 @@ substitutions = {
     "CONTROLLER_IMAGE": controller,
     "POSTGRES_IMAGE": postgres,
     "RELEASE_REGIONS": pins,
-    "MOUNT_DATA_SCRIPT": (terraform / "host/mount-data.sh").read_text(),
-    "MOUNT_CACHE_SCRIPT": (terraform / "host/mount-registry-cache.sh").read_text(),
-    "POSTGRES_START_SCRIPT": (terraform / "postgres/start.sh").read_text(),
+    "MOUNT_DATA_SCRIPT": (cloudformation / "host/mount-data.sh").read_text(),
+    "MOUNT_CACHE_SCRIPT": (cloudformation / "host/mount-registry-cache.sh").read_text(),
+    "POSTGRES_START_SCRIPT": (cloudformation / "postgres/start.sh").read_text(),
 }
 template_bytes = (cloudformation / "template.yaml").read_text()
 # Exercise the production renderer, then independently compare the parsed
@@ -386,8 +385,8 @@ user_data_values = {
     "InstallationVolume": "vol-0123456789abcdef0",
     "InitializeDataVolume": "true",
     "RegistryCacheVolume": "vol-1234567890abcdef0",
-    "MountScript": (terraform / "host/mount-data.sh").read_text(),
-    "MountCacheScript": (terraform / "host/mount-registry-cache.sh").read_text(),
+    "MountScript": substitutions["MountScript"],
+    "MountCacheScript": substitutions["MountCacheScript"],
 }
 rendered = re.sub(r"\$\{([A-Za-z0-9_]+)\}", lambda match: user_data_values[match[1]], script)
 subprocess.run(["bash", "-n"], input=rendered, text=True, check=True)

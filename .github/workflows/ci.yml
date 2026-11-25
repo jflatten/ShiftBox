@@ -85,6 +85,8 @@ jobs:
           bash platform/release/registry.test.sh
           bash platform/release/amis.test.sh
           bash platform/release/templates.test.sh
+          sh platform/cloudformation/aws/host/mount-data.test.sh
+          sh platform/cloudformation/aws/host/mount-registry-cache.test.sh
           bash platform/cloudformation/aws/setup.test.sh
           bash scripts/install-aws.test.sh
       - name: Plan publisher roles and template buckets offline

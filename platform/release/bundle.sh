@@ -49,7 +49,6 @@ import tarfile
 root, pins, catalog_dir, guide_dir, out = map(Path, sys.argv[1:])
 release = json.loads(pins.read_text())
 cloudformation = root / "platform/cloudformation/aws"
-terraform = root / "platform/terraform/aws"
 regions = ("us-east-1", "us-east-2", "us-west-1", "us-west-2")
 guides = ("contributing", "first-workspace", "install", "private-access", "setup-helper", "troubleshooting", "upgrade-recovery")
 
@@ -129,9 +128,9 @@ def render_template():
         "RELEASE_REGIONS": mappings,
         "CONTROLLER_IMAGE": f"{release['controller']['repository']}@{release['controller']['digest']}",
         "POSTGRES_IMAGE": release["postgresImage"],
-        "MOUNT_DATA_SCRIPT": read_regular(terraform / "host/mount-data.sh").decode(),
-        "MOUNT_CACHE_SCRIPT": read_regular(terraform / "host/mount-registry-cache.sh").decode(),
-        "POSTGRES_START_SCRIPT": read_regular(terraform / "postgres/start.sh").decode(),
+        "MOUNT_DATA_SCRIPT": read_regular(cloudformation / "host/mount-data.sh").decode(),
+        "MOUNT_CACHE_SCRIPT": read_regular(cloudformation / "host/mount-registry-cache.sh").decode(),
+        "POSTGRES_START_SCRIPT": read_regular(cloudformation / "postgres/start.sh").decode(),
     }
     source = read_regular(cloudformation / "template.yaml").decode()
     boundary_renderer = runpy.run_path(str(cloudformation / "render_boundaries.py"))["render_task_boundaries"]

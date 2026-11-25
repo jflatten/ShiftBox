@@ -76,7 +76,7 @@ func (p *Provider) Stop(ctx context.Context, req provider.StopRequest) (provider
 	return p.inventory(ctx, req.Ref, instance)
 }
 
-// ApplyNetwork confirms the Terraform-managed network for a stopped workspace.
+// ApplyNetwork verifies the configured network for a stopped workspace.
 func (p *Provider) ApplyNetwork(ctx context.Context, req provider.NetworkRequest) (provider.Inventory, error) {
 	if req.Ref.InstanceID == "" || req.Mode != NetworkMode || req.OperationID == "" {
 		return provider.Inventory{}, provider.ErrCapabilityUnsupported

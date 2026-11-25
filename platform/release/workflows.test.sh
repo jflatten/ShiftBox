@@ -79,6 +79,18 @@ grep -F "shiftbox_release_publisher='$publisher'" "$stage/install.sh" >/dev/null
 bash -n "$stage/install.sh"
 bash "$stage/install.sh" --help | grep -F 'Usage: install.sh' >/dev/null
 
+# The release embeds the CloudFormation bootstrap scripts in the standalone template.
+python3 - "$root/platform/cloudformation/aws" "$stage/shiftbox-aws-cloudformation.yaml" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+source, template = map(Path, sys.argv[1:])
+rendered = template.read_text()
+for script in ("host/mount-data.sh", "host/mount-registry-cache.sh", "postgres/start.sh"):
+    assert json.dumps((source / script).read_text()) in rendered, f"Missing embedded script: {script}"
+PY
+
 # Packaging uses a public allowlist and excludes unrelated files even in source locations.
 tar -tzf "$stage/shiftbox-aws-support.tar.gz" | sort >"$scratch/actual-members"
 cat >"$scratch/expected-members" <<'MEMBERS'

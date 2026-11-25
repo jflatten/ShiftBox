@@ -128,7 +128,7 @@ def test_one_pass_uses_only_existing_network_and_main_task():
     source = Path(__file__).parents[1] / "cloudformation" / "aws" / "template.yaml"
     staged = re.sub(r"(?m)^@@[A-Z_]+@@$", "          fixture", source.read_text())
     base = yaml.load(re.sub(r"@@[A-Z_]+@@", "fixture", staged), Loader=CloudFormationLoader)
-    pg_start = source.parents[2] / "terraform/aws/postgres/start.sh"
+    pg_start = source.parent / "postgres" / "start.sh"
     base["Resources"]["PostgresTask"]["Properties"]["ContainerDefinitions"][0]["Command"] = [pg_start.read_text()]
     # bundle.sh supplies these policy documents before the development transform.
     for name in ("PostgresExecutionRole", "ControllerExecutionRole"):

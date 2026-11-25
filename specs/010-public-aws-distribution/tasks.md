@@ -125,7 +125,7 @@ description: "Implementation tasks for the first public AWS distribution"
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T042 Run release baseline, end-to-end private checks and regression gates in `.github/workflows/ci.yml` and `specs/010-public-aws-distribution/quickstart.md`. Verify existing internal Terraform/ECR and UTM behavior, browser permissions and demo integration used during implementation. Reconcile and clean any test-only resources.
+- [ ] T042 Run release baseline, end-to-end private checks and regression gates in `.github/workflows/ci.yml` and `specs/010-public-aws-distribution/quickstart.md`. Verify development CloudFormation/ECR and UTM behavior, browser permissions and integration on the selected development stack. Reconcile and clean any test-only resources.
 - [ ] T043 Review the candidate site, all four scoped S3 links, qualified assets, operator guide, reviewed main, tag protections and exact evidence via `platform/release/README.md` and `platform/manifests/qualification/<rc-tag>.json`. Ensure review and deployment artifacts disclose no private test data.
 - [ ] T044 With authorized maintainer approval, push the protected stable tag for the exact qualified commit. Verify `.github/workflows/release.yml` reuses template bytes, original S3 versions/URLs, GHCR digest and AMIs. Verify default and explicit release links using `specs/010-public-aws-distribution/quickstart.md`.
 - [ ] T045 Refresh and verify Pages stable and pinned regional quick-create links independently through `.github/workflows/pages.yml` and `docs/site/tests/site.test.sh`. Record review URLs and private teardown evidence, preserving published S3 object versions and other assets still referenced.
@@ -144,6 +144,7 @@ description: "Implementation tasks for the first public AWS distribution"
 - [ ] T052 [US1] Implement test-first private HTTPS first login with deployment-scoped bootstrap authorization, one owner, verified DB TLS, durable retry and fresh post-activation login. Verify denial, replay, interruption and normal active restart before live use.
 - [X] T053 [US1] Wire one CloudFormation deployment in supplied subnets into that private UI setup path. Update the guided installer and manual docs to complete through the UI with no stack phase updates or manual SSM setup session. Keep the tested RC3 behavior available through its original pins.
 - [ ] T054 [US2] Deploy one private development attempt in testing using the existing default subnets after confirming operator-provided egress, private browser access and budget. Test the changed controller and pinned RC3 workspace AMI, use a private workspace AMI when iterating on guest changes, record private browser and enrollment evidence, and verify teardown while preserving the supplied network. Review the results before creating a new RC.
+- [X] T055 Retire the Terraform application deployment and use CloudFormation for development stack rollout and rollback. Move the release bootstrap scripts and mount tests alongside the template. Verify release packaging, CloudFormation lint and Guard, development rendering, and qualification fixtures offline.
 
 ## Dependencies & Execution Order
 
