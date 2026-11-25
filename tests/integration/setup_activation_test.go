@@ -198,9 +198,8 @@ func configureActivationCertificate(t *testing.T, db *sql.DB, cipher *cryptostor
 	return roots
 }
 
-// TestStagePostgresSetup copies only the initial account and current TLS
-// configuration, and resumes a failed activation across a restart using only
-// the saved profile and retirement receipt.
+// TestStagePostgresSetup copies the initial account, current TLS configuration,
+// and regular session timeout, and resumes a failed activation across a restart.
 func TestStagePostgresSetup(t *testing.T) {
 	appURI, dexURI := os.Getenv("SHIFTBOX_TEST_SETUP_APP_URI"), os.Getenv("SHIFTBOX_TEST_SETUP_DEX_URI")
 	if appURI == "" || dexURI == "" {
@@ -334,6 +333,14 @@ func TestStagePostgresSetup(t *testing.T) {
 	}
 	if copiedID != id || state != "configuring" || profile != "postgres" || !strings.Contains(settings, `"dataProfile":"postgres"`) {
 		t.Fatal("incorrect staged configuration")
+	}
+	var timeout auth.SessionTimeout
+	if err := dst.QueryRowContext(ctx, `SELECT session_timeout_value,session_timeout_unit,session_timeout_version
+		FROM installations WHERE id=$1`, id).Scan(&timeout.Value, &timeout.Unit, &timeout.Version); err != nil {
+		t.Fatal(err)
+	}
+	if want := (auth.SessionTimeout{Value: 8, Unit: "hours", Version: 1}); timeout != want {
+		t.Errorf("StagePostgresSetup(fresh install) session timeout = %+v, want %+v", timeout, want)
 	}
 	var ciphertext string
 	if err := dst.QueryRowContext(ctx, "SELECT value_json FROM protected_values WHERE id=$1", activationCertificateID).Scan(&ciphertext); err != nil || ciphertext != sourceCiphertext {

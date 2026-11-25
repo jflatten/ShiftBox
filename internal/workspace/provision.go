@@ -48,7 +48,7 @@ func (p *ProvisionExecutor) Observe(ctx context.Context, op operation.Operation,
 	}
 	evidence, err := p.record(ctx, req, got)
 	if err == nil {
-		p.markLaunchVMRunning(ctx, op.ID, got)
+		p.store.markLaunchVMRunning(ctx, op.ID, got)
 	}
 	return evidence, err == nil, err
 }
@@ -68,7 +68,7 @@ func (p *ProvisionExecutor) Apply(ctx context.Context, op operation.Operation, s
 	if err := p.prepareBootstrap(ctx, &req); err != nil {
 		return "", err
 	}
-	timed := p.observeLaunchTiming(ctx, op.ID)
+	timed := p.store.observeLaunchTiming(ctx, op.ID)
 	started := time.Now()
 	got, err := p.provider.Create(timed, req)
 	provider.ReportLaunchTiming(timed, "vm_create", started, err)
@@ -77,7 +77,7 @@ func (p *ProvisionExecutor) Apply(ctx context.Context, op operation.Operation, s
 	}
 	evidence, err := p.record(ctx, req, got)
 	if err == nil {
-		p.markLaunchVMRunning(ctx, op.ID, got)
+		p.store.markLaunchVMRunning(ctx, op.ID, got)
 	}
 	return evidence, err
 }

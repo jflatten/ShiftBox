@@ -27,10 +27,10 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
-// The number and selected unit survive a fresh page mount after saving.
+// The fresh default displays in hours, and a saved change survives a new page mount.
 test('validates, saves, and reloads the administration session timeout', async () => {
   const endpoint = '/api/v1/admin/settings/session';
-  let stored = { value: 30, unit: 'minutes', version: 1 };
+  let stored = { value: 8, unit: 'hours', version: 1 };
   const fetch = jest.fn<Promise<Response>, Parameters<typeof globalThis.fetch>>(async (input, init) => {
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/admin/infrastructure') return json({ conditions: [] });
@@ -54,8 +54,8 @@ test('validates, saves, and reloads the administration session timeout', async (
   const timeout = await screen.findByRole('textbox', { name: 'Session timeout' });
   const unit = screen.getByRole('combobox', { name: 'Time unit' });
   const save = screen.getByRole('button', { name: 'Save session timeout' });
-  expect(timeout).toHaveValue('30');
-  expect(unit).toHaveValue('minutes');
+  expect(timeout).toHaveValue('8');
+  expect(unit).toHaveValue('hours');
   await user.clear(timeout);
   await user.type(timeout, '0');
   await user.click(save);
@@ -64,17 +64,17 @@ test('validates, saves, and reloads the administration session timeout', async (
   await user.clear(timeout);
   await user.type(timeout, '2');
   expect(within(unit).getByRole('option', { name: 'Days' })).toBeInTheDocument();
-  await user.selectOptions(unit, 'hours');
+  await user.selectOptions(unit, 'minutes');
   await user.click(save);
   expect(await screen.findByText('Session timeout saved.')).toBeVisible();
   expect(fetch).toHaveBeenCalledWith(endpoint, expect.objectContaining({
-    method: 'PUT', body: JSON.stringify({ value: 2, unit: 'hours' }),
+    method: 'PUT', body: JSON.stringify({ value: 2, unit: 'minutes' }),
     headers: expect.objectContaining({ 'If-Match': '"1"', 'X-CSRF-Token': 'fixture' }),
   }));
   first.unmount();
   render(<Providers><AdministrationSettings /></Providers>);
   expect(await screen.findByRole('textbox', { name: 'Session timeout' })).toHaveValue('2');
-  expect(screen.getByRole('combobox', { name: 'Time unit' })).toHaveValue('hours');
+  expect(screen.getByRole('combobox', { name: 'Time unit' })).toHaveValue('minutes');
 });
 
 // Loading the settings URL directly as a member must never request admin data.

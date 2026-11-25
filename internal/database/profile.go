@@ -54,8 +54,8 @@ func OpenBootstrap(ctx context.Context, path string, seed BootstrapSeed) (*sql.D
 		stamp := seed.Now.UTC().Format(time.RFC3339Nano)
 		_, err = tx.ExecContext(ctx, `INSERT INTO installations
 			(id, state, organization_name, data_profile, management_origin, ide_host_pattern, preview_host_pattern,
-			 active_release, min_guest_release, created_at, updated_at, version)
-			VALUES ($1, 'bootstrap', $2, 'sqlite', $3, $4, $5, $6, $7, $8, $8, 1)`,
+			 active_release, min_guest_release, created_at, updated_at, version, session_timeout_value, session_timeout_unit)
+			VALUES ($1, 'bootstrap', $2, 'sqlite', $3, $4, $5, $6, $7, $8, $8, 1, 8, 'hours')`,
 			seed.ID, seed.Organization, seed.Origin, seed.IDEPattern, seed.PreviewPattern, seed.Release, seed.MinGuestRelease, stamp)
 		installationID = seed.ID
 		return err

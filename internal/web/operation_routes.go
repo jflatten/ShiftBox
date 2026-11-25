@@ -34,7 +34,7 @@ func OperationHandlers(db *sql.DB, origin string, now func() time.Time, journal 
 				operation.Operation
 				LaunchPerformance *launchlog.Performance `json:"launchPerformance,omitempty"`
 			}{Operation: op}
-			if op.Type == "provision" && op.OriginatingAction == "workspace.launch" {
+			if launchlog.TracksOperation(op.Type, op.OriginatingAction) {
 				performance, err := launchlog.Read(ctx, tx, op.ID, now())
 				if err != nil {
 					return nil, err

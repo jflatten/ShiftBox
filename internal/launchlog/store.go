@@ -1,4 +1,4 @@
-// Package launchlog records bounded diagnostics for admitted workspace launches.
+// Package launchlog records bounded diagnostics for admitted workspace launches and starts.
 package launchlog
 
 import (
@@ -12,10 +12,18 @@ import (
 )
 
 const (
-	action = "workspace.launch"
+	launchAction     = "workspace.launch"
+	startAction      = "workspace.start"
+	startupOperation = `((o.type='provision' AND o.originating_action='` + launchAction + `')
+		OR (o.type='start' AND o.originating_action='` + startAction + `'))`
 	// GuestPath is served on the authenticated guest HTTPS listener.
 	GuestPath = "/internal/v1/guest/launch-timing"
 )
+
+// TracksOperation reports whether the workflow records launch performance.
+func TracksOperation(kind, action string) bool {
+	return kind == "provision" && action == launchAction || kind == "start" && action == startAction
+}
 
 var (
 	// ErrGuestScope identifies a sample outside the guest's approved launch dispatch.
@@ -71,10 +79,10 @@ func RecordGuest(ctx context.Context, db writer, workspaceID string, generation 
 	if err := db.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM operations o JOIN guest_dispatches g ON g.operation_id=o.id
 		WHERE o.id=$1 AND o.workspace_id=$2 AND o.generation=$3 AND g.dispatch_version=$4
-		  AND o.originating_action=$5 AND o.type='provision'
+		  AND `+startupOperation+`
 		  AND o.status IN ('running','waiting','succeeded','failed')
-		  AND (o.finished_at IS NULL OR o.finished_at >= $6))`,
-		operationID, workspaceID, generation, dispatchVersion, action, stamp(now.Add(-10*time.Minute))).Scan(&eligible); err != nil {
+		  AND (o.finished_at IS NULL OR o.finished_at >= $5))`,
+		operationID, workspaceID, generation, dispatchVersion, stamp(now.Add(-10*time.Minute))).Scan(&eligible); err != nil {
 		return err
 	}
 	if !eligible {
@@ -137,35 +145,35 @@ func MarkConfigureReported(ctx context.Context, tx *sql.Tx, operationID string, 
 	return insertTiming(ctx, tx, operationID, "controller", "configure_reported", "configure_reported", "observed", now, 0, "")
 }
 
-// MarkGuestAuthenticated anchors the first accepted poll to the launch in controller time.
+// MarkGuestAuthenticated anchors the first accepted poll to the startup in controller time.
 func MarkGuestAuthenticated(ctx context.Context, tx *sql.Tx, workspaceID string, generation int64, now time.Time) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO launch_timing_events (operation_id,source,id,phase,outcome,occurred_at,duration_ms)
-		SELECT id,'controller','guest_authenticated','guest_authenticated','observed',$1,0 FROM operations
-		WHERE workspace_id=$2 AND generation=$3 AND originating_action=$4 AND type='provision'
+		SELECT o.id,'controller','guest_authenticated','guest_authenticated','observed',$1,0 FROM operations o
+		WHERE o.workspace_id=$2 AND o.generation=$3 AND `+startupOperation+`
 		  AND status IN ('running','waiting')
-		ON CONFLICT(operation_id,source,id) DO NOTHING`, stamp(now), workspaceID, generation, action)
+		ON CONFLICT(operation_id,source,id) DO NOTHING`, stamp(now), workspaceID, generation)
 	return err
 }
 
 func insertTiming(ctx context.Context, db writer, operationID, source, id, phase, outcome string, at time.Time, elapsedMS int64, reason string) error {
 	_, err := db.ExecContext(ctx, `INSERT INTO launch_timing_events
 		(operation_id,source,id,phase,outcome,occurred_at,duration_ms,reason_code)
-		SELECT id,$2,$3,$4,$5,$6,$7,$8 FROM operations
-		WHERE id=$1 AND originating_action=$9 AND type='provision' AND
+		SELECT o.id,$2,$3,$4,$5,$6,$7,$8 FROM operations o
+		WHERE o.id=$1 AND `+startupOperation+` AND
 		  (SELECT COUNT(*) FROM launch_timing_events WHERE operation_id=$1 AND source=$2)<128
 		ON CONFLICT(operation_id,source,id) DO NOTHING`,
-		operationID, source, id, phase, outcome, stamp(at), elapsedMS, reason, action)
+		operationID, source, id, phase, outcome, stamp(at), elapsedMS, reason)
 	return err
 }
 
-// ActiveCacheLaunch binds a registry request to the launch that dispatched
+// ActiveCacheLaunch binds a registry request to the launch or start that dispatched
 // setup. The request retains that association while its image layer streams.
 func ActiveCacheLaunch(ctx context.Context, db reader, workspaceID string, generation int64) (string, error) {
 	var id string
 	err := db.QueryRowContext(ctx, `SELECT o.id FROM operations o JOIN guest_dispatches g ON g.operation_id=o.id
-		WHERE o.workspace_id=$1 AND o.generation=$2 AND o.originating_action=$3 AND o.type='provision'
+		WHERE o.workspace_id=$1 AND o.generation=$2 AND `+startupOperation+`
 		  AND o.status IN ('running','waiting') AND o.current_step IN ('configure','verify_ide','finish_setup')
-		ORDER BY o.created_at DESC,o.id DESC LIMIT 1`, workspaceID, generation, action).Scan(&id)
+		ORDER BY o.created_at DESC,o.id DESC LIMIT 1`, workspaceID, generation).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -193,7 +201,7 @@ func RecordCache(ctx context.Context, db writer, operationID string, sample Cach
 	}
 	_, err := db.ExecContext(ctx, `INSERT INTO launch_cache_stats
 		(operation_id,requests,cached_requests,failed_requests,rate_limited_requests,cached_bytes,upstream_bytes,first_request_at,last_response_at)
-		SELECT id,1,$2,$3,$4,$5,$6,$7,$8 FROM operations WHERE id=$1 AND originating_action=$9 AND type='provision'
+		SELECT o.id,1,$2,$3,$4,$5,$6,$7,$8 FROM operations o WHERE o.id=$1 AND `+startupOperation+`
 		ON CONFLICT(operation_id) DO UPDATE SET requests=launch_cache_stats.requests+1,
 		  cached_requests=launch_cache_stats.cached_requests+excluded.cached_requests,
 		  failed_requests=launch_cache_stats.failed_requests+excluded.failed_requests,
@@ -205,15 +213,15 @@ func RecordCache(ctx context.Context, db writer, operationID string, sample Cach
 		  last_response_at=CASE WHEN excluded.last_response_at>launch_cache_stats.last_response_at
 		    THEN excluded.last_response_at ELSE launch_cache_stats.last_response_at END
 		WHERE launch_cache_stats.requests<4096`, operationID, cached, failed, rateLimited, sample.CachedBytes,
-		sample.UpstreamBytes, stamp(sample.StartedAt), stamp(sample.FinishedAt), action)
+		sample.UpstreamBytes, stamp(sample.StartedAt), stamp(sample.FinishedAt))
 	return err
 }
 
-// WorkspaceOperation identifies the initial launch even after a subsequent restart or rebuild.
+// WorkspaceOperation identifies the latest admitted launch or start for the workspace.
 func WorkspaceOperation(ctx context.Context, db reader, workspaceID string) (*string, error) {
 	var id string
-	err := db.QueryRowContext(ctx, `SELECT id FROM operations WHERE workspace_id=$1
-		AND originating_action=$2 AND type='provision' ORDER BY created_at DESC,id DESC LIMIT 1`, workspaceID, action).Scan(&id)
+	err := db.QueryRowContext(ctx, `SELECT o.id FROM operations o WHERE o.workspace_id=$1
+		AND `+startupOperation+` ORDER BY o.created_at DESC,o.id DESC LIMIT 1`, workspaceID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

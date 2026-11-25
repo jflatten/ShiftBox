@@ -17,7 +17,9 @@
         "LogicalResourceId/PostgresAdminSecret",
         "LogicalResourceId/PostgresAppSecret",
         "LogicalResourceId/PostgresDexSecret",
-        "LogicalResourceId/PostgresTlsSecret"
+        "LogicalResourceId/PostgresTlsSecret",
+        "LogicalResourceId/SetupClaim",
+        "LogicalResourceId/BrowserTrust"
       ]
     }
   ]

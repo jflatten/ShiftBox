@@ -116,6 +116,7 @@ export function LaunchPerformance({ performance }: { performance: Performance })
   for (const event of events) {
     let stepKey = phases[event.phase]?.[0];
     if (event.phase === 'vm_running' && bootsDuringEnrollment) stepKey = 'enroll';
+    if (eventsByStep.has('start') && (event.phase === 'vm_running' || stepKey === 'enroll')) stepKey = 'start';
     if (stepKey === 'finish_setup' && !eventsByStep.has('finish_setup')) stepKey = 'configure';
     const group = stepKey ? eventsByStep.get(stepKey) : undefined;
     (group ?? ungrouped).push(event);

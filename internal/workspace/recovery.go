@@ -30,12 +30,15 @@ func (e *PowerExecutor) start(ctx context.Context, op operation.Operation, step 
 		return got, err
 	}
 	start := provider.StartRequest{Ref: req.Ref, OperationID: op.ID, NetworkMode: req.NetworkMode, RequiresEnrollment: requiresRecovery}
+	timed := e.store.observeLaunchTiming(ctx, op.ID)
 	if requiresRecovery {
 		if e.recovery == nil || e.recovery.enrollment == nil {
 			return got, &operation.StepWaiting{Detail: "The stopped guest needs fresh enrollment media. Check the controller's recovery configuration."}
 		}
+		deliveryStarted := time.Now()
 		start.EnrollmentMedia, err = e.recovery.enrollment.Deliver(ctx, op.ID, got, now,
 			e.recovery.mediaRoot, e.recovery.endpoint, e.recovery.pollEndpoint, e.provider.DeliverEnrollment)
+		provider.ReportLaunchTiming(timed, "enrollment_delivery", deliveryStarted, err)
 		if err != nil {
 			return got, &operation.StepWaiting{Detail: "ShiftBox could not deliver fresh enrollment data to the stopped guest. Check the provider and controller enrollment service.", Cause: err}
 		}
@@ -56,7 +59,10 @@ func (e *PowerExecutor) start(ctx context.Context, op operation.Operation, step 
 	if stillRequires != start.RequiresEnrollment {
 		return got, provider.ErrOutcomeUnknown
 	}
-	return e.provider.Start(ctx, start)
+	bootStarted := time.Now()
+	got, err = e.provider.Start(timed, start)
+	provider.ReportLaunchTiming(timed, "vm_start", bootStarted, err)
+	return got, err
 }
 
 // needsEnrollment transitions only the current expired leaf on the verified

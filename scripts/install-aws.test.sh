@@ -37,6 +37,11 @@ reject() {
     fi
 }
 
+# The current release uses one stack create and hands setup to the browser.
+install_uses_first_login "$root/platform/cloudformation/aws/template.yaml"
+printf 'Parameters:\n  Phase:\n    Type: String\n    Default: foundation\n' > "$test_dir/staged.yaml"
+reject install_uses_first_login "$test_dir/staged.yaml"
+
 # Subnet selection derives the VPC and storage AZ, without a routing-mode prompt.
 (
     install_prompt() { IFS= read -r REPLY; }
@@ -66,6 +71,38 @@ reject() {
     DEFAULT_SUBNET=true install_prompt_parameters "$test_dir/subnet-state.json" us-east-2 one-pass <<<"$answers" >/dev/null
     jq -e '.parameters | .OperatorCidr == "172.31.0.1/32" and (has("RoleBoundaryMode") or has("GitHubAppSecretArn") | not)' \
       "$test_dir/subnet-state.json" >/dev/null
+)
+
+# Public discovery reuses the named zone and the only eligible subnet and
+# records the detected IPv4 only after confirmation and subscriber acceptance.
+(
+    exec 3</dev/null
+    install_prompt() { IFS= read -r REPLY; }
+    aws() {
+        case "$*" in
+            *'ec2 describe-route-tables'*)
+                printf '%s\n' '{"RouteTables":[{"Associations":[{"SubnetId":"subnet-00000000000000003"}],"Routes":[{"DestinationCidrBlock":"0.0.0.0/0","State":"active","GatewayId":"igw-example"}]}]}' ;;
+            *'route53 list-hosted-zones-by-vpc'*)
+                printf '%s\n' '{"HostedZoneSummaries":[{"HostedZoneId":"ZPRIVATE","Name":"shiftbox.dev.","Owner":{"OwningAccount":"111111111111"}}]}' ;;
+            *'route53 list-hosted-zones'*) printf '%s\n' '{"HostedZones":[{"Id":"/hostedzone/ZPUBLIC","Name":"shiftbox.dev.","Config":{"PrivateZone":false}}]}' ;;
+            *'route53 get-hosted-zone'*) printf '%s\n' '{"HostedZone":{"Name":"shiftbox.dev.","Config":{"PrivateZone":false}}}' ;;
+            *) return 97 ;;
+        esac
+    }
+    curl() { printf '192.0.2.56\n'; }
+    printf '%s\n' '{"account":"111111111111"}' > "$test_dir/public-state.json"
+    subnets='{"Subnets":[{"SubnetId":"subnet-00000000000000003","VpcId":"vpc-example","State":"available",
+      "AvailabilityZone":"us-east-2a","AvailableIpAddressCount":10,"CidrBlock":"10.0.0.0/24"}]}'
+    service=subnet-00000000000000001
+    workspace=subnet-00000000000000002
+    reject install_prompt_public "$test_dir/public-state.json" us-east-2 rc3 us-east-2a vpc-example \
+      "$service" "$workspace" "$subnets" <<<'y'
+    answers=$'y\ny\nadmin@example.com\nACCEPT\n'
+    install_prompt_public "$test_dir/public-state.json" us-east-2 rc3 us-east-2a vpc-example \
+      "$service" "$workspace" "$subnets" <<<"$answers" >/dev/null
+    jq -e '.parameters | .PublicIngressCidr == "192.0.2.56/32" and .PublicHostedZoneId == "ZPUBLIC" and
+      .PrivateBrowserZoneId == "ZPRIVATE" and .AcmeTermsAccepted == "true" and .DnsSuffix == "rc3.internal"' \
+      "$test_dir/public-state.json" >/dev/null
 )
 
 release_fixture() {
@@ -103,6 +140,17 @@ preview_fixture() {
 preview_fixture Modify False
 printf '{"OperationEvents":[]}\n' > "$test_dir/events.json"
 install_preview "$test_dir/change.json" "$test_dir/events.json" active > /dev/null
+
+# A public one-pass review admits only the expected Elastic IP and load balancer.
+jq -n '
+  {Status:"CREATE_COMPLETE",ExecutionStatus:"AVAILABLE",Capabilities:["CAPABILITY_NAMED_IAM"],
+   Changes:({ControllerService:"AWS::ECS::Service",PostgresService:"AWS::ECS::Service",
+             InstallationVolume:"AWS::EC2::Volume",SetupClaim:"AWS::SecretsManager::Secret",
+             PublicAddress:"AWS::EC2::EIP",PublicLoadBalancer:"AWS::ElasticLoadBalancingV2::LoadBalancer"} |
+     to_entries | map({Type:"Resource",ResourceChange:{Action:"Add",LogicalResourceId:.key,ResourceType:.value}}))}
+' > "$test_dir/public-change.json"
+install_preview "$test_dir/public-change.json" "$test_dir/events.json" one-pass true >/dev/null
+reject install_preview "$test_dir/public-change.json" "$test_dir/events.json" one-pass false
 
 # Deletion, replacement, and failed service-side validation block execution.
 preview_fixture Remove False

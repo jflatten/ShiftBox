@@ -68,6 +68,26 @@ function openInfrastructure(url = '/infrastructure/') {
   return render(<Providers><Infrastructure /></Providers>);
 }
 
+// A fresh installation shows both enabled policies without requiring a save.
+test('shows both image caches enabled on a fresh installation', async () => {
+  const defaults = { ...settings, enabled: true, maxBytes: '15032385536' };
+  const fetch = stubFetch(() => json({
+    ...initial,
+    desired: defaults,
+    effective: { ...defaults, version: 1 },
+    builtImages: { ...builtImages, version: 1 },
+    activation: { phase: 'ready', error: null },
+    health: { ...initial.health, state: 'ready' },
+  }));
+  openInfrastructure(cacheURL);
+  const panel = await screen.findByRole('tabpanel', { name: 'Cache' });
+  expect(await within(panel).findByRole('switch', { name: 'Retain cached image content' })).toBeChecked();
+  expect(within(panel).getByRole('switch', { name: 'Built devcontainer images' })).toBeChecked();
+  expect(within(panel).getByRole('button', { name: 'Save cache settings' })).toBeDisabled();
+  expect(within(panel).getByRole('button', { name: 'Save built image settings' })).toBeDisabled();
+  expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
+});
+
 // Only an explicit save stages changes. A failed activation remains visible after
 // reload while the prior storage path and generation remain effective.
 test('saves a keyboard-edited draft and restores the failed activation on reload', async () => {

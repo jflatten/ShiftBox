@@ -129,7 +129,7 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 	}
 	var cert tls.Certificate
 	if private {
-		cert, err = loadPrivateSetup(cloud, roots, claim)
+		cert, err = loadPrivateSetup(ctx, platform, roots, claim)
 	} else {
 		cert, err = app.EnsureBootstrapCertificate(filepath.Join(*dir, "bootstrap-tls.pem"), time.Now())
 	}
@@ -223,7 +223,11 @@ func runSetup(ctx context.Context, args []string, out, status io.Writer) error {
 		destination = "/setup/"
 	}
 	if private {
-		_, err = fmt.Fprintf(status, "Private setup ready at %s%s\n", server.Origin, destination)
+		label := "Private setup ready"
+		if platform.letsEncryptEmail != "" {
+			label = "Browser setup ready"
+		}
+		_, err = fmt.Fprintf(status, "%s at %s%s\n", label, server.Origin, destination)
 	} else {
 		_, err = fmt.Fprintf(status, "Local setup: %s\nVerify the setup certificate SHA-256 fingerprint: %x\nOpen: %s%s\n", server.Origin, sha256.Sum256(cert.Certificate[0]), server.Origin, destination)
 	}

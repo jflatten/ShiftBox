@@ -67,6 +67,7 @@ substitutions = {
     "MOUNT_DATA_SCRIPT": (cloudformation / "host/mount-data.sh").read_text(),
     "MOUNT_CACHE_SCRIPT": (cloudformation / "host/mount-registry-cache.sh").read_text(),
     "POSTGRES_START_SCRIPT": (cloudformation / "postgres/start.sh").read_text(),
+    "INSTALLATION_TLS_SCRIPT": (cloudformation / "host/installation-tls.sh").read_text(),
 }
 template_bytes = (cloudformation / "template.yaml").read_text()
 # Exercise the production renderer, then independently compare the parsed
@@ -106,15 +107,36 @@ controller_container = controller_task["ContainerDefinitions"][0]
 assert {"SourceVolume": "registry-cache", "ContainerPath": cache_path} in controller_container["MountPoints"]
 assert {"Name": "SHIFTBOX_IMAGE_CACHE_VOLUME_ID", "Value": {"Ref": "RegistryCacheVolume"}} in controller_container["Environment"]
 for name in ("PostgresTask", "SetupTask"):
-    assert all(volume["Name"] != "registry-cache" for volume in resources[name]["Properties"]["Volumes"])
+    assert all(volume.get("Name") != "registry-cache" for volume in resources[name]["Properties"]["Volumes"])
 
 # Existing subnet selection must not give the stack ownership of shared networking.
 forbidden_network_types = {
     "AWS::EC2::VPC", "AWS::EC2::Subnet", "AWS::EC2::RouteTable", "AWS::EC2::Route",
     "AWS::EC2::SubnetRouteTableAssociation", "AWS::EC2::InternetGateway",
-    "AWS::EC2::VPCGatewayAttachment", "AWS::EC2::NatGateway", "AWS::EC2::EIP",
+    "AWS::EC2::VPCGatewayAttachment", "AWS::EC2::NatGateway",
 }
 assert not (forbidden_network_types & {r["Type"] for r in resources.values()})
+# The Internet entry point must be opt-in and go only to the controller HTTPS port.
+assert template["Parameters"]["PublicAccess"]["Default"] == "false"
+assert template["Parameters"]["BrowserCertificateMode"]["Default"] == "OperatorManaged"
+assert resources["PublicAddress"]["Condition"] == "PublicEnabled"
+assert resources["PublicLoadBalancer"]["Properties"]["SubnetMappings"] == [
+    {"SubnetId": {"Ref": "PublicSubnet"}, "AllocationId": {"GetAtt": "PublicAddress.AllocationId"}}
+]
+assert resources["PublicListener"]["Properties"]["Protocol"] == "TCP"
+assert resources["PublicListener"]["Properties"]["Port"] == 443
+assert resources["PublicTargets"]["Properties"]["TargetType"] == "ip"
+# ECS needs an explicit empty list to detach the target group when public access is disabled.
+assert resources["ControllerService"]["Properties"]["LoadBalancers"] == {"If": [
+    "PublicEnabled",
+    [{"ContainerName": "controller", "ContainerPort": 443, "TargetGroupArn": {"Ref": "PublicTargets"}}],
+    [],
+]}
+assert resources["ManagedPublicZone"]["Condition"] == "CreateManagedPublicZone"
+assert resources["ManagedPrivateBrowserRecords"]["Condition"] == "ManagedBrowserTLS"
+assert resources["PublicBrowserRecords"]["Condition"] == "PublicEnabled"
+assert resources["SetupClaim"]["Condition"] == "OnePassInstall"
+assert template["Outputs"]["ManagementOrigin"]["Value"]["If"][1] == {"Sub": "https://${DeploymentName}.${BaseDomain}"}
 assert not ({"AccessMode", "VpcCidr", "CreateNatGateway"} & template["Parameters"].keys())
 # GitHub setup is separate from the stack and its runtime IAM permissions.
 assert all(field not in template_bytes for field in ("GitHubAppSecretArn", "HasGitHubApp", "SHIFTBOX_GITHUB_APP"))
@@ -122,6 +144,8 @@ assert all(field not in template_bytes for field in ("GitHubAppSecretArn", "HasG
 for resource in resources.values():
     properties = resource.get("Properties", {})
     for tag in properties.get("Tags", []) + properties.get("HostedZoneTags", []):
+        if "If" in tag:
+            tag = tag["If"][1]
         assert tag["Key"].startswith("shiftbox-"), tag["Key"]
 assert {name for name, r in resources.items() if r["Type"] == "AWS::EC2::Instance"} == {"EcsHost"}
 
@@ -131,34 +155,38 @@ def properties(name):
     return resources[name]["Properties"]
 
 
-# The console and CLI create only the foundation by default.
-assert template["Parameters"]["Phase"]["Default"] == "foundation"
+# A fresh install provisions DNS, database TLS, and the browser setup service in one create.
+assert template["Parameters"]["Phase"]["Default"] == "one-pass"
+legacy_rule = template["Rules"]["QualificationPhasesOnly"]
+assert legacy_rule["RuleCondition"] == {"Not": [{"Equals": [{"Ref": "Phase"}, "one-pass"]}]}
+assert legacy_rule["Assertions"][0]["Assert"] == {"Equals": [{"Ref": "RoleBoundaryMode"}, "external"]}
 phases = ("foundation", "dns-zones", "dns-services", "database", "active")
-assert tuple(template["Parameters"]["Phase"]["AllowedValues"]) == phases
+assert tuple(template["Parameters"]["Phase"]["AllowedValues"]) == ("one-pass", *phases)
 assert resources["PostgresService"]["Condition"] == "DatabaseEnabled"
 assert resources["ControllerService"]["Condition"] == "DatabaseEnabled"
-assert properties("ControllerService")["DesiredCount"] == {"If": ["ControllerEnabled", 1, 0]}
-assert resources["SetupTask"]["Condition"] == "DatabaseEnabled"
+assert properties("ControllerService")["DesiredCount"] == {"If": ["ControllerRunning", 1, 0]}
+assert resources["SetupTask"]["Condition"] == "ManualSetupReady"
 assert template["Conditions"]["ControllerEnabled"] == {"Equals": [{"Ref": "Phase"}, "active"]}
 
 
-def phase_condition(expression, phase):
+def phase_condition(expression, phase, **overrides):
     """Evaluate only the intrinsics that control DNS and database staging."""
     if not isinstance(expression, dict):
         return expression
     (function, args), = expression.items()
     if function == "Condition":
-        return phase_condition(template["Conditions"][args], phase)
+        return phase_condition(template["Conditions"][args], phase, **overrides)
     if function == "Ref":
-        assert args == "Phase"
-        return phase
-    values = [phase_condition(arg, phase) for arg in args]
+        return phase if args == "Phase" else overrides.get(args, template["Parameters"][args]["Default"])
+    values = [phase_condition(arg, phase, **overrides) for arg in args]
     if function == "Equals":
         return values[0] == values[1]
     if function == "Not":
         return not values[0]
     if function == "Or":
         return any(values)
+    if function == "And":
+        return all(values)
     raise AssertionError(f"Unexpected phase condition: {function}")
 
 
@@ -185,6 +213,32 @@ for index, phase in enumerate(phases):
     assert phase_condition(trust_rule["RuleCondition"], phase) == (index >= 3)
 assert "PrivateRecords" in resources["PostgresService"]["DependsOn"]
 assert template["Outputs"]["WorkspaceSecurityGroupId"]["Value"] == {"Ref": "WorkspaceGroup"}
+
+# First login and activation are part of the running controller for either certificate mode.
+for certificate in ("OperatorManaged", "LetsEncrypt"):
+    inputs = {"BrowserCertificateMode": certificate, "PublicAccess": str(certificate == "LetsEncrypt").lower()}
+    for name in ("DiscoveryNamespace", "PostgresDiscovery", "PrivateRecords", "PostgresService",
+                 "ControllerService", "SetupClaim"):
+        assert phase_condition({"Condition": resources[name]["Condition"]}, "one-pass", **inputs), name
+    for name in ("PostgresTlsSecret", "SetupTask", "SetupSession"):
+        assert not phase_condition({"Condition": resources[name]["Condition"]}, "one-pass", **inputs), name
+    assert not phase_condition(trust_rule["RuleCondition"], "one-pass", **inputs)
+    assert phase_condition({"Condition": "PrivateBootstrap"}, "one-pass", **inputs) == (certificate == "OperatorManaged")
+assert properties("ControllerTask")["ContainerDefinitions"][0]["Command"] == {"If": ["OnePassInstall", ["one-pass"], ["serve"]]}
+assert "database-trust" in str(properties("ControllerTask")["Volumes"])
+assert "pg-identity" in str(properties("PostgresTask")["Volumes"])
+assert "ManagedPublicDelegation" in str(properties("ControllerService")["Tags"])
+
+# Toggling public access leaves the managed certificate, claim and private DNS available.
+for public in ("true", "false"):
+    managed = {"BrowserCertificateMode": "LetsEncrypt", "PublicAccess": public}
+    for name in ("ManagedPublicZone", "ManagedPrivateBrowserRecords", "SetupClaim", "ControllerService"):
+        assert phase_condition({"Condition": resources[name]["Condition"]}, "one-pass", **managed), name
+    for name in ("PublicAddress", "PublicBrowserRecords", "PublicListener", "ControllerPublicIngress"):
+        assert phase_condition({"Condition": resources[name]["Condition"]}, "one-pass", **managed) == (public == "true"), name
+    assert not phase_condition({"Condition": resources["SetupTask"]["Condition"]}, "one-pass", **managed)
+assert not phase_condition({"Condition": "CreateManagedPublicZone"}, "foundation", BrowserCertificateMode="LetsEncrypt", PublicHostedZoneId="Z12345")
+assert not phase_condition({"Condition": "CreateManagedPrivateZone"}, "database", BrowserCertificateMode="LetsEncrypt", PrivateBrowserZoneId="Z12345")
 
 # The qualification role can only administer its exact named resources and
 # boundary ARNs. Public installs need distinct names across AWS regions.
@@ -219,14 +273,20 @@ for name in roles | {"HostProfile"}:
         assert resources[name + "Boundary"]["Condition"] == (
             {
                 "HostRole": "UseManagedBoundaries",
+                "SetupExecutionRole": "UseManagedSetupBoundaries",
+                "SetupTaskRole": "UseManagedSetupBoundaries",
             }.get(name, "UseManagedTaskBoundaries")
         )
-        if "Policies" in identity:
+        if name != "HostRole":
             assert properties(name + "Boundary")["PolicyDocument"] == identity["Policies"][0]["PolicyDocument"], name
+        else:
+            assert properties(name + "Boundary")["PolicyDocument"]["Statement"][-1]["If"][1] == (
+                identity["Policies"]["If"][1][0]["PolicyDocument"]["Statement"][0]
+            )
 assert resources["SetupOperatorPolicy"]["Condition"] == "ManageSetupOperatorPolicy"
 assert template["Outputs"]["SetupOperatorPolicyArn"]["Condition"] == "ManageSetupOperatorPolicy"
 assert template["Conditions"]["ManageSetupOperatorPolicy"] == {
-    "And": [{"Condition": "UseManagedBoundaries"}, {"Condition": "DatabaseEnabled"}]
+    "And": [{"Condition": "UseManagedBoundaries"}, {"Condition": "ManualSetupReady"}]
 }
 assert template["Conditions"]["UseManagedTaskBoundaries"] == {
     "And": [{"Condition": "UseManagedBoundaries"}, {"Condition": "DatabaseEnabled"}]
@@ -238,7 +298,7 @@ for name, allowed_prefixes in (
 ):
     actions = {
         action
-        for statement in properties(name)["PolicyDocument"]["Statement"]
+        for statement in properties(name)["PolicyDocument"]["Statement"] if "Action" in statement
         for action in (
             [statement["Action"]] if isinstance(statement["Action"], str) else statement["Action"]
         )
@@ -253,17 +313,20 @@ assert properties("PostgresTask")["ContainerDefinitions"][0]["Image"] == postgre
 assert template["Mappings"]["ReleaseRegions"] == pins
 cloud_environments = [
     next(item["Value"] for item in properties(name)["ContainerDefinitions"][0]["Environment"]
-         if item["Name"] == "SHIFTBOX_CLOUD_CONFIG")
+         if item.get("Name") == "SHIFTBOX_CLOUD_CONFIG")
     for name in ("SetupTask", "ControllerTask")
 ]
-assert cloud_environments[0] == cloud_environments[1], "Setup and controller provenance drifted"
+setup_config, setup_names = cloud_environments[0]["Sub"]
+active_config, active_names = cloud_environments[1]["Sub"]
+assert setup_config == active_config.replace("${BrowserOrigin}", "https://shiftbox.${DnsSuffix}:8443").replace("${BrowserPort}", "8443")
+assert setup_names == {key: value for key, value in active_names.items() if key not in {"BrowserOrigin", "BrowserPort"}}
 
 # Existing PostgreSQL data, installation state and pinned secret resources survive stack changes.
 protected = {"InstallationVolume", "PostgresAdminSecret", "PostgresAppSecret", "PostgresDexSecret", "PostgresTlsSecret"}
 assert properties("InstallationVolume")["Encrypted"] is True
 assert properties("InstallationVolume")["AvailabilityZone"] == {"Ref": "AvailabilityZone"}
 for name in protected:
-    assert "Condition" not in resources[name], name
+    assert resources[name].get("Condition") == ("StagedInstall" if name == "PostgresTlsSecret" else None), name
     assert resources[name]["DeletionPolicy"] == resources[name]["UpdateReplacePolicy"] == "Retain", name
 for name in protected - {"InstallationVolume"}:
     assert properties(name)["Name"]["If"] == [
@@ -300,12 +363,12 @@ for task, stream in (("Postgres", "postgres"), ("Setup", "setup"), ("Controller"
 # A one-line CA works in the console and is restored to PEM for both tasks.
 expected_pem_input = "-----BEGIN CERTIFICATE-----|AAAA|-----END CERTIFICATE-----|"
 assert re.fullmatch(template["Parameters"]["PostgresCaPem"]["AllowedPattern"], expected_pem_input)
-for name in ("SetupTask", "ControllerTask"):
-    ca_value = next(
-        item["Value"] for item in properties(name)["ContainerDefinitions"][0]["Environment"]
-        if item["Name"] == "SHIFTBOX_DB_CA"
-    )
-    assert ca_value == {"Join": ["\n", {"Split": ["|", {"Ref": "PostgresCaPem"}]}]}
+ca_value = {"Join": ["\n", {"Split": ["|", {"Ref": "PostgresCaPem"}]}]}
+ca_env = {"Name": "SHIFTBOX_DB_CA", "Value": ca_value}
+assert ca_env in properties("SetupTask")["ContainerDefinitions"][0]["Environment"]
+assert {"If": ["StagedInstall", ca_env, {"Ref": "AWS::NoValue"}]} in (
+    properties("ControllerTask")["ContainerDefinitions"][0]["Environment"]
+)
 
 # Native AWS selectors reference existing inputs and reject a mismatched VPC or host AZ.
 parameters = template["Parameters"]
@@ -329,15 +392,20 @@ assert not ({"PrivateRouteTableId", "TailscaleRouterInstanceId", "TailscaleAdver
 for name in ("ControllerService", "PostgresService"):
     assert properties(name)["NetworkConfiguration"]["AwsvpcConfiguration"]["AssignPublicIp"] == "DISABLED"
 for name, resource in resources.items():
-    if resource["Type"] == "AWS::EC2::SecurityGroup":
+    if resource["Type"] == "AWS::EC2::SecurityGroup" and name != "PublicIngressGroup":
         assert "SecurityGroupIngress" not in resource["Properties"], name
+assert properties("PublicIngressGroup")["SecurityGroupIngress"] == [
+    {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": {"Ref": "PublicIngressCidr"}}
+]
+assert properties("ControllerPublicIngress")["SourceSecurityGroupId"] == {"Ref": "PublicIngressGroup"}
 ingress = {
     name: (resource["Properties"]["FromPort"], resource["Properties"]["ToPort"])
     for name, resource in resources.items()
     if resource["Type"] == "AWS::EC2::SecurityGroupIngress"
 }
 assert ingress == {
-    "OperatorIngress": (8443, 8443),
+    "OperatorIngress": ({"If": ["ManagedBrowserTLS", 443, 8443]},) * 2,
+    "ControllerPublicIngress": (443, 443),
     "GuestIngress": (19443, 19447),
     "PostgresControllerIngress": (5432, 5432),
     "PostgresSetupIngress": (5432, 5432),
@@ -353,7 +421,17 @@ assert properties("GuestIngress")["SourceSecurityGroupId"] == {"Ref": "Workspace
 
 # Workspace IAM requires the exact official image and publisher, workspace scopes and encrypted EBS.
 statements = properties("ControllerTaskRole")["Policies"][0]["PolicyDocument"]["Statement"]
-by_sid = {statement["Sid"]: statement for statement in statements}
+by_sid = {statement["Sid"]: statement for statement in statements if "Sid" in statement}
+challenge = next(statement["If"][1] for statement in statements
+                 if "If" in statement and statement["If"][1]["Action"] == "route53:ChangeResourceRecordSets")
+assert challenge["Condition"]["ForAllValues:StringEquals"] == {
+    "route53:ChangeResourceRecordSetsRecordTypes": ["TXT"],
+    "route53:ChangeResourceRecordSetsActions": ["UPSERT", "DELETE"],
+    "route53:ChangeResourceRecordSetsNormalizedRecordNames": [
+        {"Sub": f"_acme-challenge.{prefix}${{DeploymentName}}.${{BaseDomain}}"}
+        for prefix in ("", "ide.", "preview.", "repair.")
+    ],
+}
 image = by_sid["LaunchOfficialImage"]
 assert image["Action"] == "ec2:RunInstances"
 assert image["Resource"]["Sub"][0].endswith("::image/${ImageId}")
@@ -363,7 +441,7 @@ assert by_sid["LaunchOwnedEncryptedVolumes"]["Condition"]["Bool"]["ec2:Encrypted
 assert by_sid["LaunchOwnedPrivateInterfaces"]["Condition"]["BoolIfExists"]["ec2:AssociatePublicIpAddress"] == "false"
 
 # The setup outputs and SSM document identify a local, scoped and authenticated handoff.
-assert template["Outputs"]["SetupConfig"]["Condition"] == "DatabaseEnabled"
+assert template["Outputs"]["SetupConfig"]["Condition"] == "ManualSetupReady"
 setup_output = template["Outputs"]["SetupConfig"]["Value"]["Sub"]
 assert set(json.loads(setup_output[0])) == {
     "account", "stack_id", "region", "cluster", "task_definition", "subnet",
@@ -377,7 +455,7 @@ assert properties("SetupSession")["Content"]["properties"] == {
 # Rendered user data and template must fit AWS limits before being hosted on S3.
 assert len(template_bytes.encode()) <= 1_048_576
 script, substitutions = properties("EcsHost")["UserData"]["Fn::Base64"]["Sub"]
-assert len(script.encode()) + sum(len(value.encode()) for value in substitutions.values()) <= 16_384
+assert len(script.encode()) + sum(len(value.encode()) for value in substitutions.values() if isinstance(value, str)) + 1024 <= 16_384
 # Hosted bootstrap runs from the rendered bytes. Detect broken shell quoting and heredocs.
 user_data_values = {
     "Cluster": "test-cluster",
@@ -387,6 +465,8 @@ user_data_values = {
     "RegistryCacheVolume": "vol-1234567890abcdef0",
     "MountScript": substitutions["MountScript"],
     "MountCacheScript": substitutions["MountCacheScript"],
+    "InstallationTlsScript": substitutions["InstallationTlsScript"],
+    "InstallationTlsUnit": "ExecStartPost=/usr/local/libexec/shiftbox-installation-tls /var/lib/shiftbox-data test.internal us-east-2 -",
 }
 rendered = re.sub(r"\$\{([A-Za-z0-9_]+)\}", lambda match: user_data_values[match[1]], script)
 subprocess.run(["bash", "-n"], input=rendered, text=True, check=True)
@@ -398,6 +478,23 @@ subprocess.run(["sh", "-n"], input=postgres_start, text=True, check=True)
 (fixture_dir / "rendered.yaml").write_text(template_bytes)
 print("CloudFormation structure tests passed.")
 PY
+
+# The host bootstrap issues a verified database identity in managed HTTPS
+# mode and reuses it after a restart without publishing a browser CA.
+mkdir "$fixture_dir/host-bin" "$fixture_dir/installation"
+printf '#!/bin/sh\nexit 0\n' > "$fixture_dir/host-bin/chown"
+printf '#!/bin/sh\nexit 99\n' > "$fixture_dir/host-bin/aws"
+chmod +x "$fixture_dir/host-bin/chown" "$fixture_dir/host-bin/aws"
+tls_bootstrap="$root/platform/cloudformation/aws/host/installation-tls.sh"
+installation="$fixture_dir/installation"
+PATH="$fixture_dir/host-bin:$PATH" sh "$tls_bootstrap" "$installation" test.internal us-east-2 - 2>"$fixture_dir/openssl.log"
+openssl verify -CAfile "$installation/database-trust/ca.crt" -purpose sslserver \
+  -verify_hostname postgres.test.internal "$installation/pg-identity/server.crt" >/dev/null
+test ! -e "$installation/browser-identity"
+test ! -e "$installation/database-trust/server.key"
+cp "$installation/pg-identity/server.crt" "$fixture_dir/first-server.crt"
+PATH="$fixture_dir/host-bin:$PATH" sh "$tls_bootstrap" "$installation" test.internal us-east-2 - 2>>"$fixture_dir/openssl.log"
+cmp "$fixture_dir/first-server.crt" "$installation/pg-identity/server.crt"
 
 # The independent execution-policy fixture can validate the same rendered
 # template without exposing or depending on the test's temporary directory.

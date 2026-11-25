@@ -123,6 +123,79 @@ func TestGuestSamplesAreScopedAndIdempotent(t *testing.T) {
 	}
 }
 
+// TestStartDiagnosticsAreIndependent verifies that starting a retained VM
+// begins with an empty summary and captures its own scoped guest and cache data.
+func TestStartDiagnosticsAreIndependent(t *testing.T) {
+	db, journal, launch, now := launchFixture(t)
+	ctx := t.Context()
+	if err := launchlog.RecordCache(ctx, db, launch.ID, launchlog.CacheSample{
+		StartedAt: *now, FinishedAt: *now, CachedBytes: 100, Status: 200,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(time.Minute)
+	start, err := journal.Create(ctx, operation.Request{
+		OriginatingAction: "workspace.start", Actor: "owner", Key: "start-performance-fixture", Type: "start",
+		WorkspaceID: launch.WorkspaceID, Generation: launch.Generation, Steps: launch.Steps,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := launchlog.Read(ctx, db, start.ID, *now)
+	if err != nil || len(initial.Steps) != len(start.Steps) || len(initial.Events) != 0 || initial.Cache != nil {
+		t.Errorf("Read(pending start) = %+v, %v, want fresh workflow steps and no samples", initial, err)
+	}
+	claim, err := journal.Claim(ctx, start.ID, "controller", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.StartStep(ctx, claim, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Transaction(ctx, db, func(tx *sql.Tx) error {
+		return launchlog.MarkGuestAuthenticated(ctx, tx, *start.WorkspaceID, start.Generation, *now)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO guest_dispatches(operation_id,dispatch_version,status) VALUES($1,1,'running')", start.ID); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := launchlog.ActiveCacheLaunch(ctx, db, *start.WorkspaceID, start.Generation); err != nil || id != start.ID {
+		t.Errorf("ActiveCacheLaunch(running start) = %q, %v, want %q", id, err, start.ID)
+	}
+	sample := launchlog.GuestSample{ID: testsupport.ID(177), Phase: "ide_start", Outcome: "succeeded", DurationMS: 300}
+	if err := launchlog.RecordGuest(ctx, db, *start.WorkspaceID, start.Generation, start.ID, 2, sample, *now); !errors.Is(err, launchlog.ErrGuestScope) {
+		t.Errorf("RecordGuest(start with wrong dispatch version) = %v, want ErrGuestScope", err)
+	}
+	if err := launchlog.RecordGuest(ctx, db, *start.WorkspaceID, start.Generation, start.ID, 1, sample, *now); err != nil {
+		t.Errorf("RecordGuest(start with current dispatch version) = %v, want success", err)
+	}
+	if err := launchlog.RecordCache(ctx, db, start.ID, launchlog.CacheSample{
+		StartedAt: *now, FinishedAt: now.Add(time.Second), UpstreamBytes: 25, Status: 200,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := launchlog.Read(ctx, db, start.ID, *now)
+	if err != nil || len(latest.Events) != 2 || latest.Events[0].Phase != "guest_authenticated" || latest.Events[1].ID != sample.ID ||
+		latest.Cache == nil || latest.Cache.CachedBytes != 0 || latest.Cache.UpstreamBytes != 25 {
+		t.Errorf("Read(start with samples) = %+v, %v, want only samples from the start", latest, err)
+	}
+	*now = now.Add(time.Minute)
+	if _, err := journal.Create(ctx, operation.Request{
+		OriginatingAction: "workspace.rebuild", Actor: "owner", Key: "rebuild-performance-fixture", Type: "rebuild",
+		WorkspaceID: launch.WorkspaceID, Generation: launch.Generation, Steps: launch.Steps,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := launchlog.WorkspaceOperation(ctx, db, *launch.WorkspaceID)
+	if err != nil || id == nil {
+		t.Fatalf("WorkspaceOperation(after rebuild) returned no operation, error = %v, want %q", err, start.ID)
+	}
+	if *id != start.ID {
+		t.Errorf("WorkspaceOperation(after rebuild) = %q, want %q", *id, start.ID)
+	}
+}
+
 // TestCacheSummaryOverlappingTransfers keeps the wall-clock window distinct from cumulative request time.
 func TestCacheSummaryOverlappingTransfers(t *testing.T) {
 	db, _, op, now := launchFixture(t)

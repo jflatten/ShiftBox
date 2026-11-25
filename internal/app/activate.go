@@ -18,6 +18,7 @@ type setupSnapshot struct {
 	id, state, profile, organization, origin, ide, preview             string
 	release, minGuest, created, updated                                string
 	interval, generation, version                                      int64
+	sessionTimeout                                                     auth.SessionTimeout
 	owner                                                              auth.User
 	ownerCreator, ownerCreated, ownerUpdated                           string
 	settings, activatedBy, activatedAt                                 string
@@ -107,9 +108,11 @@ func StagePostgresSetup(ctx context.Context, source, target *sql.DB, installatio
 func readSetupSnapshot(ctx context.Context, tx *sql.Tx, id, ownerID string) (setupSnapshot, error) {
 	var s setupSnapshot
 	err := tx.QueryRowContext(ctx, `SELECT id,state,data_profile,organization_name,management_origin,ide_host_pattern,
-		preview_host_pattern,external_auth_interval_seconds,active_release,min_guest_release,config_generation,created_at,updated_at,version
+		preview_host_pattern,external_auth_interval_seconds,active_release,min_guest_release,config_generation,created_at,updated_at,version,
+		session_timeout_value,session_timeout_unit,session_timeout_version
 		FROM installations WHERE id=$1`, id).Scan(&s.id, &s.state, &s.profile, &s.organization, &s.origin, &s.ide, &s.preview,
-		&s.interval, &s.release, &s.minGuest, &s.generation, &s.created, &s.updated, &s.version)
+		&s.interval, &s.release, &s.minGuest, &s.generation, &s.created, &s.updated, &s.version,
+		&s.sessionTimeout.Value, &s.sessionTimeout.Unit, &s.sessionTimeout.Version)
 	if err != nil {
 		return s, err
 	}
@@ -166,9 +169,11 @@ func (s setupSnapshot) stageCapacity(ctx context.Context, tx *sql.Tx) error {
 
 func (s setupSnapshot) insert(ctx context.Context, tx *sql.Tx, settings string, now time.Time) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO installations(id,state,data_profile,organization_name,management_origin,ide_host_pattern,
-		preview_host_pattern,external_auth_interval_seconds,active_release,min_guest_release,config_generation,created_at,updated_at,version)
-		VALUES($1,'configuring','postgres',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-		s.id, s.organization, s.origin, s.ide, s.preview, s.interval, s.release, s.minGuest, s.generation, s.created, now.UTC().Format(time.RFC3339Nano), s.version+1); err != nil {
+		preview_host_pattern,external_auth_interval_seconds,active_release,min_guest_release,config_generation,created_at,updated_at,version,
+		session_timeout_value,session_timeout_unit,session_timeout_version)
+		VALUES($1,'configuring','postgres',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		s.id, s.organization, s.origin, s.ide, s.preview, s.interval, s.release, s.minGuest, s.generation, s.created,
+		now.UTC().Format(time.RFC3339Nano), s.version+1, s.sessionTimeout.Value, s.sessionTimeout.Unit, s.sessionTimeout.Version); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO users(id,primary_email,display_name,role,membership_state,credential_mode,created_by,created_at,updated_at,version)

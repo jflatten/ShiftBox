@@ -177,11 +177,11 @@ func DefaultPath(installationDir, volumeID string) string {
 func DecodeConfiguration(raw string, version int64, defaultPath string) (Configuration, error) {
 	if raw == "" {
 		settings := Settings{
-			StoragePath: defaultPath, MaxBytes: Bytes(defaultSharedBudget),
+			Enabled: true, StoragePath: defaultPath, MaxBytes: Bytes(defaultSharedBudget),
 			VolumeHighPercent: 80, VolumeLowPercent: 70,
 		}
 		return Configuration{Version: version, Desired: settings, Effective: EffectiveSettings{Version: version, Settings: settings},
-			Activation: Activation{Phase: "disabled"}, RetiredLocations: []RetiredLocation{}}, nil
+			Activation: Activation{Phase: "ready"}, RetiredLocations: []RetiredLocation{}}, nil
 	}
 	var config Configuration
 	if err := json.Unmarshal([]byte(raw), &config); err != nil {

@@ -99,16 +99,17 @@ manifest_validate_support() (
     {
       path = paths[FNR]
       type = substr($0, 1, 1)
-      if ((path == "catalog/" || path == "docs/") && type == "d") {
+      if ((path == "catalog/" || path == "docs/" || path == "launch/") && type == "d") {
         sub(/\/$/, "", path)
-      } else if (!(type == "-" && path ~ /^(catalog\/(us-east-1|us-east-2|us-west-1|us-west-2)\.json|docs\/[a-z0-9][a-z0-9-]*\.md|stack-policy\.json|setup\.sh)$/)) {
+      } else if (!(type == "-" && path ~ /^(catalog\/(us-east-1|us-east-2|us-west-1|us-west-2)\.json|docs\/[a-z0-9][a-z0-9-]*\.md|launch\/shiftbox-aws-(private|public|public-placement)\.json|stack-policy\.json|setup\.sh)$/)) {
         bad = 1
       }
       if (seen[path]++) bad = 1
       if (path ~ /^docs\/.+\.md$/) docs++
+      if (path ~ /^launch\/.+\.json$/) forms++
     }
     END {
-      if (NR != 2 * FNR || bad || !docs || !seen["setup.sh"] || !seen["stack-policy.json"] ||
+      if (NR != 2 * FNR || bad || !docs || (forms && forms != 3) || !seen["setup.sh"] || !seen["stack-policy.json"] ||
           !seen["catalog/us-east-1.json"] || !seen["catalog/us-east-2.json"] ||
           !seen["catalog/us-west-1.json"] || !seen["catalog/us-west-2.json"]) exit 1
     }

@@ -47,8 +47,8 @@ func TestControllerDexRequiresRetainedSQLite(t *testing.T) {
 }
 
 // TestActiveLoginUsesCurrentMembership drives native Dex and shows that a
-// verified password opens Projects for an active local member and that a
-// temporary password from a reset forces a password change.
+// verified password opens Projects for an active local member, a fresh
+// installation issues eight-hour sessions, and a reset forces a password change.
 func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 	binary := os.Getenv("SHIFTBOX_TEST_DEX_BINARY")
 	if binary == "" {
@@ -60,15 +60,16 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := database.Open(ctx, database.Config{Profile: "sqlite", SQLitePath: filepath.Join(dir, "active.db")})
+	const installation = "719b54c3-6e15-499c-a0ed-407e1b316a90"
+	db, _, err := database.OpenBootstrap(ctx, filepath.Join(dir, "active.db"), database.BootstrapSeed{
+		ID: installation, Organization: "ShiftBox", Origin: "https://management.test",
+		IDEPattern: "{workspace}.ide.test", PreviewPattern: "{service}--{workspace}.preview.test",
+		Release: "release", MinGuestRelease: "release", Now: time.Now(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := database.Migrate(ctx, db, "sqlite"); err != nil {
-		t.Fatal(err)
-	}
-	const installation = "719b54c3-6e15-499c-a0ed-407e1b316a90"
 	const uuidOwner = "bf505ecf-2954-4504-8c88-581a09b37c05"
 	const email = "operator@example.test"
 	const password = "disposable-fixture-password"
@@ -94,10 +95,7 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	exec(`INSERT INTO installations(id,state,organization_name,data_profile,management_origin,ide_host_pattern,
-		preview_host_pattern,active_release,min_guest_release,created_at,updated_at,version)
-		VALUES($1,'active','ShiftBox','sqlite','https://management.test','{workspace}.ide.test',
-			'{service}--{workspace}.preview.test','release','release','now','now',1)`, installation)
+	exec("UPDATE installations SET state='active' WHERE id=$1", installation)
 	exec(`INSERT INTO users(id,primary_email,role,membership_state,credential_mode,must_change_password,created_by,created_at,updated_at,version)
 		VALUES($1,$2,'administrator','active','local',0,'setup','now','now',1)`, uuidOwner, email)
 	exec(`INSERT INTO users(id,primary_email,role,membership_state,credential_mode,must_change_password,created_by,created_at,updated_at,version)
@@ -300,6 +298,9 @@ func TestActiveLoginUsesCurrentMembership(t *testing.T) {
 	response.Body.Close()
 	if err != nil || originalSession.CSRFToken == "" {
 		t.Fatalf("reading original session failed: %v", err)
+	}
+	if remaining := time.Until(originalSession.ExpiresAt); remaining < 8*time.Hour-time.Minute || remaining > 8*time.Hour {
+		t.Errorf("fresh regular session has %v remaining, want approximately 8 hours", remaining)
 	}
 	const timeoutPath = "/api/v1/admin/settings/session"
 	update, err := http.NewRequestWithContext(ctx, http.MethodPut, server.Origin+timeoutPath, strings.NewReader(`{"value":2,"unit":"hours"}`))

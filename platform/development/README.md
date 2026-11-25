@@ -5,15 +5,15 @@ against known public pins, then replace either artifact independently with an
 exact private build. The public release workflow and qualification flags are
 outside this development path.
 
-## Install once and finish in the private UI
+## Install once and finish in the browser
 
 1. Choose the existing service and workspace subnets in Ohio testing account
    `888293065132`. Default VPC subnets are supported. ShiftBox disables
    public IPv4 assignment for its host, ECS tasks and workspaces. Provide
    outbound access to AWS and the image registries, plus private browser routing
    and DNS forwarding to the VPC. The stack creates workload security groups
-   and installation DNS records. It creates no VPC, subnet, route table,
-   NAT gateway, internet gateway or Elastic IP.
+   and installation DNS records. Use an existing VPC, subnets and routes.
+   Public browser access adds an internet-facing load balancer and an Elastic IP.
 
    Check reachability for the configured ECS, EC2, STS, Secrets Manager and
    CloudWatch Logs endpoints, the private ECR image and the pinned PostgreSQL
@@ -45,8 +45,15 @@ outside this development path.
    For guided CLI review, run
    `platform/development/install-aws.sh dist/aws-one-pass .shiftbox/dev-one-pass`.
    Resume with the same arguments and `--resume`.
+   For a public test, render with `--launch-form public`. Choose the public
+   hosted zone and complete the HTTPS options in the initial create. Use
+   `--launch-form public-placement` to add a subnet picker when several public
+   subnets are eligible. Render with `--launch-form private` for a private
+   console form. When building for a public test, pass the public management
+   origin to `build-controller.sh` to configure the local helper.
+   [Public access settings](https://jflatten.github.io/ShiftBox/install/#public-browser-access-with-lets-encrypt)
 4. Open **Outputs** after the stack completes. Retrieve the public PEM from
-   `BrowserCaSecretArn` in the AWS Secrets Manager console and trust it
+   `BrowserCaSecretArn`, if present, in the AWS Secrets Manager console and trust it
    once in your browser or OS. Retrieve the separate claim from
    `SetupClaimSecretArn` with your authorized AWS identity. Keep the claim
    out of URLs, terminal history and shared evidence.
@@ -68,9 +75,10 @@ outside this development path.
    fallback if the preferred type is unavailable in the selected workspace
    Availability Zone. [EC2 general purpose instance specifications](https://docs.aws.amazon.com/ec2/latest/instancetypes/gp.html)
 
-Browser TLS and PostgreSQL TLS use separate installation issuers. The host
-generates and retains the leaf identities on encrypted storage. The database
-private key is mounted only into PostgreSQL. An interrupted owner claim can
+The host generates and retains the PostgreSQL identity on encrypted storage.
+The database private key is mounted only into PostgreSQL. The host generates
+the private browser identity or the controller obtains a Let’s Encrypt certificate,
+depending on the certificate mode. An interrupted owner claim can
 resume with the same email and password. After successful
 creation the claim is spent, and activation retires the setup API.
 

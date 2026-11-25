@@ -541,6 +541,54 @@ test('keeps following the launch when switching from Overview to Performance', a
   expect(subscribe).toHaveBeenCalledTimes(1);
 });
 
+// An accepted start clears the old timings before the workspace refresh
+// completes. Reopening the page shows the finished timings for that start.
+test('replaces previous performance as soon as the workspace starts', async () => {
+  class OperationStream extends EventTarget { close() {} }
+  Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: OperationStream });
+  const refresh = Promise.withResolvers<Response>();
+  let accepted = false;
+  let finished = false;
+  const path = '/api/v1/workspaces/' + workspace.id;
+  const snapshot = { ...workspace, desiredState: 'stopped', observedState: 'stopped',
+    currentOperationId: null, launchOperationId: 'initial-launch' };
+  globalThis.fetch = jest.fn(async input => {
+    if (input === '/api/v1/session') return json(session);
+    if (input === path + '/actions/start') {
+      accepted = true;
+      return json({ id: 'new-start' });
+    }
+    if (input === path) {
+      if (finished) return json({ ...snapshot, desiredState: 'running', observedState: 'running', launchOperationId: 'new-start' });
+      return accepted ? refresh.promise : json(snapshot);
+    }
+    if (input === '/api/v1/operations/initial-launch') return json({ id: 'initial-launch', type: 'provision',
+      status: 'succeeded', version: 1, steps: [], launchPerformance: { timeToIdeReadyMs: 42000, steps: [], events: [] },
+    });
+    if (input === '/api/v1/operations/new-start') return json({ id: 'new-start', type: 'start', status: finished ? 'succeeded' : 'pending',
+      version: 1, steps: [], launchPerformance: { steps: [], events: [], ...(finished ? { timeToIdeReadyMs: 9000 } : {}) },
+    });
+    throw new Error(`Unexpected request ${input}`);
+  });
+  const user = userEvent.setup();
+  const view = render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  await user.click(await screen.findByRole('tab', { name: 'Performance' }));
+  expect(await screen.findByText('42 s')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Start workspace' }));
+  await screen.findByRole('heading', { name: 'Workspace operation' });
+  await user.click(screen.getByRole('tab', { name: 'Performance' }));
+  expect(await screen.findByText('Pending verification')).toBeVisible();
+  expect(screen.queryByText('42 s')).not.toBeInTheDocument();
+
+  finished = true;
+  await act(async () => refresh.resolve(json({ ...snapshot, launchOperationId: 'new-start' })));
+  view.unmount();
+  render(<Providers><Workspaces workspaceId={workspace.id} /></Providers>);
+  await user.click(await screen.findByRole('tab', { name: 'Performance' }));
+  expect(await screen.findByText('9 s')).toBeVisible();
+  expect(screen.queryByText('42 s')).not.toBeInTheDocument();
+});
+
 // Administrators can confirm revocation by email and see the active list refresh.
 test('revokes an administrator connection grant from workspace details', async () => {
   const path = '/api/v1/admin/workspaces/workspace-one/connection-grants';

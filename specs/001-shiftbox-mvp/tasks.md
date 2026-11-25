@@ -3337,3 +3337,7 @@ This checkpoint does not itself change the goal status.
 
 - [X] T149 Reuse the workspace launch picker design on Projects, retain project management controls, and route Launch Project from Workspaces to Projects. Verified responsive layouts, search, pagination, keyboard focus, and project management in Chromium. Verified signed-in navigation, launch review from both views, project details, and the archived filter on `shiftbox-demo-controller:40`.
 - [X] T150 Label the project launch action “Launch workspace” in the card grid and table. Verified both labels and the launch review while signed in on `shiftbox-demo-controller:41`.
+
+## Fresh-install session timeout
+
+- [X] T151 Default regular browser sessions to eight hours on fresh installs. Verified PostgreSQL cutover, the 30-minute first-login session, and saved settings through local Dex, API, and admin UI tests.

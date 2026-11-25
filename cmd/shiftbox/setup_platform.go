@@ -18,6 +18,7 @@ import (
 
 type setupPlatform struct {
 	installation, folder string
+	letsEncryptEmail     string
 	runtime              config.ControllerRuntime
 	cloud                *app.CloudSetup
 }
@@ -39,7 +40,7 @@ func readSetupPlatform(dir, configPath, folder string) (*setupPlatform, error) {
 	if err := checkControllerRuntime(*cfg.Runtime); err != nil {
 		return nil, err
 	}
-	platform := &setupPlatform{installation: dir, folder: folder, runtime: *cfg.Runtime}
+	platform := &setupPlatform{installation: dir, folder: folder, runtime: *cfg.Runtime, letsEncryptEmail: cfg.LetsEncryptEmail}
 	if cfg.Runtime.Provider != "ec2" {
 		if !filepath.IsAbs(folder) {
 			return nil, errors.New("platform setup requires an absolute --platform-folder")
@@ -49,6 +50,9 @@ func readSetupPlatform(dir, configPath, folder string) (*setupPlatform, error) {
 	suffix, valid := strings.CutPrefix(cfg.Runtime.GuestHost, "guest.")
 	if !valid || cfg.DataProfile != "postgres" || folder != "" {
 		return nil, errors.New("EC2 setup requires PostgreSQL and the deployed guest DNS name")
+	}
+	if cfg.LetsEncryptEmail != "" {
+		suffix = strings.TrimPrefix(cfg.ManagementOrigin, "https://")
 	}
 	ide := "{workspace}.ide." + suffix
 	preview := "{service}--{workspace}.preview." + suffix

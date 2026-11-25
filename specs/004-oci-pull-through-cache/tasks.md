@@ -58,6 +58,7 @@
 - [x] T028 Count verified embedded OCI image config bytes in cached-image inventory and confirm the Python attestation displays Complete on `shiftbox-demo`.
 - [x] T029 List retained public and published project devcontainer images in the protected cache API. Show date added, retained layer sizes in MB, and 20 images per page in the admin table. Verify the list in the demo.
 - [x] T030 Show total retained layer size in MB for each cached image, with layer details collapsed. Verify on `shiftbox-demo`.
+- [x] T031 Enable public retention and built devcontainer caching by default for fresh installations. Preserve saved settings and verify the cache runtime, settings API, and admin controls.
 - [ ] T024 Clean only disposable test workspaces/profiles/storage/tags/cloud resources; preserve existing resources, operator backups and local state. In `specs/004-oci-pull-through-cache/validation-report.md` link G1–G7 and every matrix row to the few actual checks, report limitations and sign off only when UI plus eviction and all accepted behavior work (depends: T023).
 
 ## Dependencies and parallel work

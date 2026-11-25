@@ -32,6 +32,7 @@ type ControllerState struct {
 	browserRoots       *x509.CertPool
 	runtime            *config.ControllerRuntime
 	browserReplacement atomic.Pointer[servedBrowserCertificate]
+	browserACME        *browserACME
 	retentionMaximum   *int64
 	retentionGrace     time.Duration
 	retentionStatus    atomic.Pointer[retentionSnapshot]
@@ -99,12 +100,32 @@ func loadControllerState(ctx context.Context, db *sql.DB, active ActiveInstallat
 	}
 	browser, err := config.LoadBrowserCertificate(ctx, db, active.InstallationID,
 		active.Settings.BrowserCertificateID, cipher, roots, now)
-	if err != nil {
+	if err != nil && (cfg.LetsEncryptEmail == "" || active.RecoveryReviewID != "" || !errors.Is(err, config.ErrInvalidBrowserCertificate)) {
 		return nil, errors.New("cannot validate the active browser certificate")
 	}
 	state := &ControllerState{DB: db, Installation: active, BrowserTLS: browser, GuestCA: authority,
 		Secrets: secret.NewService(cipher), cipher: cipher, browserRoots: roots, runtime: cfg.Runtime,
 		retentionMaximum: cfg.WorkspaceRetentionMaximumSeconds, retentionGrace: cfg.RetentionOutageGrace()}
+	if cfg.LetsEncryptEmail != "" {
+		hosts, hostErr := config.NewServiceHosts(active.Settings.ManagementOrigin, active.Settings.IDEHostPattern, active.Settings.PreviewHostPattern)
+		if hostErr != nil {
+			return nil, hostErr
+		}
+		state.browserACME = newBrowserACME(dir, cfg.LetsEncryptEmail, hosts, roots)
+		if err != nil {
+			input, pair, err := state.browserACME.ensure(ctx)
+			if err != nil {
+				return nil, err
+			}
+			defer clear(input.KeyPEM)
+			if _, err := state.activateManagedBrowserCertificate(ctx, input, pair); err != nil {
+				return nil, err
+			}
+			if err := state.browserACME.record("succeeded"); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if active.Settings.DataProfile == "postgres" {
 		state.DexPostgres, err = loadPostgresDexStorage(ctx, db, active.InstallationID, cfg.PostgresURI, cipher)
 		if err != nil {

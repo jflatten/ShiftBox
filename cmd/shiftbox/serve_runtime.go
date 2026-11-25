@@ -257,6 +257,8 @@ func serveActiveController(ctx context.Context, cfg config.Config, state *app.Co
 	}, func(ctx context.Context) error {
 		return preflightWorker.Run(ctx, time.Second)
 	}, func(ctx context.Context) error {
+		return state.RunBrowserCertificateRenewal(ctx, checkpoint.Enter)
+	}, func(ctx context.Context) error {
 		return state.RunImageCacheOperations(ctx, journal, checkpoint)
 	}, func(ctx context.Context) error {
 		return state.RunImageCacheVerification(ctx, checkpoint)

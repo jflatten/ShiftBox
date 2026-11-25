@@ -75,11 +75,11 @@ export function BrowserCertificate({ userId, active, csrfToken, refresh }: {
         <APIProblemView error={installed.error} />
         <Button variant="default" style={{ alignSelf: 'flex-start' }} onClick={() => void installed.refetch()}>Retry certificate details</Button>
       </Stack> : installed.data ? <InstalledCertificate certificate={installed.data} /> : null}
-      <Paper component="form" withBorder radius="md" p="lg" noValidate
+      {installed.data?.managed ? null : <Paper component="form" withBorder radius="md" p="lg" noValidate
         onSubmit={form.onSubmit(replace, errors => form.getInputNode(Object.keys(errors)[0])?.focus())}>
         <Stack maw={480} gap="sm">
           <Title order={3} size="h4">Replace certificate</Title>
-          <Text size="sm">Use a trusted certificate covering the management address and both IDE and preview wildcards.</Text>
+          <Text size="sm">Use a trusted certificate covering the management address and the IDE, preview, and repair wildcards.</Text>
           <FileInput label="Certificate chain" description="PEM-encoded certificate chain (.pem or .crt)." accept=".pem,.crt" withAsterisk disabled={form.submitting}
             key={form.key('chain')} {...form.getInputProps('chain')} />
           <FileInput label="Private key" description="The matching PEM-encoded private key (.pem or .key)." accept=".pem,.key" withAsterisk disabled={form.submitting}
@@ -88,7 +88,7 @@ export function BrowserCertificate({ userId, active, csrfToken, refresh }: {
           {error !== undefined ? <APIProblemView error={error} /> : null}
           {operation ? <WorkflowStepper operation={operation} /> : null}
         </Stack>
-      </Paper>
+      </Paper>}
     </Stack>
   );
 }
@@ -126,7 +126,18 @@ function InstalledCertificate({ certificate }: { certificate: CertificateDetails
         <Chip checked readOnly hidden icon={false} color={status.color} variant="light"
           styles={{ label: { cursor: 'default' } }} wrapperProps={{ role: 'status' }}>{status.label}</Chip>
       </Group>
-      {certificate.status === 'expiring' ? <Text size="sm">This certificate expires within 30 days. Install a replacement before it expires.</Text> : null}
+      {certificate.managed ? <Group gap="sm">
+        <Text size="sm">Managed by Let’s Encrypt</Text>
+        {certificate.renewal ? <>
+          <Chip checked readOnly hidden icon={false} color={certificate.renewal.result === 'failed' ? 'red' : 'green'}
+            variant="light" wrapperProps={{ role: 'status' }}>
+            {certificate.renewal.result === 'failed' ? 'Renewal failed' : 'Renewed'}
+          </Chip>
+          <Text size="sm" c="dimmed">{utcDate(certificate.renewal.at)}</Text>
+        </> : null}
+      </Group> : null}
+      {certificate.status === 'expiring' && !certificate.managed
+        ? <Text size="sm">This certificate expires within 30 days. Install a replacement before it expires.</Text> : null}
       <SimpleGrid component="dl" cols={{ base: 1, sm: 2 }} m={0} spacing="md">
         {details.map(([label, value]) => <Stack key={label} gap={4} style={{ minWidth: 0 }}>
           <Text component="dt" size="xs" c="dimmed">{label}</Text>

@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import subprocess
 import uuid
 
@@ -23,27 +24,8 @@ REPOSITORY = "shiftbox-development"
 REGISTRY = f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/{REPOSITORY}"
 DIGEST = r"sha256:[0-9a-f]{64}"
 AMI_ID = r"ami-(?:[0-9a-f]{8}|[0-9a-f]{17})"
-
-
-class CloudFormationLoader(yaml.SafeLoader):
-    """Preserve CloudFormation expressions as their JSON long forms."""
-
-
-def intrinsic(loader, tag, node):
-    """Convert a supported YAML tag while leaving regular scalar types intact."""
-    if isinstance(node, yaml.SequenceNode):
-        value = loader.construct_sequence(node, deep=True)
-    elif isinstance(node, yaml.MappingNode):
-        value = loader.construct_mapping(node, deep=True)
-    else:
-        value = loader.construct_scalar(node)
-    if tag == "GetAtt" and isinstance(value, str):
-        value = value.split(".", 1)
-    key = tag if tag in ("Ref", "Condition") else f"Fn::{tag}"
-    return {key: value}
-
-
-CloudFormationLoader.add_multi_constructor("!", intrinsic)
+launch_forms = runpy.run_path(str(Path(__file__).resolve().parents[1] / "cloudformation/aws/launch_forms.py"))
+CloudFormationLoader = launch_forms["CloudFormationLoader"]
 
 
 def render_development(base, published_controller, controller=None, workspace=None, *, one_pass=False, starter_catalog=b""):
@@ -58,8 +40,9 @@ def render_development(base, published_controller, controller=None, workspace=No
         raise ValueError("workspace must be an exact Ohio AMI ID")
 
     template = deepcopy(base)
-    template["Description"] = "Private ShiftBox development deployment restricted to the Ohio testing account."
+    template["Description"] = "ShiftBox development deployment restricted to the Ohio testing account."
     if one_pass:
+        template["Description"] = "Single-pass ShiftBox development deployment restricted to the Ohio testing account."
         configure_one_pass(template)
     regions = template["Mappings"]["ReleaseRegions"]
     template["Mappings"]["ReleaseRegions"] = {REGION: regions[REGION]}
@@ -177,7 +160,9 @@ def main():
     args.add_argument("regional_catalog", type=Path)
     args.add_argument("--controller", help="Exact private Ohio testing ECR image URI ending in @sha256:…")
     args.add_argument("--workspace", type=Path, help="Local private Ohio Packer manifest.json")
-    args.add_argument("--one-pass", action="store_true", help="Exercise private UI setup with a development controller")
+    args.add_argument("--one-pass", action="store_true", help="Prepare a fresh deployment with first-login browser setup")
+    args.add_argument("--launch-form", choices=launch_forms["FORMS"],
+                      help="Render a streamlined console form from the common stack")
     parsed = args.parse_args()
     try:
         base = yaml.load(parsed.template.read_text(), Loader=CloudFormationLoader)
@@ -195,8 +180,11 @@ def main():
             if len(images) != 1 or images[0]["imageDigest"] != digest:
                 raise ValueError("controller digest is missing from testing ECR")
         ami = workspace_pin(json.loads(parsed.workspace.read_text()), manifest["runtimeCompatibility"]) if parsed.workspace else None
-        catalog = parsed.regional_catalog.read_bytes() if parsed.one_pass else b""
-        rendered = render_development(base, published, parsed.controller, ami, one_pass=parsed.one_pass, starter_catalog=catalog)
+        one_pass = parsed.one_pass or bool(parsed.launch_form)
+        catalog = parsed.regional_catalog.read_bytes() if one_pass else b""
+        rendered = render_development(base, published, parsed.controller, ami, one_pass=one_pass, starter_catalog=catalog)
+        if parsed.launch_form:
+            rendered = launch_forms["configure_launch_form"](rendered, parsed.launch_form, one_pass_ready=True)
         with parsed.output.open("x") as destination:
             json.dump(rendered, destination, indent=2)
             destination.write("\n")

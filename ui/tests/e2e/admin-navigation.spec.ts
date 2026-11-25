@@ -1,6 +1,34 @@
 import { expect, test } from '@playwright/test';
 import { expectReadableText } from './text-contrast';
 
+// Reloading Settings must recover managed certificate state from the API and
+// keep operator-managed replacement controls out of the managed workflow.
+test('managed certificate renewal state is discoverable after reload', async ({ page }) => {
+  await page.route('**/api/v1/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/v1/session') return route.fulfill({ json: {
+      user: { id: 'admin', role: 'administrator' }, mode: 'normal', installationState: 'active',
+      csrfToken: 'fixture', permissions: ['infrastructure.manage', 'infrastructure.view'],
+    } });
+    if (path.endsWith('/settings/session')) return route.fulfill({ json: { value: 30, unit: 'minutes', version: 1 } });
+    if (path.endsWith('/admin/certificate')) return route.fulfill({ json: {
+      subject: 'CN=rc3.shiftbox.dev', issuer: 'CN=R13,O=Let’s Encrypt', dnsNames: ['rc3.shiftbox.dev'],
+      ipAddresses: [], emailAddresses: [], uris: [], notBefore: '2026-11-25T14:00:00Z', notAfter: '2027-01-25T14:00:00Z',
+      serialNumber: 'abcd', fingerprintSha256: 'a'.repeat(64), signatureAlgorithm: 'ECDSA-SHA256',
+      publicKeyAlgorithm: 'ECDSA', version: 3, chainLength: 2, status: 'valid', managed: true,
+      renewal: { result: 'failed', at: '2026-11-26T14:00:00Z' },
+    } });
+    return route.fulfill({ status: 404, json: {} });
+  });
+  await page.goto('/settings/');
+  await page.getByRole('tab', { name: 'Certificates' }).click();
+  await expect(page.getByText('Renewal failed')).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Renewal failed')).toBeVisible();
+  await expect(page.getByText('2026-11-26 14:00:00 UTC')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Replace certificate' })).toHaveCount(0);
+});
+
 for (const width of [1280, 390]) {
   // Administrators see a separate, keyboard-operable area with the current page identified.
   test(`administration navigation at ${width}px`, async ({ page }) => {

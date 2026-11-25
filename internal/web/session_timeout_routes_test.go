@@ -12,8 +12,8 @@ import (
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
-// TestSessionTimeoutSettings protects the organization timeout and verifies
-// that validation and concurrent edits preserve the last saved number and unit.
+// TestSessionTimeoutSettings checks the fresh-install default, authorization,
+// and that validation and concurrent edits preserve the saved timeout.
 func TestSessionTimeoutSettings(t *testing.T) {
 	db := keepAliveDatabase(t)
 	session, principal, token := sessionHandlerFixture(t)
@@ -42,8 +42,8 @@ func TestSessionTimeoutSettings(t *testing.T) {
 		t.Errorf("member update returned %d, want 403", got.Code)
 	}
 	principal.User.Role = "administrator"
-	if got := request(&read, "", "", false); got.Code != 200 || got.Body.String() != "{\"value\":30,\"unit\":\"minutes\",\"version\":1}\n" {
-		t.Fatalf("default read returned %d %s, want 30 minutes at version 1", got.Code, got.Body.String())
+	if got := request(&read, "", "", false); got.Code != 200 || got.Body.String() != "{\"value\":8,\"unit\":\"hours\",\"version\":1}\n" {
+		t.Fatalf("default read returned %d %s, want 8 hours at version 1", got.Code, got.Body.String())
 	}
 	if got := request(&update, valid, `"1"`, false); got.Code != 403 {
 		t.Errorf("administrator update without CSRF returned %d, want 403", got.Code)

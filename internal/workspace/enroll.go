@@ -99,7 +99,7 @@ func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step
 	default:
 		return "", provider.ErrOutcomeUnknown
 	}
-	timed := e.provision.observeLaunchTiming(ctx, op.ID)
+	timed := e.provision.store.observeLaunchTiming(ctx, op.ID)
 	deliverStarted := time.Now()
 	_, err = e.enrollment.Deliver(ctx, op.ID, got, e.now(), e.mediaRoot, e.endpoint, e.pollEndpoint, e.provision.provider.DeliverEnrollment)
 	provider.ReportLaunchTiming(timed, "enrollment_delivery", deliverStarted, err)
@@ -127,7 +127,7 @@ func (e *LaunchExecutor) Apply(ctx context.Context, op operation.Operation, step
 	if started.Power != provider.Running {
 		return "", provider.ErrOutcomeUnknown
 	}
-	e.provision.markLaunchVMRunning(ctx, op.ID, started)
+	e.provision.store.markLaunchVMRunning(ctx, op.ID, started)
 	return e.confirmContact(ctx, req)
 }
 
@@ -188,7 +188,7 @@ func (e *LaunchExecutor) inspectEnrollment(ctx context.Context, op operation.Ope
 	}
 	err = verifyWorkspaceVM(req, got)
 	if err == nil && got.Power == provider.Running {
-		e.provision.markLaunchVMRunning(ctx, op.ID, got)
+		e.provision.store.markLaunchVMRunning(ctx, op.ID, got)
 	}
 	return req, got, err
 }

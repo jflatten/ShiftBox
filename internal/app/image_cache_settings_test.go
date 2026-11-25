@@ -155,16 +155,24 @@ func TestImageCacheActivationDrainsBeforeMoving(t *testing.T) {
 	}
 }
 
-// TestBuiltImagesOpenIndependentStorage checks that fresh installations can
-// retain built images while public pulls stream, and fall back when the
-// configured storage path is protected.
-func TestBuiltImagesOpenIndependentStorage(t *testing.T) {
-	for _, storedSettings := range []bool{false, true} {
-		name := "fresh defaults"
-		if storedSettings {
-			name = "protected configured path"
-		}
-		t.Run(name, func(t *testing.T) {
+// TestImageCacheRuntimeDefaults checks that both caches use shared storage on a
+// fresh install, an explicit public Off still permits built images, and a
+// protected saved path falls back to streaming.
+func TestImageCacheRuntimeDefaults(t *testing.T) {
+	tests := []struct {
+		name          string
+		savePublicOff bool
+		protectedPath bool
+		wantPublic    bool
+		wantBuilt     string
+		wantBudget    int64
+	}{
+		{name: "fresh defaults", wantPublic: true, wantBuilt: "available", wantBudget: 14 << 30},
+		{name: "saved public off", savePublicOff: true, wantBuilt: "available", wantBudget: 512 << 20},
+		{name: "protected configured path", savePublicOff: true, protectedPath: true, wantBuilt: "unavailable", wantBudget: 512 << 20},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			ctx := t.Context()
 			base, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -179,9 +187,14 @@ func TestBuiltImagesOpenIndependentStorage(t *testing.T) {
 				t.Fatal(err)
 			}
 			raw := ""
-			if storedSettings {
-				settings := imagecache.Settings{StoragePath: base, MaxBytes: imagecache.Bytes(512 << 20), VolumeHighPercent: 80, VolumeLowPercent: 70}
-				config := imagecache.Configuration{Version: 1, Desired: settings, Effective: imagecache.EffectiveSettings{Version: 1, Settings: settings}}
+			if test.savePublicOff {
+				path := imagecache.DefaultPath(base, "")
+				if test.protectedPath {
+					path = base
+				}
+				settings := imagecache.Settings{StoragePath: path, MaxBytes: imagecache.Bytes(test.wantBudget), VolumeHighPercent: 80, VolumeLowPercent: 70}
+				config := imagecache.Configuration{Version: 1, Desired: settings,
+					Effective: imagecache.EffectiveSettings{Version: 1, Settings: settings}, Activation: imagecache.Activation{Phase: "disabled"}}
 				value, err := json.Marshal(config)
 				if err != nil {
 					t.Fatal(err)
@@ -204,17 +217,22 @@ func TestBuiltImagesOpenIndependentStorage(t *testing.T) {
 				}
 			})
 			config, err := cache.configuration(ctx)
-			if err != nil || config.Effective.Enabled {
-				t.Fatalf("public retention = %t, %v, want independently disabled", config.Effective.Enabled, err)
+			if err != nil {
+				t.Fatalf("configuration(%s): %v", test.name, err)
 			}
-			if storedSettings {
-				if cache.active != cache.stream || !cache.unavailable || config.Effective.Budget() != 512<<20 {
-					t.Fatal("protected path did not preserve the configured budget and fall back to streaming")
-				}
-				return
+			if config.Desired.Enabled != test.wantPublic || config.Effective.Enabled != test.wantPublic || cache.retainPublic != test.wantPublic {
+				t.Errorf("newImageCacheRuntime(%s) public retention (desired, effective, runtime) = %t, %t, %t, want all %t",
+					test.name, config.Desired.Enabled, config.Effective.Enabled, cache.retainPublic, test.wantPublic)
 			}
-			if cache.active == cache.stream || cache.unavailable || config.Effective.Budget() != 14<<30 {
-				t.Fatal("fresh configuration did not open built-image storage with the 14 GiB shared budget")
+			if budget := config.Effective.Budget(); budget != test.wantBudget {
+				t.Errorf("configuration(%s) budget = %d, want %d", test.name, budget, test.wantBudget)
+			}
+			status, err := cache.status(ctx)
+			if err != nil {
+				t.Fatalf("status(%s): %v", test.name, err)
+			}
+			if status.BuiltImageAvailability != test.wantBuilt {
+				t.Errorf("status(%s) built-image availability = %s, want %s", test.name, status.BuiltImageAvailability, test.wantBuilt)
 			}
 		})
 	}

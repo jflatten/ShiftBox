@@ -82,7 +82,7 @@ func Read(ctx context.Context, db reader, operationID string, now time.Time) (Pe
 func readSteps(ctx context.Context, db reader, operationID string, now time.Time, info *Performance) error {
 	rows, err := db.QueryContext(ctx, `SELECT s.step_key,s.label,s.status,s.started_at,s.finished_at,o.created_at
 		FROM operation_steps s JOIN operations o ON o.id=s.operation_id
-		WHERE s.operation_id=$1 AND o.type='provision' AND o.originating_action=$2 ORDER BY s.step_index`, operationID, action)
+		WHERE s.operation_id=$1 AND `+startupOperation+` ORDER BY s.step_index`, operationID)
 	if err != nil {
 		return err
 	}

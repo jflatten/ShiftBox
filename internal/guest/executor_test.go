@@ -202,8 +202,8 @@ func TestGuestPollCadence(t *testing.T) {
 	}
 }
 
-// TestGuestPollDispatchUsesSnapshot uses the template's selected config path
-// on both lifecycle stages and carries the committed result in the next poll.
+// TestGuestPollDispatchUsesSnapshot checks that a start uses the selected config
+// path on both stages and queues timings and a receipt for its own dispatch.
 func TestGuestPollDispatchUsesSnapshot(t *testing.T) {
 	workspace := t.TempDir()
 	journal, err := loadLocalJournal(filepath.Join(t.TempDir(), "operation.json"))
@@ -212,14 +212,15 @@ func TestGuestPollDispatchUsesSnapshot(t *testing.T) {
 	}
 	id := strings.Repeat("1", 64)
 	var calls [][]string
-	runtime := devContainer{workspace: workspace, run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+	timings := make(chan launchTimingReport, 128)
+	runtime := devContainer{workspace: workspace, launchTiming: timings, run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		calls = append(calls, args)
 		if args[0] == "up" {
 			return []byte(`{"outcome":"success","containerId":"` + id + `","mergedConfiguration":{}}`), nil
 		}
 		return []byte(`{"outcome":"success"}`), nil
 	}}
-	const command = `{"id":"0555292b-088e-4f5b-8ac6-8be6045ae630","version":7,"type":"provision",
+	const command = `{"id":"0555292b-088e-4f5b-8ac6-8be6045ae630","version":7,"type":"start",
 		"command":"ensure-development-container","arguments":{"repositoryUrl":"https://github.com/example/repo",
 		"repositoryRef":"main","devcontainerPath":".devcontainer/custom/devcontainer.json","retainedMounts":[]}}`
 	for range 2 {
@@ -239,6 +240,15 @@ func TestGuestPollDispatchUsesSnapshot(t *testing.T) {
 	for _, call := range calls {
 		if !strings.Contains(strings.Join(call, " "), "--config "+wantConfig) {
 			t.Errorf("CLI call %q, want explicit config %q", call, wantConfig)
+		}
+	}
+	if len(timings) == 0 {
+		t.Error("applyGuestPoll(start) queued no guest timings, want samples for the start")
+	}
+	for len(timings) > 0 {
+		report := <-timings
+		if report.OperationID != input.LastOperationID || report.DispatchVersion != 7 {
+			t.Errorf("applyGuestPoll(start) timing scope = %q/%d, want %q/7", report.OperationID, report.DispatchVersion, input.LastOperationID)
 		}
 	}
 }

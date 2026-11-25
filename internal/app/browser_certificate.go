@@ -62,21 +62,23 @@ func (s *ControllerState) browserCertificateReadHandler(now func() time.Time) we
 				uris = append(uris, uri.String())
 			}
 			details := struct {
-				Subject            string    `json:"subject"`
-				Issuer             string    `json:"issuer"`
-				DNSNames           []string  `json:"dnsNames"`
-				IPAddresses        []string  `json:"ipAddresses"`
-				EmailAddresses     []string  `json:"emailAddresses"`
-				URIs               []string  `json:"uris"`
-				NotBefore          time.Time `json:"notBefore"`
-				NotAfter           time.Time `json:"notAfter"`
-				SerialNumber       string    `json:"serialNumber"`
-				FingerprintSHA256  string    `json:"fingerprintSha256"`
-				SignatureAlgorithm string    `json:"signatureAlgorithm"`
-				PublicKeyAlgorithm string    `json:"publicKeyAlgorithm"`
-				Version            int       `json:"version"`
-				ChainLength        int       `json:"chainLength"`
-				Status             string    `json:"status"`
+				Subject            string                `json:"subject"`
+				Issuer             string                `json:"issuer"`
+				DNSNames           []string              `json:"dnsNames"`
+				IPAddresses        []string              `json:"ipAddresses"`
+				EmailAddresses     []string              `json:"emailAddresses"`
+				URIs               []string              `json:"uris"`
+				NotBefore          time.Time             `json:"notBefore"`
+				NotAfter           time.Time             `json:"notAfter"`
+				SerialNumber       string                `json:"serialNumber"`
+				FingerprintSHA256  string                `json:"fingerprintSha256"`
+				SignatureAlgorithm string                `json:"signatureAlgorithm"`
+				PublicKeyAlgorithm string                `json:"publicKeyAlgorithm"`
+				Version            int                   `json:"version"`
+				ChainLength        int                   `json:"chainLength"`
+				Status             string                `json:"status"`
+				Managed            bool                  `json:"managed,omitempty"`
+				Renewal            *browserRenewalResult `json:"renewal,omitempty"`
 			}{
 				Subject: leaf.Subject.String(), Issuer: leaf.Issuer.String(),
 				DNSNames: append([]string{}, leaf.DNSNames...), IPAddresses: ips,
@@ -85,6 +87,10 @@ func (s *ControllerState) browserCertificateReadHandler(now func() time.Time) we
 				SerialNumber: leaf.SerialNumber.Text(16), FingerprintSHA256: fmt.Sprintf("%x", sha256.Sum256(leaf.Raw)),
 				SignatureAlgorithm: leaf.SignatureAlgorithm.String(), PublicKeyAlgorithm: leaf.PublicKeyAlgorithm.String(),
 				Version: leaf.Version, ChainLength: len(pair.Certificate), Status: status,
+			}
+			if s.browserACME != nil {
+				details.Managed = true
+				details.Renewal = s.browserACME.result()
 			}
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -115,6 +121,9 @@ func (s *ControllerState) browserCertificateHandler(journal *operation.Journal, 
 			return web.AuthorizationTarget{Action: "infrastructure.manage"}, nil
 		},
 		Apply: func(ctx context.Context, tx *sql.Tx, r *http.Request, actor auth.Principal, _ web.AuthorizationTarget, _ auth.Decision) (http.Handler, error) {
+			if s.browserACME != nil {
+				return nil, web.Problem{Status: 409, Code: "infrastructure.managed_certificate", Title: "Let's Encrypt manages the browser certificate"}
+			}
 			key, err := web.IdempotencyKey(r)
 			if err != nil {
 				return nil, err
@@ -145,14 +154,8 @@ func (s *ControllerState) browserCertificateHandler(journal *operation.Journal, 
 			if s.cipher == nil || s.browserRoots == nil {
 				return nil, web.Problem{Status: 503, Code: "infrastructure.certificate_unavailable", Title: "Certificate storage or trust is unavailable"}
 			}
-			settings := config.InstallationSettings{}
-			activation := config.Activation{ActorID: actor.User.ID, ActivatedAt: now()}
-			if err := tx.QueryRowContext(ctx, `SELECT id,config_generation,organization_name,data_profile,
-				management_origin,ide_host_pattern,preview_host_pattern,external_auth_interval_seconds
-				FROM installations WHERE singleton=1 AND state='active'`).Scan(
-				&activation.InstallationID, &activation.ExpectedGeneration, &settings.OrganizationName, &settings.DataProfile,
-				&settings.ManagementOrigin, &settings.IDEHostPattern, &settings.PreviewHostPattern, &settings.ExternalAuthIntervalSeconds,
-			); err != nil {
+			activation, settings, err := currentBrowserActivation(ctx, tx, actor.User.ID, now())
+			if err != nil {
 				return nil, err
 			}
 			privateKey := []byte(input.Key)
@@ -178,17 +181,33 @@ func (s *ControllerState) browserCertificateHandler(journal *operation.Journal, 
 			if err != nil {
 				return nil, err
 			}
-			replacement := &servedBrowserCertificate{generation: generation, pair: pair}
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// The authorization wrapper invokes this only after commit.
-				// Concurrent responses can arrive out of generation order.
-				for current := s.browserReplacement.Load(); current == nil || current.generation < generation; current = s.browserReplacement.Load() {
-					if s.browserReplacement.CompareAndSwap(current, replacement) {
-						break
-					}
-				}
+				s.publishBrowserCertificate(generation, pair)
 				certificateResponse(op).ServeHTTP(w, r)
 			}), nil
 		},
+	}
+}
+
+func currentBrowserActivation(ctx context.Context, tx *sql.Tx, actor string, now time.Time) (config.Activation, config.InstallationSettings, error) {
+	settings := config.InstallationSettings{}
+	activation := config.Activation{ActorID: actor, ActivatedAt: now}
+	err := tx.QueryRowContext(ctx, `SELECT id,config_generation,organization_name,data_profile,
+		management_origin,ide_host_pattern,preview_host_pattern,external_auth_interval_seconds
+		FROM installations WHERE singleton=1 AND state='active'`).Scan(
+		&activation.InstallationID, &activation.ExpectedGeneration, &settings.OrganizationName, &settings.DataProfile,
+		&settings.ManagementOrigin, &settings.IDEHostPattern, &settings.PreviewHostPattern, &settings.ExternalAuthIntervalSeconds,
+	)
+	return activation, settings, err
+}
+
+func (s *ControllerState) publishBrowserCertificate(generation int64, pair tls.Certificate) {
+	// Concurrent administrator responses can arrive out of generation order.
+	replacement := &servedBrowserCertificate{generation: generation, pair: pair}
+	for current := s.browserReplacement.Load(); current == nil || current.generation < generation; current = s.browserReplacement.Load() {
+		if s.browserReplacement.CompareAndSwap(current, replacement) {
+			return
+		}
 	}
 }

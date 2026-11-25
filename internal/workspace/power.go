@@ -307,6 +307,7 @@ func (e *PowerExecutor) record(ctx context.Context, op operation.Operation, req 
 	if want == provider.Stopped {
 		return "Provider confirmed the VM stopped and the disk was retained.", nil
 	}
+	e.store.markLaunchVMRunning(ctx, op.ID, got)
 
 	var last, expiry sql.NullString
 	err = e.store.db.QueryRowContext(ctx, `SELECT r.last_authenticated_at,r.certificate_not_after

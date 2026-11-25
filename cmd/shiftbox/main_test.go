@@ -145,7 +145,8 @@ func TestSetupCommandResumes(t *testing.T) {
 }
 
 // TestSetupResetsLostTemporaryPassword recovers an unconsumed credential
-// through explicit local invocation and signs in using its replacement.
+// through explicit local invocation and checks the replacement sign-in has
+// the original 30-minute setup session lifetime.
 func TestSetupResetsLostTemporaryPassword(t *testing.T) {
 	binary := os.Getenv("SHIFTBOX_TEST_DEX_BINARY")
 	if binary == "" {
@@ -293,10 +294,14 @@ func (w *stopOnSetupURL) probe(origin string) error {
 		return fmt.Errorf("Dex login did not produce a password-gated bootstrap session (status %d)", browser.StatusCode)
 	}
 	var session struct {
-		CSRFToken string `json:"csrfToken"`
+		CSRFToken string    `json:"csrfToken"`
+		ExpiresAt time.Time `json:"expiresAt"`
 	}
 	if err := json.Unmarshal(body, &session); err != nil {
 		return err
+	}
+	if remaining := time.Until(session.ExpiresAt); remaining < 29*time.Minute || remaining > 30*time.Minute {
+		return fmt.Errorf("first-login setup session has %v remaining, want approximately 30 minutes", remaining)
 	}
 	selectProfile := func(originHeader string, want int) ([]byte, error) {
 		req, err := http.NewRequest(http.MethodPut, origin+"/api/v1/setup/data-profile", strings.NewReader(`{"profile":"sqlite"}`))
