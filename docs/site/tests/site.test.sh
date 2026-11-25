@@ -16,7 +16,7 @@ cp -R "$site/_layouts" "$fixture_site/"
 cp "$root/branding/png/shiftbox-logo-light-1600.png" "$fixture/branding/png/"
 
 # Build the public guides without exposing neighboring files or branding.
-for guide in index install setup-helper first-workspace contributing private-access troubleshooting upgrade-recovery; do
+for guide in index install setup-helper configure first-workspace contributing private-access troubleshooting upgrade-recovery; do
     cp "$site/$guide.md" "$fixture_site/$guide.md"
 done
 for screenshot in setup-administrator.png setup-activate.png; do
@@ -61,7 +61,7 @@ done
 for output in BrowserCaSecretArn SetupClaimSecretArn ManagementOrigin; do
     grep -Fq "$output" "$install"
 done
-for guide in index.html install/index.html private-access/index.html first-workspace/index.html troubleshooting/index.html upgrade-recovery/index.html; do
+for guide in index.html install/index.html configure/index.html private-access/index.html first-workspace/index.html troubleshooting/index.html upgrade-recovery/index.html; do
     if grep -Eq '/(blob|tree)/main|<code[^>]*>main</code>|git (clone|switch|checkout)|one-pass development|SetupOperatorPolicyArn|PostgresCaPem|dns-zones|setup\.sh' "$scratch/rendered/$guide"; then
         exit 1
     fi
@@ -81,3 +81,9 @@ grep -Fq 'id="finish-setup-in-shiftbox"' "$install"
 grep -Fq 'href="/private-access/"' "$install"
 grep -Fq 'href="/first-workspace/"' "$install"
 grep -Fq 'id="connect-your-github-account"' "$scratch/rendered/first-workspace/index.html"
+
+# A new administrator can find the configuration guide and both independent cache settings.
+grep -Fq 'href="/configure/"' "$scratch/rendered/index.html"
+for setting in 'Session timeout' 'Inactivity shutdown' 'Retain cached image content' 'Built devcontainer images'; do
+    grep -Fq "$setting" "$scratch/rendered/configure/index.html"
+done

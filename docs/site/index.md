@@ -6,12 +6,16 @@ permalink: /
 
 # Run ShiftBox in your AWS account
 
-ShiftBox is an open-source development sandbox for you and your coding agent. Each workspace runs in its own EC2 virtual machine and uses the tools defined by your repository's Dev Container configuration. Open the workspace in VS Code in your browser to work with the same files, tools and runtime.
+ShiftBox gives each developer a virtual machine called a *workspace*, with VS Code in the browser. A *project* tells ShiftBox which GitHub repository to use, how to set up its tools and how large the machine should be. The *controller* is the web application where you manage these projects, workspaces and users.
 
-## Get started
+## From an existing AWS network to an open editor
 
-1. [Install ShiftBox on AWS]({{ '/install/' | relative_url }}), using a published template and your existing AWS network.
-2. [Connect to ShiftBox privately]({{ '/private-access/' | relative_url }}), using Tailscale or a private connection to your AWS network.
-3. [Launch a workspace from a GitHub repository]({{ '/first-workspace/' | relative_url }}) and open its browser IDE.
+1. **Choose how people will reach ShiftBox.** Use a private connection if your team already connects to your Amazon Virtual Private Cloud (VPC). Use public HTTPS if they need to connect over the internet from approved addresses. Public access requires a domain you control. [Compare deployment options]({{ '/install/' | relative_url }}#get-the-installation-files)
+2. **Install the controller.** With a current launch form, create one CloudFormation stack, then complete first-login setup in the browser. Start by checking which installation files your release includes. [Install ShiftBox on AWS]({{ '/install/' | relative_url }})
+3. **Open the first workspace.** Connect GitHub, choose a project size, launch a repository and select **Open IDE**. At that point you have tested the path your developers will use. [Launch your first workspace]({{ '/first-workspace/' | relative_url }})
 
-Already running ShiftBox? Find help with [AWS installation problems]({{ '/troubleshooting/' | relative_url }}) or [back up and upgrade your installation]({{ '/upgrade-recovery/' | relative_url }}).
+## Before inviting your team
+
+Decide who can create and launch projects, how long people stay signed in, and how much compute and disk space the team can use. [Configure ShiftBox for your team]({{ '/configure/' | relative_url }})
+
+If setup stops, start with the symptom on screen. Before an upgrade or teardown, verify a backup and save the workspace files you want to keep. [Troubleshoot an installation]({{ '/troubleshooting/' | relative_url }}) · [Back up and recover ShiftBox]({{ '/upgrade-recovery/' | relative_url }})

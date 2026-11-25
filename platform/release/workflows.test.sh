@@ -47,7 +47,7 @@ for region in "${regions[@]}"; do
     }]}
   ' >"$catalog/$region.json"
 done
-for guide in install setup-helper first-workspace private-access troubleshooting contributing upgrade-recovery; do
+for guide in configure install setup-helper first-workspace private-access troubleshooting contributing upgrade-recovery; do
   printf '# Public %s fixture\n' "$guide" >"$guides/$guide.md"
 done
 printf 'Never include this file in release artifacts.\n' >"$guides/private-evidence.md"
@@ -98,6 +98,7 @@ catalog/us-east-1.json
 catalog/us-east-2.json
 catalog/us-west-1.json
 catalog/us-west-2.json
+docs/configure.md
 docs/contributing.md
 docs/first-workspace.md
 docs/install.md
@@ -118,6 +119,14 @@ cmp "$catalog/us-east-2.json" <(tar -xOzf "$stage/shiftbox-aws-support.tar.gz" c
 for mode in private public public-placement; do
   form="$scratch/shiftbox-aws-$mode.json"
   tar -xOzf "$stage/shiftbox-aws-support.tar.gz" "launch/shiftbox-aws-$mode.json" > "$form"
+  # A first-time operator can look up every field shown by this release's console form.
+  while IFS= read -r field; do
+    grep -Fq -- "$field" "$root/docs/site/install.md" || {
+      printf 'Installation guide is missing the %s field from the %s form.\n' "$field" "$mode" >&2
+      exit 1
+    }
+  done < <(jq -r '.Metadata["AWS::CloudFormation::Interface"].ParameterLabels as $labels |
+    .Parameters | keys[] as $id | $labels[$id].default // $id' "$form")
   # Recreating a stack with the same name gets a fresh Cloud Map domain and matching private DNS targets.
   jq -e '
     .Resources as $resources |

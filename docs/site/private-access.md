@@ -1,20 +1,33 @@
 ---
 layout: default
-title: Private connectivity and browser trust
+title: Network access and browser trust
 permalink: /private-access/
 ---
 
-# Connect to ShiftBox privately
+# Network access and browser trust
 
-Connect your computer to the AWS network before opening ShiftBox. Your organization may use a VPN, an existing Tailscale router, or another private connection.
+A browser connects to the controller for the management UI, workspace IDEs, previews and repair pages. ShiftBox checks the user’s session and permissions at those endpoints. Developers can use a workspace through the browser without a direct network route to its virtual machine.
 
 ## Route and resolve ShiftBox
 
-Ask your network administrator to confirm these settings.
+| Connection | What DNS should return | What the network must allow |
+| --- | --- | --- |
+| Public HTTPS | From outside the VPC, the deployment name and its IDE, preview and repair names resolve to the load balancer’s Elastic IP. | TCP 443 from the **Public browser source IPv4 range**. Use the hostname in **ManagementOrigin** so the certificate matches. |
+| Private with Let’s Encrypt | A resolver inside the VPC returns the private controller destination for the same browser names. | A private route to the service subnet and TCP 443 from the **Private browser source IPv4 range**. |
+| Private with the installation CA | The management name is `shiftbox` under your private DNS suffix. Workspace browser names are under `ide`, `preview` and `repair` within that suffix. | A private route to the service subnet and TCP 8443 from the **Private browser source IPv4 range**. Trust the installation CA on each client. |
 
-1. Your computer can reach the subnet that runs ShiftBox over HTTPS. Use port 443 for installations configured with Let’s Encrypt and port 8443 for the private setup with operator-managed certificates.
-2. The source IPv4 address range that AWS sees for that connection matches the range entered in **Inbound security group rule for UI access**.
-3. Your network sends requests for the browser domain to a DNS resolver that can look up private names in the VPC. Use `BaseDomain` for Let’s Encrypt deployments or the private `DnsSuffix` for operator-managed deployments. The same setup lets your browser find ShiftBox, workspace IDEs, and previews. [AWS private DNS forwarding](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver-forwarding-inbound-queries.html), [Tailscale subnet routing](https://tailscale.com/docs/features/subnet-routers)
+For either private option, connect your existing VPN or subnet router and arrange forwarding of DNS queries to a resolver that can answer for the VPC. With Let’s Encrypt, forward the selected browser domain and ensure the resolver can follow its records to the internal service names. With the installation CA, forward the private suffix. Keep the connection active when GitHub redirects your browser back to ShiftBox. [AWS private DNS forwarding](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver-forwarding-inbound-queries.html) · [Using an existing Tailscale subnet router](https://tailscale.com/docs/features/subnet-routers)
+
+**If you already use the domain inside this VPC**, check its other hostnames too. The managed-certificate forms create or reuse a private zone for the base domain, even when public records go in a delegated child zone. The VPC resolver uses that private zone for matching names. If a record exists only in the public zone, clients using this resolver can get a name lookup failure. Use a dedicated delegated domain for ShiftBox or maintain the other records needed by private clients. [How Route 53 selects a hosted zone](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/hosted-zone-private-considerations.html)
+
+Workspace machines contact the controller privately to enroll and connect their IDEs. The stack allows this traffic from the workspace security group on TCP 19443–19447 and limits PostgreSQL access to the service network. Outbound access from the workspace subnet determines which repositories, registries and package sources a project can use.
+
+## Switch an existing public endpoint to private access
+
+1. Arrange private routing and DNS for all browser names. Update the same stack to allow the **Private browser source IPv4 range** while **Public** access is still enabled.
+2. From a private client, confirm that **ManagementOrigin** resolves to the private destination. Sign in and open a workspace IDE on that route.
+3. Review and execute a change set on the same stack with **Browser access** set to **Private**. Keep the public DNS zone and certificate account settings for automatic renewal. The change removes the public browser records, load balancer and Elastic IP.
+4. Reopen **ManagementOrigin** from the private client. The same hostname should work over the private connection.
 
 ## Trust the browser certificate
 
