@@ -144,7 +144,7 @@ func (f externalLogin) finish(w http.ResponseWriter, r *http.Request) {
 		web.WriteProblem(w, web.RequestID(ctx), err)
 		return
 	}
-	http.Redirect(w, r, workspacesHome, http.StatusSeeOther)
+	http.Redirect(w, r, projectsHome, http.StatusSeeOther)
 }
 
 func (f externalLogin) reauthorizationHandler(origin string) web.AuthorizedHandler {

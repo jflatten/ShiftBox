@@ -17,7 +17,7 @@ import (
 	"github.com/jflatten/ShiftBox/internal/web"
 )
 
-const workspacesHome = "/workspaces/"
+const projectsHome = "/templates/"
 
 // NewActiveLoginHandler serves local Dex sign-in for the active installation.
 // It requires direct HTTPS on the configured management callback host.

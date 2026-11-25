@@ -134,9 +134,9 @@ func TestDexExternalRoundTrip(t *testing.T) {
 		if res.StatusCode != want {
 			t.Fatalf("external visit returned %d at %s, want %d", res.StatusCode, res.Request.URL.Path, want)
 		}
-		// Approved organization sign-in and renewal both open Workspaces.
-		if want == http.StatusOK && res.Request.URL.Path != "/workspaces/" {
-			t.Fatalf("approved organization login landed at %q, want /workspaces/", res.Request.URL.Path)
+		// Approved organization sign-in and renewal both open Projects.
+		if want == http.StatusOK && res.Request.URL.Path != "/templates/" {
+			t.Fatalf("approved organization login landed at %q, want /templates/", res.Request.URL.Path)
 		}
 	}
 	visit(server.Origin+"/auth/external", http.StatusForbidden)

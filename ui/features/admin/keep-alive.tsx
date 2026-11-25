@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Group, Select, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Button, Group, Paper, Select, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
@@ -10,20 +10,22 @@ export function KeepAliveSettings({ policy, csrfToken, refresh }: {
 }) {
   const [error, setError] = useState<unknown>();
   const [saved, setSaved] = useState(false);
-  return <Stack gap="md" pt="md">
-    <Stack gap={4}>
-      <Title order={3} size="h4">Inactivity shutdown</Title>
-      <Text size="sm" c="dimmed">Set how long workspaces can remain inactive before stopping. Workspace files and disks are preserved.</Text>
-      <Text size="sm" c="dimmed">The default applies to workspaces using the administrator default. Removed choices also fall back to the default.</Text>
+  return <Paper component="section" aria-labelledby="inactivity-shutdown-heading" withBorder radius="md" p="lg">
+    <Stack gap="md">
+      <Stack gap={4}>
+        <Title order={2} size="h3" id="inactivity-shutdown-heading">Inactivity shutdown</Title>
+        <Text size="sm" c="dimmed">Set how long workspaces can remain inactive before stopping. Workspace files and disks are preserved.</Text>
+        <Text size="sm" c="dimmed">The default applies to workspaces using the administrator default. Removed choices also fall back to the default.</Text>
+      </Stack>
+      {csrfToken ? <KeepAliveForm key={policy.version} policy={policy} csrfToken={csrfToken} refresh={refresh}
+        report={(error, saved) => { setError(error); setSaved(saved); }} /> : <Stack gap={4}>
+        <Text size="sm">Maximum: {formatKeepAlive(policy.maximumMinutes)} · Default: {formatKeepAlive(policy.defaultMinutes)}</Text>
+        <Text size="sm" c="dimmed">Choices: {policy.allowedMinutes.map(formatKeepAlive).join(', ')}</Text>
+      </Stack>}
+      {error !== undefined ? <APIProblemView error={error} /> : null}
+      {saved ? <Text role="status">Keep-alive settings saved.</Text> : null}
     </Stack>
-    {csrfToken ? <KeepAliveForm key={policy.version} policy={policy} csrfToken={csrfToken} refresh={refresh}
-      report={(error, saved) => { setError(error); setSaved(saved); }} /> : <Stack gap={4}>
-      <Text size="sm">Maximum: {formatKeepAlive(policy.maximumMinutes)} · Default: {formatKeepAlive(policy.defaultMinutes)}</Text>
-      <Text size="sm" c="dimmed">Choices: {policy.allowedMinutes.map(formatKeepAlive).join(', ')}</Text>
-    </Stack>}
-    {error !== undefined ? <APIProblemView error={error} /> : null}
-    {saved ? <Text role="status">Keep-alive settings saved.</Text> : null}
-  </Stack>;
+  </Paper>;
 }
 
 function KeepAliveForm({ policy, csrfToken, refresh, report }: {

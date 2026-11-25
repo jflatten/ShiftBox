@@ -27,9 +27,9 @@ function json(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload } as Response;
 }
 
-// Cost controls belong in the requested capacity section so administrators can
-// discover the inactivity limit beside their overall cloud resource budget.
-test('places keep-alive settings inside the capacity budget section', async () => {
+// Administrators find resource profiles immediately after provider details,
+// with separate cards for capacity limits and inactivity policy.
+test('orders the resource cards and gives each settings form its own section', async () => {
   globalThis.fetch = jest.fn(async input => {
     if (input === '/api/v1/session') return json(session);
     if (input === '/api/v1/admin/infrastructure') return json({ ...status,
@@ -38,9 +38,17 @@ test('places keep-alive settings inside the capacity budget section', async () =
     throw new Error('unexpected request');
   });
   render(<Providers><Infrastructure /></Providers>);
+  const provider = await screen.findByRole('region', { name: 'Provider' });
+  const profiles = screen.getByRole('region', { name: 'Resource profiles' });
   const capacity = await screen.findByRole('region', { name: 'Capacity budget' });
-  expect(within(capacity).getByRole('textbox', { name: 'Maximum inactivity timeout' })).toHaveValue('Unlimited');
-  expect(within(capacity).getByRole('combobox', { name: 'Default keep-alive' })).toHaveValue('30 minutes');
+  expect(provider.nextElementSibling).toBe(profiles);
+  expect(profiles.nextElementSibling).toBe(capacity);
+  const shutdown = screen.getByRole('region', { name: 'Inactivity shutdown' });
+  expect(capacity.nextElementSibling).toBe(shutdown);
+  expect(within(capacity).getByRole('button', { name: 'Save capacity budget' })).toBeVisible();
+  expect(within(shutdown).getByRole('textbox', { name: 'Maximum inactivity timeout' })).toHaveValue('Unlimited');
+  expect(within(shutdown).getByRole('combobox', { name: 'Default keep-alive' })).toHaveValue('30 minutes');
+  expect(within(shutdown).getByRole('button', { name: 'Save keep-alive settings' })).toBeVisible();
 });
 
 // Clearing individual limits must persist Unlimited without changing finite

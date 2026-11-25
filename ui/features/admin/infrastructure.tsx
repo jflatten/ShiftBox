@@ -72,8 +72,9 @@ export function Infrastructure() {
           </Tabs.List>
           <Tabs.Panel value="resources" pt="lg">
             <Stack gap="lg">
-              {data ? <>
-                <ProviderDetails provider={data.provider} />
+              {data ? <ProviderDetails provider={data.provider} /> : null}
+              <ResourceProfiles key={current.user.id} userId={current.user.id} provider={data?.provider} csrfToken={canManage ? current.csrfToken : undefined} />
+              {data ? (
                 <Paper component="section" aria-labelledby="capacity-heading" withBorder radius="md" p="lg">
                   <Stack gap="md">
                     <Stack gap={4}>
@@ -85,16 +86,15 @@ export function Infrastructure() {
                     {canManage
                       ? <CapacityBudget status={data} csrfToken={current.csrfToken} refresh={status.refetch} />
                       : <Text>{capacitySummary(data.capacity)}</Text>}
-                    {data.keepAlivePolicy ? <KeepAliveSettings policy={data.keepAlivePolicy}
-                      csrfToken={canManage ? current.csrfToken : undefined} refresh={status.refetch} /> : null}
                   </Stack>
                 </Paper>
-              </> : null}
+              ) : null}
+              {data?.keepAlivePolicy ? <KeepAliveSettings policy={data.keepAlivePolicy}
+                csrfToken={canManage ? current.csrfToken : undefined} refresh={status.refetch} /> : null}
               {data?.launchLogRetention ? <LaunchLogRetention settings={data.launchLogRetention}
                 csrfToken={canManage ? current.csrfToken : undefined} refresh={status.refetch} /> : null}
               {data?.provider.name === 'ec2' ? <AMIFamilies key={`ami-families:${current.user.id}`} userID={current.user.id}
                 csrfToken={canManage ? current.csrfToken : undefined} officialImage={data.provider.officialImage} /> : null}
-              <ResourceProfiles key={current.user.id} userId={current.user.id} provider={data?.provider} csrfToken={canManage ? current.csrfToken : undefined} />
             </Stack>
           </Tabs.Panel>
           <Tabs.Panel value="registry-cache" pt="lg">

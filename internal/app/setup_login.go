@@ -101,7 +101,7 @@ func (f loginFlow) finish(w http.ResponseWriter, r *http.Request) {
 	redirect := f.redirect
 	switch session.Mode {
 	case "normal":
-		redirect = workspacesHome
+		redirect = projectsHome
 	case "recovery_review":
 		redirect = "/recovery/"
 	}
