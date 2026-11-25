@@ -1,5 +1,5 @@
 title: ShiftBox
-url: https://jflatten.github.io
-baseurl: /ShiftBox
+url: https://www.shiftbox.dev
+baseurl: ""
 markdown: kramdown
 strict_front_matter: true

@@ -42,15 +42,21 @@ if grep -REq 'PRIVATE_FIXTURE_SENTINEL|v1\.0\.0-rc\.3|/releases/(tag|download|la
     exit 1
 fi
 
+# The custom domain serves the guides and logo from the site root.
+if grep -REq '(href|src)="/ShiftBox/' "$scratch/rendered"; then
+    echo "Published links must use the custom domain root" >&2
+    exit 1
+fi
+
 # Readers start with public downloads and can deploy through the AWS Console.
 install="$scratch/rendered/install/index.html"
 grep -Fq 'href="https://github.com/jflatten/ShiftBox/releases"' "$install"
 grep -Fq 'id="get-the-installation-files"' "$install"
 grep -Fq 'id="retrieve-the-certificate-and-admin-claim"' "$install"
-grep -Fq 'href="/ShiftBox/private-access/#trust-the-browser-certificate"' "$install"
+grep -Fq 'href="/private-access/#trust-the-browser-certificate"' "$install"
 for screenshot in setup-administrator.png setup-activate.png; do
     test -s "$scratch/rendered/assets/$screenshot"
-    grep -Fq "src=\"/ShiftBox/assets/$screenshot\"" "$install"
+    grep -Fq "src=\"/assets/$screenshot\"" "$install"
 done
 for output in BrowserCaSecretArn SetupClaimSecretArn ManagementOrigin; do
     grep -Fq "$output" "$install"
@@ -62,16 +68,16 @@ for guide in index.html install/index.html private-access/index.html first-works
 done
 
 # Advanced templates keep the terminal setup guide on a separate page.
-grep -Fq 'href="/ShiftBox/install/setup-helper/"' "$install"
+grep -Fq 'href="/install/setup-helper/"' "$install"
 grep -Fq 'sh ./setup.sh STACK_ID AWS_REGION AWS_ACCOUNT_ID' "$scratch/rendered/install/setup-helper/index.html"
 
 # Readers can follow the network and deployment steps through the first workspace.
 test -f "$scratch/rendered/first-workspace/index.html"
-grep -Fq 'href="/ShiftBox/install/"' "$scratch/rendered/index.html"
-grep -Fq '/ShiftBox/assets/shiftbox-logo.png' "$scratch/rendered/index.html"
+grep -Fq 'href="/install/"' "$scratch/rendered/index.html"
+grep -Fq '/assets/shiftbox-logo.png' "$scratch/rendered/index.html"
 grep -Fq 'id="prepare-your-vpc-and-subnets"' "$install"
 grep -Fq 'id="create-the-cloudformation-stack"' "$install"
 grep -Fq 'id="finish-setup-in-shiftbox"' "$install"
-grep -Fq 'href="/ShiftBox/private-access/"' "$install"
-grep -Fq 'href="/ShiftBox/first-workspace/"' "$install"
+grep -Fq 'href="/private-access/"' "$install"
+grep -Fq 'href="/first-workspace/"' "$install"
 grep -Fq 'id="connect-your-github-account"' "$scratch/rendered/first-workspace/index.html"

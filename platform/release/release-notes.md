@@ -1,3 +1,3 @@
 Choose the CloudFormation quick-create link for your region. Inspect the published template and its SHA-256 before deploying. The release also includes the Bash installer, support archive and manifest with the exact controller digest, template object versions and workspace AMIs.
 
-Follow the [AWS installation guide](https://jflatten.github.io/ShiftBox/install/) for private network and browser setup. If the template has a `Phase` field, use the [setup helper guide](https://jflatten.github.io/ShiftBox/install/setup-helper/). Existing installations should use the documented backup and update procedure before changing versions.
+Follow the [AWS installation guide](https://www.shiftbox.dev/install/) for private network and browser setup. If the template has a `Phase` field, use the [setup helper guide](https://www.shiftbox.dev/install/setup-helper/). Existing installations should use the documented backup and update procedure before changing versions.

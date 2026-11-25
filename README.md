@@ -13,7 +13,7 @@ Launch a workspace from a GitHub repository using its Dev Container configuratio
 
 Use AWS CloudFormation to install ShiftBox in your existing VPC, then finish setup in your browser.
 
-* [Install ShiftBox on AWS](https://jflatten.github.io/ShiftBox/install/)
-* [Launch your first workspace](https://jflatten.github.io/ShiftBox/first-workspace/)
+* [Install ShiftBox on AWS](https://www.shiftbox.dev/install/)
+* [Launch your first workspace](https://www.shiftbox.dev/first-workspace/)
 
 ShiftBox is released under the [MIT License](LICENSE).
