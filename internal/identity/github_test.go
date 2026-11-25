@@ -177,6 +177,66 @@ func githubResponse(body string) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}
 }
 
+// TestGitHubRevalidatesInstallationAccess checks that stale grants are cleared
+// while a temporary GitHub outage leaves the stored authorization intact.
+func TestGitHubRevalidatesInstallationAccess(t *testing.T) {
+	app, _, now := gitHubBrowserFixture(t)
+	if err := app.service.store.connect(t.Context(), "owner", "42", githubTokens{Access: "fixture-token"}, now); err != nil {
+		t.Fatal(err)
+	}
+	status, body := http.StatusServiceUnavailable, ""
+	app.http.client.Transport = githubRoundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/user/installations" || r.Header.Get("Authorization") != "Bearer fixture-token" {
+			t.Fatalf("unexpected request to %s", r.URL.Path)
+		}
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	if err := app.ValidateAuthorization(t.Context(), "owner"); err == nil || errors.Is(err, ErrGitHubReconnect) {
+		t.Fatalf("temporary failure = %v, want a retryable validation error", err)
+	}
+	saved, err := app.service.store.load(t.Context(), "owner")
+	if err != nil || saved.State != "connected" {
+		t.Fatalf("after temporary failure state = %q, error = %v, want connected", saved.State, err)
+	}
+	status, body = http.StatusOK, `{"total_count":1,"installations":[{"id":55}]}`
+	if err := app.ValidateAuthorization(t.Context(), "owner"); err != nil {
+		t.Fatalf("matching installation = %v, want success", err)
+	}
+	body = `{"total_count":1,"installations":[{"id":54}]}`
+	if err := app.ValidateAuthorization(t.Context(), "owner"); !errors.Is(err, ErrGitHubReconnect) {
+		t.Fatalf("stale installation = %v, want ErrGitHubReconnect", err)
+	}
+	saved, err = app.service.store.load(t.Context(), "owner")
+	if err != nil || saved.State != "reconnect_required" || saved.Tokens.Access != "" {
+		t.Fatalf("stale authorization state = %q, error = %v, want cleared credentials and reconnect_required", saved.State, err)
+	}
+}
+
+// TestGitHubCoverageDistinguishesRemovedInstallation checks the same 404
+// response for an installation the user can still access and one they cannot.
+func TestGitHubCoverageDistinguishesRemovedInstallation(t *testing.T) {
+	body := `{"total_count":1,"installations":[{"id":55}]}`
+	httpClient := &http.Client{Transport: githubRoundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/user/installations/55/repositories" {
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		if r.URL.Path == "/user/installations" {
+			return githubResponse(body), nil
+		}
+		t.Fatalf("unexpected request to %s", r.URL.Path)
+		return nil, nil
+	})}
+	provider := githubHTTP{client: httpClient, installationID: 55}
+	const repo = "https://github.com/example/private"
+	if err := provider.covers(t.Context(), "fixture-token", repo); !errors.Is(err, ErrGitHubRepositoryDenied) {
+		t.Fatalf("missing repo = %v, want repository denial", err)
+	}
+	body = `{"total_count":0,"installations":[]}`
+	if err := provider.covers(t.Context(), "fixture-token", repo); !errors.Is(err, ErrGitHubReconnect) {
+		t.Fatalf("removed installation = %v, want reconnect", err)
+	}
+}
+
 // TestGitHubProviderUsesAppCoverage verifies the token exchange and paginated
 // installation repository lookup use separate credentials and fixed hosts.
 func TestGitHubProviderUsesAppCoverage(t *testing.T) {

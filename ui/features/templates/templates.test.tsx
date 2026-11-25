@@ -42,6 +42,25 @@ test('opens the new workspace directly after launch', async () => {
   expect(screen.queryByRole('link', { name: 'View workspace' })).not.toBeInTheDocument();
 });
 
+// A launch review links to reconnection and waits for renewed authorization before submitting.
+test('prompts the owner to reconnect GitHub before launch', async () => {
+  const fetch = jest.fn(async (input: RequestInfo | URL) => {
+    if (input === '/api/v1/session') return json({ ...session, permissions: ['git.manage'] });
+    if (input === '/api/v1/templates') return json({ items: [project], nextCursor: null });
+    if (input === '/api/v1/git/authorization') return json({ state: 'reconnect_required' });
+    throw new Error(`unexpected request: ${input}`);
+  });
+  globalThis.fetch = fetch;
+  const user = userEvent.setup();
+  render(<Providers><Templates /></Providers>);
+  await user.click(await screen.findByRole('button', { name: 'Launch workspace for Example project' }));
+  const dialog = within(await screen.findByRole('dialog', { name: 'Review launch' }));
+  await user.type(dialog.getByRole('textbox', { name: 'Workspace name' }), 'New workspace');
+  expect(await dialog.findByRole('link', { name: 'Reconnect GitHub' })).toHaveAttribute('href', '/account/');
+  expect(dialog.getByRole('button', { name: 'Launch workspace' })).toBeDisabled();
+  expect(fetch.mock.calls.some(([input]) => input === '/api/v1/workspaces')).toBe(false);
+});
+
 // Shared users can inspect readable configuration without gaining edit or
 // secret-management controls, and closing details returns keyboard focus.
 test('shows named project details and respects shared access', async () => {

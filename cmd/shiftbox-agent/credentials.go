@@ -63,7 +63,10 @@ func gitCredentialCommand(ctx context.Context, args []string, stdin io.Reader, s
 		fmt.Fprintln(stderr, "Git credential access is denied for this repository.")
 		return 4
 	case errors.Is(err, guest.ErrGitReconnect):
-		fmt.Fprintln(stderr, "Reconnect your GitHub account in ShiftBox.")
+		fmt.Fprintln(stderr, "Reconnect your GitHub account in ShiftBox under Personal settings.")
+		if _, err := io.WriteString(stdout, "quit=true\n\n"); err != nil {
+			return 1
+		}
 		return 4
 	case err != nil || !guest.ValidGitAccessToken(token):
 		fmt.Fprintln(stderr, "The Git credential service is unavailable.")

@@ -79,6 +79,7 @@ func ManagementRoutes() []ManagementRoute {
 		{Method: "GET", Path: "/admin/settings/github-app/return", OperationID: "returnGitHubAppRegistration", Resolver: "github_app_browser_return"},
 		{Method: "POST", Path: "/admin/settings/github-app/callback", OperationID: "completeGitHubAppRegistration", Action: "infrastructure.manage"},
 		{Method: "POST", Path: "/admin/settings/github-app/verify", OperationID: "verifyGitHubAppInstallation", Action: "infrastructure.manage"},
+		{Method: "POST", Path: "/admin/settings/github-app/revoke", OperationID: "revokeGitHubAppInstallation", Action: "infrastructure.manage"},
 		{Method: "GET", Path: "/admin/image-cache", OperationID: "getImageCache", Action: "infrastructure.view"},
 		{Method: "PUT", Path: "/admin/image-cache", OperationID: "updateImageCache", Action: "infrastructure.manage"},
 		{Method: "PUT", Path: builtImagePolicyPath, OperationID: "updateBuiltImagePolicy", Action: "infrastructure.manage"},

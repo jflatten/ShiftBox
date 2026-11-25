@@ -132,6 +132,18 @@ func (s githubStore) requireReconnect(ctx context.Context, owner string, version
 	return err
 }
 
+// InvalidateGitHubAppAuthorizationsInTx clears credentials and unfinished
+// OAuth flows for an installation that is being removed or replaced.
+func InvalidateGitHubAppAuthorizationsInTx(ctx context.Context, tx *sql.Tx, appID string, now time.Time) error {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM github_oauth_states WHERE app_id=$1", appID); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE github_authorizations SET state='reconnect_required',nonce=$1,ciphertext=$1,
+		access_expires_at='',refresh_expires_at='',updated_at=$2,version=version+1
+		WHERE app_id=$3 AND state IN ('connected','refreshing')`, []byte{}, gitHubTimestamp(now), appID)
+	return err
+}
+
 func (s githubStore) activeVersion(ctx context.Context, owner string, version int64) (bool, error) {
 	var active bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM github_authorizations a JOIN users u ON u.id=a.user_id

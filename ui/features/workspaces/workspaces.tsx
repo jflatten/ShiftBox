@@ -38,7 +38,8 @@ export function Workspaces({ workspaceId, ownerId, launch = false }: {
         </>
       ) : (
         <div style={{ display: 'contents' }} inert={sessionUnavailable && !unavailable}>
-          {launch ? <LaunchFlow key={current.user.id} csrfToken={current.csrfToken}>
+          {launch ? <LaunchFlow key={current.user.id} csrfToken={current.csrfToken}
+            gitUserID={current.permissions.includes('git.manage') ? current.user.id : undefined}>
             {onReview => <WorkspaceLaunchPicker userID={current.user.id} admin={current.role === 'administrator'} onReview={onReview} />}
           </LaunchFlow>
             : workspaceId ? <WorkspaceDetail key={workspaceId} id={workspaceId} userId={current.user.id} csrfToken={current.csrfToken}

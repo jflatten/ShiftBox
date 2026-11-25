@@ -878,6 +878,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/settings/github-app/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Remove the confirmed GitHub App installation and stop repository access through ShiftBox. */
+        post: operations["revokeGitHubAppInstallation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/image-cache": {
         parameters: {
             query?: never;
@@ -1065,13 +1082,14 @@ export interface components {
     schemas: {
         GitHubAppSetupStatus: {
             /** @enum {string} */
-            state: "not_configured" | "registering" | "exchanging" | "installation_pending" | "ready" | "file_managed" | "recovery_required";
+            state: "not_configured" | "registering" | "exchanging" | "installation_pending" | "ready" | "revoking" | "file_managed" | "recovery_required";
             appName?: string;
             owner?: string;
             /** Format: uri */
             installUrl?: string;
             /** Format: uri */
             manageUrl?: string;
+            installationId?: string;
             /** @enum {string} */
             repositorySelection?: "selected" | "all";
         };
@@ -3589,6 +3607,35 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Current verified installation progress */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppSetupStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revokeGitHubAppInstallation: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    installationId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Current installation status. Revocation can remain pending while GitHub processes removal. */
             200: {
                 headers: {
                     [name: string]: unknown;

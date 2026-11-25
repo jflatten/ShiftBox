@@ -103,6 +103,9 @@ func (h githubHTTP) covers(ctx context.Context, token, repository string) error 
 		case http.StatusUnauthorized:
 			return ErrGitHubReconnect
 		case http.StatusNotFound:
+			if err := h.checkInstallation(ctx, token); err != nil {
+				return err
+			}
 			return ErrGitHubRepositoryDenied
 		default:
 			return errors.New("GitHub repository coverage is unavailable")
@@ -114,6 +117,37 @@ func (h githubHTTP) covers(ctx context.Context, token, repository string) error 
 		}
 		if len(listing.Repos) == 0 || page >= (max(0, listing.Count-1)/100)+1 {
 			return ErrGitHubRepositoryDenied
+		}
+	}
+}
+
+// checkInstallation distinguishes a stale user authorization from a valid
+// authorization that simply does not cover a particular repository.
+func (h githubHTTP) checkInstallation(ctx context.Context, token string) error {
+	for page := 1; ; page++ {
+		var listing struct {
+			Count         *int `json:"total_count"`
+			Installations []struct {
+				ID int64 `json:"id"`
+			} `json:"installations"`
+		}
+		status, err := h.get(ctx, token, "/user/installations?per_page=100&page="+strconv.Itoa(page), &listing, 8<<20)
+		if err != nil {
+			return err
+		}
+		if status == http.StatusUnauthorized {
+			return ErrGitHubReconnect
+		}
+		if status != http.StatusOK || listing.Count == nil || listing.Installations == nil || *listing.Count < len(listing.Installations) {
+			return errors.New("GitHub installation access could not be checked")
+		}
+		for _, installation := range listing.Installations {
+			if installation.ID == h.installationID {
+				return nil
+			}
+		}
+		if len(listing.Installations) == 0 || page >= (max(0, *listing.Count-1)/100)+1 {
+			return ErrGitHubReconnect
 		}
 	}
 }

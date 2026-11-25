@@ -6,13 +6,16 @@ import (
 	"regexp"
 )
 
+// GitHubAppIntegrationsPath opens the GitHub App setup pane in the browser.
+const GitHubAppIntegrationsPath = "/integrations/"
+
 var (
 	githubAppReturnCode  = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,256}$`)
 	githubAppReturnState = regexp.MustCompile(`^[a-zA-Z0-9_-]{43}$`)
 )
 
 // GitHubAppReturn bridges GitHub's cross-site navigation to the same-origin
-// settings page. Only its authenticated POST can redeem a registration code.
+// Integrations page. Only its authenticated POST can redeem a registration code.
 func GitHubAppReturn(origin string) http.Handler {
 	configured, _ := url.Parse(origin)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +29,7 @@ func GitHubAppReturn(origin string) http.Handler {
 			return
 		}
 		fragment := url.Values{"github-code": {query.Get("code")}, "github-state": {query.Get("state")}}
-		w.Header().Set("Location", "/settings/?section=github-app#"+fragment.Encode())
+		w.Header().Set("Location", GitHubAppIntegrationsPath+"#"+fragment.Encode())
 		w.WriteHeader(http.StatusSeeOther)
 	})
 }

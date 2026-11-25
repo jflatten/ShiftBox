@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Group, Modal, Stack, Stepper, Text, Title } from '@mantine/core';
-import { useQuery } from '@tanstack/react-query';
 import { APIProblemView } from '../../components/api-problem';
 import { readProblem } from '../../lib/api-problem';
 import { readAuthorizationLink } from '../../lib/authorization-link';
 import { useAuthorizationExpired } from '../../lib/use-authorization-expired';
+import { gitAuthorizationEndpoint, useGitAuthorization } from './use-git-authorization';
 
-const endpoint = '/api/v1/git/authorization';
 const stateLabels = {
   connected: 'GitHub is connected.',
   refreshing: 'Refreshing GitHub authorization…',
@@ -15,15 +14,7 @@ const stateLabels = {
 };
 
 export function GitConnection({ userID, csrfToken, description }: { userID: string; csrfToken: string; description?: string }) {
-  const status = useQuery<{ state: keyof typeof stateLabels }>({
-    queryKey: ['git-authorization', userID],
-    queryFn: async ({ signal }) => {
-      const response = await fetch(endpoint, { cache: 'no-store', signal });
-      if (!response.ok) throw await readProblem(response);
-      return response.json();
-    },
-    refetchInterval: query => query.state.data?.state === 'refreshing' ? 3000 : false,
-  });
+  const status = useGitAuthorization(userID);
   const [link, setLink] = useState<ReturnType<typeof readAuthorizationLink>>();
   const [pending, setPending] = useState<'POST' | 'DELETE'>();
   const [error, setError] = useState<unknown>();
@@ -41,7 +32,7 @@ export function GitConnection({ userID, csrfToken, description }: { userID: stri
     setInvalidLink(false);
     setLink(undefined);
     try {
-      const response = await fetch(endpoint, { method, headers: { 'X-CSRF-Token': csrfToken }, cache: 'no-store' });
+      const response = await fetch(gitAuthorizationEndpoint, { method, headers: { 'X-CSRF-Token': csrfToken }, cache: 'no-store' });
       if (!response.ok) throw await readProblem(response);
       if (method === 'DELETE') {
         setConfirm(false);

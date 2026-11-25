@@ -1,17 +1,19 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Group, Modal, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Anchor, Button, Group, Modal, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
 import { APIProblemView } from '../../components/api-problem';
 import type { operations } from '../../lib/api-types';
-import { readProblem } from '../../lib/api-problem';
+import { APIProblemError, readProblem } from '../../lib/api-problem';
 import { providerLabel } from '../../lib/provider-label';
 import type { TemplateRevision } from '../templates/use-templates';
+import { useGitAuthorization } from '../git/use-git-authorization';
 import { markWorkspaceLaunch, workspaceURL } from './workspace';
 
 type AcceptedLaunch = operations['launchWorkspace']['responses'][202]['content']['application/json'];
 
-export function LaunchFlow({ csrfToken, children }: {
+export function LaunchFlow({ csrfToken, gitUserID, children }: {
   csrfToken: string;
+  gitUserID?: string;
   children: (onReview: (project: TemplateRevision) => void) => ReactNode;
 }) {
   const router = useRouter();
@@ -19,6 +21,12 @@ export function LaunchFlow({ csrfToken, children }: {
   const [review, setReview] = useState<TemplateRevision>();
   const [error, setError] = useState<unknown>();
   const [submitting, setSubmitting] = useState(false);
+  const gitAuthorization = useGitAuthorization(review ? gitUserID : undefined);
+  const checkingGit = !!gitUserID && (gitAuthorization.isPending || gitAuthorization.isFetching);
+  const reconnectGit = gitAuthorization.data?.state === 'reconnect_required';
+  const connectGit = gitAuthorization.data?.state === 'revoked';
+  const gitUnavailable = gitAuthorization.error instanceof APIProblemError && gitAuthorization.error.problem.code === 'git.unavailable';
+  const waitingForGit = checkingGit || reconnectGit || connectGit || gitUnavailable;
   const requestKeys = useRef(new Map<string, string>());
 
   function closeReview() {
@@ -28,7 +36,7 @@ export function LaunchFlow({ csrfToken, children }: {
   }
 
   const begin = async () => {
-    if (!review || !name.trim() || submitting) return;
+    if (!review || !name.trim() || submitting || waitingForGit) return;
     setSubmitting(true);
     setError(undefined);
     try {
@@ -71,10 +79,21 @@ export function LaunchFlow({ csrfToken, children }: {
               <LaunchDetail label="Platform image" value={review.platformImageName || 'Unavailable'} />
               <LaunchDetail label="Secret references" value={review.secretNames?.join(', ') || 'None'} />
             </SimpleGrid>
+            {checkingGit ? <Text size="sm" role="status">Checking GitHub authorization…</Text> : null}
+            {reconnectGit || connectGit ? <Alert color="yellow" title={reconnectGit ? 'GitHub reconnection required' : 'GitHub connection required'}>
+              <Stack gap="xs">
+                <Text size="sm">{reconnectGit ? 'Reconnect' : 'Connect'} your GitHub account before launching this workspace.</Text>
+                <Anchor href="/account/">{reconnectGit ? 'Reconnect GitHub' : 'Connect GitHub'}</Anchor>
+              </Stack>
+            </Alert> : null}
+            {gitAuthorization.isError ? <Stack align="flex-start" gap="xs">
+              <APIProblemView error={gitAuthorization.error} />
+              <Button variant="default" onClick={() => void gitAuthorization.refetch()}>Check GitHub connection again</Button>
+            </Stack> : null}
             {error !== undefined ? <APIProblemView error={error} /> : null}
             <Group grow gap={0} mx="calc(-1 * var(--mantine-spacing-lg))" wrap="nowrap">
               <Button variant="default" radius={0} size="lg" disabled={submitting} onClick={closeReview}>Cancel</Button>
-              <Button type="submit" radius={0} size="lg" disabled={!name.trim()} loading={submitting}>Launch workspace</Button>
+              <Button type="submit" radius={0} size="lg" disabled={!name.trim() || waitingForGit} loading={submitting}>Launch workspace</Button>
             </Group>
           </Stack>
         ) : null}

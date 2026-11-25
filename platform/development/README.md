@@ -76,8 +76,8 @@ creation the claim is spent, and activation retires the setup API.
 
 ## Connect GitHub repositories
 
-After activating, sign in as the administrator and open **Administration →
-Settings → GitHub App**. Enter the GitHub organization that owns the
+After activating, sign in as the administrator and find **GitHub Integration**
+under **Administration → Integrations**. Enter the GitHub organization that owns the
 repositories or leave it blank for a personal account. Select **Set up GitHub
 App**, confirm the prefilled registration on GitHub, and choose the repositories
 when installing. Keep the private ShiftBox URL reachable from your browser for

@@ -22,7 +22,7 @@ Choose a **Small**, **Medium**, or **Large** resource profile when you create a 
 
 A ShiftBox administrator completes this step once per installation. You need permission to register and install the app on the GitHub account that owns the repository.
 
-1. Open **Administration → Settings → GitHub App**. Enter the GitHub organization that owns the repositories, or leave the field blank for a personal account.
+1. Open **Administration → Integrations** and find **GitHub Integration**. Enter the GitHub organization that owns the repositories, or leave the field blank for a personal account.
 2. Select **Set up GitHub App** and confirm the prefilled registration on GitHub. During installation, grant the app access to the intended repositories.
 3. Keep your private connection open so your browser can return to ShiftBox. If an organization administrator approves the installation later, return to ShiftBox and select **Check installation**.
 

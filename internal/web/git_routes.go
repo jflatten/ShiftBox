@@ -33,7 +33,7 @@ func GitAuthorizationHandlers(db *sql.DB, origin string, now func() time.Time, g
 					var err error
 					switch route.Method {
 					case http.MethodGet:
-						result, err = active.AuthorizationViewInTx(ctx, tx, principal.User.ID)
+						return readGitAuthorization(ctx, tx, github, active, principal.User.ID)
 					case http.MethodPost:
 						result, err = active.BeginAuthorizationInTx(ctx, tx, principal.User.ID, origin)
 					case http.MethodDelete:
@@ -55,6 +55,38 @@ func GitAuthorizationHandlers(db *sql.DB, origin string, now func() time.Time, g
 		}
 	}
 	return handlers
+}
+
+func readGitAuthorization(ctx context.Context, tx *sql.Tx, github, active *identity.GitHub, owner string) (http.Handler, error) {
+	view, err := active.AuthorizationViewInTx(ctx, tx, owner)
+	if err != nil {
+		return nil, err
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		current := view
+		// Provider checks can refresh a token or clear stale credentials. Run
+		// them after the management authorization transaction has committed.
+		if view.State == "connected" || view.State == "refreshing" {
+			if err := active.ValidateAuthorization(ctx, owner); err != nil && !errors.Is(err, identity.ErrGitHubReconnect) {
+				WriteProblem(w, RequestID(ctx), Problem{Status: 502, Code: "git.validation_unavailable",
+					Title: "Could not check your GitHub connection", Retryable: true})
+				return
+			}
+			var err error
+			current, err = active.AuthorizationView(ctx, owner)
+			if err != nil {
+				WriteProblem(w, RequestID(ctx), err)
+				return
+			}
+		}
+		if active != github.Active() {
+			WriteProblem(w, RequestID(ctx), gitNotConfigured())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(current)
+	}), nil
 }
 
 // GitAuthorizationCallback handles the OAuth redirect using one-use state
