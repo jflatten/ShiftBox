@@ -316,6 +316,17 @@ case "$1:$2" in
     printf 'upload %s\n' "$name" >>"$RELEASE_FIXTURE_WRITES"
     ;;
   api:--method)
+    if [ "$3" = PATCH ] && [ "$5" = --input ] && [ "$6" = - ]; then
+      # GitHub can assign a placeholder tag when a draft notes update omits tag_name.
+      edit=$(cat)
+      jq --argjson edit "$edit" '
+        . + $edit | .tag_name = ($edit.tag_name // "untagged-eaa976852465dbef6735")
+      ' "$RELEASE_FIXTURE_STATE" >"$RELEASE_FIXTURE_STATE.next"
+      mv "$RELEASE_FIXTURE_STATE.next" "$RELEASE_FIXTURE_STATE"
+      printf 'update draft\n' >>"$RELEASE_FIXTURE_WRITES"
+      cat "$RELEASE_FIXTURE_STATE"
+      exit 0
+    fi
     if [ "$3" != PATCH ] || [ "$5" != -F ] || [ "$6" != draft=false ] || [ "$8" != make_latest=false ]; then exit 91; fi
     jq '.draft = false | .immutable = true' "$RELEASE_FIXTURE_STATE" >"$RELEASE_FIXTURE_STATE.next"
     mv "$RELEASE_FIXTURE_STATE.next" "$RELEASE_FIXTURE_STATE"
@@ -366,6 +377,16 @@ expect_ok 'make finalization of the published candidate a no-op' \
   publication_fixture finalize "$tag" "$source_commit" "$release_assets"
 printf 'upload distribution-manifest.json\nupload shiftbox-aws-support.tar.gz\npublish\n' >"$scratch/expected-writes"
 expect_ok 'preserve existing assets and publish exactly once' cmp "$scratch/expected-writes" "$fixture_writes"
+
+# Replacing a same-run reservation with final notes must keep the existing Git tag attached.
+cp "$scratch/reservation.json" "$fixture_state"
+: >"$fixture_writes"
+expect_ok 'bind the final draft notes to the protected RC tag during the update' \
+  publication_fixture prepare-draft "$tag" "$source_commit" "$release_assets" "$scratch/notes.md"
+# shellcheck disable=SC2016
+expect_ok 'keep the exact source and four assets on the draft prerelease' \
+  jq -e --arg tag "$tag" --arg source "$source_commit" \
+  '.tag_name == $tag and .target_commitish == $source and .draft and .prerelease and (.assets | length) == 4' "$fixture_state"
 
 printf '%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
