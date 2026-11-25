@@ -62,18 +62,9 @@ type githubAppInstallation struct {
 // request does not return transport URLs or provider bodies in errors. Both
 // can contain one-use codes or credentials.
 func (s *githubAppSetup) request(ctx context.Context, method, path, token string, target any) error {
-	r, err := http.NewRequestWithContext(ctx, method, githubAppAPI+path, nil)
+	res, err := s.send(ctx, method, path, token)
 	if err != nil {
-		return errGitHubAppProvider
-	}
-	r.Header.Set("Accept", "application/vnd.github+json")
-	r.Header.Set("X-GitHub-Api-Version", "2026-03-10")
-	if token != "" {
-		r.Header.Set("Authorization", "Bearer "+token)
-	}
-	res, err := s.client.Do(r)
-	if err != nil {
-		return errGitHubAppProvider
+		return err
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusCreated {
@@ -86,6 +77,23 @@ func (s *githubAppSetup) request(ctx context.Context, method, path, token string
 		return errGitHubAppProvider
 	}
 	return nil
+}
+
+func (s *githubAppSetup) send(ctx context.Context, method, path, token string) (*http.Response, error) {
+	r, err := http.NewRequestWithContext(ctx, method, githubAppAPI+path, nil)
+	if err != nil {
+		return nil, errGitHubAppProvider
+	}
+	r.Header.Set("Accept", "application/vnd.github+json")
+	r.Header.Set("X-GitHub-Api-Version", "2026-03-10")
+	if token != "" {
+		r.Header.Set("Authorization", "Bearer "+token)
+	}
+	res, err := s.client.Do(r)
+	if err != nil {
+		return nil, errGitHubAppProvider
+	}
+	return res, nil
 }
 
 func (s *githubAppSetup) convert(ctx context.Context, code, organization string) (*githubAppRegistration, error) {
@@ -136,28 +144,34 @@ func githubAppSigningKey(encoded string) (*rsa.PrivateKey, error) {
 	return key, nil
 }
 
-func (s *githubAppSetup) findInstallation(ctx context.Context, app githubAppRegistration) (*githubAppInstallation, error) {
+func githubAppJWT(app githubAppRegistration, now time.Time) (string, error) {
 	key, err := githubAppSigningKey(app.PrivateKey)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	now := s.now()
 	claims, err := json.Marshal(struct {
 		Issuer    string `json:"iss"`
 		IssuedAt  int64  `json:"iat"`
 		ExpiresAt int64  `json:"exp"`
 	}{app.ClientID, now.Add(-time.Minute).Unix(), now.Add(5 * time.Minute).Unix()})
 	if err != nil {
-		return nil, errGitHubAppProvider
+		return "", errGitHubAppProvider
 	}
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
 	input := header + "." + base64.RawURLEncoding.EncodeToString(claims)
 	digest := sha256.Sum256([]byte(input))
 	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
 	if err != nil {
-		return nil, errGitHubAppProvider
+		return "", errGitHubAppProvider
 	}
-	token := input + "." + base64.RawURLEncoding.EncodeToString(signature)
+	return input + "." + base64.RawURLEncoding.EncodeToString(signature), nil
+}
+
+func (s *githubAppSetup) findInstallation(ctx context.Context, app githubAppRegistration) (*githubAppInstallation, error) {
+	token, err := githubAppJWT(app, s.now())
+	if err != nil {
+		return nil, err
+	}
 	// A private app can be installed only on its own account. The only
 	// accepted installation is the one returned for that account by GitHub.
 	var installations []githubAppInstallation
@@ -175,6 +189,40 @@ func (s *githubAppSetup) findInstallation(ctx context.Context, app githubAppRegi
 		return nil, nil
 	}
 	return install, nil
+}
+
+func (s *githubAppSetup) removeInstallation(ctx context.Context, app githubAppRegistration, id int64) (bool, error) {
+	token, err := githubAppJWT(app, s.now())
+	if err != nil {
+		return false, err
+	}
+	res, err := s.send(ctx, http.MethodDelete, "/app/installations/"+strconv.FormatInt(id, 10), token)
+	if err != nil {
+		return false, err
+	}
+	res.Body.Close()
+	switch res.StatusCode {
+	case http.StatusNoContent:
+		return true, nil
+	case http.StatusAccepted, http.StatusNotFound:
+		// A 202 only queues removal. A retry can receive 404 after removal.
+		// Confirm absence in the authenticated app's installation list.
+	default:
+		return false, errGitHubAppProvider
+	}
+	var installations []githubAppInstallation
+	if err := s.request(ctx, http.MethodGet, "/app/installations", token, &installations); err != nil || installations == nil {
+		return false, errGitHubAppProvider
+	}
+	for _, installation := range installations {
+		if installation.ID <= 0 {
+			return false, errGitHubAppProvider
+		}
+		if installation.ID == id {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (a githubAppRegistration) installURL() string {

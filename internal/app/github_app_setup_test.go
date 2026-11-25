@@ -130,8 +130,8 @@ func TestGitHubAppSetupKeepsUserConsentSeparate(t *testing.T) {
 		len(manifest.Permissions) != 6 || manifest.Permissions["workflows"] != "write" ||
 		len(manifest.CallbackURLs) != 1 || manifest.CallbackURLs[0] != githubSetupTestOrigin+"/api/v1/git/authorization/callback" ||
 		manifest.RedirectURL != githubSetupTestOrigin+settings+"/return" ||
-		!strings.HasPrefix(manifest.SetupURL, githubSetupTestOrigin+"/settings/") {
-		t.Fatalf("manifest = %s (%v), want prefilled private application and separate OAuth callback", post.Manifest, err)
+		manifest.SetupURL != githubSetupTestOrigin+"/integrations/?github-install=1" {
+		t.Fatalf("manifest = %s (%v), want a private app with separate OAuth and Integrations return URLs", post.Manifest, err)
 	}
 	callback := settings + "/callback"
 	payload := fmt.Sprintf(`{"code":"abc123","state":%q}`, action.Query().Get("state"))
@@ -182,6 +182,164 @@ func TestGitHubAppSetupKeepsUserConsentSeparate(t *testing.T) {
 	handler.ServeHTTP(view, requestOAuth)
 	if view.Code != 200 || !strings.Contains(view.Body.String(), `"state":"revoked"`) {
 		t.Fatalf("member's authorization after admin installation = %d %s, want independent consent", view.Code, view.Body)
+	}
+}
+
+// TestGitHubAppRevocation checks stale and unauthorized requests, GitHub's
+// asynchronous uninstall, and durable recovery from an ambiguous provider failure.
+func TestGitHubAppRevocation(t *testing.T) {
+	state, admin, member, _, now := newGitHubSetupFixture(t)
+	clock := func() time.Time { return now }
+	_, err := state.ConfigureGitHubAppSetup(t.Context(), nil, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := githubAppRecord{
+		App: &githubAppRegistration{ID: 1234, Name: "Fixture", Slug: "fixture", ClientID: "Iv1.fixture",
+			ClientSecret: "fixture-secret",
+			PrivateKey:   string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})),
+			Owner:        githubAppOwner{ID: 99, Login: "sample-org", Type: "Organization"}},
+		InstallationID: 4321, RepositorySelection: "selected",
+	}
+	if err := database.Transaction(t.Context(), state.DB, func(tx *sql.Tx) error {
+		_, err := state.githubAppSetup.write(t.Context(), tx, "", record)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := state.ConfigureGitHubAppSetup(t.Context(), nil, clock)
+	if err != nil || runtime.Active() == nil {
+		t.Fatalf("load installed fixture: %v", err)
+	}
+	var owner string
+	if err := state.DB.QueryRow("SELECT id FROM users WHERE role='member'").Scan(&owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.DB.Exec(`INSERT INTO github_authorizations(user_id,app_id,provider_user_id,state,nonce,ciphertext,
+		access_expires_at,refresh_expires_at,updated_at,version)
+		VALUES($1,$2,'42','connected',$3,$3,'','','fixture',1)`, owner, record.App.ClientID, []byte("fixture-encrypted")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Active().BeginAuthorization(t.Context(), owner, githubSetupTestOrigin); err != nil {
+		t.Fatal(err)
+	}
+	request := func(operation, method, path, body, session string, csrf bool, want int) string {
+		t.Helper()
+		handler, exists := state.githubAppHandlers(clock)[operation]
+		if !exists {
+			t.Fatalf("handler %s is missing", operation)
+		}
+		r := httptest.NewRequest(method, githubSetupTestOrigin+path, strings.NewReader(body))
+		r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: session})
+		r.Header.Set("Origin", githubSetupTestOrigin)
+		r.Header.Set("Content-Type", "application/json")
+		if csrf {
+			r.Header.Set("X-CSRF-Token", auth.CSRFToken(session))
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Fatalf("%s status = %d %s, want %d", operation, w.Code, w.Body, want)
+		}
+		return w.Body.String()
+	}
+	const endpoint = "/api/v1/admin/settings/github-app"
+	revoke := func(id, session string, csrf bool, want int) string {
+		t.Helper()
+		return request("revokeGitHubAppInstallation", "POST", endpoint+"/revoke",
+			fmt.Sprintf(`{"installationId":%q}`, id), session, csrf, want)
+	}
+	deletes := 0
+	deleteStatuses := []int{502, 202, 404}
+	transport := githubSetupFixtureTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "api.github.com" || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ey") {
+			t.Fatalf("GitHub uninstall request to %s must use an app JWT", r.URL.Host)
+		}
+		status, body := 200, "[]"
+		switch {
+		case r.Method == "DELETE" && r.URL.Path == "/app/installations/4321":
+			if deletes >= len(deleteStatuses) {
+				t.Fatal("completed revocation sent another provider request")
+			}
+			status = deleteStatuses[deletes]
+			deletes++
+		case r.Method == "GET" && r.URL.Path == "/app/installations":
+			if deletes == 2 {
+				body = `[{"id":4321}]`
+			}
+		default:
+			t.Fatalf("unexpected provider request %s %s", r.Method, r.URL.Path)
+		}
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	state.githubAppSetup.client.Transport = transport
+	revoke("4321", member, true, 403)
+	revoke("4321", admin, false, 403)
+	revoke("9999", admin, true, 409)
+	if deletes != 0 || runtime.Active() == nil {
+		t.Fatal("denied revocation affected the running installation")
+	}
+	revoke("4321", admin, true, 502)
+	if runtime.Active() != nil {
+		t.Fatal("GitHub remained enabled after a confirmed revocation request")
+	}
+	var authState string
+	var ciphertext []byte
+	var outstanding int
+	if err := state.DB.QueryRow(`SELECT state,ciphertext,(SELECT count(*) FROM github_oauth_states WHERE app_id=$1)
+		FROM github_authorizations WHERE user_id=$2 AND app_id=$1`, record.App.ClientID, owner).
+		Scan(&authState, &ciphertext, &outstanding); err != nil || authState != "reconnect_required" || len(ciphertext) != 0 || outstanding != 0 {
+		t.Fatalf("revoked app authorization state = %q, token bytes = %d, unfinished OAuth states = %d, error = %v",
+			authState, len(ciphertext), outstanding, err)
+	}
+	runtime, err = state.ConfigureGitHubAppSetup(t.Context(), nil, clock)
+	if err != nil || runtime.Active() != nil {
+		t.Fatalf("restart revived a pending revocation: %v", err)
+	}
+	state.githubAppSetup.client.Transport = transport
+	if body := revoke("4321", admin, true, 200); !strings.Contains(body, `"state":"revoking"`) {
+		t.Fatalf("accepted but unfinished uninstall = %s, want revoking", body)
+	}
+	if body := revoke("4321", admin, true, 200); !strings.Contains(body, `"state":"installation_pending"`) || !strings.Contains(body, "/apps/fixture/installations/new") {
+		t.Fatalf("finished uninstall = %s, want the registered app available for reinstall", body)
+	}
+	revoke("4321", admin, true, 200)
+	if deletes != 3 {
+		t.Fatalf("provider DELETE count = %d, want 3", deletes)
+	}
+	var audited int
+	if err := state.DB.QueryRow("SELECT count(*) FROM audit_events WHERE action='github_app.revoke'").Scan(&audited); err != nil || audited != 1 {
+		t.Fatalf("completed revocation audit count = %d, error = %v, want 1", audited, err)
+	}
+	reloaded, _, err := state.githubAppSetup.read(t.Context(), state.DB)
+	if err != nil || reloaded.App == nil || reloaded.InstallationID != 0 || reloaded.RepositorySelection != "" {
+		t.Fatalf("read after revoke has app %t, installation %d, selection %q, error %v", reloaded.App != nil, reloaded.InstallationID, reloaded.RepositorySelection, err)
+	}
+	state.githubAppSetup.client.Transport = githubSetupFixtureTransport(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet || r.URL.Path != "/app/installations" {
+			t.Fatalf("unexpected request during reinstall: %s %s", r.Method, r.URL.Path)
+		}
+		body, err := json.Marshal([]githubAppInstallation{{
+			ID: 4322, AppID: record.App.ID, Account: record.App.Owner,
+			RepositorySelection: "selected", Permissions: githubPermissions,
+		}})
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body)))}, err
+	})
+	if body := request("verifyGitHubAppInstallation", "POST", endpoint+"/verify", "", admin, true, 200); !strings.Contains(body, `"state":"ready"`) {
+		t.Fatalf("reinstall = %s, want ready", body)
+	}
+	gitHandlers := web.GitAuthorizationHandlers(state.DB, githubSetupTestOrigin, clock, runtime)
+	getAuthorization := gitHandlers["getGitAuthorization"]
+	r := httptest.NewRequest(http.MethodGet, githubSetupTestOrigin+"/api/v1/git/authorization", nil)
+	r.AddCookie(&http.Cookie{Name: "__Host-shiftbox_session", Value: member})
+	w := httptest.NewRecorder()
+	getAuthorization.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"state":"reconnect_required"`) {
+		t.Fatalf("member status after reinstall = %d %s, want reconnect_required", w.Code, w.Body)
 	}
 }
 

@@ -10,7 +10,9 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jflatten/ShiftBox/internal/audit"
@@ -23,20 +25,20 @@ import (
 
 const (
 	githubAppReturn          = "/api/v1/admin/settings/github-app/return"
-	githubAppSettings        = "/settings/?section=github-app"
 	githubAppExchangeTimeout = 20 * time.Second
 )
 
 type githubAppSetup struct {
-	db           *sql.DB
-	cipher       *cryptostore.Store
-	installation string
-	origin       string
-	name         string
-	now          func() time.Time
-	client       *http.Client
-	publish      func(*identity.GitHub)
-	fileManaged  bool
+	db             *sql.DB
+	cipher         *cryptostore.Store
+	installation   string
+	origin         string
+	name           string
+	now            func() time.Time
+	client         *http.Client
+	publish        func(*identity.GitHub)
+	fileManaged    bool
+	installationMu sync.Mutex
 }
 
 type githubAppRecord struct {
@@ -48,6 +50,7 @@ type githubAppRecord struct {
 	App                 *githubAppRegistration
 	InstallationID      int64
 	RepositorySelection string
+	Revoking            bool
 }
 
 type githubAppStatus struct {
@@ -57,6 +60,7 @@ type githubAppStatus struct {
 	InstallURL          string `json:"installUrl,omitempty"`
 	ManageURL           string `json:"manageUrl,omitempty"`
 	RepositorySelection string `json:"repositorySelection,omitempty"`
+	InstallationID      string `json:"installationId,omitempty"`
 }
 
 // ConfigureGitHubAppSetup loads durable credentials and wires the active client
@@ -78,7 +82,7 @@ func (s *ControllerState) ConfigureGitHubAppSetup(ctx context.Context, file *ide
 		if err != nil {
 			return nil, err
 		}
-		if record.App != nil && record.InstallationID > 0 {
+		if record.App != nil && record.InstallationID > 0 && !record.Revoking {
 			client, err := setup.userClient(record)
 			if err != nil {
 				return nil, err
@@ -168,9 +172,14 @@ func (s *githubAppSetup) status(record githubAppRecord) githubAppStatus {
 		if record.InstallationID == 0 {
 			view.InstallURL = record.App.installURL()
 		} else {
-			view.State = "ready"
-			view.ManageURL = record.App.manageURL(record.InstallationID)
-			view.RepositorySelection = record.RepositorySelection
+			view.InstallationID = strconv.FormatInt(record.InstallationID, 10)
+			if record.Revoking {
+				view.State = "revoking"
+			} else {
+				view.State = "ready"
+				view.ManageURL = record.App.manageURL(record.InstallationID)
+				view.RepositorySelection = record.RepositorySelection
+			}
 		}
 		return view
 	}
@@ -187,11 +196,11 @@ func (s *githubAppSetup) status(record githubAppRecord) githubAppStatus {
 }
 
 func (s *ControllerState) githubAppHandlers(now func() time.Time) map[string]web.AuthorizedHandler {
-	handlers := make(map[string]web.AuthorizedHandler, 4)
+	handlers := make(map[string]web.AuthorizedHandler, 5)
 	setup := s.githubAppSetup
 	for _, route := range web.ManagementRoutes() {
 		switch route.OperationID {
-		case "getGitHubAppSetup", "beginGitHubAppSetup", "completeGitHubAppRegistration", "verifyGitHubAppInstallation":
+		case "getGitHubAppSetup", "beginGitHubAppSetup", "completeGitHubAppRegistration", "verifyGitHubAppInstallation", "revokeGitHubAppInstallation":
 		default:
 			continue
 		}
@@ -223,6 +232,8 @@ func (s *ControllerState) githubAppHandlers(now func() time.Time) map[string]web
 					return setup.callback(ctx, tx, r, principal, record, previous)
 				case "verifyGitHubAppInstallation":
 					return setup.verify(principal, record, previous)
+				case "revokeGitHubAppInstallation":
+					return setup.revoke(ctx, tx, r, principal, record, previous)
 				}
 				return nil, githubAppConflict()
 			},
@@ -277,7 +288,7 @@ func (s *githubAppSetup) begin(ctx context.Context, tx *sql.Tx, r *http.Request,
 func (s *githubAppSetup) form(record githubAppRecord) (http.Handler, error) {
 	manifest, err := json.Marshal(map[string]any{
 		"name": s.name, "url": s.origin, "description": "Repository access for ShiftBox workspaces",
-		"redirect_url": s.origin + githubAppReturn, "setup_url": s.origin + githubAppSettings + "&github-install=1",
+		"redirect_url": s.origin + githubAppReturn, "setup_url": s.origin + web.GitHubAppIntegrationsPath + "?github-install=1",
 		"callback_urls": []string{s.origin + "/api/v1/git/authorization/callback"},
 		"public":        false, "request_oauth_on_install": false, "setup_on_update": false,
 		"default_permissions": githubPermissions, "default_events": []string{},
@@ -355,16 +366,102 @@ func (s *githubAppSetup) verify(principal auth.Principal, record githubAppRecord
 			record.InstallationID, record.RepositorySelection = install.ID, install.RepositorySelection
 			loaded, err := s.userClient(record)
 			if err == nil {
+				s.installationMu.Lock()
 				err = s.finish(r.Context(), principal, previous, record, "github_app.install")
+				if err == nil {
+					s.publish(loaded)
+				}
+				s.installationMu.Unlock()
 			}
 			if err != nil {
 				web.WriteProblem(w, web.RequestID(r.Context()), err)
 				return
 			}
-			s.publish(loaded)
 		}
 		githubAppJSON(s.status(record)).ServeHTTP(w, r)
 	}), nil
+}
+
+func (s *githubAppSetup) revoke(ctx context.Context, tx *sql.Tx, r *http.Request, principal auth.Principal,
+	record githubAppRecord, previous string) (http.Handler, error) {
+	var input struct {
+		InstallationID string `json:"installationId"`
+	}
+	if err := web.DecodeJSON(nil, r, &input, 1024); err != nil {
+		return nil, err
+	}
+	id, err := strconv.ParseInt(input.InstallationID, 10, 64)
+	if err != nil || id < 1 || strconv.FormatInt(id, 10) != input.InstallationID {
+		return nil, web.Problem{Status: 400, Code: "github_app.invalid_installation", Title: "A valid installation ID is required"}
+	}
+	if record.App == nil || (record.InstallationID != 0 && record.InstallationID != id) {
+		return nil, githubAppConflict()
+	}
+	if record.InstallationID == 0 {
+		return githubAppJSON(s.status(record)), nil
+	}
+	if !record.Revoking {
+		record.Revoking = true
+		if _, err := s.write(ctx, tx, previous, record); err != nil {
+			return nil, err
+		}
+		if err := identity.InvalidateGitHubAppAuthorizationsInTx(ctx, tx, record.App.ClientID, s.now()); err != nil {
+			return nil, err
+		}
+		if err := s.audit(ctx, tx, principal.User.ID, "github_app.revoke_requested"); err != nil {
+			return nil, err
+		}
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The durable request was authorized before contacting GitHub. Finish
+		// recording its outcome even if the browser closes in the meantime.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), githubAppExchangeTimeout)
+		defer cancel()
+		result, err := s.completeRevocation(ctx, principal.User.ID, id)
+		if err != nil {
+			web.WriteProblem(w, web.RequestID(r.Context()), err)
+			return
+		}
+		githubAppJSON(result).ServeHTTP(w, r)
+	}), nil
+}
+
+func (s *githubAppSetup) completeRevocation(ctx context.Context, actor string, id int64) (githubAppStatus, error) {
+	// Keep runtime publication ordered with installation verification and
+	// serialize retries so a stale request cannot disable a new installation.
+	s.installationMu.Lock()
+	defer s.installationMu.Unlock()
+	record, previous, err := s.read(ctx, s.db)
+	if err != nil {
+		return githubAppStatus{}, err
+	}
+	if record.App != nil && record.InstallationID == 0 {
+		return s.status(record), nil
+	}
+	if record.App == nil || !record.Revoking || record.InstallationID != id {
+		return githubAppStatus{}, githubAppConflict()
+	}
+	s.publish(nil)
+	removed, err := s.removeInstallation(ctx, *record.App, id)
+	if err != nil {
+		return githubAppStatus{}, web.Problem{Status: 502, Code: "github_app.revocation_failed",
+			Title: "GitHub installation removal could not be confirmed", Retryable: true}
+	}
+	if !removed {
+		return s.status(record), nil
+	}
+	record.Revoking = false
+	record.InstallationID = 0
+	record.RepositorySelection = ""
+	if err := database.Transaction(ctx, s.db, func(tx *sql.Tx) error {
+		if _, err := s.write(ctx, tx, previous, record); err != nil {
+			return err
+		}
+		return s.audit(ctx, tx, actor, "github_app.revoke")
+	}); err != nil {
+		return githubAppStatus{}, err
+	}
+	return s.status(record), nil
 }
 
 func (s *githubAppSetup) finish(ctx context.Context, principal auth.Principal, previous string, record githubAppRecord, action string) error {
@@ -375,6 +472,11 @@ func (s *githubAppSetup) finish(ctx context.Context, principal auth.Principal, p
 		}
 		if _, err := s.write(ctx, tx, previous, record); err != nil {
 			return err
+		}
+		if record.InstallationID > 0 {
+			if err := identity.InvalidateGitHubAppAuthorizationsInTx(ctx, tx, record.App.ClientID, s.now()); err != nil {
+				return err
+			}
 		}
 		return s.audit(ctx, tx, current.User.ID, action)
 	})

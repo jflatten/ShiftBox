@@ -27,7 +27,8 @@ export function Templates() {
       {!normal ? <Title order={1}>Projects</Title> : null}
       {session.isPending ? <Text role="status">Checking your session…</Text> : null}
       {session.data === null ? <SignInChoices /> : null}
-      {normal ? <LaunchFlow key={current.user.id} csrfToken={current.csrfToken}>
+      {normal ? <LaunchFlow key={current.user.id} csrfToken={current.csrfToken}
+        gitUserID={current.permissions.includes('git.manage') ? current.user.id : undefined}>
         {onReview => <TemplateList userID={current.user.id} admin={current.role === 'administrator'} csrfToken={current.csrfToken}
           canCreate={current.permissions.includes('template.create')} onReview={onReview} />}
       </LaunchFlow> : null}

@@ -52,6 +52,7 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
   const adminInfrastructure = !signedOut && !renewalRequired && session?.role === 'administrator' && permitted('infrastructure.view');
   const adminSettings = normal && session?.role === 'administrator' &&
     (permitted('infrastructure.manage') || permitted('secret.manage_organization'));
+  const adminIntegrations = adminSettings && permitted('infrastructure.manage');
   const adminUsers = normal && session?.role === 'administrator' && permitted('user.list');
   const adminAudit = normal && session?.role === 'administrator' && permitted('audit.list');
   const adminRecovery = session?.role === 'administrator' && (backup || recovery);
@@ -113,6 +114,8 @@ export function ShiftBoxShell({ session, alerts, error, children, showNoticeToas
             aria-current={at('/infrastructure/') ? 'page' : undefined} /> : null}
           {adminSettings ? <NavLink href="/settings/" label="Settings" active={!!at('/settings/')}
             aria-current={at('/settings/') ? 'page' : undefined} /> : null}
+          {adminIntegrations ? <NavLink href="/integrations/" label="Integrations" active={!!at('/integrations/')}
+            aria-current={at('/integrations/') ? 'page' : undefined} /> : null}
           {adminUsers ? <NavLink href="/users/" label="Users" active={!!at('/users/')}
             aria-current={at('/users/') ? 'page' : undefined} /> : null}
           {adminAudit ? <NavLink href="/audit/" label="Audit" active={!!at('/audit/')}

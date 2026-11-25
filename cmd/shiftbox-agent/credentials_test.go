@@ -73,3 +73,15 @@ func TestGitCredentialHelper(t *testing.T) {
 		}
 	}
 }
+
+// TestGitCredentialHelperStopsPrompt sends Git the helper quit response only
+// for an explicit reconnect requirement and directs the owner to ShiftBox.
+func TestGitCredentialHelperStopsPrompt(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := gitCredentialCommand(t.Context(), []string{"git", "credential", "get"},
+		strings.NewReader("protocol=https\nhost=github.com\npath=owner/project.git\n\n"), &stdout, &stderr,
+		func(context.Context, string) (string, error) { return "", guest.ErrGitReconnect })
+	if code != 4 || stdout.String() != "quit=true\n\n" || !strings.Contains(stderr.String(), "Reconnect your GitHub account in ShiftBox") {
+		t.Fatalf("git helper = %d, stdout %q, stderr %q, want denial, Git's quit response, and reconnect message", code, &stdout, &stderr)
+	}
+}
