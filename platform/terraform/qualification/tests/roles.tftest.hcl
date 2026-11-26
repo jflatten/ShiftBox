@@ -42,29 +42,38 @@ run "separates_deployment_and_cleanup" {
   }
 }
 
-# The Ohio DNS update may be previewed and discarded. It cannot be executed
-# by the qualification GitHub identity or use the staffed service role.
-run "dns_staging_is_preview_only" {
+# The same YAML can be reviewed in every region. Only the staffed operator
+# can execute a controller stack change set.
+run "qualification_is_preview_only" {
   command = plan
 
   assert {
-    condition = toset([
+    condition = toset(flatten([
       for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement :
-      s.Condition.StringLike["cloudformation:ChangeSetName"] if s.Sid == "CreateReviewedChangeSet" || s.Sid == "CreateOhioDnsPreview"
-      ]) == toset(["sbq-*-*-foundation", "sbq-*-*-dns-zones"]) && one([
+      s.Condition.StringLike["cloudformation:ChangeSetName"] if s.Sid == "CreateReviewedChangeSet"
+      ])) == toset(["sbq-*-*-foundation", "sbq-*-*-one-pass"]) && contains(one([
       for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement :
-      s.Condition.StringLike["cloudformation:TemplateUrl"] if s.Sid == "CreateOhioDnsPreview"
-    ]) == "https://shiftbox-template-fixture-oh.s3.us-east-2.amazonaws.com/public/templates/v*-rc.*/*/shiftbox-aws-cloudformation.yaml?versionId=*"
-    error_message = "Only the named foundation and first DNS preview are allowed."
+      s.Condition.StringLike["cloudformation:TemplateUrl"] if s.Sid == "CreateReviewedChangeSet"
+    ]), "https://shiftbox-template-fixture-oh.s3.us-east-2.amazonaws.com/public/templates/v*-rc.*/*/shiftbox-aws-cloudformation.yaml?versionId=*")
+    error_message = "Review may create the one-pass and legacy previews using pinned template URLs."
   }
 
   assert {
-    condition = one([
+    condition = length([
       for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement :
-      s.Condition.StringLike["cloudformation:ChangeSetName"]
-      if try(contains(s.Action, "cloudformation:ExecuteChangeSet"), s.Action == "cloudformation:ExecuteChangeSet")
-    ]) == "sbq-*-*-foundation"
-    error_message = "Only the reviewed foundation change set can be executed."
+      s if try(contains(s.Action, "cloudformation:ExecuteChangeSet"), s.Action == "cloudformation:ExecuteChangeSet")
+    ]) == 0
+    error_message = "Automation cannot execute a change set regardless of name."
+  }
+
+  # The new one-pass name grants event readback without changing execution authority.
+  assert {
+    condition = length([
+      for arn in one([
+        for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement : s.Resource if s.Sid == "ReadOperationEvents"
+      ]) : arn if endswith(arn, "-one-pass/*")
+    ]) == 4
+    error_message = "One-pass validation must read change-set events in each supported region."
   }
 
   assert {
@@ -72,13 +81,6 @@ run "dns_staging_is_preview_only" {
     error_message = "No GitHub role can pass the staffed operator service role."
   }
 
-  assert {
-    condition = one([
-      for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement :
-      [for arn in s.Resource : arn if endswith(arn, "-dns-zones/*")] if s.Sid == "ReadOperationEvents"
-    ])[0] == "arn:aws:cloudformation:us-east-2:111111111111:changeSet/sbq-*-*-dns-zones/*"
-    error_message = "The preview can read pre-deployment events only for the Ohio DNS change set."
-  }
 }
 
 # The demo and publisher cannot be selected as the qualification account.

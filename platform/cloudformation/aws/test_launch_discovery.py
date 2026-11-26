@@ -1,9 +1,27 @@
 """Test single-create discovery with AWS API doubles."""
 
-import pytest
+from pathlib import Path
+import sys
+from types import ModuleType
 
-from launch_discovery import delete_private_zone, resolve_launch, resolve_private_zone, wait_for_private_zone
-from launch_forms import discovery_resources
+import pytest
+import yaml
+
+
+@pytest.fixture(scope="module")
+def resources():
+    # Exercise the same inline Lambda that operators get in the checked-in template.
+    template = Path(__file__).with_name("template.yaml")
+    return yaml.safe_load(template.read_text())["Resources"]
+
+
+@pytest.fixture
+def discovery(resources, monkeypatch):
+    code = resources["DiscoveryFunction"]["Properties"]["Code"]["ZipFile"]
+    monkeypatch.setitem(sys.modules, "cfnresponse", ModuleType("cfnresponse"))
+    namespace = {}
+    exec(compile(code, "<CloudFormation discovery Lambda>", "exec"), namespace)
+    return namespace
 
 
 class EC2:
@@ -61,48 +79,46 @@ def inputs():
             "DeploymentName": "rc3", "PublicZone": "ZPUBLIC", "PublicAccess": "true"}
 
 
-def test_auto_public_launch(inputs):
+def test_auto_public_launch(inputs, discovery):
     # One Internet-routed subnet is enough to derive all the missing launch values.
-    assert resolve_launch(inputs, EC2(), DNS()) == {
+    assert discovery["resolve_launch"](inputs, EC2(), DNS()) == {
         "VpcId": "vpc-example", "AvailabilityZone": "us-east-2a", "PublicSubnet": "subnet-public",
         "BaseDomain": "shiftbox.dev", "DnsSuffix": "rc3.internal",
     }
 
 
-def test_ambiguous_public_subnets_require_selection(inputs):
+def test_ambiguous_public_subnets_fail_closed(inputs, discovery):
     # Multiple eligible subnets must not change the load balancer placement arbitrarily.
     ec2 = EC2(("subnet-public", "subnet-second"))
-    with pytest.raises(ValueError, match="Choose public subnet"):
-        resolve_launch(inputs, ec2, DNS())
-    inputs["PublicSubnet"] = "subnet-second"
-    assert resolve_launch(inputs, ec2, DNS())["PublicSubnet"] == "subnet-second"
-    inputs["PublicSubnet"] = "subnet-service"
-    with pytest.raises(ValueError, match="eligible public subnet"):
-        resolve_launch(inputs, ec2, DNS())
+    with pytest.raises(ValueError, match="More than one eligible public subnet"):
+        discovery["resolve_launch"](inputs, ec2, DNS())
 
 
-def test_workspace_vpc_mismatch_and_public_cutover(inputs):
+def test_workspace_vpc_mismatch_and_public_cutover(inputs, discovery):
     # Cutover can keep managed DNS without any public subnet, but workspace VPC validation stays active.
     inputs["PublicAccess"] = "false"
     ec2 = EC2(())
+    resolve_launch = discovery["resolve_launch"]
     assert resolve_launch(inputs, ec2, DNS())["PublicSubnet"] == ""
     ec2.subnets[1]["VpcId"] = "vpc-other"
     with pytest.raises(ValueError, match="same VPC"):
         resolve_launch(inputs, ec2, DNS())
 
 
-def test_updates_keep_chosen_public_subnet(inputs):
+def test_updates_keep_chosen_public_subnet(inputs, discovery):
     # A new free subnet or a lower remaining IP count must not move an existing NLB.
     ec2 = EC2(())
+    resolve_launch = discovery["resolve_launch"]
     assert resolve_launch(inputs, ec2, DNS(), previous_public_subnet="subnet-original")["PublicSubnet"] == "subnet-original"
     inputs["PublicAccess"] = "false"
     assert resolve_launch(inputs, ec2, DNS(), previous_public_subnet="subnet-original")["PublicSubnet"] == ""
 
 
-def test_private_zone_reuse_and_create():
+def test_private_zone_reuse_and_create(discovery):
     # A matching account-owned VPC zone is reused, while a missing zone is created with a stable caller reference.
     zone = {"HostedZoneId": "ZEXISTING", "Name": "shiftbox.dev.", "Owner": {"OwningAccount": "123456789012"}}
     props = {"VpcId": "vpc-example", "BaseDomain": "shiftbox.dev", "DeploymentName": "rc3"}
+    resolve_private_zone = discovery["resolve_private_zone"]
     dns = DNS([zone])
     assert resolve_private_zone(props, dns, "us-east-2", "123456789012", "stack-token") == ("ZEXISTING", False, None)
     assert not dns.created
@@ -115,7 +131,7 @@ def test_private_zone_reuse_and_create():
         resolve_private_zone(props, DNS([zone]), "us-east-2", "123456789012", "stack-token")
 
 
-def test_delete_does_not_remove_an_adopted_or_nonempty_zone():
+def test_delete_does_not_remove_an_adopted_or_nonempty_zone(discovery):
     # Ownership and surviving record checks protect zones shared by other installations.
     class DeleteDNS(DNS):
         class exceptions:
@@ -139,11 +155,11 @@ def test_delete_does_not_remove_an_adopted_or_nonempty_zone():
 
     for token, empty, removed in (("ours", True, True), ("theirs", True, False), ("ours", False, False)):
         dns = DeleteDNS(token, empty)
-        delete_private_zone(dns, "ZPRIVATE", "ours")
+        discovery["delete_private_zone"](dns, "ZPRIVATE", "ours")
         assert dns.deleted is removed
 
 
-def test_private_zone_can_propagate_past_the_old_one_minute_limit(monkeypatch):
+def test_private_zone_can_propagate_past_the_old_one_minute_limit(monkeypatch, discovery):
     # Exercise the real SDK waiter with a zone that remains pending for 90 seconds.
     from botocore.session import get_session
     from botocore.stub import Stubber
@@ -157,23 +173,20 @@ def test_private_zone_can_propagate_past_the_old_one_minute_limit(monkeypatch):
         for status in (["PENDING"] * 9) + ["INSYNC"]:
             stub.add_response("get_change", {"ChangeInfo": {"Id": change_id, "Status": status,
                                                             "SubmittedAt": "2026-11-25T16:00:00Z"}}, params)
-        wait_for_private_zone(client, change_id)
+        discovery["wait_for_private_zone"](client, change_id)
         stub.assert_no_pending_responses()
     assert sum(pauses) == 90
 
 
-def test_private_zone_has_time_to_report_a_propagation_timeout():
+def test_private_zone_has_time_to_report_a_propagation_timeout(resources):
     # CloudFormation must allow enough time for the Lambda to report its own limit.
-    resources = discovery_resources(managed=True, placement=False)
     assert resources["DiscoveryFunction"]["Properties"]["Timeout"] >= 360
     assert int(resources["PrivateBrowserZone"]["Properties"]["ServiceTimeout"]) > resources["DiscoveryFunction"]["Properties"]["Timeout"]
 
 
-@pytest.mark.parametrize("managed", [False, True])
-def test_private_zone_ec2_permissions_are_in_policy_and_boundary(managed):
+def test_private_zone_ec2_permissions_are_in_policy_and_boundary(resources):
     # Route 53 checks EC2 read permissions when listing or creating private
     # zones for a VPC. Both the identity policy and its boundary must allow them.
-    resources = discovery_resources(managed, placement=False)
     role_policy = resources["DiscoveryRole"]["Properties"]["Policies"][0]["PolicyDocument"]
     boundary = resources["DiscoveryBoundary"]["Properties"]["PolicyDocument"]
     assert role_policy == boundary
@@ -182,7 +195,4 @@ def test_private_zone_ec2_permissions_are_in_policy_and_boundary(managed):
                            if dependent_actions.intersection(statement["Action"]
                                                             if isinstance(statement["Action"], list)
                                                             else [statement["Action"]])]
-    if managed:
-        assert matching_statements == [{"Effect": "Allow", "Resource": "*", "Action": sorted(dependent_actions)}]
-    else:
-        assert not matching_statements
+    assert matching_statements == [{"Effect": "Allow", "Resource": "*", "Action": sorted(dependent_actions)}]

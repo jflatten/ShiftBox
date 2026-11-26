@@ -150,13 +150,14 @@ jobs:
           allowed-account-ids: ${{ vars.SHIFTBOX_QUALIFICATION_ACCOUNT_ID }}
           role-duration-seconds: 7200
           unset-current-credentials: true
-      - name: Review named-role change sets, boot probes, and check staged Ohio DNS
+      - name: Review named-role change sets and boot regional AMI probes
         timeout-minutes: 45
         env:
           SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN: ${{ vars.SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN }}
           SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN: ${{ vars.SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN }}
           SHIFTBOX_QUALIFICATION_STAFFED: ${{ inputs.staffed }}
           SHIFTBOX_QUALIFICATION_SUBNETS: ${{ vars.SHIFTBOX_QUALIFICATION_SUBNETS }}
+          SHIFTBOX_QUALIFICATION_BROWSER: ${{ vars.SHIFTBOX_QUALIFICATION_BROWSER }}
           CANDIDATE: ${{ inputs.candidate }}
         run: |
           mode=automated
@@ -164,6 +165,7 @@ jobs:
           bash platform/qualification/preflight.sh capacity "$mode"
           run=$(bash platform/qualification/preflight.sh guard qualify)
           assets="$RUNNER_TEMP/qualification-assets"
+          schema=$(jq -er .schemaVersion "$assets/distribution-manifest.json")
           mkdir -- "$RUNNER_TEMP/qualification-evidence"
           bash platform/qualification/deploy.sh "$assets/distribution-manifest.json" "$assets" "$run" "$RUNNER_TEMP/qualification-evidence"
           {
@@ -173,10 +175,15 @@ jobs:
               printf 'All review stacks were removed. The 60-minute operator window starts now.\n\n'
               printf 'Use the verified Ohio Console link for %s, the separately reviewed staffed service role, and the approved run tags.\n' "$CANDIDATE"
               printf 'Use the preapproved existing Ohio service and workspace subnets, operator-managed routing and DNS, and optional GitHub App.\n'
-              printf 'Review foundation → dns-zones → dns-services → database → active. Verify the VPC, private zones, and Cloud Map IDs between stages.\n'
+              if [[ $schema == 2 ]]; then
+                url=$(jq -er '.regions["us-east-2"].templateLocation.quickCreateUrl' "$assets/distribution-manifest.json")
+                printf '[Open the pinned Ohio template](%s). Review and execute one change set, then finish first login in the browser.\n' "$url"
+              else
+                printf 'Review foundation → dns-zones → dns-services → database → active. Verify the VPC, private zones, and Cloud Map IDs between stages.\n'
+              fi
             else
-              jq -e '.dnsZoneChangeSetReviewed and (.dnsBootstrapExecuted | not)' "$RUNNER_TEMP/qualification-evidence/automated.json" >/dev/null
-              printf 'Reviewed and discarded the Ohio dns-zones change set. DNS resources require the staffed path.\n'
+              jq -e '.status == "automated-preview-only" and (.regions | length == 4)' "$RUNNER_TEMP/qualification-evidence/automated.json" >/dev/null
+              printf 'Reviewed and discarded the change sets in all four regions. Stack creation requires the staffed path.\n'
             fi
             printf 'Browser, Git authorization, private-route and recovery checks require an operator.\n'
           } >> "$GITHUB_STEP_SUMMARY"
@@ -184,13 +191,14 @@ jobs:
         if: inputs.staffed
         timeout-minutes: 61
         run: sleep 3600
-      - name: Verify the staffed stack's staged DNS inventory
+      - name: Verify the staffed stack and DNS inventory
         if: inputs.staffed
         timeout-minutes: 3
         env:
           SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN: ${{ vars.SHIFTBOX_QUALIFICATION_SERVICE_ROLE_ARN }}
           SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN: ${{ vars.SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN }}
           SHIFTBOX_QUALIFICATION_STAFFED: ${{ inputs.staffed }}
+          SHIFTBOX_QUALIFICATION_BROWSER: ${{ vars.SHIFTBOX_QUALIFICATION_BROWSER }}
         run: |
           run=$(bash platform/qualification/preflight.sh guard qualify)
           assets="$RUNNER_TEMP/qualification-assets"

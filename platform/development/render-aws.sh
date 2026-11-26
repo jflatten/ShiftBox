@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Render the current checkout using a verified public baseline and optional private pins.
+# Prepare inputs for the single published template or an older downloaded baseline.
 set -euo pipefail
 umask 077
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -16,14 +16,20 @@ scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 
 bash "$root/platform/release/manifest.sh" verify-assets "$manifest" "$baseline"
+if [[ $(jq -er '.schemaVersion' "$manifest") == 2 ]]; then
+  if (($#)); then
+    printf '%s\n' 'Use the release controller and workspace pins for a fresh one-template install.' >&2
+    exit 2
+  fi
+  bash "$root/platform/release/manifest.sh" launch-pins "$manifest" us-east-2 >"$scratch/release-pins.json"
+  mkdir -- "$output"
+  cp -- "$scratch/release-pins.json" "$output/"
+  printf 'Use the verified release YAML with Release inputs from %s/release-pins.json in Ohio.\n' "$output"
+  exit 0
+fi
 mkdir "$scratch/catalog"
-for region in us-east-1 us-east-2 us-west-1 us-west-2; do
-  tar -xOzf "$baseline/shiftbox-aws-support.tar.gz" "catalog/$region.json" >"$scratch/catalog/$region.json"
-done
-jq '{schemaVersion,candidateTag,sourceCommit,runtimeCompatibility,publisherAccountId,controller,postgresImage,
-     regions:(.regions|map_values({hostAmiId,workspaceImage}))}' "$manifest" >"$scratch/pins.json"
-bash "$root/platform/release/bundle.sh" "$scratch/pins.json" "$scratch/catalog" "$root/docs/site" "$scratch/rendered"
-python3 "$here/aws_template.py" "$scratch/rendered/shiftbox-aws-cloudformation.yaml" "$manifest" \
+tar -xOzf "$baseline/shiftbox-aws-support.tar.gz" catalog/us-east-2.json >"$scratch/catalog/us-east-2.json"
+python3 "$here/aws_template.py" "$baseline/shiftbox-aws-cloudformation.yaml" "$manifest" \
   "$scratch/shiftbox-aws-development.json" "$scratch/catalog/us-east-2.json" "$@"
 mkdir -- "$output"
 cp -- "$scratch/shiftbox-aws-development.json" "$output/"

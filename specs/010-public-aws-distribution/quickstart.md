@@ -15,7 +15,7 @@ The November 21, 2026 inventory reviewed the repository's recorded evidence. A r
 
 ## 1. Verify source and run local checks
 
-From the reviewed RC source, verify baseline CI for the peeled commit. Use the actual rendered template file as `release_template`.
+From the reviewed RC source, verify baseline CI for the peeled commit. Use the candidate commit’s checked-in `platform/cloudformation/aws/template.yaml` as `release_template`.
 
 ```sh
 git rev-parse 'v1.0.0-rc.1^{commit}'
@@ -31,7 +31,7 @@ bash scripts/install-aws.test.sh
 bash platform/release/release.test.sh
 ```
 
-Verify standalone template layout, encrypted retained resources, disabled bootstrap controller, least-privilege IAM, no public ingress or secret values and archive/privacy exclusions. Run the private CloudFormation development renderer tests for development deployment compatibility.
+Verify standalone template layout, encrypted retained resources, restricted first-login bootstrap, least-privilege IAM, private access by default and no secret values and archive/privacy exclusions. Verify the release package contains the checked-in YAML byte for byte.
 
 ## 2. Rehearse publication and promotion
 
@@ -41,7 +41,7 @@ Exercise missing S3 or AMI regions, a failed asset upload, an already complete r
 
 ## 3. Validate four console links and launch four exact AMIs
 
-For each region, decode the quick-create link and compare the console region, S3 endpoint and version ID to the manifest. Fetch that exact S3 version anonymously and compare SHA-256 against the GitHub inspection copy. Verify unsigned list/write and reads of a nonrelease object or unversioned alias are denied. In each cross-account context open the link, inspect the template and region, and create a disposable CREATE change set with reviewed inputs. Inspect the change set and CloudFormation validation events.
+For each region, decode the quick-create link and compare the console region, S3 endpoint and version ID to the manifest. Compare the decoded **Release inputs** with the regional pins supplied by the installer. Fetch that exact S3 version anonymously and compare SHA-256 against the GitHub inspection copy. Verify unsigned list/write and reads of a nonrelease object or unversioned alias are denied. In each cross-account context open the link, inspect the template and region, and create a disposable CREATE change set with reviewed inputs. Inspect the change set and CloudFormation validation events.
 
 ```sh
 aws cloudformation validate-template --region "$release_region" --template-url "$versioned_template_url"
@@ -74,33 +74,41 @@ For the staffed workflow, use its runbook to select existing Ohio subnets
 and arrange operator-managed private routing, DNS and optional GitHub App
 credentials.
 
-Use an authenticated Ohio customer-like account with capacity, a tailnet, no domain/certificate, and an operator-owned GitHub App and known-good repository for the later checkout. Start at the candidate's Ohio Console link with no existing stack or GitHub artifact credentials.
+Use the dedicated testing account, an authoritative Route 53 public zone,
+an approved private route and DNS forwarding, and a known-good repository.
+Start at the candidate’s Ohio Console link.
 
-For pre-RC development, use the [single-stack private UI procedure](../../platform/development/README.md#install-once-and-finish-in-the-private-ui).
-Select supplied Ohio subnets, provide outbound access and confirm private
-DNS and routing from the browser. Confirm the change set has no NAT or shared
-network changes. Retrieve the CA and initial claim through the stack's AWS
-references, exercise the private wizard through activation, and verify a
-fresh sign-in and repeat startup before testing the pinned workspace image.
-The published RC3 uses its original staged procedure below.
+1. Check the AWS account, Region and prefilled release inputs. Select the
+   admitted service and workspace subnets and **Private** browser access.
+   Enter the approved source IPv4 range and Let’s Encrypt settings.
+2. Review the single CREATE change set and named IAM acknowledgement.
+   Confirm the plan uses the existing VPC and subnets. Execute it with the
+   staffed role. Install the stack policy and enable termination protection.
+3. After `CREATE_COMPLETE`, verify the exact controller and PostgreSQL
+   images, encrypted storage, private DNS and Cloud Map outputs. Retrieve
+   the setup claim from Secrets Manager and finish first login at
+   `ManagementOrigin`. Confirm database and browser TLS, durable activation,
+   and denial from outside the approved private route.
+4. Validate the official image and observe canary cleanup. Save and reload
+   the pinned profile and project template. Authorize repository access and
+   open the IDE. Confirm the exact AMI and encrypted root.
+5. Exercise the guided installer against the same YAML and release inputs.
+   Decline execution once, then resume the same reviewed change set.
+   Verify rejection of wrong account, wrong Region, changed pins, changed
+   template bytes and unexpected resources.
 
-1. Verify account, region, template/version, required parameters and `CAPABILITY_NAMED_IAM` acknowledgement. Select the existing VPC, private service and workspace subnets and service Availability Zone. Launch the foundation with retained encrypted EBS and scoped secrets. Use the shipped stack policy and termination protection. Verify that DNS and the normal controller are absent. Review and execute `dns-zones`, verify both private zone and namespace identities against the VPC, then review and execute `dns-services` and verify both service IDs in that namespace. Populate DB TLS via the scoped secret, verify outputs contain public trust and references only, then review the alias records and execute the database/setup change set.
-2. Confirm the setup definition and later controller pull the RC image digest anonymously. Verify PostgreSQL uses its pinned image, mounts the retained EBS volume and uses verified TLS and scoped credentials. Test denied access to setup.
-3. Follow the documented local AWS/SSM client into the fingerprint-verified setup wizard. Verify durable activation and no remaining setup task, then review and execute the controller activation change set. Sign in fresh. Verify private Tailscale routing, split DNS, HTTPS for management and workspace names and failed access from outside the private connection. Exercise wrong DNS/route and untrusted certificate.
-4. Use the admin catalog to validate the official image and observe canary cleanup. Save and reload a named pinned profile and permitted template. Authorize the workspace owner's repository access and open the IDE. Confirm exact AMI and encrypted root.
-5. Exercise download/inspect and the guided CLI with the same RC. Reject a valid change set and verify zero stack-resource changes. Interrupt after execution and resume by stack ID with no duplicate stack, volume or setup task. Try wrong account/region/template, inadequate IAM, invalid resources and an attempted protected replacement. Verify a fresh review after input drift. Exercise an already-managed private route with conditional DNS and trusted HTTPS. Review Direct Connect instructions against that same routing contract.
+### Historical staged fixture evidence
 
 The local T021 rehearsal assembled the actual installer from synthetic release assets and ran it in an interactive terminal with mocked AWS and artifact endpoints. The installer submitted a CREATE preview, kept the same review stack ID after the operator declined execution, and rejected substituted CloudFormation template bytes on resume. After explicit approval it executed only the original change set, recorded the protected stack and retained volume, and stopped when the operator declined the TLS secret write. Later resumes rejected account and volume drift.
 
 A second terminal fixture exercised the CLI stage runner from a synthetic foundation through activation. It kept the reviewed DNS service change set after rejection, recovered from a lost response to the TLS secret write without a duplicate write, and withheld controller activation after an interrupted setup handoff. It reused the stack, volume, VPC and DNS IDs on resume, and repeated execution issued no further change sets after the stack was active. CloudFormation and the protected setup handoff were simulated.
 
-An offline check ran the [manual certificate commands](../../platform/cloudformation/aws/README.md#connect-privately-and-complete-the-wizard) with a synthetic DNS suffix. OpenSSL verified the management, IDE, preview, repair and PostgreSQL hostnames under their intended issuers. It rejected unrelated hostnames, a name beyond the wildcard depth, and each leaf under the other issuer. The fixture keys were removed after the check.
+An offline check ran the [legacy setup helper](../../docs/site/setup-helper.md) with a synthetic DNS suffix. OpenSSL verified the management, IDE, preview, repair and PostgreSQL hostnames under their intended issuers. It rejected unrelated hostnames, a name beyond the wildcard depth, and each leaf under the other issuer. The fixture keys were removed after the check.
 
 A Chrome fixture exercised the freshly built UI against local responses. It uploaded the exact catalog bytes, reloaded a validated release and saved a resource profile pinned to that artifact. It reloaded the project template and verified the inherited AMI in the launch review. The canary and persisted API responses were simulated. The live canary, catalog persistence and IDE, Console launch, the remaining manual journey, and live DNS and browser trust remain pending.
 
 ```sh
-curl -fsSL https://github.com/jflatten/ShiftBox/releases/download/v1.0.0-rc.1/install.sh |
-  bash -s -- --version v1.0.0-rc.1 --work-dir "$validation_dir"
+bash ./install.sh --version "$release_tag" --work-dir "$validation_dir"
 ```
 
 Keep evidence privately. Delete disposable workspaces through normal product controls. In the authorized test account, disable termination protection, delete the disposable stack and verify dependent services, application security groups and DNS cleanup. Verify retained EBS and secrets survive as designed, then remove only the identified test remnants after review. Verify the selected subnets, routes and router remain available. Keep publisher assets and demo state.

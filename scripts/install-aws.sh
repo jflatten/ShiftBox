@@ -45,7 +45,7 @@ install_identity() {
 }
 
 install_preview() {
-  local changes=$1 events=$2 phase=$3 public=${4:-false}
+  local changes=$1 events=$2 phase=$3 access=${4:-OperatorManaged}
   if ! jq -e '
     (.OperationEvents | type == "array") and all(.OperationEvents[];
       .EventType != "VALIDATION_ERROR" or .ValidationFailureMode == "WARN")
@@ -54,7 +54,7 @@ install_preview() {
     install_fail "CloudFormation validation failed for the $phase change set"
     return 1
   fi
-  if ! jq -e --arg phase "$phase" --arg public "$public" '
+  if ! jq -e --arg phase "$phase" --arg access "$access" '
     def dns_resource: .ResourceType | startswith("AWS::Route53::") or startswith("AWS::ServiceDiscovery::");
     def only_adds($expected):
       length == ($expected | length) and
@@ -83,14 +83,20 @@ install_preview() {
           (.ResourceType | IN("AWS::EC2::VPC", "AWS::EC2::Subnet", "AWS::EC2::RouteTable",
             "AWS::EC2::Route", "AWS::EC2::SubnetRouteTableAssociation", "AWS::EC2::NatGateway",
             "AWS::EC2::InternetGateway", "AWS::EC2::VPCGatewayAttachment") | not) and
-          (.ResourceType != "AWS::EC2::EIP" or ($public == "true" and .LogicalResourceId == "PublicAddress"))) and
+          (.ResourceType != "AWS::EC2::EIP" or ($access == "Public" and .LogicalResourceId == "PublicAddress"))) and
         (map({key:.LogicalResourceId,value:.ResourceType}) | from_entries |
           .ControllerService == "AWS::ECS::Service" and .PostgresService == "AWS::ECS::Service" and
           .InstallationVolume == "AWS::EC2::Volume" and
           .SetupClaim == "AWS::SecretsManager::Secret" and
-          (if $public == "true" then .PublicAddress == "AWS::EC2::EIP" and
+          (if $access == "Public" then .PublicAddress == "AWS::EC2::EIP" and
             .PublicLoadBalancer == "AWS::ElasticLoadBalancingV2::LoadBalancer"
-           else .BrowserTrust == "AWS::SecretsManager::Secret" and (has("PublicLoadBalancer") | not) end))
+           elif $access == "Private" then
+             .LaunchDiscovery == "Custom::ShiftBoxLaunchDiscovery" and
+             .ManagedPrivateBrowserRecords == "AWS::Route53::RecordSetGroup" and
+             (has("BrowserTrust") or has("PublicLoadBalancer") | not)
+           elif $access == "OperatorManaged" then
+             .BrowserTrust == "AWS::SecretsManager::Secret" and (has("PublicLoadBalancer") | not)
+           else false end))
       else false end)
   ' <"$changes" >/dev/null; then
     install_fail "the $phase change set is unavailable, lacks named IAM acknowledgement, or contains unexpected changes"
@@ -261,7 +267,7 @@ install_wait_status() {
 
 install_change() {
   local state=$1 phase=$2 type=$3 scratch=$4 allow_submit=${5:-true}
-  local account region stack name changes events desired digest change_name phase_record change_id stack_id decision
+  local account region stack name changes events desired digest change_name phase_record change_id stack_id decision access
   account=$(jq -er '.account' <"$state") || return 1
   region=$(jq -er '.region' <"$state") || return 1
   stack=$(jq -er '.stack' <"$state") || return 1
@@ -332,7 +338,9 @@ install_change() {
     return 1
   fi
   aws --region "$region" cloudformation describe-events --change-set-name "$change_id" --output json >"$events" || return 1
-  install_preview "$changes" "$events" "$phase" "$(jq -r '.parameters.PublicAccess // "false"' <"$state")" || return 1
+  access=$(jq -er '.parameters.BrowserAccess //
+    (if .parameters.PublicAccess == "true" then "Public" else "OperatorManaged" end)' <"$state") || return 1
+  install_preview "$changes" "$events" "$phase" "$access" || return 1
   jq '{Parameters, Capabilities, Changes}' <"$changes" || return 1
   printf 'Change set %s\n' "$change_id"
   install_prompt "Type EXECUTE $phase to execute this exact change set:" || return 1
@@ -473,8 +481,8 @@ install_subnet_choices() {
 }
 
 install_prompt_parameters() {
-  local state=$1 region=$2 name zone suffix cidr vpc service workspace network
-  local mode=${3:-staged}
+  local state=$1 region=$2 name zone suffix cidr vpc service workspace network discovered service_vpc
+  local mode=${3:-staged} release_pins=${4:-}
   local subnet_query='Subnets[?State==`available` && MapPublicIpOnLaunch==`false`].[SubnetId,VpcId,AvailabilityZone,CidrBlock]'
   install_prompt 'Enter a new lowercase deployment name (2–32 characters):' || return 1
   name=$REPLY
@@ -482,8 +490,7 @@ install_prompt_parameters() {
   if [ "$mode" = one-pass ] || [ "$mode" = public ]; then
     subnet_query='Subnets[?State==`available`].[SubnetId,VpcId,AvailabilityZone,CidrBlock,MapPublicIpOnLaunch]'
   fi
-  if [ "$mode" = public ]; then
-    local discovered service_vpc
+  if [ "$mode" = public ] || [ -n "$release_pins" ]; then
     discovered=$(aws --region "$region" ec2 describe-subnets --output json) || return 1
     service=$(install_choose_resource "$(install_subnet_choices <<<"$discovered")" 'service subnet') || return 1
     service_vpc=$(jq -er --arg subnet "$service" '.Subnets[] | select(.SubnetId == $subnet) | .VpcId' <<<"$discovered") || return 1
@@ -510,7 +517,12 @@ install_prompt_parameters() {
     ') || { install_fail 'select two available subnets in the same VPC and a supported service AZ'; return 1; }
   vpc=$(jq -er '.vpc' <<<"$network") || return 1
   zone=$(jq -er '.zone' <<<"$network") || return 1
-  if [ "$mode" = public ]; then
+  if [ -n "$release_pins" ]; then
+    local access=Private
+    if [ "$mode" = public ]; then access=Public; fi
+    install_prompt_console "$state" "$region" "$name" "$service" "$workspace" "$access" "$release_pins"
+    return $?
+  elif [ "$mode" = public ]; then
     install_prompt_public "$state" "$region" "$name" "$zone" "$vpc" "$service" "$workspace" "$discovered"
     return $?
   fi
@@ -537,7 +549,7 @@ install_prompt_parameters() {
 
 install_prompt_public() {
   local state=$1 region=$2 name=$3 zone=$4 vpc=$5 service=$6 workspace=$7 subnets=$8
-  local tables public choices zone_id domain private_zone email cidr ip account
+  local tables public choices zone_id domain private_zone account browser
   tables=$(aws --region "$region" ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpc" --output json) || return 1
   choices=$(jq -c --arg zone "$zone" --arg vpc "$vpc" --argjson tables "$tables" '
     def internet: any(.Routes[]?; .DestinationCidrBlock == "0.0.0.0/0" and .State == "active" and
@@ -548,12 +560,7 @@ install_prompt_public() {
         ($tables.RouteTables | map(select(any(.Associations[]?; .SubnetId == $id))) | .[0] // $main) | internet)))
   ' <<<"$subnets" | install_subnet_choices "$vpc") || return 1
   public=$(install_choose_resource "$choices" "Internet-routed subnet in $zone") || return 1
-  choices=$(aws --region "$region" route53 list-hosted-zones --output json | jq -c '
-    [.HostedZones[] | select(.Config.PrivateZone == false and .LinkedService == null) |
-      {id:(.Id | split("/") | last), label:(.Name | sub("[.]$"; ""))}] |
-    group_by(.label) | map(if length == 1 then .[] else .[] | .label += "  " + .id end) | sort_by(.label)
-  ') || return 1
-  zone_id=$(install_choose_resource "$choices" 'authoritative public hosted zone') || return 1
+  zone_id=$(install_choose_browser_zone "$region") || return 1
   domain=$(aws --region "$region" route53 get-hosted-zone --id "$zone_id" --output json |
     jq -er '.HostedZone | select(.Config.PrivateZone == false) | .Name | sub("[.]$"; "")') || return 1
   account=$(jq -er '.account' <"$state") || return 1
@@ -564,35 +571,80 @@ install_prompt_public() {
       else error("resolve conflicting or externally owned private hosted zones for \($name)") end
     ') || return 1
   printf 'Management origin: https://%s.%s\n' "$name" "$domain"
-  install_prompt "Use this computer's current public IPv4 address for browser access? [y/N]:" || return 1
+  browser=$(install_prompt_browser_settings Public) || return 1
+  install_store "$state" --arg name "$name" --arg zone "$zone" --arg vpc "$vpc" --arg domain "$domain" \
+    --arg service "$service" --arg workspace "$workspace" --arg public "$public" \
+    --arg zone_id "$zone_id" --arg private_zone "${private_zone##*/}" --argjson browser "$browser" '
+    .stackName = $name | .parameters = ({DeploymentName:$name, AvailabilityZone:$zone, VpcId:$vpc,
+      ServiceSubnet:$service, WorkspaceSubnet:$workspace, DnsSuffix:($name + ".internal"), PublicAccess:"true",
+      PublicSubnet:$public, BrowserCertificateMode:"LetsEncrypt", BaseDomain:$domain,
+      PublicHostedZoneId:$zone_id, PrivateBrowserZoneId:$private_zone} + $browser)
+  '
+}
+
+install_choose_browser_zone() {
+  local region=$1 choices
+  choices=$(aws --region "$region" route53 list-hosted-zones --output json | jq -c '
+    [.HostedZones[] | select(.Config.PrivateZone == false and .LinkedService == null) |
+      {id:(.Id | split("/") | last), label:(.Name | sub("[.]$"; ""))}] |
+    group_by(.label) | map(if length == 1 then .[] else .[] | .label += "  " + .id end) | sort_by(.label)
+  ') || return 1
+  install_choose_resource "$choices" 'authoritative public hosted zone'
+}
+
+install_prompt_browser_settings() {
+  local access=$1 cidr ip email field=OperatorCidr
   cidr=''
-  if [[ "$REPLY" =~ ^[Yy]([Ee][Ss])?$ ]]; then
-    ip=$(curl -4 --silent --show-error --fail --proto '=https' --connect-timeout 5 --max-time 8 https://checkip.amazonaws.com) || ip=''
-    if [ -n "$ip" ]; then
-      install_prompt "Allow $ip/32 for public browser access? [y/N]:" || return 1
-      if [[ "$REPLY" =~ ^[Yy]([Ee][Ss])?$ ]]; then cidr="$ip/32"; fi
+  if [ "$access" = Public ]; then
+    field=PublicIngressCidr
+    install_prompt "Use this computer's current public IPv4 address for browser access? [y/N]:" || return 1
+    if [[ "$REPLY" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+      ip=$(curl -4 --silent --show-error --fail --proto '=https' --connect-timeout 5 --max-time 8 https://checkip.amazonaws.com) || ip=''
+      if [ -n "$ip" ]; then
+        install_prompt "Allow $ip/32 for public browser access? [y/N]:" || return 1
+        if [[ "$REPLY" =~ ^[Yy]([Ee][Ss])?$ ]]; then cidr="$ip/32"; fi
+      fi
     fi
-  fi
-  if [ -z "$cidr" ]; then
-    install_prompt 'Enter the allowed public IPv4 CIDR:' || return 1
+    if [ -z "$cidr" ]; then
+      install_prompt 'Enter the allowed public IPv4 CIDR:' || return 1
+      cidr=$REPLY
+    fi
+  else
+    install_prompt 'Enter the allowed private IPv4 CIDR (use /32 for one address):' || return 1
     cidr=$REPLY
   fi
   local octet='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
   [[ "$cidr" =~ ^($octet\.){3}$octet/([0-9]|[12][0-9]|3[0-2])$ ]] || { install_fail 'enter a valid IPv4 CIDR'; return 1; }
+  if [ "$access" = Private ] && [[ "$cidr" == */0 ]]; then
+    install_fail 'private browser access requires a restricted IPv4 CIDR'
+    return 1
+  fi
   install_prompt "Enter your Let's Encrypt contact email:" || return 1
   email=$REPLY
   [[ "$email" =~ ^[A-Za-z0-9._+%-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || { install_fail 'enter a valid contact email'; return 1; }
-  printf "Let's Encrypt Subscriber Agreement: https://letsencrypt.org/repository/\n"
+  printf "Let's Encrypt Subscriber Agreement: https://letsencrypt.org/repository/\n" >&2
   install_prompt "Type ACCEPT to accept the Let's Encrypt Subscriber Agreement:" || return 1
   [ "$REPLY" = ACCEPT ] || { install_fail 'subscriber agreement acceptance is required'; return 1; }
-  install_store "$state" --arg name "$name" --arg zone "$zone" --arg vpc "$vpc" --arg domain "$domain" \
-    --arg service "$service" --arg workspace "$workspace" --arg public "$public" --arg cidr "$cidr" \
-    --arg zone_id "$zone_id" --arg private_zone "${private_zone##*/}" --arg email "$email" '
-    .stackName = $name | .parameters = {DeploymentName:$name, AvailabilityZone:$zone, VpcId:$vpc,
-      ServiceSubnet:$service, WorkspaceSubnet:$workspace, DnsSuffix:($name + ".internal"), PublicAccess:"true",
-      PublicSubnet:$public, PublicIngressCidr:$cidr, BrowserCertificateMode:"LetsEncrypt", BaseDomain:$domain,
-      PublicHostedZoneId:$zone_id, PrivateBrowserZoneId:$private_zone, AcmeContactEmail:$email, AcmeTermsAccepted:"true"}
+  jq -cn --arg field "$field" --arg cidr "$cidr" --arg email "$email" '
+    {($field):$cidr, AcmeContactEmail:$email, AcmeTermsAccepted:"true"}
   '
+}
+
+install_prompt_console() {
+  local state=$1 region=$2 name=$3 service=$4 workspace=$5 access=$6 release_pins=$7 zone_id browser
+  zone_id=$(install_choose_browser_zone "$region") || return 1
+  browser=$(install_prompt_browser_settings "$access") || return 1
+  install_store "$state" --arg name "$name" --arg service "$service" --arg workspace "$workspace" \
+    --arg access "$access" --arg zone_id "$zone_id" --arg pins "$release_pins" --argjson browser "$browser" '
+    .stackName = $name | .parameters = ({ServiceSubnet:$service, WorkspaceSubnet:$workspace,
+      BrowserAccess:$access, PublicDnsZone:$zone_id, ReleasePins:$pins} + $browser)'
+}
+
+install_verify_release_inputs() {
+  local state=$1 release_pins=$2
+  jq -e --arg pins "$release_pins" '
+    .parameters | .ReleasePins == $pins and (.BrowserAccess | IN("Private","Public"))
+  ' <"$state" >/dev/null || install_fail 'saved launch inputs do not match the regional release pins'
 }
 
 install_record_stage() {
@@ -762,7 +814,7 @@ install_run_first_login() (
   printf 'Open the management URL and complete first-login setup in the browser.\n'
   printf 'Management URL: %s\nSetup claim ARN: %s\n' \
     "$(install_output "$stack_file" ManagementOrigin)" "$(install_output "$stack_file" SetupClaimSecretArn)"
-  if [ "$(jq -r '.parameters.PublicAccess // "false"' <"$state")" != true ]; then
+  if jq -e '.parameters | .BrowserAccess == null and .PublicAccess != "true"' <"$state" >/dev/null; then
     printf 'Browser trust CA ARN: %s\n' "$(install_output "$stack_file" BrowserCaSecretArn)"
   fi
 )
@@ -785,6 +837,7 @@ install_aws() (
   umask 077
   export AWS_PAGER="" AWS_CLI_AUTO_PROMPT=off
   local requested='' directory=.shiftbox/aws-install resume=false public=false scratch account region publisher release
+  local release_pins='' mode
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --help|-h) install_help; return 0 ;;
@@ -847,7 +900,9 @@ install_aws() (
     account=$(jq -er '.account' <"$state")
     region=$(jq -er '.region' <"$state")
     release=$(jq -er '.release' <"$state")
-    if [ "$public" = true ] && ! jq -e '.parameters.PublicAccess == "true"' <"$state" >/dev/null; then
+    if [ "$public" = true ] && ! jq -e '
+      .parameters | if .BrowserAccess == null then .PublicAccess == "true" else .BrowserAccess == "Public" end
+    ' <"$state" >/dev/null; then
       install_fail 'the saved install uses private access'
       return 1
     fi
@@ -860,6 +915,10 @@ install_aws() (
     fi
     manifest_validate "$manifest" "$release" "$(install_tag_commit "$release" "$scratch")" "$publisher"
     manifest_verify_assets "$manifest" "$directory/release"
+    if jq -e '.schemaVersion == 2' <"$manifest" >/dev/null; then
+      release_pins=$(manifest_launch_pins "$manifest" "$region")
+      install_verify_release_inputs "$state" "$release_pins"
+    fi
   else
     install_prompt 'Enter the expected AWS account ID:'
     account=$REPLY
@@ -877,7 +936,12 @@ install_aws() (
       --arg sha "$(manifest_sha256 "$manifest")" '
       {account:$account,region:$region,release:$release,templateUrl:$url,manifestSha256:$sha,stack:""}
     ' >"$scratch/state.json"
-    if [ "$public" = true ]; then
+    if jq -e '.schemaVersion == 2' <"$manifest" >/dev/null; then
+      release_pins=$(manifest_launch_pins "$manifest" "$region")
+      mode=one-pass
+      if [ "$public" = true ]; then mode=public; fi
+      install_prompt_parameters "$scratch/state.json" "$region" "$mode" "$release_pins"
+    elif [ "$public" = true ]; then
       if ! grep -qx '  PublicAccess:' "$directory/release/shiftbox-aws-cloudformation.yaml" ||
           ! install_uses_first_login "$directory/release/shiftbox-aws-cloudformation.yaml"; then
         install_fail 'the selected release does not support one-pass public access'
@@ -904,7 +968,7 @@ install_aws() (
     install_fail "the hosted template differs from the inspected release"; return 1
   fi
   printf 'Verified %s in %s. Inspect %s/release/shiftbox-aws-cloudformation.yaml.\n' "$release" "$region" "$directory"
-  if install_uses_first_login "$scratch/template.yaml"; then
+  if [ -n "$release_pins" ] || install_uses_first_login "$scratch/template.yaml"; then
     install_run_first_login "$state" "$directory" "$scratch"
   else
     install_require_tools

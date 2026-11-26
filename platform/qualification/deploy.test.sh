@@ -61,6 +61,7 @@ flags() {
   return 1
 }
 workspace=$(jq -c --arg region "$region" '.regions[$region].workspaceImage' "$FIXTURE/manifest.json")
+schema=$(jq -r .schemaVersion "$FIXTURE/manifest.json")
 ami=$(jq -r .amiId <<<"$workspace")
 root=$(jq -r .rootDeviceName <<<"$workspace")
 snapshot=$(jq -r .rootSnapshotId <<<"$workspace")
@@ -108,22 +109,30 @@ case "$service:$operation" in
     [[ $(flags --capabilities) == CAPABILITY_NAMED_IAM ]]
     name=$(flags --change-set-name)
     change="$change_prefix-${name#"$run-"}/abcd1234-abcd-abcd-abcd-abcdef123456"
-    if [[ $name == "$run-dns-zones" ]]; then
-      [[ $region == us-east-2 && $(flags --stack-name) == "$stack" && $(flags --change-set-type) == UPDATE ]]
-    else
-      [[ $name == "$run-foundation" && $(flags --stack-name) == "$run" && $(flags --change-set-type) == CREATE ]]
-    fi
+    [[ $(flags --stack-name) == "$run" && $(flags --change-set-type) == CREATE ]]
+    if [[ $schema == 2 ]]; then [[ $name == "$run-one-pass" ]]; else [[ $name == "$run-foundation" ]]; fi
     parameters=$(flags --parameters)
     file="$FIXTURE/parameters-$region-$name.json"
     cp "${parameters#file://}" "$file"
-    jq -e --arg phase "${name#"$run-"}" '
+    if [[ $name == "$run-one-pass" ]]; then
+      jq -e --arg region "$region" --arg ami "$ami" '
+        map({key:.ParameterKey,value:.ParameterValue}) | from_entries |
+        keys == ["AcmeContactEmail","AcmeTermsAccepted","BrowserAccess","DnsSuffix","OperatorCidr",
+          "PublicDnsZone","ReleasePins","ServiceSubnet","WorkspaceSubnet"] and
+        .BrowserAccess == "Private" and .PublicDnsZone == "ZPUBLIC12" and
+        .ServiceSubnet == "subnet-00000000000000001" and .WorkspaceSubnet == "subnet-00000000000000002" and
+        (.ReleasePins | fromjson | .Region == $region and .WorkspaceAmi == $ami)
+      ' "$file" >/dev/null
+    else
+      jq -e --arg phase "${name#"$run-"}" '
       any(.[]; .ParameterKey == "RoleBoundaryMode" and .ParameterValue == "external") and
       any(.[]; .ParameterKey == "VpcId" and .ParameterValue == "vpc-00000000000000001") and
       any(.[]; .ParameterKey == "ServiceSubnet" and .ParameterValue == "subnet-00000000000000001") and
       any(.[]; .ParameterKey == "WorkspaceSubnet" and .ParameterValue == "subnet-00000000000000002") and
       all(.[]; .ParameterKey != "AccessMode" and .ParameterKey != "CreateNatGateway") and
       all(.[]; .ParameterKey != "GitHubAppSecretArn") and
-      any(.[]; .ParameterKey == "Phase" and .ParameterValue == $phase)' "$file" >/dev/null
+        any(.[]; .ParameterKey == "Phase" and .ParameterValue == $phase)' "$file" >/dev/null
+    fi
     jq -n --arg stack "$stack" --arg change "$change" '{StackId:$stack,Id:$change}'
     ;;
   cloudformation:describe-change-set)
@@ -138,9 +147,12 @@ case "$service:$operation" in
       {ChangeSetId:$change,StackId:$stack,Status:"CREATE_COMPLETE",ExecutionStatus:"AVAILABLE",
         ChangeSetName:$name,Capabilities:[$capability],Parameters:$parameters[0],
         Tags:[{Key:"project",Value:"shiftbox"},{Key:"cluster_name",Value:$run},{Key:"shiftbox_qualification_run",Value:$run}],
-        Changes:(if $name == ($run+"-dns-zones") then
-          [resource("PrivateZone";"AWS::Route53::HostedZone"), resource("DiscoveryNamespace";"AWS::ServiceDiscovery::PrivateDnsNamespace")]
-          + (if $unexpected == "early-record" then [resource("PrivateRecords";"AWS::Route53::RecordSetGroup")] else [] end)
+        Changes:(if $name == ($run+"-one-pass") then
+          [resource("LaunchDiscovery";"Custom::ShiftBoxLaunchDiscovery"), resource("PrivateBrowserZone";"Custom::ShiftBoxPrivateBrowserZone"),
+           resource("ManagedPrivateBrowserRecords";"AWS::Route53::RecordSetGroup"),
+           resource("InstallationVolume";"AWS::EC2::Volume"), resource("SetupClaim";"AWS::SecretsManager::Secret"),
+           resource("PostgresService";"AWS::ECS::Service"), resource("ControllerService";"AWS::ECS::Service")]
+          + (if $unexpected == "public-lb" then [resource("PublicLoadBalancer";"AWS::ElasticLoadBalancingV2::LoadBalancer")] else [] end)
         else [resource("InstallationVolume";"AWS::EC2::Volume"), resource("HostRole";"AWS::IAM::Role")]
           + (if $unexpected == "foundation-zone" then [resource("PrivateZone";"AWS::Route53::HostedZone")] else [] end)
         end)}'
@@ -155,6 +167,21 @@ case "$service:$operation" in
     ;;
   cloudformation:describe-stacks)
     if [[ ${MOCK_STAFFED_STACK:-false} == true ]]; then
+      if [[ $schema == 2 ]]; then
+        jq -n --arg stack "$stack" --arg run "$run" --arg role "$SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN" \
+          --arg foreign "${MOCK_FOREIGN_PINS:-false}" --slurpfile params "$FIXTURE/parameters-$region-$run-one-pass.json" '
+          ($params[0] | map(if .ParameterKey == "ReleasePins" and $foreign == "true" then
+            .ParameterValue |= (fromjson | .Region = "us-west-1" | tojson) else . end)) as $selected |
+          {Stacks:[{StackId:$stack,StackName:$run,StackStatus:"CREATE_COMPLETE",EnableTerminationProtection:true,RoleARN:$role,
+            Capabilities:["CAPABILITY_NAMED_IAM"],Parameters:$selected,
+            Tags:[{Key:"project",Value:"shiftbox"},{Key:"cluster_name",Value:$run},{Key:"shiftbox_qualification_run",Value:$run}],
+            Outputs:({VpcId:"vpc-00000000000000001",ServiceSubnetId:"subnet-00000000000000001",
+              WorkspaceSubnetId:"subnet-00000000000000002",PrivateZoneId:"Z0PRIVATE",PrivateBrowserDnsZoneId:"Z0BROWSER",
+              DiscoveryNamespaceId:"ns-abcdefghijklmnop",DiscoveryHostedZoneId:"Z0DISCOVERY",
+              PostgresDiscoveryServiceId:"srv-abcdefghijklmnop",ControllerDiscoveryServiceId:"srv-0123456789abcdef"}
+              | to_entries | map({OutputKey:.key,OutputValue:.value}))}]}'
+        exit
+      fi
       jq -n --arg stack "$stack" --arg run "$run" --arg role "$SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN" \
         --arg service "${MOCK_SERVICE_SUBNET:-subnet-00000000000000001}" '
         {Stacks:[{StackId:$stack,StackName:$run,StackStatus:"UPDATE_COMPLETE",EnableTerminationProtection:true,RoleARN:$role,
@@ -185,7 +212,7 @@ case "$service:$operation" in
   cloudformation:list-stack-resources)
     if [[ ${MOCK_STAFFED_STACK:-false} == true ]]; then
       jq -n --arg service "${MOCK_DISCOVERY_SERVICE:-srv-0123456789abcdef}" \
-        --arg router "${MOCK_ROUTER_RESOURCE:-false}" '
+        --arg router "${MOCK_ROUTER_RESOURCE:-false}" --arg schema "$schema" '
         def r($type; $id): {ResourceType:$type,PhysicalResourceId:$id,ResourceStatus:"CREATE_COMPLETE"};
         {StackResourceSummaries:(({
           PrivateZone:r("AWS::Route53::HostedZone";"Z0PRIVATE"),
@@ -193,7 +220,10 @@ case "$service:$operation" in
           DiscoveryNamespace:r("AWS::ServiceDiscovery::PrivateDnsNamespace";"ns-abcdefghijklmnop"),
           PostgresDiscovery:r("AWS::ServiceDiscovery::Service";"srv-abcdefghijklmnop"),
           ControllerDiscovery:r("AWS::ServiceDiscovery::Service";$service)
-        } | to_entries | map(.value + {LogicalResourceId:.key})) +
+        } + (if $schema == "2" then {
+          PrivateBrowserZone:r("Custom::ShiftBoxPrivateBrowserZone";"adopted:Z0BROWSER"),
+          ManagedPrivateBrowserRecords:r("AWS::Route53::RecordSetGroup";"Z0BROWSER")
+        } else {} end) | to_entries | map(.value + {LogicalResourceId:.key})) +
           (if $router == "true" then [r("AWS::EC2::Instance";"i-00000000000000001") + {LogicalResourceId:"TailscaleRouter"}] else [] end))}'
       exit
     fi
@@ -265,28 +295,20 @@ reject env MOCK_SUBNET_OWNER=444455556666 bash "$here/deploy.sh" "$fixture/manif
 grep -q 'requires existing private subnets' "$fixture/rejected.log"
 if grep -q 'create-change-set' "$fixture/aws.log"; then exit 1; fi
 
-# Successful fixtures run precisely four isolated regional probes, remove review stacks, and execute only the Ohio foundation.
+# Legacy candidates still get four isolated probes and review stacks that automation never executes.
 : >"$fixture/aws.log"
 : >"$fixture/terraform.log"
 deploy
-[[ $(grep -c 'create-change-set' "$fixture/aws.log") = 5 ]]
-[[ $(grep -c 'delete-stack' "$fixture/aws.log") = 3 ]]
-[[ $(grep -c '^us-east-2 cloudformation execute-change-set' "$fixture/aws.log") = 1 ]]
-grep -q '^us-east-2 cloudformation delete-change-set .*sbq-123-1-dns-zones/' "$fixture/aws.log"
-if grep -q 'execute-change-set .*dns-zones' "$fixture/aws.log"; then exit 1; fi
+[[ $(grep -c 'create-change-set' "$fixture/aws.log") = 4 ]]
+[[ $(grep -c 'delete-stack' "$fixture/aws.log") = 4 ]]
+if grep -q 'execute-change-set' "$fixture/aws.log"; then exit 1; fi
 [[ $(grep -c 'plan .* -destroy\|plan -destroy' "$fixture/terraform.log") = 4 ]]
-jq -e '.status == "automated-foundation-only" and (.regions | length == 4) and
+jq -e '.status == "automated-preview-only" and (.regions | length == 4) and
   all(.regions[]; .amiBooted and .hostedChangeSetValidated and .terraformDestroyCompleted) and
-  .dnsZoneChangeSetReviewed == true and .dnsBootstrapExecuted == false and
+  .dnsZoneChangeSetReviewed == false and .dnsBootstrapExecuted == false and
   .manualGatesPending == true' "$fixture/evidence/automated.json" >/dev/null
 
-# DNS records arriving before the zone and service ownership handoff cannot execute.
 rm -- "$fixture/evidence/automated.json"
-: >"$fixture/aws.log"
-reject env MOCK_DNS_STAGE=early-record bash "$here/deploy.sh" "$fixture/manifest.json" "$fixture/assets" sbq-123-1 "$fixture/evidence"
-grep -q 'change set' "$fixture/rejected.log"
-if grep -q 'execute-change-set .*dns-zones' "$fixture/aws.log"; then exit 1; fi
-[[ ! -e "$fixture/evidence/automated.json" ]]
 
 # Staffed qualification needs a fresh Ohio console launch, so delete the Ohio
 # review stack instead of executing it under the automation identity.
@@ -315,9 +337,45 @@ MOCK_DISCOVERY_SERVICE=srv-0000000000000000 reject check_staffed
 MOCK_SERVICE_SUBNET=subnet-00000000000000003 reject check_staffed
 grep -q 'reviewed role, parameters or ownership' "$fixture/rejected.log"
 MOCK_ROUTER_RESOURCE=true reject check_staffed
-grep -q 'does not expose the verified staged DNS inventory' "$fixture/rejected.log"
+grep -q 'does not expose the verified DNS inventory' "$fixture/rejected.log"
 jq -e 'has("staffedDnsInventoryVerified") | not' "$fixture/evidence/automated.json" >/dev/null
 check_staffed
 jq -e '.staffedDnsInventoryVerified and .manualGatesPending and (.dnsBootstrapExecuted | not)' "$fixture/evidence/automated.json" >/dev/null
 if grep -E 'create-change-set|execute-change-set|delete-stack|delete-change-set' "$fixture/aws.log"; then exit 1; fi
+
+# A schema 2 candidate reviews the exact single template in each region, using
+# manifest pins and the tested form fields, without executing a stack in automation.
+unset MOCK_STAFFED_STACK SHIFTBOX_QUALIFICATION_STAFFED
+rm "$fixture/evidence/automated.json"
+source "$here/../release/manifest.sh"
+jq "$manifest_filter"' .schemaVersion = 2 | . as $release |
+  .regions |= with_entries(.key as $region | .value.templateLocation |=
+    (.quickCreateUrl = release_console_url($release; $region; .url)))' \
+  "$fixture/manifest.json" >"$fixture/one-pass-manifest.json"
+mv "$fixture/one-pass-manifest.json" "$fixture/manifest.json"
+: >"$fixture/aws.log"
+reject deploy
+grep -q 'qualification browser inputs' "$fixture/rejected.log"
+if grep -q 'create-change-set' "$fixture/aws.log"; then exit 1; fi
+export SHIFTBOX_QUALIFICATION_BROWSER='{"zoneId":"ZPUBLIC12","contactEmail":"operator@example.com","privateCidr":"10.24.8.0/24"}'
+reject env MOCK_DNS_STAGE=public-lb bash "$here/deploy.sh" "$fixture/manifest.json" "$fixture/assets" sbq-123-1 "$fixture/evidence"
+grep -q 'change set parameters, ownership or resource changes are invalid' "$fixture/rejected.log"
+: >"$fixture/aws.log"
+deploy
+[[ $(grep -c 'create-change-set' "$fixture/aws.log") = 4 ]]
+[[ $(grep -c 'delete-stack' "$fixture/aws.log") = 4 ]]
+if grep -Eq 'execute-change-set|set-stack-policy' "$fixture/aws.log"; then exit 1; fi
+jq -e '.status == "automated-preview-only" and .manualGatesPending and
+  (.ohioFoundationDeployed | not) and (.regions | length == 4)' "$fixture/evidence/automated.json" >/dev/null
+
+# Staffed readback accepts CREATE_COMPLETE with the pinned one-pass values and
+# rejects a deployment whose release pins were changed after the handoff.
+rm "$fixture/evidence/automated.json"
+export SHIFTBOX_QUALIFICATION_STAFFED=true
+deploy
+export MOCK_STAFFED_STACK=true
+MOCK_FOREIGN_PINS=true reject check_staffed
+grep -q 'reviewed role, parameters or ownership' "$fixture/rejected.log"
+check_staffed
+jq -e '.staffedDnsInventoryVerified and .manualGatesPending' "$fixture/evidence/automated.json" >/dev/null
 printf 'Qualification deployment fixtures passed.\n'

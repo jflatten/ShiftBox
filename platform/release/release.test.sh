@@ -106,7 +106,8 @@ expect_rejected 'reject an unrelated independently observed source commit' \
   "$manifest_tool" validate "$manifest" "$tag" 1111111111111111111111111111111111111111 "$publisher"
 expect_rejected 'reject a different independently approved publisher' \
   "$manifest_tool" validate "$manifest" "$tag" "$source_commit" 999988887777
-reject_manifest_edit 'reject an unknown distribution schema version' '.schemaVersion = 2'
+reject_manifest_edit 'reject an unknown distribution schema version' '.schemaVersion = 3'
+reject_manifest_edit 'reject missing release inputs from a version 2 console link' '.schemaVersion = 2'
 reject_manifest_edit 'reject a stable label in the embedded candidate field' '.candidateTag = "v1.4.2"'
 reject_manifest_edit 'reject stable as a substitute runtime compatibility identity' '.runtimeCompatibility = "v1.4.2"'
 
@@ -288,6 +289,30 @@ for edit in '.candidate.sourceCommit = ("0" * 40)' '.candidate.releaseId = 2222'
 done
 jq '.prerelease = false' "$release_json" >"$mutated"
 expect_rejected 'reject a non-prerelease as RC evidence' check_promotion "$qualification" "$mutated"
+
+# Stable promotion accepts the exact new console links without rebuilding or changing candidate assets.
+# shellcheck source=platform/release/manifest.sh
+source "$manifest_tool"
+v2_assets="$scratch/v2-assets"
+mkdir "$v2_assets"
+cp "$release_assets/install.sh" "$release_assets/shiftbox-aws-cloudformation.yaml" \
+  "$release_assets/shiftbox-aws-support.tar.gz" "$v2_assets/"
+v2_manifest="$v2_assets/distribution-manifest.json"
+jq "$manifest_filter"'
+  .schemaVersion = 2 | . as $release |
+  .regions |= with_entries(.key as $region | .value.templateLocation |=
+    (.quickCreateUrl = release_console_url($release; $region; .url)))
+' "$manifest" >"$v2_manifest"
+v2_manifest_hash=$(sha256 "$v2_manifest")
+jq --arg hash "$v2_manifest_hash" --arg source "$source_commit" '
+  .body = "<!-- shiftbox-release manifest-sha256=\($hash) source=\($source) -->" |
+  (.assets[] | select(.name == "distribution-manifest.json").digest) = "sha256:\($hash)"
+' "$release_json" >"$scratch/v2-release.json"
+jq --arg hash "$v2_manifest_hash" '.candidate.assets["distribution-manifest.json"].sha256 = $hash' \
+  "$qualification" >"$scratch/v2-qualification.json"
+expect_ok 'accept verified schema version 2 candidate assets for stable promotion' \
+  "$promote_tool" verify "$v2_manifest" "$scratch/v2-qualification.json" "$v2_assets" \
+  "$scratch/v2-release.json" v1.4.2 "$source_commit" "$publisher"
 
 # Reconcile a partial publication against a fixture REST API, then rerun it without another mutation.
 fake_bin="$scratch/publication-bin"

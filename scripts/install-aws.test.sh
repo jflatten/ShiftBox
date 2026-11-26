@@ -37,8 +37,9 @@ reject() {
     fi
 }
 
-# The current release uses one stack create and hands setup to the browser.
-install_uses_first_login "$root/platform/cloudformation/aws/template.yaml"
+# Older release templates distinguish browser setup from staged installation.
+printf 'Parameters:\n  Phase:\n    Type: String\n    Default: one-pass\n' > "$test_dir/first-login.yaml"
+install_uses_first_login "$test_dir/first-login.yaml"
 printf 'Parameters:\n  Phase:\n    Type: String\n    Default: foundation\n' > "$test_dir/staged.yaml"
 reject install_uses_first_login "$test_dir/staged.yaml"
 
@@ -71,6 +72,58 @@ reject install_uses_first_login "$test_dir/staged.yaml"
     DEFAULT_SUBNET=true install_prompt_parameters "$test_dir/subnet-state.json" us-east-2 one-pass <<<"$answers" >/dev/null
     jq -e '.parameters | .OperatorCidr == "172.31.0.1/32" and (has("RoleBoundaryMode") or has("GitHubAppSecretArn") | not)' \
       "$test_dir/subnet-state.json" >/dev/null
+)
+
+# Both access choices pass only the inputs accepted by the shared console template.
+(
+    # shellcheck disable=SC2329
+    install_prompt() { IFS= read -r REPLY; }
+    # shellcheck disable=SC2329
+    aws() {
+        case "$*:" in
+            *'ec2 describe-subnets --subnet-ids'*|*'ec2 describe-subnets --output json:'*)
+                jq -n '{
+                  Subnets:[
+                    {SubnetId:"subnet-00000000000000001",VpcId:"vpc-00000000000000001",
+                     State:"available",AvailabilityZone:"us-east-2a",CidrBlock:"10.0.1.0/24"},
+                    {SubnetId:"subnet-00000000000000002",VpcId:"vpc-00000000000000001",
+                     State:"available",AvailabilityZone:"us-east-2b",CidrBlock:"10.0.2.0/24"}
+                  ]}' ;;
+            *'route53 list-hosted-zones'*) printf '%s\n' '{"HostedZones":[{"Id":"/hostedzone/ZPUBLIC","Name":"shiftbox.dev.","Config":{"PrivateZone":false}}]}' ;;
+            *) return 97 ;;
+        esac
+    }
+
+    state="$test_dir/console-inputs.json"
+    pins='{"Region":"us-east-2","WorkspaceAmi":"ami-00000000000000001"}'
+    printf '{}\n' >"$state"
+    answers=$'fresh\n1\n2\n172.31.0.1/32\nadmin@example.com\nACCEPT\n'
+    install_prompt_parameters "$state" us-east-2 one-pass "$pins" <<<"$answers" >/dev/null
+    jq -e --arg pins "$pins" '
+      .stackName == "fresh" and .parameters == {
+        ServiceSubnet:"subnet-00000000000000001",WorkspaceSubnet:"subnet-00000000000000002",
+        BrowserAccess:"Private",PublicDnsZone:"ZPUBLIC",OperatorCidr:"172.31.0.1/32",
+        AcmeContactEmail:"admin@example.com",AcmeTermsAccepted:"true",ReleasePins:$pins
+      }
+    ' "$state" >/dev/null
+
+    # Private access rejects an unrestricted source and keeps the last valid inputs.
+    cp "$state" "$test_dir/valid-console-inputs.json"
+    answers=$'fresh\n1\n2\n0.0.0.0/0\nadmin@example.com\nACCEPT\n'
+    reject install_prompt_parameters "$state" us-east-2 one-pass "$pins" <<<"$answers"
+    cmp "$test_dir/valid-console-inputs.json" "$state"
+
+    answers=$'fresh\n1\n2\nn\n192.0.2.56/32\nadmin@example.com\nACCEPT\n'
+    install_prompt_parameters "$state" us-east-2 public "$pins" <<<"$answers" >/dev/null
+    jq -e --arg pins "$pins" '
+      .parameters.BrowserAccess == "Public" and .parameters.PublicIngressCidr == "192.0.2.56/32" and
+      .parameters.ReleasePins == $pins and
+      (.parameters | has("OperatorCidr") or has("PublicSubnet") or has("PrivateBrowserZoneId") | not)
+    ' "$state" >/dev/null
+
+    # Resume never accepts a local state file with different regional pins.
+    install_verify_release_inputs "$state" "$pins"
+    reject install_verify_release_inputs "$state" '{"Region":"us-west-2"}'
 )
 
 # Public discovery reuses the named zone and the only eligible subnet and
@@ -149,8 +202,8 @@ jq -n '
              PublicAddress:"AWS::EC2::EIP",PublicLoadBalancer:"AWS::ElasticLoadBalancingV2::LoadBalancer"} |
      to_entries | map({Type:"Resource",ResourceChange:{Action:"Add",LogicalResourceId:.key,ResourceType:.value}}))}
 ' > "$test_dir/public-change.json"
-install_preview "$test_dir/public-change.json" "$test_dir/events.json" one-pass true >/dev/null
-reject install_preview "$test_dir/public-change.json" "$test_dir/events.json" one-pass false
+install_preview "$test_dir/public-change.json" "$test_dir/events.json" one-pass Public >/dev/null
+reject install_preview "$test_dir/public-change.json" "$test_dir/events.json" one-pass OperatorManaged
 
 # Deletion, replacement, and failed service-side validation block execution.
 preview_fixture Remove False
@@ -446,8 +499,6 @@ install_cleanup "$resumable" "$resumable/run.fixture" false
 test -f "$resumable/state.json"
 test -d "$resumable/release"
 test ! -e "$resumable/.install-lock"
-printf 'Installer fixtures passed.\n'
-
 # The one-pass preview allows a new bounded stack with both services and the
 # initial claim. It rejects an update or a stack that tries to own the network.
 jq -n '{
@@ -462,9 +513,25 @@ jq -n '{
 }' > "$test_dir/one-pass.json"
 printf '{"OperationEvents":[]}\n' > "$test_dir/events.json"
 install_preview "$test_dir/one-pass.json" "$test_dir/events.json" one-pass >/dev/null
+
+# Private access can use Let's Encrypt with the selected Route 53 zone. The
+# preview must contain managed private DNS and no public endpoint or local CA.
+jq '
+  .Changes |= map(select(.ResourceChange.LogicalResourceId != "BrowserTrust")) |
+  .Changes += [{Type:"Resource",ResourceChange:{Action:"Add",LogicalResourceId:"LaunchDiscovery",ResourceType:"Custom::ShiftBoxLaunchDiscovery"}},
+               {Type:"Resource",ResourceChange:{Action:"Add",LogicalResourceId:"ManagedPrivateBrowserRecords",ResourceType:"AWS::Route53::RecordSetGroup"}}]
+' "$test_dir/one-pass.json" > "$test_dir/private-managed.json"
+install_preview "$test_dir/private-managed.json" "$test_dir/events.json" one-pass Private >/dev/null
+reject install_preview "$test_dir/private-managed.json" "$test_dir/events.json" one-pass OperatorManaged
+reject install_preview "$test_dir/public-change.json" "$test_dir/events.json" one-pass Private
+jq '.Changes |= map(select(.ResourceChange.LogicalResourceId != "ManagedPrivateBrowserRecords"))' \
+    "$test_dir/private-managed.json" > "$test_dir/private-missing-dns.json"
+reject install_preview "$test_dir/private-missing-dns.json" "$test_dir/events.json" one-pass Private
+
 jq '.Changes[0].ResourceChange.Action = "Modify" | .Changes[0].ResourceChange.Replacement = "False"' \
     "$test_dir/one-pass.json" > "$test_dir/modified-one-pass.json"
 reject install_preview "$test_dir/modified-one-pass.json" "$test_dir/events.json" one-pass
 jq '.Changes += [{Type:"Resource",ResourceChange:{Action:"Add",LogicalResourceId:"Network",ResourceType:"AWS::EC2::VPC"}}]' \
     "$test_dir/one-pass.json" > "$test_dir/network-one-pass.json"
 reject install_preview "$test_dir/network-one-pass.json" "$test_dir/events.json" one-pass
+printf 'Installer fixtures passed.\n'

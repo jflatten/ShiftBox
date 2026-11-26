@@ -88,6 +88,36 @@
     rules:
       first_login_startup: FAIL
 
+# The canonical stack starts the protected browser setup without a separate setup task.
+- name: Canonical launch starts with the first-login command
+  input:
+    Parameters:
+      ReleasePins:
+        Type: String
+    Resources:
+      ControllerTask:
+        Properties:
+          ContainerDefinitions:
+            - Command: [one-pass]
+  expectations:
+    rules:
+      canonical_first_login_startup: PASS
+
+# Starting the controller directly would skip the intended first-login bootstrap.
+- name: Canonical launch rejects the regular serve command
+  input:
+    Parameters:
+      ReleasePins:
+        Type: String
+    Resources:
+      ControllerTask:
+        Properties:
+          ContainerDefinitions:
+            - Command: [serve]
+  expectations:
+    rules:
+      canonical_first_login_startup: FAIL
+
 # A role created by the public template needs a name, path and permissions ceiling.
 - name: A named role with a permissions boundary is accepted
   input:
