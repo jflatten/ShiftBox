@@ -61,37 +61,30 @@ done
 jq -n --arg tag "$tag" --arg commit "$commit" --arg publisher "$publisher" \
   --arg template "$synthetic_hash" --arg installer "$synthetic_hash" --arg support "$synthetic_hash" \
   --argjson catalog "$catalog_hashes" -f "$here/tests/distribution-fixture.jq" |
-  jq 'del(.template, .installer, .supportAssets) |
+  jq '.schemaVersion = 2 | del(.template, .installer, .supportAssets) |
     .regions |= with_entries(.value |= (del(.templateLocation) |
       .workspaceImage.amiId = "ami-00000000000000001" |
       .workspaceImage.sourceAmiId = "ami-00000000000000002" |
       .workspaceImage.minimumDiskGiB = 32))' >"$pins"
 
-# The renderer runs twice from the same pins and produces byte-identical public artifacts.
+# Candidate retries with the same pins produce byte-identical public artifacts.
 "$candidate" prepare "$pins" "$catalog" "$guides" "$stage"
 "$candidate" prepare "$pins" "$catalog" "$guides" "$stage"
 "$candidate" prepare "$pins" "$catalog" "$guides" "$second_stage"
 for asset in install.sh shiftbox-aws-cloudformation.yaml shiftbox-aws-support.tar.gz; do
   cmp "$stage/$asset" "$second_stage/$asset"
 done
-grep -F 'ghcr.io/jflatten/shiftbox@sha256:' "$stage/shiftbox-aws-cloudformation.yaml" >/dev/null
+# The template published for every operator is the exact checked-in YAML.
+cmp "$root/platform/cloudformation/aws/template.yaml" "$stage/shiftbox-aws-cloudformation.yaml"
+# Image updates affect release inputs and leave the published template bytes untouched.
+jq '.controller.digest = ("sha256:" + ("b" * 64))' "$pins" >"$scratch/new-controller-pins.json"
+"$candidate" prepare "$scratch/new-controller-pins.json" "$catalog" "$guides" "$scratch/new-controller-stage"
+cmp "$stage/shiftbox-aws-cloudformation.yaml" "$scratch/new-controller-stage/shiftbox-aws-cloudformation.yaml"
 grep -F "shiftbox_release_publisher='$publisher'" "$stage/install.sh" >/dev/null
 bash -n "$stage/install.sh"
 bash "$stage/install.sh" --help | grep -F 'Usage: install.sh' >/dev/null
 
-# The release embeds the CloudFormation bootstrap scripts in the standalone template.
-python3 - "$root/platform/cloudformation/aws" "$stage/shiftbox-aws-cloudformation.yaml" <<'PY'
-import json
-from pathlib import Path
-import sys
-
-source, template = map(Path, sys.argv[1:])
-rendered = template.read_text()
-for script in ("host/mount-data.sh", "host/mount-registry-cache.sh", "host/installation-tls.sh", "postgres/start.sh"):
-    assert json.dumps((source / script).read_text()) in rendered, f"Missing embedded script: {script}"
-PY
-
-# Packaging uses a public allowlist and excludes unrelated files even in source locations.
+# Packaging uses a public allowlist and excludes extra deployment templates and unrelated source files.
 tar -tzf "$stage/shiftbox-aws-support.tar.gz" | sort >"$scratch/actual-members"
 cat >"$scratch/expected-members" <<'MEMBERS'
 catalog/us-east-1.json
@@ -106,61 +99,48 @@ docs/private-access.md
 docs/setup-helper.md
 docs/troubleshooting.md
 docs/upgrade-recovery.md
-launch/shiftbox-aws-private.json
-launch/shiftbox-aws-public-placement.json
-launch/shiftbox-aws-public.json
 setup.sh
 stack-policy.json
 MEMBERS
 cmp "$scratch/expected-members" "$scratch/actual-members"
 cmp "$catalog/us-east-2.json" <(tar -xOzf "$stage/shiftbox-aws-support.tar.gz" catalog/us-east-2.json)
 
-# Console forms have resource pickers and derive the other values within one create.
-for mode in private public public-placement; do
-  form="$scratch/shiftbox-aws-$mode.json"
-  tar -xOzf "$stage/shiftbox-aws-support.tar.gz" "launch/shiftbox-aws-$mode.json" > "$form"
-  # A first-time operator can look up every field shown by this release's console form.
-  while IFS= read -r field; do
-    grep -Fq -- "$field" "$root/docs/site/install.md" || {
-      printf 'Installation guide is missing the %s field from the %s form.\n' "$field" "$mode" >&2
-      exit 1
-    }
-  done < <(jq -r '.Metadata["AWS::CloudFormation::Interface"].ParameterLabels as $labels |
-    .Parameters | keys[] as $id | $labels[$id].default // $id' "$form")
-  # Recreating a stack with the same name gets a fresh Cloud Map domain and matching private DNS targets.
-  jq -e '
-    .Resources as $resources |
-    $resources.DiscoveryNamespace.Properties.Name as $domain |
-    $domain."Fn::Sub" == ["svc-${StackInstanceId}.${DnsSuffix}", {
-      StackInstanceId: {"Fn::Select": [2, {"Fn::Split": ["/", {"Ref": "AWS::StackId"}]}]},
-      DnsSuffix: {"Fn::GetAtt": ["LaunchDiscovery", "DnsSuffix"]}
-    }] and
-    all(
-      ($resources.PrivateRecords, $resources.ManagedPrivateBrowserRecords // empty) |
-        .Properties.RecordSets[].ResourceRecords[] |
-        ."Fn::Sub";
-      (.[0] | test("^(postgres|shiftbox)\\.\\$\\{ServiceDiscoveryDomain\\}\\.$")) and
-      .[1].ServiceDiscoveryDomain == $domain
-    )
-  ' "$form" >/dev/null
-  jq -e --arg mode "$mode" '
-    (.Parameters | (has("VpcId") or has("AvailabilityZone") or has("DeploymentName") or has("Phase")) | not) and
-    .Parameters.ServiceSubnet.Type == "AWS::EC2::Subnet::Id" and
-    .Resources.LaunchDiscovery.Type == "Custom::ShiftBoxLaunchDiscovery" and
-    (.Resources.DiscoveryFunction.Properties.Code.ZipFile | contains("\nimport cfnresponse\n")) and
-    .Resources.ControllerTask.Properties.ContainerDefinitions[0].Command == ["one-pass"] and
-    (if $mode == "private" then (.Parameters | has("PublicDnsZone") | not)
-     else .Parameters.PublicDnsZone.Type == "AWS::Route53::HostedZone::Id" and
-       .Resources.ManagedPrivateBrowserRecords.Properties.HostedZoneId."Fn::GetAtt" == ["PrivateBrowserZone", "ZoneId"]
-     end) and
-    (if $mode == "public-placement" then .Parameters.PublicSubnet.Type == "AWS::EC2::Subnet::Id"
-     else (.Parameters | has("PublicSubnet") | not) end)
-  ' "$form" >/dev/null
-  if [ "${2:-}" = --aws-tooling ]; then
-    cfn-lint --regions "${regions[@]}" -- "$form"
-    cfn-guard validate --rules "$root/platform/cloudformation/aws/shiftbox.guard" --data "$form"
-  fi
-done
+# The one published template exposes the tested console inputs and documents every field.
+python3 - "$stage/shiftbox-aws-cloudformation.yaml" "$root/docs/site/install.md" <<'PYTEST'
+from pathlib import Path
+import sys
+
+import yaml
+
+
+class CloudFormationLoader(yaml.SafeLoader):
+    pass
+
+
+def intrinsic(loader, tag, node):
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node, deep=True)
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node, deep=True)
+    return loader.construct_scalar(node)
+
+
+CloudFormationLoader.add_multi_constructor("!", intrinsic)
+template_file, guide_file = map(Path, sys.argv[1:])
+template = yaml.load(template_file.read_text(), Loader=CloudFormationLoader)
+parameters = template["Parameters"]
+assert not set(parameters) & {"VpcId", "AvailabilityZone", "DeploymentName", "Phase", "PublicSubnet"}
+assert parameters["ReleasePins"]["Type"] == "String"
+assert parameters["ServiceSubnet"]["Type"] == "AWS::EC2::Subnet::Id"
+assert parameters["WorkspaceSubnet"]["Type"] == "AWS::EC2::Subnet::Id"
+assert parameters["PublicDnsZone"]["Type"] == "AWS::Route53::HostedZone::Id"
+assert parameters["BrowserAccess"]["AllowedValues"] == ["Public", "Private"]
+labels = template["Metadata"]["AWS::CloudFormation::Interface"].get("ParameterLabels", {})
+guide = guide_file.read_text()
+for name in parameters:
+    field = labels.get(name, {}).get("default", name)
+    assert field in guide, f"Installation guide is missing the {field} field"
+PYTEST
 
 # Validate the actual packaged bytes with the same static AWS tools used on release templates.
 if [ "${2:-}" = --aws-tooling ]; then
@@ -188,10 +168,52 @@ cmp "$scratch/approved.json" "$stage/distribution-manifest.json"
 "$here/manifest.sh" validate "$stage/distribution-manifest.json" v2.0.1 "$commit" "$publisher"
 "$here/manifest.sh" verify-assets "$stage/distribution-manifest.json" "$stage"
 jq -e --slurpfile pinned "$locations" '
-  all(.regions | to_entries[];
+  .schemaVersion == 2 and all(.regions | to_entries[];
      .value.templateLocation.versionId == $pinned[0][.key].versionId and
      (.value.templateLocation.quickCreateUrl | contains("pin%252Bconstructed%252Fversion%253D")))
 ' "$stage/distribution-manifest.json" >/dev/null
+
+# Decode each console link independently and compare every input with the exact regional release record.
+# The command-line helper must supply the same pins to CloudFormation.
+python3 - "$stage/distribution-manifest.json" "$here/manifest.sh" <<'PY'
+import json
+from pathlib import Path
+import subprocess
+import sys
+from urllib.parse import parse_qs, urlsplit
+
+manifest_file, manifest_script = sys.argv[1:]
+manifest = json.loads(Path(manifest_file).read_text())
+for region, regional in manifest["regions"].items():
+    workspace = regional["workspaceImage"]
+    location = regional["templateLocation"]
+    expected = {
+        "Region": region,
+        "ControllerImage": manifest["controller"]["repository"] + "@" + manifest["controller"]["digest"],
+        "PostgresImage": manifest["postgresImage"],
+        "HostAmi": regional["hostAmiId"],
+        "WorkspaceAmi": workspace["amiId"],
+        "PublisherAccount": manifest["publisherAccountId"],
+        "WorkspaceRootDevice": workspace["rootDeviceName"],
+        "WorkspaceSnapshot": workspace["rootSnapshotId"],
+        "WorkspaceSourceAmi": workspace["sourceAmiId"],
+        "WorkspaceSourceRegion": workspace["sourceRegion"],
+        "WorkspaceSourceRevision": workspace["sourceCommit"],
+        "WorkspaceRelease": manifest["candidateTag"],
+        "GuestRelease": workspace["guestRelease"],
+        "WorkspaceArchitecture": workspace["architecture"],
+        "WorkspaceCatalogSHA256": workspace["catalogSha256"],
+        "WorkspaceMinimumDiskGiB": str(workspace["minimumDiskGiB"]),
+    }
+    link = urlsplit(location["quickCreateUrl"])
+    parameters = parse_qs(link.fragment.split("?", 1)[1], strict_parsing=True)
+    assert set(parameters) == {"templateURL", "param_ReleasePins"}
+    assert parameters["templateURL"] == [location["url"]]
+    assert len(parameters["param_ReleasePins"]) == 1
+    assert json.loads(parameters["param_ReleasePins"][0]) == expected
+    installer_pins = subprocess.check_output([manifest_script, "launch-pins", manifest_file, region], text=True)
+    assert json.loads(installer_pins) == expected
+PY
 
 expect_rejected() {
   local name=$1
@@ -201,6 +223,34 @@ expect_rejected() {
     exit 1
   fi
 }
+
+# Development handoff for a current release writes the Ohio parameters only.
+"$root/platform/development/render-aws.sh" "$stage" "$scratch/development-inputs"
+cmp "$scratch/development-inputs/release-pins.json" \
+  <("$here/manifest.sh" launch-pins "$stage/distribution-manifest.json" us-east-2)
+[[ $(find "$scratch/development-inputs" -type f -print | wc -l) -eq 1 ]]
+
+# A separately valid AMI id in a console parameter must still match the manifest pin.
+jq '.regions["us-east-2"].templateLocation.quickCreateUrl |= sub("ami-00000000000000001"; "ami-00000000000000002")' \
+  "$stage/distribution-manifest.json" >"$scratch/mismatched-launch-pins.json"
+expect_rejected 'changed regional launch pin' "$here/manifest.sh" validate \
+  "$scratch/mismatched-launch-pins.json" "$tag" "$commit" "$publisher"
+
+# Earlier release archives can be verified with their original launch variants.
+# The same archive is invalid for a new release even with an updated outer checksum.
+mkdir -p "$scratch/legacy-archive/launch" "$scratch/legacy-assets"
+tar -xzf "$stage/shiftbox-aws-support.tar.gz" -C "$scratch/legacy-archive"
+for form in private public public-placement; do
+  printf '{}\n' >"$scratch/legacy-archive/launch/shiftbox-aws-$form.json"
+done
+legacy_archive="$scratch/legacy-assets/shiftbox-aws-support.tar.gz"
+tar -C "$scratch/legacy-archive" -czf "$legacy_archive" catalog docs launch setup.sh stack-policy.json
+"$here/manifest.sh" validate-support "$legacy_archive"
+cp "$stage/install.sh" "$stage/shiftbox-aws-cloudformation.yaml" "$scratch/legacy-assets/"
+jq --arg archive_hash "$(openssl dgst -sha256 -r <"$legacy_archive" | awk '{print $1}')" \
+  '.supportAssets.sha256 = $archive_hash' "$stage/distribution-manifest.json" >"$scratch/legacy-archive-v2.json"
+expect_rejected 'legacy launch variants in a new release' "$here/manifest.sh" verify-assets \
+  "$scratch/legacy-archive-v2.json" "$scratch/legacy-assets"
 
 # A digest mutation, wrong object key or replacement version must not rewrite an approved stage.
 jq '.["us-east-2"].versionId = "different-original"' "$locations" >"$scratch/mismatched-version.json"

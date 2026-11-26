@@ -10,7 +10,10 @@
     "supportAssets", "regions"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": {
+      "enum": [1, 2],
+      "description": "Version 1 pins release-specific template bytes. Version 2 uses the checked-in template and supplies regional release inputs in its console links."
+    },
     "candidateTag": { "$ref": "#/$defs/candidateTag" },
     "sourceCommit": { "$ref": "#/$defs/commit" },
     "runtimeCompatibility": { "$ref": "#/$defs/candidateTag" },

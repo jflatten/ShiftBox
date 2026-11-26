@@ -115,92 +115,29 @@ def test_one_pass_refuses_rc3_controller():
         render_development({}, PUBLIC_IMAGE, one_pass=True)
 
 
-def test_one_pass_uses_only_existing_network_and_main_task():
-    # A fresh stack starts both services and supplies only the exact release catalog for starters.
-    import base64
-    import hashlib
+def test_current_template_starts_the_services_in_one_stack():
+    # Fresh development installs exercise the same standalone form as release qualification.
     from pathlib import Path
-    from aws_template import CloudFormationLoader
-    import json
-    import re
     import yaml
 
     source = Path(__file__).parents[1] / "cloudformation" / "aws" / "template.yaml"
-    staged = re.sub(r"(?m)^@@[A-Z_]+@@$", "          fixture", source.read_text())
-    base = yaml.load(re.sub(r"@@[A-Z_]+@@", "fixture", staged), Loader=CloudFormationLoader)
-    pg_start = source.parent / "postgres" / "start.sh"
-    base["Resources"]["PostgresTask"]["Properties"]["ContainerDefinitions"][0]["Command"] = [pg_start.read_text()]
-    # bundle.sh supplies these policy documents before the development transform.
-    for name in ("PostgresExecutionRole", "ControllerExecutionRole"):
-        policies = base["Resources"][name]["Properties"]["Policies"]
-        base["Resources"][name + "Boundary"]["Properties"]["PolicyDocument"] = deepcopy(policies[0]["PolicyDocument"])
-    catalog = b'{"builds": [{"region": "us-east-2"}]}\n'
-    base["Mappings"]["ReleaseRegions"] = {REGION: {"WorkspaceCatalogSHA256": hashlib.sha256(catalog).hexdigest()}}
-    base["Resources"]["ControllerTask"]["Properties"]["ContainerDefinitions"][0]["Image"] = PUBLIC_IMAGE
-    with pytest.raises(ValueError, match="starter catalog"):
-        render_development(base, PUBLIC_IMAGE, PRIVATE_IMAGE, one_pass=True, starter_catalog=catalog.strip())
-    base = render_development(base, PUBLIC_IMAGE, PRIVATE_IMAGE, one_pass=True, starter_catalog=catalog)
-    # The console explains the rule in plain language before accepting an IPv4 range.
-    labels = base["Metadata"]["AWS::CloudFormation::Interface"]["ParameterLabels"]
-    assert labels["OperatorCidr"]["default"] == "Inbound security group rule for UI access"
-    help_text = base["Parameters"]["OperatorCidr"]["Description"]
-    assert "ShiftBox UI" in help_text and "8443" in help_text and "/32" in help_text
-    # The one-pass console exposes the shared cache input and keeps wiring its own disk.
-    cache_parameter = "OciImageCacheSizeGiB"
-    assert base["Parameters"][cache_parameter]["Default"] == 20
-    groups = base["Metadata"]["AWS::CloudFormation::Interface"]["ParameterGroups"]
-    assert any(cache_parameter in group["Parameters"] for group in groups)
-    assert labels[cache_parameter]["default"] == "OCI image cache size (GiB)"
-    resources = base["Resources"]
-    assert resources["RegistryCacheVolume"]["Properties"]["Size"] == {"Ref": cache_parameter}
-    assert "RegistryCacheAttachment" in resources["ControllerService"]["DependsOn"]
-    rendered = json.dumps(base)
-    assert {"Phase", "PostgresCaPem"}.isdisjoint(base["Parameters"])
-    # Public deployment uses the same one-pass artifact and retains optional IAM and DNS.
-    assert base["Parameters"]["PublicAccess"]["Default"] == "false"
-    assert base["Parameters"]["PublicParentHostedZoneId"]["Default"] == ""
-    assert resources["PublicLoadBalancer"]["Condition"] == "PublicEnabled"
-    assert resources["ManagedPublicDelegation"]["Properties"]["HostedZoneId"] == {"Ref": "PublicParentHostedZoneId"}
-    assert base["Outputs"]["BrowserCaSecretArn"]["Condition"] == "PrivateBootstrap"
-    assert any(tag.get("Fn::If", [None])[0] == "CreateManagedPublicZone"
-               for tag in resources["ControllerService"]["Properties"]["Tags"])
-    assert all(field not in rendered for field in ("GitHubAppSecretArn", "HasGitHubApp", "SHIFTBOX_GITHUB_APP"))
-    assert "SetupTask" not in resources
-    assert "SetupSession" not in resources
-    assert "PostgresTlsSecret" not in rendered
+    template = yaml.safe_load(source.read_text())
+    resources = template["Resources"]
+    assert template["Parameters"]["BrowserAccess"]["Default"] == "Private"
+    assert template["Parameters"]["ReleasePins"]["Type"] == "String"
+    assert {"Phase", "PostgresCaPem"}.isdisjoint(template["Parameters"])
+    assert {"SetupSession", "SetupTask"}.isdisjoint(resources)
+    assert resources["ControllerTask"]["Properties"]["ContainerDefinitions"][0]["Command"] == ["one-pass"]
     assert resources["ControllerService"]["Properties"]["DesiredCount"] == 1
     assert resources["PostgresService"]["Properties"]["DesiredCount"] == 1
+    interface = template["Metadata"]["AWS::CloudFormation::Interface"]
+    cache_size = "OciImageCacheSizeGiB"
+    assert template["Parameters"][cache_size]["Default"] == 20
+    assert interface["ParameterLabels"][cache_size]["default"] == "OCI image cache size (GiB)"
+    assert any(cache_size in group["Parameters"] for group in interface["ParameterGroups"])
+    assert resources["RegistryCacheVolume"]["Properties"]["Size"] == {"Ref": cache_size}
+    assert "RegistryCacheAttachment" in resources["ControllerService"]["DependsOn"]
     assert resources["EcsHost"]["Properties"]["NetworkInterfaces"][0]["AssociatePublicIpAddress"] is False
     assert resources["EcsHost"]["Properties"]["NetworkInterfaces"][0]["SubnetId"] == {"Ref": "ServiceSubnet"}
     assert all(resource["Type"] not in {"AWS::EC2::VPC", "AWS::EC2::Subnet", "AWS::EC2::NatGateway", "AWS::EC2::Route"}
                for resource in resources.values())
-    definition = resources["ControllerTask"]["Properties"]["ContainerDefinitions"][0]
-    assert definition["Command"] == ["one-pass"]
-    runtime = next(entry["Value"]["Fn::Sub"][0] for entry in definition["Environment"]
-                   if entry["Name"] == "SHIFTBOX_CLOUD_CONFIG")
-    encoded = re.search(r'"starterCatalog":"([A-Za-z0-9+/=]+)"', runtime).group(1)
-    assert base64.b64decode(encoded, validate=True) == catalog
-    for resource in resources.values():
-        properties = resource.get("Properties", {})
-        for tag in properties.get("Tags", []) + properties.get("HostedZoneTags", []):
-            if "Fn::If" in tag:
-                assert len(tag["Fn::If"]) == 3
-                tag = tag["Fn::If"][1]
-            assert tag["Key"].startswith("shiftbox-"), tag["Key"]
-    assert '"namespacedTags":true' in rendered.replace('\\"', '"')
-    assert "aws:RequestTag/shiftbox-workspace-deployment" in rendered
-    assert "aws:ResourceTag/ShiftBoxWorkspaceDeployment" not in rendered
-    assert base["Outputs"]["SetupClaimSecretArn"]["Value"] == {"Ref": "SetupClaim"}
-    assert base["Outputs"]["BrowserCaSecretArn"]["Value"] == {"Ref": "BrowserTrust"}
-    assert definition["Secrets"][-1] == {"Name": "SHIFTBOX_BOOTSTRAP_CLAIM", "ValueFrom": {"Ref": "SetupClaim"}}
-    for name in ("ControllerExecutionRole", "PostgresExecutionRole"):
-        policies = resources[name]["Properties"]["Policies"]
-        grants = [grant for policy in policies for grant in policy["PolicyDocument"]["Statement"]]
-        boundary = resources[name + "Boundary"]["Properties"]["PolicyDocument"]
-        assert grants == boundary["Statement"]
-    assert "pg-identity" in json.dumps(resources["PostgresTask"])
-    assert "pg-identity" not in json.dumps(resources["ControllerTask"])
-    assert "database-trust" in json.dumps(resources["ControllerTask"])
-    assert "SHIFTBOX_DB_CA" not in json.dumps(resources["ControllerTask"])
-    trust = resources["ControllerTaskRole"]["Properties"]["AssumeRolePolicyDocument"]["Statement"][0]
-    assert trust["Condition"]["StringEquals"]["aws:SourceAccount"] == {"Ref": "AWS::AccountId"}

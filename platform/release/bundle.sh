@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Renders the standalone template and packages the public files from locally staged pins.
+# Packages the checked-in template and public files from locally staged pins.
 set -euo pipefail
 
 if [ "$#" -ne 4 ]; then
@@ -22,7 +22,7 @@ jq -es "$manifest_filter"'
   length == 1 and (.[0] as $release | $release |
     shape(["schemaVersion", "candidateTag", "sourceCommit", "runtimeCompatibility",
       "publisherAccountId", "controller", "postgresImage", "regions"]) and
-    .schemaVersion == 1 and (.candidateTag | candidate) and (.sourceCommit | commit) and
+    .schemaVersion == 2 and (.candidateTag | candidate) and (.sourceCommit | commit) and
     .runtimeCompatibility == .candidateTag and (.publisherAccountId | matches("^[0-9]{12}")) and
     (.controller | shape(["repository", "digest", "platform"]) and
       .repository == "ghcr.io/jflatten/shiftbox" and .platform == "linux/amd64" and
@@ -42,10 +42,8 @@ from io import BytesIO
 import json
 from pathlib import Path
 import re
-import runpy
 import sys
 import tarfile
-import yaml
 
 root, pins, catalog_dir, guide_dir, out = map(Path, sys.argv[1:])
 release = json.loads(pins.read_text())
@@ -103,52 +101,6 @@ def catalog_bytes(region):
     return contents
 
 
-def render_template():
-    """Use the same pins in the template, archive provenance and the distribution manifest."""
-    mappings = {}
-    for region in regions:
-        data = release["regions"][region]
-        image = data["workspaceImage"]
-        mappings[region] = {
-            "HostAmi": data["hostAmiId"],
-            "WorkspaceAmi": image["amiId"],
-            "PublisherAccount": release["publisherAccountId"],
-            "WorkspaceRootDevice": image["rootDeviceName"],
-            "WorkspaceSnapshot": image["rootSnapshotId"],
-            "WorkspaceSourceAmi": image["sourceAmiId"],
-            "WorkspaceSourceRegion": image["sourceRegion"],
-            "WorkspaceSourceRevision": image["sourceCommit"],
-            "WorkspaceRelease": release["candidateTag"],
-            "GuestRelease": image["guestRelease"],
-            "WorkspaceArtifact": "workspace-ami",
-            "WorkspaceArchitecture": image["architecture"],
-            "WorkspaceCatalogSHA256": image["catalogSha256"],
-            "WorkspaceMinimumDiskGiB": str(image["minimumDiskGiB"]),
-        }
-    values = {
-        "RELEASE_REGIONS": mappings,
-        "CONTROLLER_IMAGE": f"{release['controller']['repository']}@{release['controller']['digest']}",
-        "POSTGRES_IMAGE": release["postgresImage"],
-        "MOUNT_DATA_SCRIPT": read_regular(cloudformation / "host/mount-data.sh").decode(),
-        "MOUNT_CACHE_SCRIPT": read_regular(cloudformation / "host/mount-registry-cache.sh").decode(),
-        "POSTGRES_START_SCRIPT": read_regular(cloudformation / "postgres/start.sh").decode(),
-        "INSTALLATION_TLS_SCRIPT": read_regular(cloudformation / "host/installation-tls.sh").decode(),
-    }
-    source = read_regular(cloudformation / "template.yaml").decode()
-    boundary_renderer = runpy.run_path(str(cloudformation / "render_boundaries.py"))["render_task_boundaries"]
-    template = boundary_renderer(source)
-    matches = re.findall(r"@@([A-Z_]+)@@", template)
-    if set(matches) != set(values) or matches.count("CONTROLLER_IMAGE") != 2:
-        raise ValueError("CloudFormation source markers do not match the renderer")
-    rendered = re.sub(
-        r"@@([A-Z_]+)@@", lambda match: json.dumps(values[match[1]], sort_keys=True), template
-    )
-    encoded = rendered.encode()
-    if len(encoded) > 1_048_576:
-        raise ValueError("Rendered template exceeds the CloudFormation S3 template size limit")
-    return encoded
-
-
 def build_installer():
     """Embed the approved publisher and validators in one fully parsed Bash block."""
     validator = read_regular(root / "platform/release/manifest.sh").decode()
@@ -166,7 +118,7 @@ def build_installer():
     ).encode()
 
 
-def build_support_archive(destination, catalog, template):
+def build_support_archive(destination, catalog):
     """Archive only public files, with stable ordering, ownership, permissions and time."""
     members = {f"catalog/{region}.json": (contents, 0o644) for region, contents in catalog.items()}
     members.update({
@@ -174,14 +126,6 @@ def build_support_archive(destination, catalog, template):
     })
     members["setup.sh"] = (read_regular(cloudformation / "setup.sh"), 0o755)
     members["stack-policy.json"] = (read_regular(cloudformation / "stack-policy.json"), 0o644)
-    launch_forms = runpy.run_path(str(cloudformation / "launch_forms.py"))
-    base = yaml.load(template, Loader=launch_forms["CloudFormationLoader"])
-    for mode in launch_forms["FORMS"]:
-        form = launch_forms["configure_launch_form"](base, mode)
-        form_bytes = (json.dumps(form, indent=2) + "\n").encode()
-        if len(form_bytes) > 1_048_576:
-            raise ValueError("Console launch form exceeds the CloudFormation S3 template size limit")
-        members[f"launch/shiftbox-aws-{mode}.json"] = (form_bytes, 0o644)
     with destination.open("xb") as raw, GzipFile(filename="", fileobj=raw, mode="wb", mtime=0) as archive:
         with tarfile.open(fileobj=archive, mode="w", format=tarfile.USTAR_FORMAT) as tar:
             for name, (data, mode) in sorted(members.items()):
@@ -193,17 +137,19 @@ def build_support_archive(destination, catalog, template):
 
 try:
     catalog = {region: catalog_bytes(region) for region in regions}
-    template = render_template()
+    template = read_regular(cloudformation / "template.yaml")
+    if not 0 < len(template) <= 1_048_576:
+        raise ValueError("CloudFormation template is empty or exceeds the S3 template size limit")
     installer = build_installer()
     out.mkdir()
     (out / "shiftbox-aws-cloudformation.yaml").write_bytes(template)
     install_path = out / "install.sh"
     install_path.write_bytes(installer)
     install_path.chmod(0o755)
-    build_support_archive(out / "shiftbox-aws-support.tar.gz", catalog, template)
+    build_support_archive(out / "shiftbox-aws-support.tar.gz", catalog)
 except (KeyError, OSError, TypeError, ValueError) as error:
     sys.exit(f"ShiftBox release: {error}")
 PY
 
 bash -n "$out/install.sh"
-manifest_validate_support "$out/shiftbox-aws-support.tar.gz"
+manifest_validate_support "$out/shiftbox-aws-support.tar.gz" 2

@@ -145,6 +145,7 @@ description: "Implementation tasks for the first public AWS distribution"
 - [X] T053 [US1] Wire one CloudFormation deployment in supplied subnets into that private UI setup path. Update the guided installer and manual docs to complete through the UI with no stack phase updates or manual SSM setup session. Keep the tested RC3 behavior available through its original pins.
 - [ ] T054 [US2] Deploy one private development attempt in testing using the existing default subnets after confirming operator-provided egress, private browser access and budget. Test the changed controller and pinned RC3 workspace AMI, use a private workspace AMI when iterating on guest changes, record private browser and enrollment evidence, and verify teardown while preserving the supplied network. Review the results before creating a new RC.
 - [X] T055 Retire the Terraform application deployment and use CloudFormation for development stack rollout and rollback. Move the release bootstrap scripts and mount tests alongside the template. Verify release packaging, CloudFormation lint and Guard, development rendering, and qualification fixtures offline.
+- [X] T056 Use the tested launch form as the single checked-in YAML. Stage its exact bytes, prefill the same manifest-derived regional inputs for the Console and installer, and verify those bytes and inputs in qualification. Keep automated change sets review-only. Verified the packaging, CloudFormation, installer and qualification fixtures offline.
 
 ## Dependencies & Execution Order
 

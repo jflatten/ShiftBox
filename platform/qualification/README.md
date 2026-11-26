@@ -25,7 +25,7 @@ charges. Actual aggregate headroom has not been verified.
 
 | Scenario | Estimated incremental AWS cost | Planning ceiling |
 | --- | ---: | ---: |
-| Four isolated regional AMI boots and hosted change sets plus Ohio foundation only | $0.49 | $5.00 |
+| Four isolated regional AMI boots and hosted change-set previews | $0.49 | $5.00 |
 | Same regional probes plus one staffed Ohio console-to-IDE install and scoped recovery target | $1.01 | $6.00 |
 
 The full model allocates 15 minutes to each standalone private probe, up to
@@ -99,7 +99,12 @@ assets. The cost calculator contains dated catalog links and line items.
    by the testing account and in the same VPC. For example, one entry has the
    shape `"us-east-2":{"service":"subnet-0123456789abcdef0","workspace":"subnet-0123456789abcdef1"}`.
    The workflow verifies the IDs and derives the VPC and service AZ before
-   creating any change sets. The automated review holds browser ingress closed.
+   creating any change sets. For the single template, set
+   `SHIFTBOX_QUALIFICATION_BROWSER` in the environment to a JSON object
+   with `zoneId`, `contactEmail`, and `privateCidr`. Use the approved
+   testing-account Route 53 public zone, Let’s Encrypt contact, and source
+   IPv4 range for the private browser route. The automated change sets
+   are previews and the workflow discards them.
    For staffed runs, prepare the operator-managed private route and DNS,
    local browser/SSM client, GitHub App and permanent secret, private test
    repository, and testing-account SSO permission set. The workflow needs
@@ -131,60 +136,49 @@ versioned S3 template bytes and anonymous controller digest. The same group
 serializes qualification and either cleanup path. GitHub can replace a queued
 run with a newer pending run.
 
-The workflow validates the exact hosted change set in all four regions,
-executes each isolated Terraform AMI probe sequentially, verifies its
-instance status and exact encrypted root, and destroys its state. It uses
-one name per attempt of the form `sbq-<run-id>-<attempt>`. Probes append
-`-p` to the name. The four regional change sets use `CAPABILITY_NAMED_IAM`
-and `RoleBoundaryMode=external`. The runtime role ARNs and boundary ARNs are
-bound to this attempt. Automated mode creates only the Ohio foundation and
-verifies the VPC, encrypted volume and absence of DNS and application
-services. It previews an Ohio `dns-zones` UPDATE, verifies the exact release
-template and two expected additions, and discards the change set. The
-GitHub deploy role can execute only a foundation change set in Ohio.
+The workflow compares the published YAML with the file at the candidate
+commit. It reviews a CREATE change set in each Region using the same YAML
+and regional release inputs supplied by the Console link and installer.
+It discards each preview and tests the exact AMI in a separate private
+network. The probes verify instance status and encrypted root storage,
+then destroy their resources. The run uses `sbq-<run-id>-<attempt>`
+as its stack name. Probe names add `-p`.
 
-Before a separately approved run, prepare the exact host role boundary and
-the limited execution role permissions for that attempt. Apply the reviewed
-deploy IAM update for the new Ohio preview and verify the live permissions.
-The [execution policy draft](../terraform/qualification/execution/README.md)
-records the required name, boundary and resource handler checks.
+After review, apply the qualification IAM change in the testing account
+and confirm that the automation role can create, inspect, and discard its
+named previews. Controller stack execution requires the staffed operator.
 
-Staffed mode instead discards the Ohio review stack and opens a 60-minute
-window for the operator. Use the confirmed testing account through the
-existing local `shiftbox-testing` SSO profile and the exact Ohio Console
-template. Set both the stack name and `DeploymentName` to the job summary's
-name. Use that name plus `.internal` as the DNS suffix and leave
-`RoleBoundaryMode=managed` to exercise the public installation path.
-Use the verified Ohio VPC and subnet choices from admission. Set
-`OperatorCidr` to the verified source the service sees if private browser
-access is ready. The operator manages routing
-to the disposable VPC, split DNS for the run suffix, and private browser
-access on TCP 8443. Supply the operator-managed GitHub App secret ARN directly
-on the staffed database change set. The controller execution role may read
-that exact secret for the install. GitHub Actions takes no App or Tailscale
-credential inputs.
-Before enabling the staffed lane, configure
-`SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN` in the qualification
-environment with the separately reviewed
-`shiftbox-qualification-staffed-cloudformation` role in the testing
-account. The approved operator passes that role to CloudFormation; the
-GitHub deploy identity has no authority to pass it. Verify the role supports
-deletion of the entire tagged stack before opening the operator window.
-Set the stack tags `project=shiftbox`, `cluster_name=<name>`, and
-`shiftbox_qualification_run=<name>`. Keep the tags and role on updates.
+### Staffed Ohio installation
 
-Review the foundation and protect the stack and storage using the published
-policy. Review and execute `dns-zones` on that stack, then inspect the
-`PrivateZoneId`, `DiscoveryNamespaceId`, and `DiscoveryHostedZoneId` outputs.
-Verify both zones are private, use the exact suffixes, and are associated only
-with the run VPC; independently verify the namespace and its tags. Review
-and execute `dns-services` next. Verify the two service output IDs refer to
-`postgres` and `shiftbox` in the verified namespace with the correct run
-tags. Verify the six aliases during the subsequent `database` change set.
-Record each change-set ID and these results in private evidence. Follow the
-[validation quickstart](../../specs/010-public-aws-distribution/quickstart.md)
-for PostgreSQL TLS, protected SSM bootstrap, browser trust and the first IDE.
-Use a disposable browser profile on the approved private route.
+The workflow opens a 60-minute window after it removes the review stacks.
+Open the Ohio link from the job summary. Use the reported run name as
+the CloudFormation stack name. Select the preapproved private service and
+workspace subnets and enter the run name plus `.internal` as the DNS
+suffix. Keep **Browser access** set to **Private**. Select the same public
+Route 53 zone, contact email and private source IPv4 range from the
+qualification configuration. The operator reviews and accepts the
+Let’s Encrypt subscriber agreement.
+
+Before enabling the staffed lane, set
+`SHIFTBOX_QUALIFICATION_STAFFED_SERVICE_ROLE_ARN` to the reviewed
+`shiftbox-qualification-staffed-cloudformation` role. Verify that the role
+can create and delete the exact stack, including its discovery Lambda,
+managed IAM boundaries and private DNS resources. The staffed operator
+passes this role to CloudFormation. The workflow uses separate review and
+cleanup credentials. Set the stack tags `project=shiftbox`,
+`cluster_name=<name>`, and `shiftbox_qualification_run=<name>`.
+
+Review and execute one CREATE change set with named IAM acknowledgement.
+Use the published stack policy and enable termination protection.
+Verify the selected VPC and subnets, `PrivateZoneId`,
+`PrivateBrowserDnsZoneId`, and the Cloud Map namespace and service IDs.
+Confirm that the private DNS records resolve over the operator’s route.
+Open `ManagementOrigin` and complete first login with the claim from
+`SetupClaimSecretArn`. Verify PostgreSQL TLS, browser trust and an IDE
+using the exact release image. Follow the full
+[validation quickstart](../../specs/010-public-aws-distribution/quickstart.md#4-run-a-fresh-ohio-console-install-and-exercise-the-guided-cli).
+Use the release-matched instructions for a historical staged template.
+
 Run the reviewed recovery within the same stack's budget and window with
 a separate empty scoped TLS PostgreSQL target. Tag its exact-owned private
 EC2 instance, encrypted disk and attached resources with `project=shiftbox`,
@@ -197,9 +191,9 @@ DNS outputs against the CloudFormation inventory. The independent cleanup
 job then deletes the disposable stack. Verify teardown even if a gate remains
 incomplete.
 
-The automation artifact is sanitized foundation or console-handoff evidence.
+The automation artifact records the sanitized review and console handoff.
 Staffed DNS readback confirms CloudFormation inventory and the candidate
-template. The operator evidence covers the DNS stage order and live service
+template. The operator evidence covers the reviewed change set and live service
 configuration, the browser, OIDC and Git checkout, operator-managed DNS and
 private access, CLI resume, recovery, or completed teardown. Keep those
 verified receipts in private operator evidence and combine them with the

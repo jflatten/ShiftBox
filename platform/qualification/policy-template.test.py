@@ -25,6 +25,24 @@ def intrinsic(loader, tag, node):
 CloudFormationLoader.add_multi_constructor("!", intrinsic)
 template = yaml.load(Path(sys.argv[1]).read_text(), Loader=CloudFormationLoader)
 resources = template["Resources"]
+
+# One-pass qualification previews named IAM resources and leaves execution to
+# the staffed operator. Compare each role with the boundary the stack creates.
+if "ReleasePins" in template["Parameters"]:
+    assert {"Phase", "RoleBoundaryMode", "PostgresCaPem"}.isdisjoint(template["Parameters"])
+    assert resources["LaunchDiscovery"]["Properties"]["ReleasePins"] == {"Ref": "ReleasePins"}
+    assert resources["ControllerTask"]["Properties"]["ContainerDefinitions"][0]["Command"] == ["one-pass"]
+    for name, role in resources.items():
+        if role["Type"] != "AWS::IAM::Role":
+            continue
+        properties = role["Properties"]
+        boundary = resources[properties["PermissionsBoundary"]["Ref"]]
+        assert boundary["Type"] == "AWS::IAM::ManagedPolicy", name
+        grants = [grant for policy in properties.get("Policies", [])
+                  for grant in policy["PolicyDocument"]["Statement"]]
+        assert all(grant in boundary["Properties"]["PolicyDocument"]["Statement"] for grant in grants), name
+    sys.exit(0)
+
 module = Path(__file__).resolve().parents[1] / "terraform/qualification/execution"
 account = "111122223333"
 run = "sbq-123-1"

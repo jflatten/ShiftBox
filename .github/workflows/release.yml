@@ -511,7 +511,9 @@ jobs:
         run: |
           stage="$RUNNER_TEMP/candidate/assets"
           platform/release/manifest.sh validate "$stage/distribution-manifest.json" "$RELEASE_TAG" "$SOURCE_COMMIT" "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID"
+          jq -e '.schemaVersion == 2' "$stage/distribution-manifest.json" >/dev/null
           platform/release/manifest.sh verify-assets "$stage/distribution-manifest.json" "$stage"
+          git show "$SOURCE_COMMIT:platform/cloudformation/aws/template.yaml" | cmp - "$stage/shiftbox-aws-cloudformation.yaml"
       - uses: actions/download-artifact@v8.0.2
         if: steps.restore.outputs.assets == ''
         with:
@@ -573,7 +575,7 @@ jobs:
           jq -n --arg tag "$RELEASE_TAG" --arg source "$SOURCE_COMMIT" --arg publisher "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" \
             --arg image "$image" --arg digest "$digest" --arg postgres "$POSTGRES_IMAGE" \
             --argjson hosts "$HOST_AMIS" --slurpfile workspace "$RUNNER_TEMP/candidate/amis/workspace-images.json" '
-            {schemaVersion:1,candidateTag:$tag,sourceCommit:$source,runtimeCompatibility:$tag,publisherAccountId:$publisher,
+            {schemaVersion:2,candidateTag:$tag,sourceCommit:$source,runtimeCompatibility:$tag,publisherAccountId:$publisher,
               controller:{repository:$image,digest:$digest,platform:"linux/amd64"},postgresImage:$postgres,
               regions:($hosts | with_entries(.key as $region | .value = {hostAmiId:.value,workspaceImage:$workspace[0][$region]}))}
           ' > "$RUNNER_TEMP/candidate/pins.json"
@@ -589,14 +591,9 @@ jobs:
         run: |
           stage="$RUNNER_TEMP/candidate"
           platform/release/build-candidate.sh prepare "$stage/pins.json" "$stage/amis/catalog" docs/site "$stage/assets"
+          git show "$SOURCE_COMMIT:platform/cloudformation/aws/template.yaml" | cmp - "$stage/assets/shiftbox-aws-cloudformation.yaml"
           cfn-lint --regions us-east-1 us-east-2 us-west-1 us-west-2 -- "$stage/assets/shiftbox-aws-cloudformation.yaml"
           cfn-guard validate --rules platform/cloudformation/aws/shiftbox.guard --data "$stage/assets/shiftbox-aws-cloudformation.yaml"
-          for mode in private public public-placement; do
-            form="$stage/shiftbox-aws-$mode.json"
-            tar -xOzf "$stage/assets/shiftbox-aws-support.tar.gz" "launch/shiftbox-aws-$mode.json" > "$form"
-            cfn-lint --regions us-east-1 us-east-2 us-west-1 us-west-2 -- "$form"
-            cfn-guard validate --rules platform/cloudformation/aws/shiftbox.guard --data "$form"
-          done
           platform/release/templates.sh stage "$SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID" "$RELEASE_TAG" \
             "$stage/assets/shiftbox-aws-cloudformation.yaml" "$stage/buckets.json" > "$stage/locations.json"
           platform/release/build-candidate.sh finalize "$stage/pins.json" "$stage/locations.json" "$stage/assets"

@@ -21,6 +21,7 @@ case "${1:-}:$#" in
   finalize:4) operation=$1 pins=$2 locations=$3 stage=$4 ;;
   *) usage ;;
 esac
+jq -e '.schemaVersion == 2' "$pins" >/dev/null || manifest_fail 'candidate pins must use distribution schema version 2'
 [[ -n "$stage" && "${stage%/}" != "" ]] || usage
 stage=${stage%/}
 mkdir -p -- "$(dirname -- "$stage")"
@@ -82,6 +83,8 @@ fi
 for path in "$stage" "$stage/.candidate-stage.json" "$stage/shiftbox-aws-cloudformation.yaml" "$stage/install.sh" "$stage/shiftbox-aws-support.tar.gz"; do
   [[ ! -L "$path" && -e "$path" ]] || { manifest_fail 'candidate stage is incomplete'; exit 1; }
 done
+cmp -s "$here/../cloudformation/aws/template.yaml" "$stage/shiftbox-aws-cloudformation.yaml" ||
+  manifest_fail 'staged template differs from the checked-in CloudFormation template'
 asset_checksums "$stage" >"$scratch/checksums"
 jq -e --arg pin_hash "$(manifest_sha256 "$pins")" --slurpfile expected "$scratch/checksums" '
   .pinsSha256 == $pin_hash and del(.pinsSha256) == $expected[0]
@@ -97,7 +100,7 @@ jq -e --slurpfile locations "$locations" --slurpfile checksums "$scratch/checksu
     . + $checksums[0] | . as $release |
     .regions |= with_entries(.key as $region | .value.templateLocation =
       ($locations[0][$region] + {sha256: $release.template.sha256} |
-        .url = location_url($region) | .quickCreateUrl = console_url($region; .url)))
+        .url = location_url($region) | .quickCreateUrl = release_console_url($release; $region; .url)))
   else error("expected one minimal object location for each release region") end
 ' <"$pins" >"$scratch/distribution-manifest.json"
 

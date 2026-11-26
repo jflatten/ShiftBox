@@ -35,6 +35,13 @@ rule first_login_startup when Parameters.Phase exists {
     Parameters.Phase.Default == 'one-pass'
 }
 
+rule canonical_first_login_startup when Parameters.ReleasePins exists {
+    Parameters.ReleasePins.Type == 'String'
+    Parameters.Phase !exists
+    Resources.ControllerTask.Properties.ContainerDefinitions[0].Command[0] == 'one-pass'
+    Resources.SetupTask !exists
+}
+
 rule bounded_runtime_roles when %runtime_roles !empty {
     %runtime_roles.Properties {
         RoleName exists

@@ -1,13 +1,13 @@
 # Install ShiftBox on AWS
 
-Download the release support archive and select a template in its `launch/` directory. Compare the archive SHA-256 with the distribution manifest before extracting it. [ShiftBox releases](https://github.com/jflatten/ShiftBox/releases)
+Open the release’s CloudFormation link for your Region. It loads the checked-in `template.yaml` as `shiftbox-aws-cloudformation.yaml` and fills in the regional release inputs. The support archive contains the image catalogs and stack policy. Compare the downloaded assets with their SHA-256 values in the distribution manifest. [ShiftBox releases](https://github.com/jflatten/ShiftBox/releases)
 
 ShiftBox runs the ECS controller and PostgreSQL on a private EC2 host with retained encrypted storage. Workspaces use separate private EC2 instances. A public installation adds a Network Load Balancer and an Elastic IP for browser HTTPS.
 
 ## Create the stack
 
-1. In the intended AWS account and Region, upload the private or public launch template. Enter the deployment name as the stack name. Select the service and workspace subnets. CloudFormation resolves the VPC, service Availability Zone, and default internal DNS suffix during the create.
-2. Supply the approved browser source IPv4 range. For public access, select **Public**, select the authoritative Route 53 zone, and enter the Let’s Encrypt inputs. Use the explicit-placement form when several eligible public subnets exist. [Public access inputs](https://jflatten.github.io/ShiftBox/install/#public-browser-access-with-lets-encrypt)
+1. In the intended AWS account and Region, open the release’s CloudFormation link. Enter the deployment name as the stack name. Select the service and workspace subnets. CloudFormation resolves the VPC, service Availability Zone, and default internal DNS suffix during the create.
+2. Choose **Private** or **Public** browser access and supply an approved source IPv4 range. Select the authoritative Route 53 zone and enter the Let’s Encrypt inputs. For public access, the service subnet’s Availability Zone must have exactly one eligible internet-routed subnet. [Browser access inputs](https://www.shiftbox.dev/install/#browser-access-with-lets-encrypt)
 3. Review and execute the CREATE change set. Acknowledge named IAM resources and keep the default installation settings for a fresh stack. Wait for **CREATE_COMPLETE**. The stack configures discovery and database TLS before starting the controller. You can enable termination protection and use the release’s `stack-policy.json` to protect retained resources during future updates.
 
 ## Finish first-login setup

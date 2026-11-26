@@ -23,6 +23,29 @@ manifest_filter='
     "https://\(.bucket).s3.\($region).amazonaws.com/\(.key)?versionId=\(.versionId | @uri)";
   def console_url($region; $url):
     "https://\($region).console.aws.amazon.com/cloudformation/home?region=\($region)#/stacks/create/review?templateURL=\($url | @uri)";
+  def launch_pins($release; $region):
+    $release.regions[$region] as $regional |
+    $regional.workspaceImage as $workspace |
+    {Region: $region,
+     ControllerImage: ($release.controller.repository + "@" + $release.controller.digest),
+     PostgresImage: $release.postgresImage,
+     HostAmi: $regional.hostAmiId,
+     WorkspaceAmi: $workspace.amiId,
+     PublisherAccount: $release.publisherAccountId,
+     WorkspaceRootDevice: $workspace.rootDeviceName,
+     WorkspaceSnapshot: $workspace.rootSnapshotId,
+     WorkspaceSourceAmi: $workspace.sourceAmiId,
+     WorkspaceSourceRegion: $workspace.sourceRegion,
+     WorkspaceSourceRevision: $workspace.sourceCommit,
+     WorkspaceRelease: $release.candidateTag,
+     GuestRelease: $workspace.guestRelease,
+     WorkspaceArchitecture: $workspace.architecture,
+     WorkspaceCatalogSHA256: $workspace.catalogSha256,
+     WorkspaceMinimumDiskGiB: ($workspace.minimumDiskGiB | tostring)};
+  def release_console_url($release; $region; $url):
+    console_url($region; $url) +
+    (if $release.schemaVersion == 2 then "&param_ReleasePins=\(launch_pins($release; $region) | tojson | @uri)"
+     else "" end);
   def asset($name):
     shape(["name", "sha256"]) and .name == $name and (.sha256 | sha256);
   def workspace($release; $region):
@@ -34,13 +57,16 @@ manifest_filter='
     .sourceCommit == $release.sourceCommit and .guestRelease == $release.candidateTag and
     .architecture == "amd64" and
     .minimumDiskGiB == 32 and
+    (if $release.schemaVersion == 2 then
+      .rootDeviceName == "/dev/sda1" and (.sourceRegion as $source | supported_regions | index($source) != null)
+     else true end) and
     .catalogPath == "catalog/\($region).json" and (.catalogSha256 | sha256);
   def location($release; $region):
     shape(["bucket", "key", "versionId", "url", "quickCreateUrl", "sha256"]) and
     (.bucket | bucket) and (.versionId | object_version) and
     .key == "public/templates/\($release.candidateTag)/\($release.template.sha256)/\($release.template.name)" and
     .sha256 == $release.template.sha256 and .url == location_url($region) and
-    (.url | length <= 1024) and .quickCreateUrl == console_url($region; .url);
+    (.url | length <= 1024) and .quickCreateUrl == release_console_url($release; $region; .url);
   def regional($release):
     shape(supported_regions) and all(to_entries[];
       .key as $region | .value |
@@ -51,7 +77,7 @@ manifest_filter='
     . as $release |
     shape(["schemaVersion", "candidateTag", "sourceCommit", "runtimeCompatibility", "publisherAccountId",
       "controller", "postgresImage", "template", "installer", "supportAssets", "regions"]) and
-    .schemaVersion == 1 and (.candidateTag | candidate) and (.sourceCommit | commit) and
+    (.schemaVersion == 1 or .schemaVersion == 2) and (.candidateTag | candidate) and (.sourceCommit | commit) and
     .runtimeCompatibility == .candidateTag and (.publisherAccountId | matches("^[0-9]{12}")) and
     (.controller |
       shape(["repository", "digest", "platform"]) and .repository == "ghcr.io/jflatten/shiftbox" and
@@ -84,8 +110,15 @@ manifest_quick_create() {
   '
 }
 
+manifest_launch_pins() {
+  jq -ces --arg region "$2" "$manifest_filter"'
+    select(length == 1 and (supported_regions | index($region))) |
+    .[0] | select(.schemaVersion == 2 and distribution) | launch_pins(.; $region)
+  ' <"$1"
+}
+
 manifest_validate_support() (
-  local archive=$1 scratch
+  local archive=$1 schema=${2:-1} scratch
   scratch=$(mktemp -d) || return 1
   trap 'rm -rf "$scratch"' EXIT
   if ! tar -tzf - <"$archive" >"$scratch/paths" || ! tar -tvzf - <"$archive" >"$scratch/entries"; then
@@ -94,7 +127,7 @@ manifest_validate_support() (
   fi
 
   # Only the fixed packaging layout can be extracted, with no links or duplicate paths.
-  if ! awk '
+  if ! awk -v schema="$schema" '
     NR == FNR { paths[NR] = $0; next }
     {
       path = paths[FNR]
@@ -109,7 +142,7 @@ manifest_validate_support() (
       if (path ~ /^launch\/.+\.json$/) forms++
     }
     END {
-      if (NR != 2 * FNR || bad || !docs || (forms && forms != 3) || !seen["setup.sh"] || !seen["stack-policy.json"] ||
+      if (NR != 2 * FNR || bad || !docs || (forms && (schema == 2 || forms != 3)) || !seen["setup.sh"] || !seen["stack-policy.json"] ||
           !seen["catalog/us-east-1.json"] || !seen["catalog/us-east-2.json"] ||
           !seen["catalog/us-west-1.json"] || !seen["catalog/us-west-2.json"]) exit 1
     }
@@ -165,7 +198,7 @@ manifest_verify_controller() (
 )
 
 manifest_verify_assets() (
-  local file=$1 directory=$2 kind name expected archive region catalog scratch actual
+  local file=$1 directory=$2 kind name expected archive schema region catalog scratch actual
   if ! jq -es "$manifest_filter"' length == 1 and (.[0] | distribution)' <"$file" >/dev/null; then
     manifest_fail "cannot verify assets without a valid distribution manifest"
     return 1
@@ -180,7 +213,8 @@ manifest_verify_assets() (
     fi
   done
   archive="$directory/shiftbox-aws-support.tar.gz"
-  manifest_validate_support "$archive" || return 1
+  schema=$(jq -er '.schemaVersion' <"$file") || return 1
+  manifest_validate_support "$archive" "$schema" || return 1
   scratch=$(mktemp -d) || return 1
   trap 'rm -rf "$scratch"' EXIT
   for region in us-east-1 us-east-2 us-west-1 us-west-2; do
@@ -201,7 +235,8 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     verify-assets:3) manifest_verify_assets "$2" "$3" ;;
     verify-controller:3) manifest_verify_controller "$2" "$3" ;;
     quick-create:3) manifest_quick_create "$2" "$3" ;;
+    launch-pins:3) manifest_launch_pins "$2" "$3" ;;
     validate-support:2) manifest_validate_support "$2" ;;
-    *) manifest_fail "usage: manifest.sh {validate|verify-assets|quick-create|validate-support} arguments" ;;
+    *) manifest_fail "usage: manifest.sh {validate|verify-assets|quick-create|launch-pins|validate-support} arguments" ;;
   esac
 fi

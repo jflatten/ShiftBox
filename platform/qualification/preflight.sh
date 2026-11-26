@@ -68,7 +68,7 @@ capacity() {
 }
 
 fetch() (
-  local tag=$1 assets=$2 release_metadata ref type commit annotated
+  local tag=$1 assets=$2 release_metadata ref type commit annotated manifest
   local pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.[1-9][0-9]*$'
   [[ $tag =~ $pattern && ${#tag} -le 64 ]] || fail 'supply an explicit canonical RC tag'
   [[ ${SHIFTBOX_RELEASE_PUBLISHER_ACCOUNT_ID:-} =~ ^[0-9]{12}$ &&
@@ -103,6 +103,12 @@ fetch() (
   [[ $(bash "$release/publish.sh" verify-draft "$tag" "$commit" "$assets" "$release_metadata") == published ]] ||
     fail 'published artifact IDs and digests did not match verified release assets'
   manifest="$assets/distribution-manifest.json"
+  if [[ $(jq -er '.schemaVersion' "$manifest") == 2 ]]; then
+    gh api -H 'Accept: application/vnd.github.raw+json' \
+      "repos/$repo/contents/platform/cloudformation/aws/template.yaml?ref=$commit" |
+      cmp -s - "$assets/shiftbox-aws-cloudformation.yaml" ||
+      fail 'the release template differs from the single YAML checked in at the candidate commit'
+  fi
   bash "$release/templates.sh" verify "$manifest" "$assets/shiftbox-aws-cloudformation.yaml"
   bash "$release/manifest.sh" verify-controller "$(jq -er '.controller.repository' "$manifest")" \
     "$(jq -er '.controller.digest' "$manifest")"
