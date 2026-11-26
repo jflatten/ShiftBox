@@ -3,6 +3,65 @@
 Use `shiftbox-testing` (`888293065132`) in Ohio. Fresh installations use the
 same checked-in CloudFormation YAML and pinned inputs as release qualification.
 
+## Deploy the tip of main from GitHub Actions
+
+Run **Deploy private AWS test from main** in Actions with **main** selected.
+The workflow checks out the dispatched SHA and stops if main moves before
+deployment. It builds the controller, browser UI, macOS helper, and an
+encrypted workspace AMI from that commit, then deploys `sbtest-main` in Ohio.
+The workflow uses the checked-in YAML and passes the catalog and its checksum
+through **Release inputs**. Passing Checks and a signed tag are part of the
+release workflow and are independent of this test.
+
+### Set up the private test destination
+
+1. Create the `aws-main-test` GitHub environment and allow deployments from
+   protected `main` only. Use the existing GitHub OIDC provider in
+   `shiftbox-testing`. Review and apply the [main test Terraform configuration](../terraform/main-test/main.tf).
+   Supply the private Packer network and the reviewed
+   `shiftbox-main-test-cloudformation` IAM policy for the single `sbtest-main`
+   stack. That policy must allow creation and cleanup of the template resources, including
+   passing only the stack's service roles. The workflow identities cannot
+   modify this policy or operate publisher resources.
+2. Create or select an Ohio EC2 Instance Connect Endpoint in the private build
+   subnet. Tag it `shiftbox-project=shiftbox` and
+   `shiftbox-cluster-name=sbtest-main`. Configure IPv4 with client IP
+   preservation off, allow SSH from the endpoint security group to the
+   builder group, and provide outbound access for the guest build.
+3. Set up the **private** GHCR package `jflatten/shiftbox-main-test` and grant
+   this repository Actions write access. In Ohio Secrets Manager, create
+   `shiftbox-main-test-ghcr` using the default Secrets Manager key. Store a
+   GHCR username and read-only package token in its `username` and
+   `password` fields. The stack's ECS execution role reads it when pulling
+   the private image. [GHCR package access](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility) · [ECS private registry credentials](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html)
+4. Set these variables in the GitHub environment.
+
+   | Variable | Value |
+   | --- | --- |
+   | `SHIFTBOX_MAIN_TEST_BUCKET` | The Terraform `staging_bucket` output. |
+   | `SHIFTBOX_MAIN_TEST_BUILD_NETWORK` | The Terraform `workflow_build_network` JSON output. |
+   | `SHIFTBOX_MAIN_TEST_GUEST_UPDATE_PUBLIC_KEY` | Single-line base64 of the 32-byte Ed25519 guest-update public key. |
+   | `SHIFTBOX_MAIN_TEST_HOST_AMI` | Verified Ohio Amazon ECS host AMI ID. |
+   | `SHIFTBOX_MAIN_TEST_POSTGRES_IMAGE` | The release lane's digest-pinned PostgreSQL 17 Debian image. |
+   | `SHIFTBOX_MAIN_TEST_STACK_PARAMETERS` | JSON object with `ServiceSubnet`, `WorkspaceSubnet`, `BrowserAccess`, and the standard Route 53, Let's Encrypt, and ingress inputs for the tested form. |
+
+The controller and AMI stay private. The workflow passes the helper and
+template through a private, versioned S3 bucket with an expiration rule.
+
+### Verify the deployment
+
+1. Open the stack from the Action summary and use **ManagementOrigin** and
+   **SetupClaimSecretArn** from its Outputs tab to complete first login.
+2. After activation, sign in again and verify that the default AMI and
+   **Small**, **Medium**, and **Large** profiles appear. Start a workspace
+   and open its IDE to verify guest enrollment.
+3. Record the tested SHA from the summary. If `main` advances before the
+   release, repeat the test on the new SHA.
+4. Delete the test workspaces and the `sbtest-main` stack after verification.
+   Use the stack's resource inventory to remove its retained installation
+   volume and generated secrets. Deregister the run's private workspace AMI,
+   delete its snapshot, and remove the corresponding private GHCR version.
+
 ## Install once and finish in the browser
 
 1. Confirm the testing account and choose existing service and workspace

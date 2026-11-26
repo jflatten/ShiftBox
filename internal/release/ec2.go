@@ -108,7 +108,7 @@ type OfficialEC2Image struct {
 // Validate checks the descriptor against the regional customer deployment.
 func (i OfficialEC2Image) Validate(region, accountID string) error {
 	if !publicEC2Region(region) || !publicEC2Region(i.SourceRegion) || !ec2AccountPattern.MatchString(accountID) ||
-		!ec2AccountPattern.MatchString(i.PublisherAccountID) || accountID == i.PublisherAccountID ||
+		!validPinnedPublisher(region, accountID, i.PublisherAccountID, i.ReleaseID) ||
 		!ec2AMIIDPattern.MatchString(i.AMIID) || !ec2AMIIDPattern.MatchString(i.SourceAMI) ||
 		!ec2SnapshotPattern.MatchString(i.RootSnapshotID) || i.RootDeviceName != "/dev/sda1" ||
 		len(i.SourceCommit) != 40 || !ec2RevisionPattern.MatchString(i.SourceCommit) ||
@@ -117,6 +117,13 @@ func (i OfficialEC2Image) Validate(region, accountID string) error {
 		return ErrInvalidArtifact
 	}
 	return nil
+}
+
+func validPinnedPublisher(region, account, publisher, version string) bool {
+	if account != publisher {
+		return ec2AccountPattern.MatchString(publisher)
+	}
+	return account == "888293065132" && region == "us-east-2" && strings.HasPrefix(version, "v0.0.0-rc.")
 }
 
 // MatchesManifest checks both the unmodified release bytes and their decoded provenance.
@@ -221,7 +228,7 @@ func validEC2Artifact(artifact Artifact) bool {
 }
 
 func (i EC2Image) validOfficialCatalog(manifest ArtifactManifest) bool {
-	return i.PublisherAccountID != i.AccountID && ec2AccountPattern.MatchString(i.PublisherAccountID) &&
+	return validPinnedPublisher(i.Region, i.AccountID, i.PublisherAccountID, i.ReleaseID) &&
 		i.Family == "" && publicEC2Region(i.Region) && publicEC2Region(i.SourceRegion) && len(i.SourceRevision) == 40 &&
 		ec2RCPattern.MatchString(i.ReleaseID) && manifest.Guest.Version == i.ReleaseID
 }

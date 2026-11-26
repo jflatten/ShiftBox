@@ -30,6 +30,7 @@ def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--subnet-cidr", type=ipaddress.IPv4Network, required=True)
     parser.add_argument("--port-file", type=Path, required=True)
+    parser.add_argument("--private-test", action="store_true")
     patterns = {
         "account-id": r"[0-9]{12}",
         "endpoint-id": "eice-" + RESOURCE_ID,
@@ -45,6 +46,10 @@ def arguments():
     for flag, pattern in patterns.items():
         if not re.fullmatch(pattern, getattr(args, flag.replace("-", "_"))):
             parser.error("invalid --" + flag)
+    if args.private_test and (
+        args.account_id != "888293065132" or not args.candidate_tag.startswith("v0.0.0-rc.")
+    ):
+        parser.error("--private-test requires the Ohio testing account and a test runtime version")
     if not 16 <= args.subnet_cidr.prefixlen <= 28 or not any(
         args.subnet_cidr.subnet_of(network) for network in PRIVATE_RANGES
     ):
@@ -129,20 +134,24 @@ class Bridge:
             "environment": "release-" + args.candidate_tag,
             "publisher_attempt": args.attempt_id,
         }
+        self.endpoint_tags = self.tags
+        if args.private_test:
+            self.endpoint_tags = {"shiftbox-project": "shiftbox", "shiftbox-cluster-name": "sbtest-main"}
+            self.tags = {**self.endpoint_tags, "shiftbox-environment": args.candidate_tag}
         self.stopping = False
         self.target = None
 
     def stop(self, *_):
         self.stopping = True
 
-    def has_tags(self, entry):
+    def has_tags(self, entry, expected):
         observed = {tag["Key"]: tag["Value"] for tag in entry.get("Tags", [])}
-        return all(observed.get(key) == value for key, value in self.tags.items())
+        return all(observed.get(key) == value for key, value in expected.items())
 
     def verify_context(self):
         args = self.args
         if aws_json("sts", "get-caller-identity").get("Account") != args.account_id:
-            raise ValueError("AWS identity did not match the approved publisher")
+            raise ValueError("AWS identity did not match the approved build account")
         result = aws_json(
             "ec2", "describe-instance-connect-endpoints", "--instance-connect-endpoint-ids",
             args.endpoint_id,
@@ -163,7 +172,7 @@ class Bridge:
             or endpoint.get("IpAddressType") != "ipv4"
             or endpoint.get("State") not in {"create-complete", "update-complete"}
             or endpoint.get("PreserveClientIp") is not False
-            or not self.has_tags(endpoint)
+            or not self.has_tags(endpoint, self.endpoint_tags)
         ):
             raise ValueError("Instance Connect Endpoint did not match the approved build attempt")
 
@@ -202,7 +211,7 @@ class Bridge:
             or instance.get("PublicIpAddress")
             or instance.get("PublicDnsName")
             or instance.get("IamInstanceProfile")
-            or not self.has_tags(instance)
+            or not self.has_tags(instance, self.tags)
             or len(interfaces) != 1
         ):
             return None

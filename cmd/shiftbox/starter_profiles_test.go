@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -26,8 +28,26 @@ import (
 // TestStarterProfilesReachTemplateCatalog verifies that a newly activated AWS
 // install offers all three sizes on its exact release AMI and respects later edits.
 func TestStarterProfilesReachTemplateCatalog(t *testing.T) {
+	t.Run("published image", func(t *testing.T) { verifyStarterProfiles(t, false) })
+	t.Run("private Ohio test image", func(t *testing.T) { verifyStarterProfiles(t, true) })
+}
+
+func verifyStarterProfiles(t *testing.T, privateTest bool) {
+	t.Helper()
 	db, active, actor, now := starterProfileDatabase(t)
 	settings, raw := cloudCandidateFixture()
+	if privateTest {
+		const version = "v0.0.0-rc.1234"
+		settings.AccountID, settings.Region = "888293065132", "us-east-2"
+		pin := settings.OfficialImage
+		pin.PublisherAccountID, pin.ReleaseID, pin.GuestRelease = settings.AccountID, version, version
+		raw = strings.NewReplacer("us-west-2", settings.Region, "v1.4.2-rc.1", version).Replace(raw)
+		pin.CatalogSHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte(raw)))
+		if _, err := db.Exec("UPDATE installations SET active_release=$1,min_guest_release=$1", version); err != nil {
+			t.Fatal(err)
+		}
+		active.ActiveRelease, active.MinimumGuestRelease = version, version
+	}
 	settings.StarterCatalog = []byte(raw)
 	caps := starterProfileCapabilities()
 	observations := 0

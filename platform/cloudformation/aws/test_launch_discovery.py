@@ -1,8 +1,15 @@
 """Test single-create discovery with AWS API doubles."""
 
+import base64
+import hashlib
+import json
+from io import BytesIO
 from pathlib import Path
+import re
 import sys
-from types import ModuleType
+import tarfile
+from types import ModuleType, SimpleNamespace
+from urllib.error import URLError
 
 import pytest
 import yaml
@@ -77,6 +84,114 @@ class DNS:
 def inputs():
     return {"ServiceSubnet": "subnet-service", "WorkspaceSubnet": "subnet-workspace",
             "DeploymentName": "rc3", "PublicZone": "ZPUBLIC", "PublicAccess": "true"}
+
+
+@pytest.fixture
+def starter_release():
+    catalog = b'{"builds":[{"artifact_id":"us-east-2:ami-00000000000000002"}]}\n'
+    pins = {
+        "Region": "us-east-2",
+        "ControllerImage": "ghcr.io/jflatten/shiftbox@sha256:" + "a" * 64,
+        "PostgresImage": "docker.io/library/postgres:17-bookworm@sha256:" + "b" * 64,
+        "HostAmi": "ami-00000000000000001",
+        "WorkspaceAmi": "ami-00000000000000002",
+        "PublisherAccount": "123456789012",
+        "WorkspaceRootDevice": "/dev/sda1",
+        "WorkspaceSnapshot": "snap-00000000000000001",
+        "WorkspaceSourceAmi": "ami-00000000000000003",
+        "WorkspaceSourceRegion": "us-east-1",
+        "WorkspaceSourceRevision": "c" * 40,
+        "WorkspaceRelease": "v1.0.0-rc.5",
+        "GuestRelease": "v1.0.0-rc.5",
+        "WorkspaceArchitecture": "amd64",
+        "WorkspaceCatalogSHA256": hashlib.sha256(catalog).hexdigest(),
+        "WorkspaceMinimumDiskGiB": "32",
+    }
+    return pins, catalog
+
+
+def support_archive(region, catalog):
+    stream = BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+        entry = tarfile.TarInfo(f"catalog/{region}.json")
+        entry.size = len(catalog)
+        archive.addfile(entry, BytesIO(catalog))
+    return stream.getvalue()
+
+
+@pytest.mark.parametrize("access", ["true", "false"])
+def test_launch_passes_verified_catalog_to_controller(access, monkeypatch, discovery, resources, inputs, starter_release):
+    # The actual launch handler and ECS task must deliver the exact release catalog in either browser mode.
+    pins, catalog = starter_release
+    inputs.update(PublicAccess=access, ReleasePins=json.dumps(pins))
+    inputs["IncludeStarterCatalog"] = resources["LaunchDiscovery"]["Properties"]["IncludeStarterCatalog"]
+    event = {
+        "RequestType": "Create",
+        "ResourceType": "Custom::ShiftBoxLaunchDiscovery",
+        "StackId": "arn:aws:cloudformation:us-east-2:123456789012:stack/rc3/stack-id",
+        "LogicalResourceId": "LaunchDiscovery",
+        "ResourceProperties": inputs,
+    }
+
+    def download(url, *, timeout):
+        assert url == "https://github.com/jflatten/ShiftBox/releases/download/v1.0.0-rc.5/shiftbox-aws-support.tar.gz"
+        assert 0 < timeout < 30
+        return BytesIO(support_archive(pins["Region"], catalog))
+
+    clients = {"ec2": EC2(), "route53": DNS()}
+    monkeypatch.setitem(sys.modules, "boto3", SimpleNamespace(client=lambda name, **_: clients[name]))
+    monkeypatch.setenv("AWS_REGION", pins["Region"])
+    monkeypatch.setitem(discovery, "urlopen", download)
+    responses = []
+    response = SimpleNamespace(SUCCESS="SUCCESS", FAILED="FAILED", send=lambda *args, **_: responses.append(args))
+    discovery["respond_to_cloudformation"](event, None, response)
+    _, _, status, data = responses[0]
+    assert status == "SUCCESS"
+
+    task = resources["ControllerTask"]["Properties"]["ContainerDefinitions"][0]
+    body, bindings = next(item["Value"]["Fn::Sub"] for item in task["Environment"]
+                          if item["Name"] == "SHIFTBOX_CLOUD_CONFIG")
+    substitutions = {key: data[value["Fn::GetAtt"][1]] for key, value in bindings.items()
+                     if isinstance(value, dict) and value.get("Fn::GetAtt", [None])[0] == "LaunchDiscovery"}
+    rendered = re.sub(r"\$\{([^}]+)\}", lambda match: substitutions.get(match[1], "fixture"), body)
+    config = json.loads(rendered)["runtime"]["ec2"]
+    assert config["officialImage"]["amiId"] == pins["WorkspaceAmi"]
+    assert config["officialImage"]["catalogSha256"] == hashlib.sha256(catalog).hexdigest()
+    assert base64.b64decode(config["starterCatalog"], validate=True) == catalog
+
+
+@pytest.mark.parametrize("failure", ["unavailable", "missing region", "digest mismatch", "oversized catalog"])
+def test_starter_catalog_rejects_unverified_download(failure, monkeypatch, discovery, starter_release):
+    # A bad release artifact must fail discovery before it can seed the wrong AMI or an empty catalog.
+    pins, catalog = starter_release
+    archive = support_archive(
+        "us-west-2" if failure == "missing region" else pins["Region"],
+        {"digest mismatch": b"{}", "oversized catalog": b"x" * 2048}.get(failure, catalog),
+    )
+
+    def download(*args, **kwargs):
+        if failure == "unavailable":
+            raise URLError("offline")
+        return BytesIO(archive)
+
+    monkeypatch.setitem(discovery, "urlopen", download)
+    with pytest.raises(ValueError, match="starter AMI catalog"):
+        discovery["load_starter_catalog"](pins)
+
+
+def test_testing_pins_require_private_registry_and_inline_catalog(discovery, starter_release):
+    # Private pins deliver a SHA-verified catalog without accessing any release URL.
+    pins, catalog = starter_release
+    pins.update(ControllerImage="ghcr.io/jflatten/shiftbox-main-test@sha256:" + "a" * 64,
+                PublisherAccount="888293065132", WorkspaceRelease="v0.0.0-rc.1234",
+                WorkspaceSourceRegion="us-east-2",
+                GuestRelease="v0.0.0-rc.1234", WorkspaceStarterCatalog=base64.b64encode(catalog).decode())
+    parse_pins = discovery["parse_release_pins"]
+    assert parse_pins(json.dumps(pins), "us-east-2", private_test=True) == pins
+    with pytest.raises(ValueError, match="release inputs"):
+        parse_pins(json.dumps(pins), "us-east-2")
+    with pytest.raises(ValueError, match="checksum"):
+        parse_pins(json.dumps(pins | {"WorkspaceCatalogSHA256": "0" * 64}), "us-east-2", private_test=True)
 
 
 def test_auto_public_launch(inputs, discovery):

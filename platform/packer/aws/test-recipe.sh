@@ -103,6 +103,11 @@ VARS
 "$packer" fmt -check "$recipe"
 "$packer" validate -evaluate-datasources=false -var-file="$test_dir/release.pkrvars.hcl" "$recipe"
 
+# Validate the private main test's encrypted builder and scoped SSH proxy settings.
+"$packer" validate -evaluate-datasources=false -var-file="$test_dir/release.pkrvars.hcl" \
+    -var region=us-east-2 -var cluster_name=sbtest-main -var environment=v0.0.0-rc.1234 \
+    -var release_id=v0.0.0-rc.1234 -var build_ssh_proxy_host=127.0.0.1 -var build_ssh_proxy_port=4125 "$recipe"
+
 # Exercise the hosted release's attempt tags and local proxy without AWS calls or provisioning.
 "$packer" validate -evaluate-datasources=false -var-file="$test_dir/release.pkrvars.hcl" \
     -var public_build=true -var publisher_account_id=111111111111 -var publisher_attempt=recipe-test \

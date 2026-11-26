@@ -74,6 +74,7 @@ jobs:
             --test-data platform/cloudformation/aws/tests/guard/template-tests.yaml
           bash platform/release/workflows.test.sh --workflows --aws-tooling
           python3 -m pytest -q platform/cloudformation/aws/test_launch_discovery.py
+          python3 -m pytest -q platform/development/test_main_workflow.py
           bash platform/packer/aws/hosted-build.test.sh
           bash platform/packer/aws/release-network.test.sh
           bash platform/packer/aws/recover-release-network.test.sh
@@ -106,6 +107,12 @@ jobs:
       - name: Check the closed and bound Packer rehearsal role offline
         run: |
           root=platform/terraform/publisher/packer-rehearsal
+          terraform -chdir="$root" fmt -check -recursive
+          terraform -chdir="$root" init -backend=false -lockfile=readonly
+          terraform -chdir="$root" test
+      - name: Verify private main test infrastructure offline
+        run: |
+          root=platform/terraform/main-test
           terraform -chdir="$root" fmt -check -recursive
           terraform -chdir="$root" init -backend=false -lockfile=readonly
           terraform -chdir="$root" test
