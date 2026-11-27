@@ -239,8 +239,16 @@ for name in roles:
         assert boundary == role["Policies"][0]["PolicyDocument"], name
     if name != "ControllerTaskRole":
         assert "ec2:RunInstances" not in str(boundary)
-for task in (controller, postgres):
-    assert "RepositoryCredentials" not in task
+# Only the exact private test destination can pull the test package using Secrets Manager.
+assert "RepositoryCredentials" not in postgres
+assert controller["RepositoryCredentials"] == {"Fn::If": [
+    "PrivateTestArtifacts", {"CredentialsParameter": "shiftbox-main-test-ghcr"}, {"Ref": "AWS::NoValue"}
+]}
+assert template["Conditions"]["PrivateTestArtifacts"] == {"Fn::And": [
+    {"Fn::Equals": [{"Ref": "AWS::AccountId"}, "888293065132"]},
+    {"Fn::Equals": [{"Ref": "AWS::Region"}, "us-east-2"]},
+    {"Fn::Equals": [{"Ref": "AWS::StackName"}, "sbtest-main"]},
+]}
 for task in ("Controller", "Postgres"):
     execution_role = properties(f"{task}ExecutionRole")
     assert not execution_role.get("ManagedPolicyArns")

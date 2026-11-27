@@ -1,0 +1,104 @@
+name: Deploy private AWS test from main
+run-name: Ohio test of main at ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shiftbox-main-aws-test
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+  AWS_PAGER: ''
+  AWS_CLI_AUTO_PROMPT: 'off'
+  AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: 'true'
+  TEST_BUCKET: ${{ vars.SHIFTBOX_MAIN_TEST_BUCKET }}
+
+jobs:
+  helper:
+    if: >-
+      github.repository == 'jflatten/ShiftBox' && github.repository_id == '1457179716' &&
+      github.ref == 'refs/heads/main' && github.actor_id == '11561330' &&
+      github.triggering_actor == 'jflatten'
+    runs-on: macos-15
+    environment: aws-main-test
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      helper_sha256: ${{ steps.stage.outputs.sha256 }}
+      helper_version: ${{ steps.stage.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: bash platform/development/main-test.sh source
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build the portable macOS helper from this commit
+        run: sh platform/helper/macos/package.sh --portable "$RUNNER_TEMP/shiftbox-helper"
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-region: us-east-2
+          role-to-assume: arn:aws:iam::888293065132:role/shiftbox-main-test-stage
+          allowed-account-ids: '888293065132'
+          unset-current-credentials: true
+      - name: Store the helper in private S3
+        id: stage
+        run: bash platform/development/main-test.sh stage-helper "$RUNNER_TEMP/shiftbox-helper/ShiftBox-Local-Helper.dmg"
+
+  deploy:
+    needs: helper
+    runs-on: ubuntu-24.04
+    environment: aws-main-test
+    timeout-minutes: 100
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: bash platform/development/main-test.sh source
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install the release-pinned Packer and plugin
+        run: |
+          tools=$(mktemp -d "$RUNNER_TEMP/packer.XXXXXX")
+          curl --fail --silent --show-error --location --proto '=https' \
+            https://releases.hashicorp.com/packer/1.14.2/packer_1.14.2_linux_amd64.zip -o "$tools/packer.zip"
+          printf 'cfefdea4ac580eba7b254ef34d25b756d4961741004e3e701a1476594d13e64a  %s\n' "$tools/packer.zip" |
+            sha256sum --check
+          unzip -q "$tools/packer.zip" -d "$tools"
+          "$tools/packer" init platform/packer/aws
+          printf '%s\n' "$tools" >> "$GITHUB_PATH"
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-region: us-east-2
+          role-to-assume: arn:aws:iam::888293065132:role/shiftbox-main-test-deploy
+          allowed-account-ids: '888293065132'
+          role-duration-seconds: 7200
+          unset-current-credentials: true
+      - name: Build private artifacts and deploy the reviewed CREATE change set
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TEST_HELPER_VERSION: ${{ needs.helper.outputs.helper_version }}
+          TEST_HELPER_SHA256: ${{ needs.helper.outputs.helper_sha256 }}
+          TEST_BUILD_NETWORK: ${{ vars.SHIFTBOX_MAIN_TEST_BUILD_NETWORK }}
+          TEST_GUEST_UPDATE_PUBLIC_KEY: ${{ vars.SHIFTBOX_MAIN_TEST_GUEST_UPDATE_PUBLIC_KEY }}
+          TEST_HOST_AMI: ${{ vars.SHIFTBOX_MAIN_TEST_HOST_AMI }}
+          TEST_POSTGRES_IMAGE: ${{ vars.SHIFTBOX_MAIN_TEST_POSTGRES_IMAGE }}
+          TEST_STACK_PARAMETERS: ${{ vars.SHIFTBOX_MAIN_TEST_STACK_PARAMETERS }}
+        run: bash platform/development/main-test.sh deploy

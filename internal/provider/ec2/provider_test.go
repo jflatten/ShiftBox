@@ -312,6 +312,39 @@ func TestInspectOfficialImage(t *testing.T) {
 	}
 }
 
+// TestInspectPrivateTestingImage requires a pinned encrypted AMI owned by the Ohio testing account.
+func TestInspectPrivateTestingImage(t *testing.T) {
+	cfg, mock := officialProviderFixture()
+	cfg.Region, cfg.AccountID = "us-east-2", "888293065132"
+	pin := cfg.OfficialImage
+	pin.PublisherAccountID = cfg.AccountID
+	pin.ReleaseID, pin.GuestRelease = "v0.0.0-rc.1234", "v0.0.0-rc.1234"
+	if err := pin.Validate(cfg.Region, cfg.AccountID); err != nil {
+		t.Fatalf("Validate(Ohio testing image) = %v, want success", err)
+	}
+	if err := pin.Validate("us-east-1", cfg.AccountID); err == nil {
+		t.Fatal("Validate(testing image outside Ohio) succeeded, want rejection")
+	}
+	mock.image.OwnerId = aws.String(cfg.AccountID)
+	mock.image.Public = aws.Bool(false)
+	mock.image.BlockDeviceMappings[0].Ebs.Encrypted = aws.Bool(true)
+	mock.image.Tags = []types.Tag{
+		{Key: aws.String(tagArtifact), Value: aws.String("workspace-ami")},
+		{Key: aws.String(tagRelease), Value: aws.String(pin.ReleaseID)},
+		{Key: aws.String("ShiftBoxSourceAMI"), Value: aws.String(pin.SourceAMI)},
+		{Key: aws.String("ShiftBoxSourceCommit"), Value: aws.String(pin.SourceCommit)},
+	}
+	p := &Provider{cfg: cfg, client: mock, now: time.Now}
+	image, err := p.InspectOfficialImage(t.Context())
+	if err != nil || image.ID != pin.AMIID || !image.SingleBoot {
+		t.Fatalf("InspectOfficialImage(private) = %+v, %v, want pinned image with single-boot enrollment", image, err)
+	}
+	mock.image.Tags = nil
+	if _, err := p.InspectOfficialImage(t.Context()); !errors.Is(err, provider.ErrOwnershipMismatch) {
+		t.Fatalf("InspectOfficialImage(private without provenance) = %v, want ownership mismatch", err)
+	}
+}
+
 // TestInspectOfficialImageRejectsObservedDrift verifies stale and incompatible AMIs fail closed.
 func TestInspectOfficialImageRejectsObservedDrift(t *testing.T) {
 	now := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)

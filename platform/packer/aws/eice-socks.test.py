@@ -113,7 +113,7 @@ class BridgeTest(unittest.TestCase):
     def update_config(self):
         self.config_path.write_text(json.dumps(self.config), encoding="utf-8")
 
-    def run_bridge(self, **overrides):
+    def run_bridge(self, private_test=False, **overrides):
         self.update_config()
         arguments = {
             "account-id": ACCOUNT,
@@ -128,6 +128,8 @@ class BridgeTest(unittest.TestCase):
             **overrides,
         }
         command = [sys.executable, str(BRIDGE)]
+        if private_test:
+            command.append("--private-test")
         for flag, value in arguments.items():
             command.extend(["--" + flag, value])
         process = subprocess.Popen(command, env=self.environment, stderr=subprocess.PIPE)
@@ -144,8 +146,8 @@ class BridgeTest(unittest.TestCase):
             _, stderr = process.communicate(timeout=5)
         return stderr
 
-    def start(self):
-        process = self.run_bridge()
+    def start(self, **overrides):
+        process = self.run_bridge(**overrides)
         deadline = time.monotonic() + 5
         while not self.port_path.exists() and process.poll() is None and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -154,6 +156,24 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(self.port_path.stat().st_mode), 0o600)
         self.port = int(self.port_path.read_text(encoding="utf-8"))
         return process
+
+    def test_private_test_endpoint_uses_only_the_testing_account(self):
+        # The main workflow reuses the tunnel with its own tagged Ohio endpoint.
+        account = "888293065132"
+        self.config["account"] = account
+        self.endpoint.update(
+            OwnerId=account,
+            InstanceConnectEndpointArn=f"arn:aws:ec2:us-east-2:{account}:instance-connect-endpoint/{ENDPOINT}",
+            Tags=[{"Key": "shiftbox-project", "Value": "shiftbox"},
+                  {"Key": "shiftbox-cluster-name", "Value": "sbtest-main"}],
+        )
+        runtime = "v0.0.0-rc.1234"
+        self.config["reservations"][0]["OwnerId"] = account
+        self.builder["Tags"] = self.endpoint["Tags"] + [{"Key": "shiftbox-environment", "Value": runtime}]
+        self.start(private_test=True, **{"account-id": account, "candidate-tag": runtime})
+        connection = self.connect()
+        self.assertEqual(self.socks(connection)[1], 0)
+        self.assertEqual(self.read_exact(connection, len(BANNER)), BANNER)
 
     def connect(self):
         connection = socket.create_connection(("127.0.0.1", self.port), timeout=3)

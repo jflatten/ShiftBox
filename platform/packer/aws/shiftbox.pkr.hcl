@@ -137,11 +137,17 @@ locals {
   canonical_account = "099720109477"
   root_disk_gib     = 32
   rehearsal         = startswith(var.publisher_attempt, "rehearsal-")
-  tags = merge({
+  private_test_tags = {
+    shiftbox-project      = "shiftbox"
+    shiftbox-cluster-name = var.cluster_name
+    shiftbox-environment  = var.environment
+  }
+  release_tags = merge({
     project      = "shiftbox"
     cluster_name = var.cluster_name
     environment  = var.environment
   }, var.publisher_attempt == "" ? {} : { publisher_attempt = var.publisher_attempt })
+  tags = { test = local.private_test_tags, release = local.release_tags }[var.cluster_name == "sbtest-main" ? "test" : "release"]
 }
 
 source "amazon-ebs" "shiftbox" {

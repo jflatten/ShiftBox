@@ -116,7 +116,7 @@ Parameters:
   ReleasePins:
     Type: String
     MinLength: 1
-    MaxLength: 2048
+    MaxLength: 4096
     Description: Verified image and provenance inputs for this region. The release launch link prefills this value.
 
 Rules:
@@ -168,6 +168,11 @@ Rules:
       AssertDescription: Enter an allowed private browser source IPv4 range.
 
 Conditions:
+  PrivateTestArtifacts:
+    Fn::And:
+    - Fn::Equals: [{Ref: 'AWS::AccountId'}, '888293065132']
+    - Fn::Equals: [{Ref: 'AWS::Region'}, us-east-2]
+    - Fn::Equals: [{Ref: 'AWS::StackName'}, sbtest-main]
   PublicEnabled:
     Fn::Equals:
     - {Ref: BrowserAccess}
@@ -448,6 +453,10 @@ Resources:
           - {Ref: PostgresAppSecret}
           - {Ref: PostgresDexSecret}
           - {Ref: SetupClaim}
+          - Fn::If:
+            - PrivateTestArtifacts
+            - Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:shiftbox-main-test-ghcr-??????
+            - {Ref: 'AWS::NoValue'}
         - Effect: Allow
           Action: ['logs:CreateLogStream', 'logs:PutLogEvents']
           Resource:
@@ -1482,6 +1491,10 @@ Resources:
             - {Ref: PostgresAppSecret}
             - {Ref: PostgresDexSecret}
             - {Ref: SetupClaim}
+            - Fn::If:
+              - PrivateTestArtifacts
+              - Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:shiftbox-main-test-ghcr-??????
+              - {Ref: 'AWS::NoValue'}
           - Effect: Allow
             Action: ['logs:CreateLogStream', 'logs:PutLogEvents']
             Resource:
@@ -1784,6 +1797,11 @@ Resources:
       ContainerDefinitions:
       - Name: controller
         Image: {'Fn::GetAtt': [LaunchDiscovery, ControllerImage]}
+        RepositoryCredentials:
+          Fn::If:
+          - PrivateTestArtifacts
+          - CredentialsParameter: shiftbox-main-test-ghcr
+          - {Ref: 'AWS::NoValue'}
         Essential: true
         MemoryReservation: 512
         EntryPoint: [/usr/local/bin/shiftbox-cloud]
@@ -1816,7 +1834,7 @@ Resources:
               "runtime":{"provider":"ec2","ec2":{"accountId":"${AWS::AccountId}","region":"${AWS::Region}", "dataVolumeId":"${InstallationVolume}","subnetId":"${WorkspaceSubnet}","securityGroupId":"${WorkspaceGroup}",
               "deployment":"${DeploymentName}","environment":"production","officialImage":{"amiId":"${ImageId}", "publisherAccountId":"${ImageOwner}","rootDeviceName":"${RootDevice}","rootSnapshotId":"${Snapshot}",
               "sourceAmiId":"${SourceAmi}","sourceRegion":"${SourceRegion}","sourceCommit":"${SourceRevision}", "releaseId":"${ImageRelease}","guestRelease":"${GuestRelease}","architecture":"${Architecture}",
-              "minimumDiskGiB":${MinimumDisk},"catalogSha256":"${CatalogSHA256}"}},"browserAddress":":${BrowserPort}",
+              "minimumDiskGiB":${MinimumDisk},"catalogSha256":"${CatalogSHA256}"},"starterCatalog":"${StarterCatalog}"},"browserAddress":":${BrowserPort}",
               "guestHost":"guest.${DnsSuffix}","enrollmentAddress":":19443","pollAddress":":19444","tunnelAddress":":19445"}}'
             - BrowserOrigin:
                 Fn::Sub:
@@ -1836,6 +1854,7 @@ Resources:
               Architecture: {'Fn::GetAtt': [LaunchDiscovery, WorkspaceArchitecture]}
               MinimumDisk: {'Fn::GetAtt': [LaunchDiscovery, WorkspaceMinimumDiskGiB]}
               CatalogSHA256: {'Fn::GetAtt': [LaunchDiscovery, WorkspaceCatalogSHA256]}
+              StarterCatalog: {'Fn::GetAtt': [LaunchDiscovery, WorkspaceStarterCatalog]}
               DeploymentName: {Ref: 'AWS::StackName'}
               DnsSuffix: {'Fn::GetAtt': [LaunchDiscovery, DnsSuffix]}
         - Name: SHIFTBOX_ACME_EMAIL
@@ -2061,7 +2080,7 @@ Resources:
       com.aws.cloudformation.Context:
         why: Resolve launch form choices before dependent resources are created.
         must: [Preserve adopted zones and zones with surviving records., Reject malformed or wrong-region release inputs
-            before returning image pins.]
+            before returning image pins., Verify the regional starter catalog against its pinned SHA-256.]
     Properties:
       FunctionName:
         Fn::Sub: ${AWS::StackName}-${AWS::Region}-discovery
@@ -2078,17 +2097,25 @@ Resources:
         ZipFile: |
           """Resolve the AWS resources selected on the first-launch console form."""
 
+          import base64
+          import gzip
           import hashlib
+          from io import BytesIO
           import json
           import logging
           import os
           import re
+          import tarfile
+          from urllib.request import urlopen
 
 
           log = logging.getLogger(__name__)
           DNS_NAME = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
           PRIVATE_ZONE_WAIT_SECONDS = 300
           PRIVATE_ZONE_POLL_SECONDS = 10
+          MAX_SUPPORT_ARCHIVE_BYTES = 1024 * 1024
+          # Leave room for discovery data and CloudFormation's 4096-byte response envelope.
+          MAX_STARTER_CATALOG_BYTES = 1536
 
 
           SUPPORTED_REGIONS = ("us-east-1", "us-east-2", "us-west-1", "us-west-2")
@@ -2112,22 +2139,67 @@ Resources:
           }
 
 
-          def parse_release_pins(raw, region):
+          def parse_release_pins(raw, region, *, private_test=False):
               """Accept the complete regional inputs supplied by a verified release launch."""
               try:
                   pins = json.loads(raw)
               except (TypeError, ValueError) as error:
                   raise ValueError("Use the release launch link to supply the release inputs.") from error
-              if not isinstance(pins, dict) or pins.keys() != RELEASE_PIN_PATTERNS.keys():
+              patterns = RELEASE_PIN_PATTERNS
+              if private_test:
+                  patterns = patterns | {
+                      "ControllerImage": r"ghcr\.io/jflatten/shiftbox-main-test@sha256:[0-9a-f]{64}",
+                      "PublisherAccount": r"888293065132",
+                      "WorkspaceRelease": r"v0\.0\.0-rc\.[1-9][0-9]*",
+                      "WorkspaceSourceRegion": r"us-east-2",
+                      "WorkspaceStarterCatalog": r"[A-Za-z0-9+/]{1,2048}={0,2}",
+                  }
+              if not isinstance(pins, dict) or pins.keys() != patterns.keys():
                   raise ValueError("The release inputs are incomplete. Use the release launch link.")
-              for key, pattern in RELEASE_PIN_PATTERNS.items():
+              for key, pattern in patterns.items():
                   if not isinstance(pins[key], str) or not re.fullmatch(pattern, pins[key]):
                       raise ValueError(f"The release inputs have an invalid {key}. Use the release launch link.")
               if region not in SUPPORTED_REGIONS or pins["Region"] != region:
                   raise ValueError("Use the ShiftBox release launch link for this AWS region.")
               if pins["GuestRelease"] != pins["WorkspaceRelease"]:
                   raise ValueError("The workspace and guest release inputs must match.")
+              if private_test:
+                  if region != "us-east-2":
+                      raise ValueError("Private test artifacts are available only in Ohio.")
+                  verify_starter_catalog(pins, base64.b64decode(pins["WorkspaceStarterCatalog"], validate=True))
               return pins
+
+
+          def verify_starter_catalog(pins, catalog):
+              if not 0 < len(catalog) <= MAX_STARTER_CATALOG_BYTES:
+                  raise ValueError("The regional starter AMI catalog is empty or oversized.")
+              if hashlib.sha256(catalog).hexdigest() != pins["WorkspaceCatalogSHA256"]:
+                  raise ValueError(f"The {pins['Region']} starter AMI catalog did not match the release checksum.")
+
+
+          def load_starter_catalog(pins):
+              """Return the exact catalog bytes selected and verified by the release inputs."""
+              region = pins["Region"]
+              release = pins["WorkspaceRelease"]
+              url = f"https://github.com/jflatten/ShiftBox/releases/download/{release}/shiftbox-aws-support.tar.gz"
+              try:
+                  with urlopen(url, timeout=10) as response:
+                      compressed = response.read(MAX_SUPPORT_ARCHIVE_BYTES + 1)
+                  if len(compressed) > MAX_SUPPORT_ARCHIVE_BYTES:
+                      raise ValueError("The release support archive is too large to read.")
+                  with gzip.GzipFile(fileobj=BytesIO(compressed)) as stream:
+                      contents = stream.read(MAX_SUPPORT_ARCHIVE_BYTES + 1)
+                  if len(contents) > MAX_SUPPORT_ARCHIVE_BYTES:
+                      raise ValueError("The expanded release support archive is too large to read.")
+                  with tarfile.open(fileobj=BytesIO(contents), mode="r:") as archive:
+                      entry = archive.getmember(f"catalog/{region}.json")
+                      if not entry.isfile() or not 0 < entry.size <= MAX_STARTER_CATALOG_BYTES:
+                          raise ValueError("The regional starter AMI catalog is empty, oversized, or not a regular file.")
+                      catalog = archive.extractfile(entry).read()
+              except (OSError, EOFError, tarfile.TarError, KeyError) as error:
+                  raise ValueError(f"Could not read the {region} starter AMI catalog for ShiftBox {release}.") from error
+              verify_starter_catalog(pins, catalog)
+              return base64.b64encode(catalog).decode("ascii")
 
 
           def public_candidates(ec2, vpc, zone):
@@ -2299,7 +2371,10 @@ Resources:
                       old_token, _, previous_subnet = physical_id.partition(":")
                       if old_token != token:
                           previous_subnet = ""
-                      pins = parse_release_pins(props.get("ReleasePins"), os.environ["AWS_REGION"])
+                      private_test = props.get("PrivateTestArtifacts") == "true"
+                      pins = parse_release_pins(props.get("ReleasePins"), os.environ["AWS_REGION"], private_test=private_test)
+                      if not private_test and props.get("IncludeStarterCatalog") == "true":
+                          pins["WorkspaceStarterCatalog"] = load_starter_catalog(pins)
                       data = resolve_launch(props, boto3.client("ec2", config=config), boto3.client("route53", config=config),
                                             previous_public_subnet=previous_subnet)
                       data.update(pins)
@@ -2339,6 +2414,9 @@ Resources:
       PublicAccess:
         Fn::If: [PublicEnabled, 'true', 'false']
       ReleasePins: {Ref: ReleasePins}
+      PrivateTestArtifacts: {'Fn::If': [PrivateTestArtifacts, 'true', 'false']}
+      # Refresh launch discovery when upgrading a stack created by the earlier template.
+      IncludeStarterCatalog: 'true'
   PrivateBrowserZone:
     Type: Custom::ShiftBoxPrivateBrowserZone
     Metadata:

@@ -193,7 +193,7 @@ func (p *Provider) InspectImage(ctx context.Context, imageID string) (Image, err
 	return p.inspectImage(ctx, imageID, p.cfg.AccountID, nil)
 }
 
-// InspectOfficialImage verifies the configured public AMI without relying on publisher tags.
+// InspectOfficialImage verifies the deployment-pinned AMI against EC2.
 func (p *Provider) InspectOfficialImage(ctx context.Context) (Image, error) {
 	pin := p.cfg.OfficialImage
 	if pin == nil {
@@ -212,14 +212,14 @@ func (p *Provider) inspectImage(ctx context.Context, imageID, owner string, offi
 	}
 	image := result.Images[0]
 	architecture := platformArchitecture(string(image.Architecture))
-	public := official != nil
+	public := official != nil && owner != p.cfg.AccountID
 	if aws.ToString(image.ImageId) != imageID || aws.ToString(image.OwnerId) != owner || aws.ToBool(image.Public) != public ||
 		!release.SupportsEC2PlatformArchitecture(architecture) || image.RootDeviceType != types.DeviceTypeEbs ||
 		image.VirtualizationType != types.VirtualizationTypeHvm || image.State != types.ImageStateAvailable {
 		return Image{}, provider.ErrOwnershipMismatch
 	}
 	root := aws.ToString(image.RootDeviceName)
-	if public {
+	if official != nil {
 		if root != official.RootDeviceName || architecture != official.Architecture || len(image.ProductCodes) != 0 || image.Platform != "" {
 			return Image{}, provider.ErrOwnershipMismatch
 		}
@@ -255,9 +255,16 @@ func (p *Provider) inspectImage(ctx context.Context, imageID, owner string, offi
 	}
 	observed := Image{ID: imageID, Architecture: architecture, RootDeviceName: root, SnapshotID: aws.ToString(rootDisk.SnapshotId),
 		CreationDate: aws.ToString(image.CreationDate)}
-	if public {
+	if official != nil {
 		if observed.SnapshotID != official.RootSnapshotID || aws.ToInt32(rootDisk.VolumeSize) > official.MinimumDiskGiB {
 			return Image{}, provider.ErrOwnershipMismatch
+		}
+		if !public {
+			tags := tagValues(image.Tags)
+			if tags[tagArtifact] != "workspace-ami" || tags[tagRelease] != official.ReleaseID ||
+				tags["ShiftBoxSourceAMI"] != official.SourceAMI || tags["ShiftBoxSourceCommit"] != official.SourceCommit {
+				return Image{}, provider.ErrOwnershipMismatch
+			}
 		}
 		observed.SingleBoot = true
 		return observed, nil
