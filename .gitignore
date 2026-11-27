@@ -14,6 +14,7 @@
 !.env.template
 *.local.pkrvars.hcl
 *.local.pkrvars.json
+/platform/terraform/main-test/terraform.tfstate*
 crash.log
 
 # Go build and test outputs
