@@ -18,7 +18,7 @@ def test_workflow_has_only_manual_entry_and_confines_artifacts():
     workflow = yaml.load(source, Loader=yaml.BaseLoader)
     assert set(workflow["on"]) == {"workflow_dispatch"}
     assert workflow["jobs"]["deploy"]["needs"] == "helper"
-    assert {job["environment"] for job in workflow["jobs"].values()} == {"aws-main-test"}
+    assert {job["environment"] for job in workflow["jobs"].values()} == {"aws-testing"}
     for job in workflow["jobs"].values():
         checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
         assert checkout["with"] == {"ref": "${{ github.sha }}", "persist-credentials": "false"}

@@ -30,7 +30,7 @@ run "private_testing_artifacts" {
   assert {
     condition = alltrue([for role in aws_iam_role.actions :
       jsondecode(role.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] ==
-      "repo:jflatten@11561330/ShiftBox@1457179716:environment:aws-main-test"
+      "repo:jflatten@11561330/ShiftBox@1457179716:environment:aws-testing"
     ])
     error_message = "The AWS roles must use only the protected testing environment."
   }

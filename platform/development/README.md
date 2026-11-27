@@ -15,7 +15,7 @@ release workflow and are independent of this test.
 
 ### Set up the private test destination
 
-1. Create the `aws-main-test` GitHub environment and allow deployments from
+1. Create the `aws-testing` GitHub environment and allow deployments from
    protected `main` only. Use the existing GitHub OIDC provider in
    `shiftbox-testing`. Review and apply the [main test Terraform configuration](../terraform/main-test/main.tf).
    Supply the private Packer network and the reviewed
