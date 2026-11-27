@@ -9,13 +9,55 @@ permissions:
 
 jobs:
   go:
+    if: always()
+    needs: [go-checks, go-race]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the regular checks and every race shard
+        env:
+          GO_CHECKS: ${{ needs.go-checks.result }}
+          GO_RACE: ${{ needs.go-race.result }}
+        run: test "$GO_CHECKS" = success && test "$GO_RACE" = success
+  go-checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: make fmt-check vet test race
+      - run: bash scripts/go-race-shard.test.sh
+      - run: make fmt-check vet test
+  go-race:
+    name: Go race (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [app, web, acceptance, core]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Locate the Go caches
+        id: go-cache
+        run: |
+          printf 'modules=%s\nbuild=%s\n' "$(go env GOMODCACHE)" "$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          printf 'runner=%s-%s-%s\n' "$RUNNER_OS" "${RUNNER_ARCH,,}" "${ImageOS:-ubuntu}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.go-cache.outputs.modules }}
+            ${{ steps.go-cache.outputs.build }}
+          key: go-race-${{ steps.go-cache.outputs.runner }}-${{ matrix.shard }}-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            go-race-${{ steps.go-cache.outputs.runner }}-${{ matrix.shard }}-
+            setup-go-${{ steps.go-cache.outputs.runner }}-go-
+      - name: Run the package shard with the race detector
+        env:
+          RACE_SHARD: ${{ matrix.shard }}
+        run: bash scripts/go-race-shard.sh "$RACE_SHARD"
   ui:
     runs-on: ubuntu-latest
     steps:

@@ -108,6 +108,10 @@ func (t *Tunnels) probeWorkbenchWebSocket(ctx context.Context, workspace string,
 		return fmt.Errorf("request IDE WebSocket: %w", err)
 	}
 	defer response.Body.Close()
+	// The response can arrive concurrently with cancellation of the upgrade.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// RFC 6455 requires SHA-1 here to verify that the peer accepted this challenge.
 	accept := sha1.Sum([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
 	if response.StatusCode != http.StatusSwitchingProtocols || !hasConnectionUpgrade(response.Header) ||

@@ -52,7 +52,7 @@ locals {
   region     = "us-east-2"
   stack      = "sbtest-main"
   oidc       = "token.actions.githubusercontent.com"
-  subject    = "repo:jflatten@11561330/ShiftBox@1457179716:environment:aws-main-test"
+  subject    = "repo:jflatten@11561330/ShiftBox@1457179716:environment:aws-testing"
   cfn        = "arn:aws:cloudformation:${local.region}:${local.account}"
   ec2        = "arn:aws:ec2:${local.region}"
   owned      = "${local.ec2}:${local.account}"
