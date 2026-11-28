@@ -15,11 +15,18 @@ import pytest
 import yaml
 
 
+TEMPLATE = Path(__file__).with_name("template.yaml")
+
+
+def test_template_preserves_bytes_in_cloudformation_readback():
+    # CloudFormation replaced non-ASCII punctuation in the original staged template.
+    assert TEMPLATE.read_bytes().isascii()
+
+
 @pytest.fixture(scope="module")
 def resources():
     # Exercise the same inline Lambda that operators get in the checked-in template.
-    template = Path(__file__).with_name("template.yaml")
-    return yaml.safe_load(template.read_text())["Resources"]
+    return yaml.safe_load(TEMPLATE.read_text())["Resources"]
 
 
 @pytest.fixture

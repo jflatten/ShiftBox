@@ -26,9 +26,9 @@ Metadata:
       PublicIngressCidr:
         default: Public browser source IPv4 range
       AcmeContactEmail:
-        default: Let’s Encrypt contact email
+        default: Let's Encrypt contact email
       AcmeTermsAccepted:
-        default: Accept Let’s Encrypt subscriber agreement
+        default: Accept Let's Encrypt subscriber agreement
       ReleasePins:
         default: Release inputs
     ParameterGroups:
@@ -93,12 +93,12 @@ Parameters:
     Default: ''
     MaxLength: 254
     AllowedPattern: (|[A-Za-z0-9._+%-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})
-    Description: Contact email for the Let’s Encrypt account.
+    Description: Contact email for the Let's Encrypt account.
   AcmeTermsAccepted:
     Type: String
     Default: 'false'
     AllowedValues: ['false', 'true']
-    Description: Accept the current Let’s Encrypt subscriber agreement to enable managed issuance.
+    Description: Accept the current Let's Encrypt subscriber agreement to enable managed issuance.
   BrowserAccess:
     Type: String
     AllowedValues: [Public, Private]
@@ -134,14 +134,14 @@ Rules:
         - Fn::Equals:
           - {Ref: AcmeContactEmail}
           - ''
-      AssertDescription: Enter a Let’s Encrypt contact email.
+      AssertDescription: Enter a Let's Encrypt contact email.
   AcmeTermsAcceptedRequired:
     Assertions:
     - Assert:
         Fn::Equals:
         - {Ref: AcmeTermsAccepted}
         - 'true'
-      AssertDescription: Accept the Let’s Encrypt subscriber agreement.
+      AssertDescription: Accept the Let's Encrypt subscriber agreement.
   PublicSourceRequired:
     RuleCondition:
       Fn::Equals:
@@ -2229,7 +2229,7 @@ Resources:
           def resolve_launch(props, ec2, dns, *, previous_public_subnet=""):
               name = props["DeploymentName"]
               if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}[a-z0-9]", name):
-                  raise ValueError("Use a stack name of 2–32 lowercase letters, numbers, or hyphens, starting with a letter and ending with a letter or number.")
+                  raise ValueError("Use a stack name of 2-32 lowercase letters, numbers, or hyphens, starting with a letter and ending with a letter or number.")
               ids = [props["ServiceSubnet"], props["WorkspaceSubnet"]]
               subnets = {subnet["SubnetId"]: subnet for subnet in ec2.describe_subnets(SubnetIds=sorted(set(ids)))["Subnets"]}
               if any(subnet_id not in subnets or subnets[subnet_id]["State"] != "available" for subnet_id in ids):
