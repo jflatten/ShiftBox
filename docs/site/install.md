@@ -53,8 +53,8 @@ For example, selecting the authoritative zone `example.com` and naming the stack
 | **Browser access** | Choose **Public** to create the internet entry point. **Private** keeps browser traffic on your private route and still issues a publicly trusted certificate. |
 | **Public Route 53 hosted zone** | Select your domain from the zones in this AWS account. Check that its public name servers match the delegation. The stack gets the domain name from the zone. |
 | **Public browser source IPv4 range** | Required for public access. Use your office or VPN’s public exit range, or one public IP with `/32`. `0.0.0.0/0` lets any IPv4 address reach the sign-in page. |
-| **Let’s Encrypt contact email** | Enter a monitored address for the certificate account. An address on another domain works. DNS proves domain control. |
-| **Accept Let’s Encrypt subscriber agreement** | Select **true** if authorized to accept the agreement. Both managed-certificate options require acceptance. [Let’s Encrypt subscriber agreement](https://letsencrypt.org/repository/) |
+| **Let's Encrypt contact email** | Enter a monitored address for the certificate account. An address on another domain works. DNS proves domain control. |
+| **Accept Let's Encrypt subscriber agreement** | Select **true** if authorized to accept the agreement. Both managed-certificate options require acceptance. [Let’s Encrypt subscriber agreement](https://letsencrypt.org/repository/) |
 | **DNS placement** (Advanced) | Keep **Use selected zone** to add the deployment’s records to your existing zone. **Delegate a child zone** creates a separate zone for the deployment name and adds its name servers to the selected parent. Choose this if you want that deployment’s public records grouped separately. |
 
 On first boot, Certbot in the controller writes temporary DNS TXT records, obtains the certificate and later renews it automatically. The stack grants the required Route 53 permissions. The same certificate covers management, workspace IDEs, previews and repair pages. [How DNS certificate validation works](https://letsencrypt.org/docs/challenge-types/#dns-01-challenge)
